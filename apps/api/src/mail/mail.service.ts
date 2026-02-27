@@ -210,7 +210,14 @@ export class MailService {
     const EMBED_BUDGET_MS = 5_000;
     let bodyHtml = rawBodyHtml;
 
-    const hasZimbraImages = rawBodyHtml?.includes('/service/home/') ?? false;
+    // Detect any src attribute pointing to the Zimbra host — covers
+    // /service/home/ (inline attachments), /service/proxy/ (image proxy for
+    // external images), /home/ briefcase paths, and other Zimbra REST URLs.
+    const zimbraHostPattern = new RegExp(
+      `src=["']https?://${user.zimbraHost.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`,
+      'i',
+    );
+    const hasZimbraImages = rawBodyHtml ? zimbraHostPattern.test(rawBodyHtml) : false;
     if (rawBodyHtml && (inlineImages.length > 0 || hasZimbraImages)) {
       const embedTask = this.embedInlineImages(rawBodyHtml, inlineImages, user, String(m.id));
       const raceResult = await Promise.race([
@@ -479,13 +486,63 @@ export class MailService {
       );
     }
 
-    await this.zimbra.sendMessage(
-      user.zimbraHost,
-      user.authToken!,
-      { ...payload, body: cleanBody, replyToId: zimbraReplyToId },
-      user.csrfToken ?? undefined,
-      attachmentAids,
-    );
+    const { zimbraId: sentZimbraId, conversationId: sentCid } =
+      await this.zimbra.sendMessage(
+        user.zimbraHost,
+        user.authToken!,
+        { ...payload, body: cleanBody, replyToId: zimbraReplyToId },
+        user.csrfToken ?? undefined,
+        attachmentAids,
+      );
+
+    // Persist the sent message to the local DB so it appears in thread view.
+    // Best-effort: a failure here must NOT prevent the 200 response reaching
+    // the client (the message was already delivered by Zimbra).
+    if (sentZimbraId) {
+      try {
+        // Find the Sent folder — Zimbra's standard path is /Sent.
+        const sentFolder = await this.prisma.folder.findFirst({
+          where: { userId, path: '/Sent' },
+        });
+
+        if (sentFolder) {
+          // Determine the conversationId: prefer Zimbra's cid; fall back to the
+          // original message's conversationId when replying.
+          let resolvedConversationId: string | null = sentCid;
+          if (!resolvedConversationId && zimbraReplyToId) {
+            const origMsg = await this.prisma.message.findFirst({
+              where: { userId, zimbraId: zimbraReplyToId },
+              select: { conversationId: true },
+            });
+            resolvedConversationId = origMsg?.conversationId ?? null;
+          }
+
+          await this.prisma.message.upsert({
+            where: { userId_zimbraId: { userId, zimbraId: sentZimbraId } },
+            update: { syncedAt: new Date() },
+            create: {
+              userId,
+              folderId:       sentFolder.id,
+              zimbraId:       sentZimbraId,
+              conversationId: resolvedConversationId,
+              subject:        payload.subject ?? null,
+              snippet:        null,
+              fromEmail:      user.email,
+              fromName:       user.displayName ?? null,
+              toRecipients:   payload.to.map((a) => ({ email: a, name: null })),
+              ccRecipients:   (payload.cc ?? []).map((a) => ({ email: a, name: null })),
+              isRead:         true,
+              isDraft:        false,
+              hasAttachments: files.length > 0,
+              receivedAt:     new Date(),
+            },
+          });
+        }
+      } catch (err: any) {
+        this.logger.warn(`Failed to persist sent message zimbraId=${sentZimbraId}: ${err?.message}`);
+      }
+    }
+
     return { success: true };
   }
 
@@ -565,10 +622,17 @@ export class MailService {
   }
 
   /**
-   * Find every <img src="https://{zimbraHost}/service/home/...?id=X&part=Y">
-   * in the HTML, download the image server-side (with the user's auth token),
-   * and replace the src with a base64 data URI.  This handles signature images
-   * that are stored in the user's Zimbra Briefcase rather than as CID attachments.
+   * Find every src attribute pointing to this Zimbra server in the HTML,
+   * download the resource server-side (with the user's auth token), and
+   * replace the src with a base64 data URI.
+   *
+   * Handles all Zimbra-hosted image patterns:
+   *   • /service/home/~/?id=X&part=Y  — inline attachments (uses downloadAttachmentBuffer)
+   *   • /service/proxy/?target=…      — Zimbra image-proxy for external images
+   *   • /home/user@domain/path        — Briefcase path-based URLs
+   *   • Any other path on this host   — generic Zimbra REST resources
+   *
+   * Only image/* content types are embedded; other types are left unchanged.
    */
   private async embedZimbraHostedImages(
     html: string,
@@ -577,9 +641,9 @@ export class MailService {
     if (!user.authToken) return html;
 
     const escapedHost = user.zimbraHost.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Match src attributes pointing to this Zimbra server's /service/home/ endpoint
+    // Match ANY src attribute pointing to this Zimbra server (http or https)
     const urlRe = new RegExp(
-      `src=["'](https?://${escapedHost}/service/home/[^?"']*\\?[^"']*)["']`,
+      `src=["'](https?://${escapedHost}/[^"']*)["']`,
       'gi',
     );
 
@@ -598,15 +662,33 @@ export class MailService {
           const parsed = new URL(url);
           const id   = parsed.searchParams.get('id');
           const part = parsed.searchParams.get('part');
-          if (!id || !part) return;
 
-          const { data, contentType } = await this.zimbra.downloadAttachmentBuffer(
-            user.zimbraHost,
-            user.authToken!,
-            user.email,
-            id,
-            part,
-          );
+          let data: Buffer;
+          let contentType: string;
+
+          if (id && part) {
+            // Standard inline attachment served via the Zimbra REST home endpoint
+            ({ data, contentType } = await this.zimbra.downloadAttachmentBuffer(
+              user.zimbraHost,
+              user.authToken!,
+              user.email,
+              id,
+              part,
+            ));
+          } else {
+            // Path-based URL (Briefcase image, image-proxy, or other Zimbra resource)
+            // downloadZimbraPath appends ?auth=qp&zauthtoken=... for query-param auth
+            const relativePath = parsed.pathname + (parsed.search || '');
+            ({ data, contentType } = await this.zimbra.downloadZimbraPath(
+              user.zimbraHost,
+              user.authToken!,
+              relativePath,
+            ));
+          }
+
+          // Only embed image types; leave documents/videos/etc. with their original URL
+          if (!contentType.startsWith('image/')) return;
+
           const dataUri = `data:${contentType};base64,${data.toString('base64')}`;
           // Replace the exact matched attribute (literal string replace, no regex)
           processed = processed.split(full).join(`src="${dataUri}"`);

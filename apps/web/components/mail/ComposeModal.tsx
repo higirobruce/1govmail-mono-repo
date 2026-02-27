@@ -216,6 +216,25 @@ function ToolbarBtn({ title, onClick, active, children }: {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Strip outer <html>/<head>/<body> wrapper tags from an email body string.
+ *
+ * When inserting quoted HTML inside a <blockquote>, any <html>/<body> tags
+ * inside the blockquote are invalid and confuse the browser's HTML parser.
+ * More critically, the extractBodyContent() function used by the email iframe
+ * uses a greedy regex to find the <body> content; a nested <body> inside the
+ * blockquote would be matched instead of the reply's own outer body, causing
+ * the viewer to show the ORIGINAL message content rather than the reply.
+ */
+function stripHtmlDocWrapper(html: string): string {
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  if (bodyMatch) return bodyMatch[1];
+  return html
+    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<\/?(html|body)[^>]*>/gi, '')
+    .trim();
+}
+
 function buildHtmlBody(userHtml: string, mode: ComposeMode, original?: ComposeMessage | null): string {
   if (!original || mode === 'new') return userHtml;
   const dateStr = (() => { try { return format(parseISO(original.receivedAt), "EEE, MMM d, yyyy 'at' h:mm a"); } catch { return ''; } })();
@@ -227,7 +246,12 @@ function buildHtmlBody(userHtml: string, mode: ComposeMode, original?: ComposeMe
   } else {
     header = `<br/><br/><div style="color:#999;font-size:13px;">On ${dateStr}, ${fromStr} wrote:</div>`;
   }
-  const quoteContent = original.bodyHtml ?? (original.bodyText ? `<pre style="font-family:inherit;white-space:pre-wrap;margin:0">${original.bodyText}</pre>` : '');
+  // Strip document-level wrapper tags from the original body so that nesting
+  // it inside a <blockquote> produces valid HTML and does not confuse the
+  // greedy extractBodyContent() regex when the reply is later rendered.
+  const quoteContent = original.bodyHtml
+    ? stripHtmlDocWrapper(original.bodyHtml)
+    : (original.bodyText ? `<pre style="font-family:inherit;white-space:pre-wrap;margin:0">${original.bodyText}</pre>` : '');
   const quote = `<blockquote style="margin:4px 0 0 .8ex;border-left:2px solid #555;padding-left:1ex;color:#aaa;">${quoteContent}</blockquote>`;
   return `${userHtml}${header}${quote}`;
 }

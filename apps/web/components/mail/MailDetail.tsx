@@ -212,7 +212,14 @@ function EmailBody({
     );
   }
 
-  const body = extractBodyContent(html);
+  // Zimbra uses `dfsrc` instead of `src` on images (deferred loading). Convert
+  // them to standard `src` so the browser renders them correctly.
+  // Also strip the non-standard `name=` parameter from data URIs — e.g.
+  // `data:image/gif; name="foo.gif";base64,...` — whose unescaped inner quotes
+  // break HTML attribute parsing and cause the image to render as broken.
+  const body = extractBodyContent(html)
+    .replace(/\bdfsrc=/gi, 'src=')
+    .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;');
   // upgrade-insecure-requests: silently upgrades http:// image/resource URLs to
   // https:// so external email images are not blocked by mixed-content policy on
   // HTTPS deployments.

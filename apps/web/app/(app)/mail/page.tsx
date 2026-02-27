@@ -29,6 +29,9 @@ export default function MailPage() {
 
   const [loadingMessage, setLoadingMessage] = useState(false);
 
+  // Increment after sending a reply to force ThreadView to re-fetch the conversation.
+  const [threadRefreshKey, setThreadRefreshKey] = useState(0);
+
   // ── TanStack Query: paginated message list ─────────────────────────────────
   const {
     data: messagesData,
@@ -674,6 +677,7 @@ export default function MailPage() {
           }
           folders={folders}
           onMoveToFolder={(folderId) => { if (activeMessageId) handleMoveToFolder(folderId); }}
+          refreshKey={threadRefreshKey}
         />
       </div>
 
@@ -687,6 +691,8 @@ export default function MailPage() {
           setComposeOpen(false);
           setComposeDraftProps(null);
           invalidateMessages();
+          // Re-fetch the thread so the sent reply appears immediately.
+          setThreadRefreshKey((k) => k + 1);
         }}
         initialDraftZimbraId={composeDraftProps?.zimbraId}
         initialTo={composeDraftProps?.to}

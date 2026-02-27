@@ -562,14 +562,14 @@ export class ZimbraService {
     },
     csrfToken?: string,
     attachmentAids: string[] = [],
-  ): Promise<void> {
+  ): Promise<{ zimbraId: string; conversationId: string | null }> {
     const client = this.buildClient(host, authToken, csrfToken);
     const toAddrs  = payload.to.map((a) => ({ t: 't', a }));
     const ccAddrs  = (payload.cc  ?? []).map((a) => ({ t: 'c', a }));
     const bccAddrs = (payload.bcc ?? []).map((a) => ({ t: 'b', a }));
 
     try {
-      await client.post('/service/soap', {
+      const res = await client.post('/service/soap', {
         Body: {
           SendMsgRequest: {
             _jsns: 'urn:zimbraMail',
@@ -590,6 +590,11 @@ export class ZimbraService {
         },
         Header: this.soapHeader(csrfToken),
       });
+      const sent = res.data?.Body?.SendMsgResponse?.m?.[0];
+      return {
+        zimbraId:       sent?.id  != null ? String(sent.id)  : '',
+        conversationId: sent?.cid != null ? String(sent.cid) : null,
+      };
     } catch (err: any) {
       this.handleZimbraError(err, 'sendMessage');
     }

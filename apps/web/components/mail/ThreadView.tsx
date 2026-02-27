@@ -84,6 +84,8 @@ interface Props {
   onMoveToInbox?: () => void;
   folders?: any[];
   onMoveToFolder?: (folderId: string) => void;
+  /** Increment to force the thread conversation to re-fetch (e.g. after sending a reply). */
+  refreshKey?: number;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -98,6 +100,7 @@ export default function ThreadView({
   onMoveToInbox,
   folders,
   onMoveToFolder,
+  refreshKey,
 }: Props) {
   const user = useAuthStore((s) => s.user);
 
@@ -137,7 +140,7 @@ export default function ThreadView({
         toast.error('Could not load thread', { description: err?.message });
       })
       .finally(() => setLoadingThread(false));
-  }, [message?.id, message?.conversationId]);
+  }, [message?.id, message?.conversationId, refreshKey]);
 
   // Accordion toggle: clicking an open message closes it; clicking a closed one
   // opens it and closes whatever was open before.

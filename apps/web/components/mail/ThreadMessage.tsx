@@ -124,7 +124,10 @@ function EmailBodyFrame({ html, text }: { html: string | null; text: string | nu
         return /^\s*(On .+wrote:|From\s*:|De\s*:|Von\s*:|-{3,})/i.test(t);
       });
       if (byHeuristic) return byHeuristic;
-      return doc.body.querySelector<Element>('hr'); // last resort
+      // Do NOT fall back to the first <hr> unconditionally — newsletters and
+      // formatted emails use <hr> for design/layout, and removing everything
+      // after the first one would wipe out images and content.
+      return null;
     };
 
     const sep = findQuoteSep();
@@ -170,7 +173,14 @@ function EmailBodyFrame({ html, text }: { html: string | null; text: string | nu
     );
   }
 
-  const body = extractBodyContent(html);
+  // Zimbra uses `dfsrc` instead of `src` on images (deferred loading). Convert
+  // them to standard `src` so the browser renders them correctly.
+  // Also strip the non-standard `name=` parameter from data URIs — e.g.
+  // `data:image/gif; name="foo.gif";base64,...` — whose unescaped inner quotes
+  // break HTML attribute parsing and cause the image to render as broken.
+  const body = extractBodyContent(html)
+    .replace(/\bdfsrc=/gi, 'src=')
+    .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;');
   const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
   // In thread view each message is shown individually, so suppress the quoted
   // history that email clients embed inside every reply/forward body.

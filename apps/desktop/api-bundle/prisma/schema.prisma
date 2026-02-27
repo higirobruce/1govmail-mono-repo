@@ -1,0 +1,183 @@
+generator client {
+  provider = "prisma-client-js"
+  // With the better-sqlite3 driver adapter the Rust query engine binary is
+  // only needed for `prisma migrate`; the runtime client is pure JavaScript.
+  // "native" covers the current build machine; the others cover packaging targets.
+  binaryTargets = ["native", "darwin", "darwin-arm64", "windows", "debian-openssl-3.0.x", "linux-musl"]
+}
+
+datasource db {
+  provider = "sqlite"
+  // url is intentionally absent: in Prisma 7 the connection is established
+  // via a driver adapter passed to PrismaClient at construction time (runtime)
+  // and via prisma.config.ts for the Prisma CLI / migrations.
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  displayName  String?
+  zimbraHost   String
+  authToken    String?
+  csrfToken    String?
+  tokenExpiry  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  sessions       Session[]
+  folders        Folder[]
+  messages       Message[]
+  contacts       Contact[]
+  calendarEvents CalendarEvent[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userAgent String?
+  ipAddress String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ─── Mail ─────────────────────────────────────────────────────────────────────
+
+model Folder {
+  id          String     @id @default(cuid())
+  userId      String
+  zimbraId    String
+  name        String
+  path        String
+  parentId    String?
+  type        FolderType @default(MAIL)
+  unreadCount Int        @default(0)
+  totalCount  Int        @default(0)
+  color       String?
+  syncedAt    DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@unique([userId, zimbraId])
+  @@index([userId])
+  @@map("folders")
+}
+
+enum FolderType {
+  MAIL
+  CONTACTS
+  CALENDAR
+  TASKS
+  BRIEFCASE
+}
+
+model Message {
+  id             String    @id @default(cuid())
+  userId         String
+  folderId       String
+  zimbraId       String
+  conversationId String?
+  subject        String?
+  snippet        String?
+  bodyText       String?
+  bodyHtml       String?
+  fromEmail      String
+  fromName       String?
+  toRecipients   Json
+  ccRecipients   Json      @default("[]")
+  bccRecipients  Json      @default("[]")
+  replyTo        String?
+  isRead         Boolean   @default(false)
+  isStarred      Boolean   @default(false)
+  isDraft        Boolean   @default(false)
+  hasAttachments Boolean   @default(false)
+  attachments    Json      @default("[]")
+  inlineImages   Json?
+  // SQLite has no native array type; stored as JSON text (was String[] on PostgreSQL)
+  flags          Json      @default("[]")
+  tags           Json      @default("[]")
+  sentAt         DateTime?
+  receivedAt     DateTime
+  syncedAt       DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, zimbraId])
+  @@index([userId, folderId])
+  @@index([userId, conversationId])
+  @@map("messages")
+}
+
+// ─── Contacts ────────────────────────────────────────────────────────────────
+
+model Contact {
+  id        String    @id @default(cuid())
+  userId    String
+  zimbraId  String
+  firstName String?
+  lastName  String?
+  fullName  String?
+  nickname  String?
+  company   String?
+  jobTitle  String?
+  emails    Json      @default("[]")
+  phones    Json      @default("[]")
+  addresses Json      @default("[]")
+  notes     String?
+  photoUrl  String?
+  // SQLite has no native array type; stored as JSON text (was String[] on PostgreSQL)
+  tags      Json      @default("[]")
+  syncedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, zimbraId])
+  @@index([userId])
+  @@map("contacts")
+}
+
+// ─── Calendar ────────────────────────────────────────────────────────────────
+
+model CalendarEvent {
+  id              String   @id @default(cuid())
+  userId          String
+  zimbraId        String
+  title           String
+  description     String?
+  location        String?
+  startAt         DateTime
+  endAt           DateTime
+  allDay          Boolean  @default(false)
+  isRecurring     Boolean  @default(false)
+  recurrenceRule  String?
+  organizer       String?
+  attendees       Json     @default("[]")
+  calendarName    String?
+  color           String?
+  syncedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, zimbraId])
+  @@index([userId, startAt])
+  @@map("calendar_events")
+}

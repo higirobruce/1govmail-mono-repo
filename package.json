@@ -1,0 +1,28 @@
+{
+  "name": "email-client",
+  "version": "0.0.1",
+  "private": true,
+  "packageManager": "pnpm@10.29.3",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter web dev\" \"pnpm --filter api start:dev\"",
+    "build": "pnpm --filter web build && pnpm --filter api build",
+    "lint": "pnpm --filter web lint && pnpm --filter api lint",
+
+    "dev:desktop": "concurrently \"pnpm --filter web dev\" \"pnpm --filter api start:dev\" \"pnpm --filter desktop dev:electron\"",
+
+    "build:desktop": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build",
+    "build:desktop:mac": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:mac",
+    "build:desktop:win": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:win",
+    "build:desktop:linux": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:linux",
+
+    "dev:website": "pnpm --filter website run dev",
+    "build:website": "pnpm --filter website run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

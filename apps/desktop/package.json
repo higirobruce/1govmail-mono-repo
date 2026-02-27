@@ -1,0 +1,29 @@
+{
+  "name": "desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "generate-icons": "node scripts/generate-icons.mjs",
+    "prepare:api": "node scripts/prepare-api.mjs",
+    "dev:electron": "wait-on tcp:3000 && tsc && electron .",
+    "prebuild": "node scripts/generate-icons.mjs && node scripts/prepare-api.mjs",
+    "prebuild:mac": "node scripts/generate-icons.mjs && node scripts/prepare-api.mjs",
+    "prebuild:win": "node scripts/generate-icons.mjs && node scripts/prepare-api.mjs",
+    "prebuild:linux": "node scripts/generate-icons.mjs && node scripts/prepare-api.mjs",
+    "build": "tsc && electron-builder",
+    "build:mac": "tsc && electron-builder --mac",
+    "build:win": "tsc && electron-builder --win",
+    "build:linux": "tsc && electron-builder --linux"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/node": "^20",
+    "concurrently": "^9.1.2",
+    "electron": "^34.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5",
+    "wait-on": "^8.0.1"
+  }
+}

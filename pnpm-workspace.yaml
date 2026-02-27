@@ -1,0 +1,20 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver
+
+# Packages that are explicitly allowed to run build/install scripts.
+# better-sqlite3 compiles a native Node.js addon.
+# @prisma/engines + prisma download the Prisma query-engine binaries.
+onlyBuiltDependencies:
+  - better-sqlite3
+  - "@prisma/engines"
+  - prisma
+  - "@nestjs/core"
+
+allowedDeprecatedVersions:
+  glob: "*"
+  inflight: "*"

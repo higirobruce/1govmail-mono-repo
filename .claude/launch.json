@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "web", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "api", "start:dev"],
+      "port": 3001
+    },
+    {
+      "name": "zimbra-wrapper",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/brucehigiro/Documents/development/zimbra-wrapper && npm run start:dev"],
+      "port": 3002
+    },
+    {
+      "name": "website",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "website", "run", "dev"],
+      "port": 3010
+    }
+  ]
+}

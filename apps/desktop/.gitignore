@@ -1,4 +1,17 @@
-dist/
-release/
-node_modules/
-api-bundle/dev.db
+node_modules
+.env
+*.db
+
+# Electron build output
+dist
+release
+out
+
+# Bundled API (generated at build time)
+api-bundle
+
+# Compiled renderer/main process files
+main.js
+main.js.map
+preload.js
+preload.js.map

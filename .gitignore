@@ -7,5 +7,4 @@ dist
 *.log
 .DS_Store
 release
-apps/api/dev.db
-apps/desktop/api-bundle/dev.db
+*.db

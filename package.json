@@ -17,10 +17,7 @@
     "build:desktop": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build",
     "build:desktop:mac": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:mac",
     "build:desktop:win": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:win",
-    "build:desktop:linux": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:linux",
-
-    "dev:website": "pnpm --filter website run dev",
-    "build:website": "pnpm --filter website run build"
+    "build:desktop:linux": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:linux"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

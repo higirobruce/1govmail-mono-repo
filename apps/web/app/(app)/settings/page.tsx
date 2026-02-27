@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
@@ -331,6 +332,7 @@ export default function SettingsPage() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [hydrated, setHydrated] = useState(false);
+  const queryClient = useQueryClient();
 
   const [section, setSection] = useState<Section>('profile');
   const [loading, setLoading] = useState(true);
@@ -353,12 +355,16 @@ export default function SettingsPage() {
     try {
       const d = await api.settings.get();
       setData(d as SettingsData);
+      // Invalidate the React Query ['settings'] cache so ComposeModal (and any
+      // other component using useQuery(['settings'])) refetches the latest data,
+      // including updated zimbraPrefDefaultSignatureId and signature content.
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
     } catch (err: any) {
       toast.error('Failed to load settings', { description: err?.message });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     if (!hydrated || !isAuthenticated) return;

@@ -272,11 +272,11 @@ export default function ComposeModal({
 
   // Derive the correct signature HTML for the current compose mode.
   // Check both identity attrs AND prefs — Zimbra may store the ID in either.
-  // Falls back to the single signature when no default has been explicitly chosen.
+  // Falls back to the first available signature when no default is configured or
+  // when the configured default ID no longer matches any existing signature.
   const signatureHtml = useMemo(() => {
     const settings = settingsData as any;
     const sigs: any[] = settings?.signatures ?? [];
-    console.log('[sig-debug] settingsData loaded:', !!settings, '| sigs count:', sigs.length);
     if (!sigs.length) return '';
 
     const primaryIdentity = settings?.identities?.[0];
@@ -287,22 +287,14 @@ export default function ComposeModal({
       ? (attrs.zimbraPrefDefaultSignatureId        || prefs.zimbraPrefDefaultSignatureId        || '')
       : (attrs.zimbraPrefForwardReplySignatureId   || prefs.zimbraPrefForwardReplySignatureId   || '');
 
-    console.log('[sig-debug] mode:', mode, '| defaultId from attrs:', attrs.zimbraPrefDefaultSignatureId, '| from prefs:', prefs.zimbraPrefDefaultSignatureId, '| resolved id:', id);
-    console.log('[sig-debug] sig ids in list:', sigs.map((s: any) => s.id));
-
-    // If an explicit default is configured, use it
+    // If an explicit default is configured and found, use it
     if (id) {
-      const found = sigs.find((s: any) => s.id === id)?.contentHtml ?? '';
-      console.log('[sig-debug] found by id:', !!found, '| contentHtml length:', found.length);
-      return found;
+      const found = sigs.find((s: any) => s.id === id)?.contentHtml;
+      if (found) return found;
+      // Configured signature no longer exists — fall through to first available
     }
-    // Fallback: if there's exactly one signature and no default configured, use it
-    if (sigs.length === 1) {
-      console.log('[sig-debug] using single-sig fallback, contentHtml length:', sigs[0].contentHtml?.length ?? 0);
-      return sigs[0].contentHtml ?? '';
-    }
-    console.log('[sig-debug] no default configured and multiple sigs — returning empty');
-    return '';
+    // No default configured (or configured sig not found) — use first available signature
+    return sigs[0]?.contentHtml ?? '';
   }, [settingsData, mode]);
 
   const [minimised, setMinimised] = useState(false);
@@ -440,12 +432,8 @@ export default function ComposeModal({
   // The pre-populate effect above is declared first so React always runs it
   // before this one, guaranteeing sigInserted is reset before we try to inject.
   useEffect(() => {
-    console.log('[inject-debug] effect ran | editor:', !!editor, '| open:', open, '| sigInserted:', sigInserted.current, '| draftId:', initialDraftZimbraId, '| sigHtmlLen:', signatureHtml.length);
     if (!editor || !open || sigInserted.current || initialDraftZimbraId || !signatureHtml) return;
-    const textLen = editor.getText().trim().length;
-    console.log('[inject-debug] editor text length:', textLen);
-    if (textLen > 0) return;
-    console.log('[inject-debug] INJECTING signature!');
+    if (editor.getText().trim().length > 0) return;
     sigInserted.current = true;
     editor.commands.setContent(`<p></p><div data-sig="1">${signatureHtml}</div>`);
     editor.commands.focus('start');

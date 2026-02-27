@@ -470,6 +470,85 @@ export class ZimbraService {
 
   // ─── Send / Modify ───────────────────────────────────────────────────────────
 
+  /**
+   * Upload a single file to Zimbra's REST upload endpoint.
+   * Returns the attachment ID (`aid`) that can be referenced in SendMsgRequest.
+   */
+  async uploadAttachment(
+    host: string,
+    authToken: string,
+    buffer: Buffer,
+    filename: string,
+    mimeType: string,
+  ): Promise<string> {
+    const baseURL = host.startsWith('http') ? host : `https://${host}`;
+    let rawResponse = '';
+    try {
+      const res = await axios.post(
+        `${baseURL}/service/upload?fmt=raw`,
+        buffer,
+        {
+          // Force string response — Zimbra returns non-standard JS:
+          // 200,'null',[{"aid":"...","filename":"...","ct":"..."}]
+          responseType: 'text',
+          headers: {
+            Cookie: `ZM_AUTH_TOKEN=${authToken}`,
+            'Content-Type': mimeType,
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
+          },
+          timeout: 30000,
+        },
+      );
+
+      rawResponse = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+      this.logger.debug(`Zimbra upload response for "${filename}": ${rawResponse.substring(0, 400)}`);
+
+      // Strategy 1: direct regex on the standard Zimbra response
+      // Handles: 200,'null',[{"aid":"<value>"}] and variants
+      const m1 = rawResponse.match(/"aid"\s*:\s*"([^"]+)"/);
+      if (m1?.[1]) return m1[1];
+
+      // Strategy 2: extract and parse the JSON array portion
+      const arrMatch = rawResponse.match(/\[(\{[^[\]]+\}(?:,\s*\{[^[\]]+\})*)\]/);
+      if (arrMatch) {
+        try {
+          const arr = JSON.parse(arrMatch[0]) as Array<{ aid?: string }>;
+          if (Array.isArray(arr) && arr[0]?.aid) return String(arr[0].aid);
+        } catch { /* ignore parse error */ }
+      }
+
+      // Strategy 3: Axios already parsed the array (some Zimbra configs return JSON)
+      if (Array.isArray(res.data) && (res.data as any[])[0]?.aid) {
+        return String((res.data as any[])[0].aid);
+      }
+      if (typeof res.data === 'object' && res.data !== null && (res.data as any).aid) {
+        return String((res.data as any).aid);
+      }
+
+      // Strategy 4: plain-string format — 200,'null','<aid>'
+      // Some Zimbra installs return the aid as a bare single-quoted string,
+      // not a JSON array: e.g. 200,'null','uuid1:uuid2'
+      const plainMatch = rawResponse.match(/^\d+,'[^']*','([^']+)'/);
+      if (plainMatch?.[1]) return plainMatch[1];
+
+      this.logger.error(
+        `Zimbra upload: no aid in response for "${filename}". ` +
+        `HTTP ${res.status}. Body: ${rawResponse.substring(0, 400)}`,
+      );
+      throw new BadGatewayException(
+        `Zimbra upload did not return an aid for "${filename}". ` +
+        `Response: ${rawResponse.substring(0, 200)}`,
+      );
+    } catch (err: any) {
+      if (err instanceof BadGatewayException) throw err;
+      this.logger.error(
+        `Failed to upload "${filename}": ${err?.message}. ` +
+        `Response so far: ${rawResponse.substring(0, 200)}`,
+      );
+      throw new BadGatewayException(`Failed to upload attachment "${filename}": ${err?.message ?? err}`);
+    }
+  }
+
   async sendMessage(
     host: string,
     authToken: string,
@@ -482,6 +561,7 @@ export class ZimbraService {
       replyToId?: string;
     },
     csrfToken?: string,
+    attachmentAids: string[] = [],
   ): Promise<void> {
     const client = this.buildClient(host, authToken, csrfToken);
     const toAddrs  = payload.to.map((a) => ({ t: 't', a }));
@@ -501,6 +581,10 @@ export class ZimbraService {
                 ct: 'text/html',
                 content: { _content: payload.body },
               },
+              // Attach pre-uploaded files by their Zimbra attachment IDs
+              ...(attachmentAids.length > 0
+                ? { attach: { aid: attachmentAids.join(',') } }
+                : {}),
             },
           },
         },

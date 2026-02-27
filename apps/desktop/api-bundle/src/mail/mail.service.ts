@@ -127,27 +127,33 @@ export class MailService {
         const msg = await this.prisma.message.upsert({
           where: { userId_zimbraId: { userId, zimbraId } },
           update: {
-            isRead: !flags.includes('u'),
-            isStarred: flags.includes('f'),
-            syncedAt: new Date(),
+            isRead:    !flags.includes('u'),
+            isStarred:  flags.includes('f'),
+            isDraft:    flags.includes('d'),
+            syncedAt:   new Date(),
           },
           create: {
             userId,
             folderId,
             zimbraId,
             conversationId: m.cid != null ? String(m.cid) : null,
-            subject: m.su ?? null,
-            snippet: m.fr ?? null,
-            fromEmail: fromAddr?.a ?? '',
-            fromName: fromAddr?.d ?? null,
-            toRecipients: toAddrs,
-            isRead: !flags.includes('u'),
-            isStarred: flags.includes('f'),
-            hasAttachments: flags.includes('a'),
-            receivedAt: new Date(m.d),
+            subject:        m.su ?? null,
+            snippet:        m.fr ?? null,
+            fromEmail:      fromAddr?.a ?? '',
+            fromName:       fromAddr?.d ?? null,
+            toRecipients:   toAddrs,
+            isRead:         !flags.includes('u'),
+            isStarred:       flags.includes('f'),
+            isDraft:         flags.includes('d'),
+            hasAttachments:  flags.includes('a'),
+            receivedAt:      new Date(m.d),
           },
         });
-        saved.push(msg);
+        // Strip large body fields — the list view only needs metadata.
+        // Returning bodyHtml with embedded base64 images for 50 messages at
+        // once can exceed V8's string length limit in JSON.stringify.
+        const { bodyHtml: _bh, bodyText: _bt, inlineImages: _ii, attachments: _att, ...msgMeta } = msg as any;
+        saved.push(msgMeta);
       } catch (err: any) {
         this.logger.error(`Failed to upsert message zimbraId=${m.id}: ${err?.message}`);
       }
@@ -173,7 +179,8 @@ export class MailService {
     // (null = never fetched), and bodyHtml has no un-embedded cid: refs.
     const attachmentsCached = Array.isArray(cached?.attachments) && (cached.attachments as any[]).length >= 0;
     const bodyHasCids = (cached?.bodyHtml ?? '').includes('cid:');
-    if ((cached?.bodyHtml || cached?.bodyText) && attachmentsCached && cached?.inlineImages !== null && !bodyHasCids) {
+    const bodyHasZimbraUrls = (cached?.bodyHtml ?? '').includes('/service/home/');
+    if ((cached?.bodyHtml || cached?.bodyText) && attachmentsCached && cached?.inlineImages !== null && !bodyHasCids && !bodyHasZimbraUrls) {
       return cached;
     }
 
@@ -203,7 +210,8 @@ export class MailService {
     const EMBED_BUDGET_MS = 5_000;
     let bodyHtml = rawBodyHtml;
 
-    if (rawBodyHtml && inlineImages.length > 0) {
+    const hasZimbraImages = rawBodyHtml?.includes('/service/home/') ?? false;
+    if (rawBodyHtml && (inlineImages.length > 0 || hasZimbraImages)) {
       const embedTask = this.embedInlineImages(rawBodyHtml, inlineImages, user, String(m.id));
       const raceResult = await Promise.race([
         embedTask.then((html) => ({ html, done: true as const })),
@@ -287,6 +295,50 @@ export class MailService {
     }
 
     return result;
+  }
+
+  /**
+   * Returns all messages in the same conversation as the given messageId,
+   * ordered oldest → newest.  Body fields are omitted — callers fetch bodies
+   * lazily via getMessage() when the user expands a message.
+   */
+  async getConversation(userId: string, messageId: string) {
+    // Resolve the message to get conversationId
+    const msg = await this.prisma.message.findFirst({
+      where: { userId, id: messageId },
+      select: { id: true, conversationId: true },
+    });
+
+    if (!msg) throw new NotFoundException('Message not found');
+
+    // Standalone message — no conversation
+    if (!msg.conversationId) {
+      return { conversationId: null, messages: [] };
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where: { userId, conversationId: msg.conversationId },
+      orderBy: { receivedAt: 'asc' },
+      select: {
+        id: true,
+        zimbraId: true,
+        conversationId: true,
+        subject: true,
+        snippet: true,
+        fromEmail: true,
+        fromName: true,
+        toRecipients: true,
+        ccRecipients: true,
+        isRead: true,
+        isStarred: true,
+        isDraft: true,
+        hasAttachments: true,
+        attachments: true,
+        receivedAt: true,
+      },
+    });
+
+    return { conversationId: msg.conversationId, messages };
   }
 
   async searchMessages(userId: string, query: string, limit = 50, offset = 0) {
@@ -387,9 +439,53 @@ export class MailService {
       body: string;
       replyToId?: string;
     },
+    files: Express.Multer.File[] = [],
   ) {
     const user = await this.getUser(userId);
-    await this.zimbra.sendMessage(user.zimbraHost, user.authToken!, payload, user.csrfToken ?? undefined);
+
+    // Resolve replyToId: the frontend sends our internal Prisma CUID, but
+    // Zimbra's origid expects the numeric zimbraId.
+    let zimbraReplyToId: string | undefined;
+    if (payload.replyToId) {
+      const orig = await this.prisma.message.findFirst({
+        where: { userId, id: payload.replyToId },
+        select: { zimbraId: true },
+      });
+      zimbraReplyToId = orig?.zimbraId ?? payload.replyToId;
+    }
+
+    // Strip embedded base64 data URIs from the outgoing body.
+    // When a user replies to a thread, the quoted body may contain images we
+    // previously embedded as data URIs for display.  Those URIs are meaningless
+    // to the recipient and inflate the payload well beyond 10 MB.
+    const cleanBody = payload.body.replace(
+      /src=["']data:[^"']*["']/gi,
+      'src=""',
+    );
+
+    // Upload each attachment to Zimbra and collect their attachment IDs.
+    let attachmentAids: string[] = [];
+    if (files.length > 0) {
+      attachmentAids = await Promise.all(
+        files.map((f) =>
+          this.zimbra.uploadAttachment(
+            user.zimbraHost,
+            user.authToken!,
+            f.buffer,
+            f.originalname,
+            f.mimetype,
+          ),
+        ),
+      );
+    }
+
+    await this.zimbra.sendMessage(
+      user.zimbraHost,
+      user.authToken!,
+      { ...payload, body: cleanBody, replyToId: zimbraReplyToId },
+      user.csrfToken ?? undefined,
+      attachmentAids,
+    );
     return { success: true };
   }
 
@@ -417,8 +513,10 @@ export class MailService {
 
   /**
    * Replace every `cid:` reference in the HTML with a base64 data URI fetched
-   * from Zimbra.  Any part that fails to download is left as-is (broken img is
-   * acceptable; the rest of the email still renders).
+   * from Zimbra.  After CID embedding, also replaces Zimbra REST home URLs
+   * (used by signature images stored in Zimbra briefcase) with data URIs.
+   * Any remaining unresolvable `cid:` references are stripped so the browser
+   * does not display broken-image icons.
    */
   private async embedInlineImages(
     html: string,
@@ -426,32 +524,98 @@ export class MailService {
     user: { zimbraHost: string; authToken: string | null; email: string },
     zimbraMessageId: string,
   ): Promise<string> {
-    if (!inlineImages.length) return html;
+    let processed = html;
+
+    // ── Pass 1: CID inline attachments ────────────────────────────────────────
+    if (inlineImages.length > 0) {
+      await Promise.all(
+        inlineImages.map(async (img) => {
+          try {
+            const { data, contentType } = await this.zimbra.downloadAttachmentBuffer(
+              user.zimbraHost,
+              user.authToken!,
+              user.email,
+              String(zimbraMessageId),
+              img.partId,
+            );
+            const dataUri = `data:${contentType};base64,${data.toString('base64')}`;
+            const esc     = img.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // HTML may encode '@' as '&#64;' or '&#x40;' — match all variants
+            const escCid  = esc.replace(/@/g, '(?:@|&#(?:64|x40);)');
+            const escBase = esc.split('@')[0];
+            processed = processed
+              .replace(new RegExp(`src=["']cid:${escCid}["']`,  'gi'), `src="${dataUri}"`)
+              .replace(new RegExp(`src=["']cid:${escBase}["']`, 'gi'), `src="${dataUri}"`);
+          } catch {
+            // individual image failure is handled below (stripped in pass 3)
+          }
+        }),
+      );
+    }
+
+    // ── Pass 2: Zimbra-hosted image URLs (e.g. signature logos in Briefcase) ──
+    processed = await this.embedZimbraHostedImages(processed, user);
+
+    // ── Pass 3: Strip any remaining cid: references that could not be resolved ─
+    // Browsers cannot load cid: URLs — they render as broken-image icons.
+    // Replacing with src="" causes the browser to skip the image silently.
+    processed = processed.replace(/src=["']cid:[^"']*["']/gi, 'src=""');
+
+    return processed;
+  }
+
+  /**
+   * Find every <img src="https://{zimbraHost}/service/home/...?id=X&part=Y">
+   * in the HTML, download the image server-side (with the user's auth token),
+   * and replace the src with a base64 data URI.  This handles signature images
+   * that are stored in the user's Zimbra Briefcase rather than as CID attachments.
+   */
+  private async embedZimbraHostedImages(
+    html: string,
+    user: { zimbraHost: string; authToken: string | null; email: string },
+  ): Promise<string> {
+    if (!user.authToken) return html;
+
+    const escapedHost = user.zimbraHost.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Match src attributes pointing to this Zimbra server's /service/home/ endpoint
+    const urlRe = new RegExp(
+      `src=["'](https?://${escapedHost}/service/home/[^?"']*\\?[^"']*)["']`,
+      'gi',
+    );
+
+    const matches: Array<{ full: string; url: string }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = urlRe.exec(html)) !== null) {
+      matches.push({ full: m[0], url: m[1] });
+    }
+
+    if (matches.length === 0) return html;
 
     let processed = html;
     await Promise.all(
-      inlineImages.map(async (img) => {
+      matches.map(async ({ full, url }) => {
         try {
+          const parsed = new URL(url);
+          const id   = parsed.searchParams.get('id');
+          const part = parsed.searchParams.get('part');
+          if (!id || !part) return;
+
           const { data, contentType } = await this.zimbra.downloadAttachmentBuffer(
             user.zimbraHost,
             user.authToken!,
             user.email,
-            String(zimbraMessageId),
-            img.partId,
+            id,
+            part,
           );
           const dataUri = `data:${contentType};base64,${data.toString('base64')}`;
-          const esc     = img.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          // HTML may encode '@' as '&#64;' or '&#x40;' — match all variants
-          const escCid  = esc.replace(/@/g, '(?:@|&#(?:64|x40);)');
-          const escBase = esc.split('@')[0];
-          processed = processed
-            .replace(new RegExp(`src=["']cid:${escCid}["']`,  'gi'), `src="${dataUri}"`)
-            .replace(new RegExp(`src=["']cid:${escBase}["']`, 'gi'), `src="${dataUri}"`);
+          // Replace the exact matched attribute (literal string replace, no regex)
+          processed = processed.split(full).join(`src="${dataUri}"`);
         } catch {
-          // leave original cid: reference; broken image is acceptable
+          // leave the original URL in place; browser will try (and likely fail) to load it
         }
       }),
     );
+
     return processed;
   }
 

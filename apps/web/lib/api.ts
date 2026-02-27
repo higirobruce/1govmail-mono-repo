@@ -333,8 +333,8 @@ export const api = {
 
     /** POST /settings/signatures — create a new email signature */
     createSignature: (data: { name: string; contentHtml: string }) => {
-      if (USE_MOCK) return delay({ id: `sig-${Date.now()}`, name: data.name, contentHtml: data.contentHtml, contentText: '' });
-      return request<{ id: string; name: string; contentHtml: string; contentText: string }>(
+      if (USE_MOCK) return delay({ id: `sig-${Date.now()}`, name: data.name, contentHtml: data.contentHtml, contentText: '', imagesStripped: false });
+      return request<{ id: string; name: string; contentHtml: string; contentText: string; imagesStripped?: boolean }>(
         '/settings/signatures',
         { method: 'POST', body: JSON.stringify(data) },
       );
@@ -342,8 +342,8 @@ export const api = {
 
     /** PATCH /settings/signatures/:id — update an existing email signature */
     updateSignature: (id: string, data: { name: string; contentHtml: string }) => {
-      if (USE_MOCK) return delay({ id, name: data.name, contentHtml: data.contentHtml, contentText: '' });
-      return request<{ id: string; name: string; contentHtml: string; contentText: string }>(
+      if (USE_MOCK) return delay({ id, name: data.name, contentHtml: data.contentHtml, contentText: '', imagesStripped: false });
+      return request<{ id: string; name: string; contentHtml: string; contentText: string; imagesStripped?: boolean }>(
         `/settings/signatures/${id}`,
         { method: 'PATCH', body: JSON.stringify(data) },
       );

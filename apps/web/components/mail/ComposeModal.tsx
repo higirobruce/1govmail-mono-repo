@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -9,6 +9,8 @@ import { Color } from '@tiptap/extension-color';
 import FontFamily from '@tiptap/extension-font-family';
 import Link from '@tiptap/extension-link';
 import { Extension } from '@tiptap/core';
+import TiptapImage from '@tiptap/extension-image';
+import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -259,6 +261,50 @@ export default function ComposeModal({
 }: ComposeModalProps) {
   const user = useAuthStore((s) => s.user);
 
+  // ── Fetch settings (for default signature) ─────────────────────────────────
+  // No `enabled` guard — component is always mounted, so we pre-fetch and cache
+  // settings immediately; they're available the instant the user opens compose.
+  const { data: settingsData } = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api.settings.get(),
+    staleTime: 5 * 60_000,
+  });
+
+  // Derive the correct signature HTML for the current compose mode.
+  // Check both identity attrs AND prefs — Zimbra may store the ID in either.
+  // Falls back to the single signature when no default has been explicitly chosen.
+  const signatureHtml = useMemo(() => {
+    const settings = settingsData as any;
+    const sigs: any[] = settings?.signatures ?? [];
+    console.log('[sig-debug] settingsData loaded:', !!settings, '| sigs count:', sigs.length);
+    if (!sigs.length) return '';
+
+    const primaryIdentity = settings?.identities?.[0];
+    const attrs = primaryIdentity?.attrs ?? {};
+    const prefs = settings?.prefs ?? {};
+
+    const id = (mode === 'new')
+      ? (attrs.zimbraPrefDefaultSignatureId        || prefs.zimbraPrefDefaultSignatureId        || '')
+      : (attrs.zimbraPrefForwardReplySignatureId   || prefs.zimbraPrefForwardReplySignatureId   || '');
+
+    console.log('[sig-debug] mode:', mode, '| defaultId from attrs:', attrs.zimbraPrefDefaultSignatureId, '| from prefs:', prefs.zimbraPrefDefaultSignatureId, '| resolved id:', id);
+    console.log('[sig-debug] sig ids in list:', sigs.map((s: any) => s.id));
+
+    // If an explicit default is configured, use it
+    if (id) {
+      const found = sigs.find((s: any) => s.id === id)?.contentHtml ?? '';
+      console.log('[sig-debug] found by id:', !!found, '| contentHtml length:', found.length);
+      return found;
+    }
+    // Fallback: if there's exactly one signature and no default configured, use it
+    if (sigs.length === 1) {
+      console.log('[sig-debug] using single-sig fallback, contentHtml length:', sigs[0].contentHtml?.length ?? 0);
+      return sigs[0].contentHtml ?? '';
+    }
+    console.log('[sig-debug] no default configured and multiple sigs — returning empty');
+    return '';
+  }, [settingsData, mode]);
+
   const [minimised, setMinimised] = useState(false);
   const [to, setTo] = useState<string[]>([]);
   const [cc, setCc] = useState<string[]>([]);
@@ -273,6 +319,9 @@ export default function ComposeModal({
   const [attachments, setAttachments] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Signature injection state ─────────────────────────────────────────────
+  const sigInserted = useRef(false);
 
   // ── Draft auto-save state ─────────────────────────────────────────────────
   const [savedDraftId, setSavedDraftId] = useState<string | null>(null);
@@ -293,6 +342,7 @@ export default function ComposeModal({
       Color,
       FontFamily,
       FontSize,
+      TiptapImage.configure({ inline: true, allowBase64: true }),
       Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { class: 'text-primary underline' } }),
     ],
     content: '',
@@ -320,14 +370,21 @@ export default function ComposeModal({
   });
 
   // ── Pre-populate fields when modal opens ──────────────────────────────────
+  // Signature injection is intentionally NOT done here — the editor is null
+  // in this closure because TipTap uses immediatelyRender:false (async init).
+  // Injection is handled by the dedicated effect below.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      sigInserted.current = false;
+      return;
+    }
     setError(null);
     setSending(false);
     setAttachments([]);
     setSavedDraftId(initialDraftZimbraId ?? null);
     setDraftStatus('idle');
     setMinimised(false);
+    sigInserted.current = false; // reset so injection fires fresh on this open
 
     if (mode === 'new' || !originalMessage) {
       if (initialTo || initialDraftZimbraId) {
@@ -336,8 +393,7 @@ export default function ComposeModal({
         setBcc(initialBcc ?? []);
         setSubject(initialSubject ?? '');
         setShowCcBcc((initialCc?.length ?? 0) > 0 || (initialBcc?.length ?? 0) > 0);
-        const html = initialBody ?? '';
-        editor?.commands.setContent(html || '<p></p>');
+        editor?.commands.setContent(initialBody || '<p></p>');
         return;
       }
       setTo([]); setCc([]); setBcc([]);
@@ -373,6 +429,27 @@ export default function ComposeModal({
       setTimeout(() => editor?.commands.focus(), 50);
     }
   }, [open, mode, originalMessage, user?.email]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Signature injection ────────────────────────────────────────────────────
+  // `editor` is in the dep array so this effect re-runs automatically when
+  // TipTap finishes async initialisation (null → instance). Combined with
+  // `open` and `signatureHtml`, all three async paths are covered:
+  //   • editor null → instance  (TipTap useLayoutEffect completes)
+  //   • open false  → true      (modal opens, editor already ready)
+  //   • signatureHtml '' → html (settings fetch resolves after open)
+  // The pre-populate effect above is declared first so React always runs it
+  // before this one, guaranteeing sigInserted is reset before we try to inject.
+  useEffect(() => {
+    console.log('[inject-debug] effect ran | editor:', !!editor, '| open:', open, '| sigInserted:', sigInserted.current, '| draftId:', initialDraftZimbraId, '| sigHtmlLen:', signatureHtml.length);
+    if (!editor || !open || sigInserted.current || initialDraftZimbraId || !signatureHtml) return;
+    const textLen = editor.getText().trim().length;
+    console.log('[inject-debug] editor text length:', textLen);
+    if (textLen > 0) return;
+    console.log('[inject-debug] INJECTING signature!');
+    sigInserted.current = true;
+    editor.commands.setContent(`<p></p><div data-sig="1">${signatureHtml}</div>`);
+    editor.commands.focus('start');
+  }, [editor, open, signatureHtml, initialDraftZimbraId]);
 
   // ── Auto-save draft ────────────────────────────────────────────────────────
   useEffect(() => {

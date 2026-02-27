@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
@@ -15,8 +15,34 @@ import {
   User, Pen, Shield, Mail, Loader2, Plus, Trash2,
   Check, ChevronRight, RotateCcw, FileSignature,
   Palmtree, Settings2,
+  Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
 } from 'lucide-react';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import Underline from '@tiptap/extension-underline';
+import { TextStyle } from '@tiptap/extension-text-style';
+import { Color } from '@tiptap/extension-color';
+import TiptapImage from '@tiptap/extension-image';
+import Link from '@tiptap/extension-link';
 import { cn } from '@/lib/utils';
+
+// Extend TipTap's Image extension to preserve the data-zimbra-src attribute
+// that the backend embeds alongside each base64 data URI. Without this, TipTap
+// strips the attribute on parse and the round-trip to Zimbra loses the original
+// Briefcase path, causing a "zimbraPrefMailSignature > 10 240 bytes" error.
+const ZimbraAwareImage = TiptapImage.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      'data-zimbra-src': {
+        default: null,
+        parseHTML: (el) => el.getAttribute('data-zimbra-src') ?? null,
+        renderHTML: (attrs) =>
+          attrs['data-zimbra-src'] ? { 'data-zimbra-src': attrs['data-zimbra-src'] } : {},
+      },
+    };
+  },
+}).configure({ inline: true, allowBase64: true });
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -140,7 +166,35 @@ function SectionHeader({ title, description }: { title: string; description?: st
   );
 }
 
-// ── Signature editor ───────────────────────────────────────────────────────────
+// ── Signature toolbar button helper ────────────────────────────────────────────
+
+function SigToolBtn({
+  children,
+  active,
+  onClick,
+  title,
+}: {
+  children: React.ReactNode;
+  active?: boolean;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={cn(
+        'p-1.5 rounded hover:bg-muted/60 transition-colors',
+        active && 'bg-muted text-primary',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ── Signature editor (WYSIWYG) ─────────────────────────────────────────────────
 
 function SignatureEditor({
   sig,
@@ -154,11 +208,40 @@ function SignatureEditor({
   saving: boolean;
 }) {
   const [name, setName] = useState(sig.name ?? '');
-  const [html, setHtml] = useState(sig.contentHtml ?? '');
-  const [preview, setPreview] = useState(false);
+  const imgInputRef = useRef<HTMLInputElement>(null);
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions: [
+      StarterKit,
+      Underline,
+      TextStyle,
+      Color,
+      ZimbraAwareImage,
+      Link.configure({ openOnClick: false, autolink: true }),
+    ],
+    content: sig.contentHtml || '<p></p>',
+    editorProps: {
+      attributes: {
+        class: 'min-h-[120px] outline-none text-sm text-foreground leading-relaxed p-3 [&_img]:max-w-full',
+      },
+    },
+  });
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editor) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      editor.chain().focus().setImage({ src: reader.result as string }).run();
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
 
   return (
     <div className="space-y-4">
+      {/* Name */}
       <div className="flex flex-col gap-1.5">
         <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Name</Label>
         <Input
@@ -169,40 +252,60 @@ function SignatureEditor({
         />
       </div>
 
+      {/* WYSIWYG editor */}
       <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between">
-          <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Content (HTML)</Label>
-          <button
-            type="button"
-            onClick={() => setPreview(!preview)}
-            className="text-xs text-primary hover:underline"
-          >
-            {preview ? 'Edit' : 'Preview'}
-          </button>
+        <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Signature content</Label>
+        <div className="border border-border/50 rounded-lg overflow-hidden">
+          {/* Mini toolbar */}
+          <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-border/40 bg-muted/20">
+            <SigToolBtn
+              active={editor?.isActive('bold')}
+              onClick={() => editor?.chain().focus().toggleBold().run()}
+              title="Bold"
+            >
+              <Bold className="w-3.5 h-3.5" />
+            </SigToolBtn>
+            <SigToolBtn
+              active={editor?.isActive('italic')}
+              onClick={() => editor?.chain().focus().toggleItalic().run()}
+              title="Italic"
+            >
+              <Italic className="w-3.5 h-3.5" />
+            </SigToolBtn>
+            <SigToolBtn
+              active={editor?.isActive('underline')}
+              onClick={() => editor?.chain().focus().toggleUnderline().run()}
+              title="Underline"
+            >
+              <UnderlineIcon className="w-3.5 h-3.5" />
+            </SigToolBtn>
+            <div className="w-px h-4 bg-border/40 mx-1" />
+            <SigToolBtn
+              onClick={() => imgInputRef.current?.click()}
+              title="Upload image"
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+            </SigToolBtn>
+            <input
+              ref={imgInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleImageUpload}
+            />
+          </div>
+          <EditorContent editor={editor} className="bg-background" />
         </div>
-        {preview ? (
-          <div
-            className="min-h-[120px] max-h-64 overflow-auto border border-border/50 rounded-md p-3 text-sm bg-background"
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
-        ) : (
-          <textarea
-            value={html}
-            onChange={(e) => setHtml(e.target.value)}
-            placeholder="<p>Your name<br>Your title<br>Your company</p>"
-            rows={6}
-            className="w-full rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/20 focus:border-primary/30 resize-y font-mono"
-          />
-        )}
         <p className="text-[11px] text-muted-foreground/40">
-          Enter HTML. Use &lt;p&gt;, &lt;b&gt;, &lt;a href=""&gt;, &lt;img src=""&gt;, etc.
+          Use the toolbar to format text and upload images (logo, photo, etc.).
         </p>
       </div>
 
+      {/* Actions */}
       <div className="flex gap-2 pt-1">
         <Button
           size="sm"
-          onClick={() => onSave({ name: name.trim(), contentHtml: html })}
+          onClick={() => onSave({ name: name.trim(), contentHtml: editor?.getHTML() ?? '' })}
           disabled={saving || !name.trim()}
           className="h-8 text-xs gap-1.5"
         >
@@ -432,10 +535,16 @@ function SignaturesSection({ data, onUpdate }: { data: SettingsData; onUpdate: (
         const created = await api.settings.createSignature(sigData);
         setSignatures((prev) => [...prev, created as Signature]);
         toast.success('Signature created');
+        if (created.imagesStripped) {
+          toast.warning('Uploaded images were removed — only images from your Zimbra Briefcase can be saved in signatures.');
+        }
       } else if (editingId) {
         const updated = await api.settings.updateSignature(editingId, sigData);
         setSignatures((prev) => prev.map((s) => s.id === editingId ? (updated as Signature) : s));
         toast.success('Signature updated');
+        if (updated.imagesStripped) {
+          toast.warning('Uploaded images were removed — only images from your Zimbra Briefcase can be saved in signatures.');
+        }
       }
       setEditingId(null);
       onUpdate();

@@ -14,7 +14,10 @@ import {
   HttpStatus,
   ParseIntPipe,
   DefaultValuePipe,
+  UseInterceptors,
+  UploadedFiles,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { MailService } from './mail.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -52,6 +55,14 @@ export class MailController {
     return this.mailService.searchMessages(req.user.sub, q ?? '', limit, offset);
   }
 
+  @Get('messages/:messageId/conversation')
+  getConversation(
+    @Req() req: AuthenticatedRequest,
+    @Param('messageId') messageId: string,
+  ) {
+    return this.mailService.getConversation(req.user.sub, messageId);
+  }
+
   @Get('messages/:messageId')
   getMessage(
     @Req() req: AuthenticatedRequest,
@@ -64,6 +75,20 @@ export class MailController {
   @HttpCode(HttpStatus.OK)
   sendMessage(@Req() req: AuthenticatedRequest, @Body() dto: SendMessageDto) {
     return this.mailService.sendMessage(req.user.sub, dto);
+  }
+
+  /** Send a message with file attachments (multipart/form-data).
+   *  The JSON payload fields are carried as a single `payload` form field. */
+  @Post('send-with-attachments')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FilesInterceptor('attachments', 10))
+  sendMessageWithAttachments(
+    @Req() req: AuthenticatedRequest,
+    @Body('payload') payloadJson: string,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    const dto: SendMessageDto = JSON.parse(payloadJson);
+    return this.mailService.sendMessage(req.user.sub, dto, files ?? []);
   }
 
   @Delete('messages/:messageId')

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Loader2,
   ChevronsDownUp,
@@ -115,11 +115,23 @@ export default function ThreadView({
   // Tab: 'messages' | 'attachments'
   const [activeTab, setActiveTab] = useState<'messages' | 'attachments'>('messages');
 
+  // Track IDs of drafts deleted locally so they are filtered out of subsequent
+  // server re-fetches (e.g. triggered by refreshKey after sending a reply).
+  // Cleared whenever we navigate to a different conversation.
+  const locallyDeletedDraftIds = useRef<Set<string>>(new Set());
+  const prevConversationMessageId = useRef<string | undefined>(undefined);
+
   useEffect(() => {
     if (!message?.id) return;
     if (!message.conversationId) {
       setThreadMessages([]);
       return;
+    }
+
+    // Switching to a new conversation — reset the locally-deleted draft tracker.
+    if (prevConversationMessageId.current !== message.id) {
+      locallyDeletedDraftIds.current.clear();
+      prevConversationMessageId.current = message.id;
     }
 
     setLoadingThread(true);
@@ -130,7 +142,11 @@ export default function ThreadView({
     api.mail
       .getConversation(message.id)
       .then((data) => {
-        const msgs: ThreadMessageMeta[] = data.messages;
+        // Filter out drafts the user already deleted in this session so a
+        // refreshKey-triggered re-fetch doesn't bring them back.
+        const msgs: ThreadMessageMeta[] = (data.messages as ThreadMessageMeta[]).filter(
+          (m) => !locallyDeletedDraftIds.current.has(m.id),
+        );
         if (msgs.length === 0) return;
         setThreadMessages(msgs);
         // Default: expand the newest (chronologically last = visually first)
@@ -321,6 +337,7 @@ export default function ThreadView({
                   ? async () => {
                       try {
                         await api.mail.discardDraft(msg.zimbraId);
+                        locallyDeletedDraftIds.current.add(msg.id);
                         setThreadMessages((prev) => prev.filter((m) => m.id !== msg.id));
                         toast.success('Draft deleted');
                       } catch {

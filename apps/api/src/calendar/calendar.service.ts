@@ -281,4 +281,37 @@ export class CalendarService {
     );
     return { email, ...data };
   }
+
+  // ── Batch Free / Busy ─────────────────────────────────────────────────────
+
+  /**
+   * Return free/busy for multiple users in parallel (one Zimbra call per email).
+   */
+  async getFreeBusyBatch(
+    userId: string,
+    emails: string[],
+    start: Date,
+    end: Date,
+  ): Promise<Array<{
+    email: string;
+    busy:        Array<{ s: number; e: number }>;
+    tentative:   Array<{ s: number; e: number }>;
+    unavailable: Array<{ s: number; e: number }>;
+  }>> {
+    const user = await this.getUser(userId);
+    return Promise.all(
+      emails.map((email) =>
+        this.zimbra
+          .getFreeBusy(
+            user.zimbraHost,
+            user.authToken!,
+            email,
+            start.getTime(),
+            end.getTime(),
+            user.csrfToken ?? undefined,
+          )
+          .then((data) => ({ email, ...data })),
+      ),
+    );
+  }
 }

@@ -833,45 +833,198 @@ function AgendaView({
 
 // ── Availability panel ─────────────────────────────────────────────────────────
 
+const ATTENDEE_COLORS: Array<{ dot: string; busy: string; tent: string }> = [
+  { dot: 'bg-blue-500',   busy: 'bg-blue-500/55',   tent: 'bg-blue-400/35'   },
+  { dot: 'bg-violet-500', busy: 'bg-violet-500/55', tent: 'bg-violet-400/35' },
+  { dot: 'bg-amber-500',  busy: 'bg-amber-500/55',  tent: 'bg-amber-400/35'  },
+  { dot: 'bg-rose-500',   busy: 'bg-rose-500/55',   tent: 'bg-rose-400/35'   },
+  { dot: 'bg-cyan-500',   busy: 'bg-cyan-500/55',   tent: 'bg-cyan-400/35'   },
+  { dot: 'bg-pink-500',   busy: 'bg-pink-500/55',   tent: 'bg-pink-400/35'   },
+];
+
+type FBDuration = 60 | 90 | 120; // minutes
+
+/** Merge overlapping intervals and return sorted non-overlapping array. */
+function mergeIntervals(intervals: Array<{ s: number; e: number }>): Array<{ s: number; e: number }> {
+  const sorted = [...intervals].sort((a, b) => a.s - b.s);
+  const merged: Array<{ s: number; e: number }> = [];
+  for (const iv of sorted) {
+    if (merged.length > 0 && iv.s <= merged[merged.length - 1].e) {
+      merged[merged.length - 1].e = Math.max(merged[merged.length - 1].e, iv.e);
+    } else {
+      merged.push({ ...iv });
+    }
+  }
+  return merged;
+}
+
+/** Subtract busy intervals from a free window [wStart, wEnd]. Returns free sub-intervals. */
+function subtractIntervals(
+  wStart: number,
+  wEnd: number,
+  busy: Array<{ s: number; e: number }>,
+): Array<{ s: number; e: number }> {
+  const clipped = mergeIntervals(
+    busy
+      .filter((b) => b.e > wStart && b.s < wEnd)
+      .map((b) => ({ s: Math.max(b.s, wStart), e: Math.min(b.e, wEnd) })),
+  );
+  const free: Array<{ s: number; e: number }> = [];
+  let cursor = wStart;
+  for (const b of clipped) {
+    if (b.s > cursor) free.push({ s: cursor, e: b.s });
+    cursor = b.e;
+  }
+  if (cursor < wEnd) free.push({ s: cursor, e: wEnd });
+  return free;
+}
+
+/** Snap ms timestamp to the next :00 or :30 boundary (on or after). */
+function snapToHalfHour(ms: number): number {
+  const d = new Date(ms);
+  const mins = d.getMinutes();
+  if (mins === 0) return ms;
+  const next = mins <= 30 ? 30 : 60;
+  d.setMinutes(next, 0, 0);
+  return d.getTime();
+}
+
+interface SuggestedSlot { start: Date; end: Date }
+
+function findFreeSlots(
+  results: FreeBusyData[],
+  fromDate: Date,
+  durationMs: number,
+  maxSlots = 5,
+): SuggestedSlot[] {
+  const slots: SuggestedSlot[] = [];
+  const days = eachDayOfInterval({ start: startOfDay(fromDate), end: addDays(fromDate, 29) });
+
+  for (const day of days) {
+    if (slots.length >= maxSlots) break;
+    const wStart = new Date(day); wStart.setHours(8, 0, 0, 0);
+    const wEnd   = new Date(day); wEnd.setHours(18, 0, 0, 0);
+
+    // Combine all busy + tentative from all attendees
+    const allBusy: Array<{ s: number; e: number }> = results.flatMap((r) => [
+      ...r.busy,
+      ...r.tentative,
+    ]);
+
+    const freeWindows = subtractIntervals(wStart.getTime(), wEnd.getTime(), allBusy);
+
+    for (const fw of freeWindows) {
+      if (slots.length >= maxSlots) break;
+      let t = snapToHalfHour(fw.s);
+      while (t + durationMs <= fw.e && slots.length < maxSlots) {
+        slots.push({ start: new Date(t), end: new Date(t + durationMs) });
+        t += 30 * 60_000; // advance 30 min to find more slots in same window
+      }
+    }
+  }
+  return slots;
+}
+
 function AvailabilityPanel({
   viewStart,
   viewEnd,
-  freeBusy,
+  results,
   loading,
-  onSearch,
+  onFetch,
   onClose,
+  onSuggestTime,
 }: {
   viewStart: Date;
   viewEnd: Date;
-  freeBusy: FreeBusyData | null;
+  results: FreeBusyData[];
   loading: boolean;
-  onSearch: (email: string) => void;
+  onFetch: (emails: string[]) => void;
   onClose: () => void;
+  onSuggestTime: (start: Date, end: Date, attendees: string[]) => void;
 }) {
-  const [email, setEmail] = useState(freeBusy?.email ?? '');
+  const [attendees, setAttendees]   = useState<string[]>([]);
+  const [query, setQuery]           = useState('');
   const [suggestions, setSuggestions] = useState<Array<{ email: string; display: string }>>([]);
   const [loadingSug, setLoadingSug] = useState(false);
+  const [duration, setDuration]     = useState<FBDuration>(60);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Autocomplete suggestions; clear parent free/busy when field is emptied
+  // Autocomplete
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (email.trim().length === 0) { setSuggestions([]); onSearch(''); return; }
-    if (email.trim().length < 2) { setSuggestions([]); return; }
+    if (query.trim().length < 2) { setSuggestions([]); return; }
     setLoadingSug(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const res = await api.contacts.autocomplete(email.trim());
-        setSuggestions(res.filter((r) => r.email !== email));
+        const res = await api.contacts.autocomplete(query.trim());
+        setSuggestions(res.filter((r) => !attendees.includes(r.email)));
       } catch { setSuggestions([]); }
       finally { setLoadingSug(false); }
     }, 300);
-  }, [email]); // eslint-disable-line
+  }, [query]); // eslint-disable-line
 
+  const addAttendee = (email: string) => {
+    const e = email.trim().toLowerCase();
+    if (!e || attendees.includes(e)) return;
+    setAttendees((prev) => [...prev, e]);
+    setQuery('');
+    setSuggestions([]);
+  };
+
+  const removeAttendee = (email: string) => {
+    setAttendees((prev) => prev.filter((a) => a !== email));
+  };
+
+  const suggestedSlots = results.length > 0
+    ? findFreeSlots(results, viewStart, duration * 60_000)
+    : [];
+
+  // Per-day timeline helpers
+  const dayDur = endOfDay(viewStart).getTime() - startOfDay(viewStart).getTime();
+
+  const blocksForAttendee = (
+    fb: FreeBusyData,
+    day: Date,
+  ): Array<{ left: number; width: number; label: string; type: 'busy' | 'tent' | 'unav' }> => {
+    const ds = startOfDay(day).getTime();
+    const de = endOfDay(day).getTime();
+    const dur = de - ds;
+    const toBlocks = (arr: Array<{ s: number; e: number }>, type: 'busy' | 'tent' | 'unav') =>
+      arr
+        .filter((b) => b.e > ds && b.s < de)
+        .map((b) => ({
+          left:  ((Math.max(b.s, ds) - ds) / dur) * 100,
+          width: ((Math.min(b.e, de) - Math.max(b.s, ds)) / dur) * 100,
+          label: `${format(new Date(b.s), 'HH:mm')} – ${format(new Date(b.e), 'HH:mm')}`,
+          type,
+        }));
+    return [
+      ...toBlocks(fb.busy,        'busy'),
+      ...toBlocks(fb.tentative,   'tent'),
+      ...toBlocks(fb.unavailable, 'unav'),
+    ];
+  };
+
+  const freeForAllBlocks = (day: Date): Array<{ left: number; width: number }> => {
+    if (results.length < 2) return [];
+    const ds = startOfDay(day).getTime();
+    const de = endOfDay(day).getTime();
+    const dur = de - ds;
+    const wStart = new Date(day); wStart.setHours(8, 0, 0, 0);
+    const wEnd   = new Date(day); wEnd.setHours(18, 0, 0, 0);
+    const allBusy = results.flatMap((r) => [...r.busy, ...r.tentative]);
+    return subtractIntervals(wStart.getTime(), wEnd.getTime(), allBusy).map((fw) => ({
+      left:  ((fw.s - ds) / dur) * 100,
+      width: ((fw.e - fw.s) / dur) * 100,
+    }));
+  };
+
+  const days = eachDayOfInterval({ start: viewStart, end: viewEnd });
 
   return (
-    <div className="w-72 shrink-0 border-l border-border/40 flex flex-col h-full bg-card/60">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
+    <div className="w-80 shrink-0 border-l border-border/40 flex flex-col h-full bg-card/60">
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/40 shrink-0">
         <div className="flex items-center gap-1.5">
           <Users className="w-3.5 h-3.5 text-muted-foreground/50" />
           <span className="text-sm font-semibold text-foreground">Availability</span>
@@ -881,21 +1034,45 @@ function AvailabilityPanel({
         </Button>
       </div>
 
-      <div className="px-4 pt-3 pb-2 border-b border-border/30 space-y-2">
+      {/* ── Attendee manager ── */}
+      <div className="px-4 pt-3 pb-2 border-b border-border/30 space-y-2 shrink-0">
+        {/* Chips */}
+        {attendees.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {attendees.map((a, i) => {
+              const color = ATTENDEE_COLORS[i % ATTENDEE_COLORS.length];
+              return (
+                <span key={a} className="inline-flex items-center gap-1 bg-muted/50 border border-border/40 text-xs rounded-full pl-1.5 pr-1 py-0.5">
+                  <span className={cn('w-2 h-2 rounded-full shrink-0', color.dot)} />
+                  <span className="truncate max-w-[120px] text-foreground/70">{a}</span>
+                  <button type="button" onClick={() => removeAttendee(a)}
+                    className="w-3.5 h-3.5 rounded-full flex items-center justify-center hover:bg-muted/80 text-muted-foreground/50 hover:text-foreground">
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Email input */}
         <div className="relative">
           <Input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { setSuggestions([]); onSearch(email.trim()); } }}
-            placeholder="Search user email…"
-            className="h-8 text-xs bg-muted/30 border-border/50 pr-16"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setSuggestions([]);
+                if (query.includes('@')) addAttendee(query);
+              }
+            }}
+            placeholder="Add person by email…"
+            className="h-8 text-xs bg-muted/30 border-border/50 pr-7"
           />
-          <Button size="sm" onClick={() => { setSuggestions([]); onSearch(email.trim()); }}
-            disabled={loading || !email.trim()}
-            className="absolute right-1 top-1 h-6 px-2 text-xs bg-primary/90 hover:bg-primary text-primary-foreground">
-            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Check'}
-          </Button>
-          {/* Suggestions dropdown */}
+          <button type="button" onClick={() => { if (query.includes('@')) addAttendee(query); }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-primary">
+            <Plus className="w-3.5 h-3.5" />
+          </button>
           {(loadingSug || suggestions.length > 0) && (
             <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-lg shadow-lg overflow-hidden">
               {loadingSug ? (
@@ -903,13 +1080,14 @@ function AvailabilityPanel({
                   <Loader2 className="w-3 h-3 animate-spin" /> Searching…
                 </div>
               ) : (
-                <ul className="max-h-40 overflow-y-auto py-1">
+                <ul className="max-h-36 overflow-y-auto py-1">
                   {suggestions.map((s) => (
                     <li key={s.email}>
-                      <button type="button"
-                        onMouseDown={() => { setEmail(s.email); setSuggestions([]); onSearch(s.email); }}
-                        className="w-full text-left px-3 py-2 hover:bg-muted/60 flex flex-col gap-0.5">
-                        <span className="text-xs font-medium truncate">{s.display !== s.email ? s.display : ''}</span>
+                      <button type="button" onMouseDown={() => addAttendee(s.email)}
+                        className="w-full text-left px-3 py-1.5 hover:bg-muted/60 flex flex-col gap-0.5">
+                        {s.display !== s.email && (
+                          <span className="text-xs font-medium truncate">{s.display}</span>
+                        )}
                         <span className="text-xs text-muted-foreground/60 truncate">{s.email}</span>
                       </button>
                     </li>
@@ -919,101 +1097,150 @@ function AvailabilityPanel({
             </div>
           )}
         </div>
+
+        <Button
+          size="sm"
+          onClick={() => { if (attendees.length > 0) onFetch(attendees); }}
+          disabled={loading || attendees.length === 0}
+          className="w-full h-8 text-xs bg-primary/90 hover:bg-primary text-primary-foreground gap-1.5">
+          {loading
+            ? <><Loader2 className="w-3 h-3 animate-spin" /> Checking…</>
+            : <><Users className="w-3 h-3" /> Check availability</>}
+        </Button>
+
         <p className="text-[10px] text-muted-foreground/40">
           {format(viewStart, 'MMM d')} – {format(viewEnd, 'MMM d, yyyy')}
         </p>
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
-        {!freeBusy ? (
-          <div className="flex flex-col items-center justify-center h-full py-12 text-center gap-2">
+        {results.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full py-12 text-center gap-2 px-4">
             <Users className="w-8 h-8 text-muted-foreground/20" />
-            <p className="text-xs text-muted-foreground/40">Search a colleague's email to see their availability</p>
+            <p className="text-xs text-muted-foreground/40">Add people above and click "Check availability"</p>
           </div>
         ) : (
-          <div className="px-4 py-4 space-y-4">
-            <p className="text-xs font-medium text-foreground/80 truncate">{freeBusy.email}</p>
+          <div className="pb-4">
 
-            {/* Legend */}
-            <div className="flex flex-wrap gap-3 text-[10px] text-muted-foreground/60">
-              <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-rose-500/60 inline-block" /> Busy</div>
-              <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-400/60 inline-block" /> Tentative</div>
-              <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-slate-500/40 inline-block" /> Unavailable</div>
+            {/* ── Find a time ── */}
+            <div className="px-4 pt-4 pb-3 border-b border-border/20 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-semibold text-foreground/80">Find a time</p>
+                {/* Duration chips */}
+                <div className="flex items-center gap-1">
+                  {([60, 90, 120] as FBDuration[]).map((d) => (
+                    <button key={d} onClick={() => setDuration(d)}
+                      className={cn(
+                        'px-2 py-0.5 rounded text-[10px] font-medium transition-colors border',
+                        duration === d
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'border-border/40 text-muted-foreground/60 hover:border-primary/40 hover:text-foreground',
+                      )}>
+                      {d === 60 ? '1h' : d === 90 ? '1.5h' : '2h'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {suggestedSlots.length === 0 ? (
+                <p className="text-xs text-muted-foreground/40 italic">No common free slots found in the next 30 days</p>
+              ) : (
+                <div className="space-y-1">
+                  {suggestedSlots.map((slot, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-emerald-500/8 border border-emerald-500/20 hover:bg-emerald-500/12 transition-colors">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-medium text-foreground/80 truncate">{format(slot.start, 'EEE, MMM d')}</p>
+                        <p className="text-[10px] text-muted-foreground/60">
+                          {format(slot.start, 'h:mm a')} – {format(slot.end, 'h:mm a')}
+                        </p>
+                      </div>
+                      <Button size="sm" variant="ghost"
+                        onClick={() => onSuggestTime(slot.start, slot.end, attendees)}
+                        className="h-6 px-2 text-[10px] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1">
+                        Use <ChevronRight className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* One row per day in range */}
-            {eachDayOfInterval({ start: viewStart, end: viewEnd }).map((day) => {
-              const dayStart = startOfDay(day).getTime();
-              const dayEnd   = endOfDay(day).getTime();
-              const dayDur   = dayEnd - dayStart;
-              const blocksIn = (arr: Array<{ s: number; e: number }>) =>
-                arr.filter((b) => b.e > dayStart && b.s < dayEnd).map((b) => ({
-                  left:  ((Math.max(b.s, dayStart) - dayStart) / dayDur) * 100,
-                  width: ((Math.min(b.e, dayEnd) - Math.max(b.s, dayStart)) / dayDur) * 100,
-                  label: `${format(new Date(b.s), 'HH:mm')} – ${format(new Date(b.e), 'HH:mm')}`,
-                }));
+            {/* ── Per-day stacked rows ── */}
+            <div className="divide-y divide-border/15">
+              {days.map((day) => {
+                const freeAll = freeForAllBlocks(day);
+                const ds      = startOfDay(day).getTime();
+                const dur     = endOfDay(day).getTime() - ds;
 
-              const busyBlocks = blocksIn(freeBusy.busy);
-              const tentBlocks = blocksIn(freeBusy.tentative);
-              const unavBlocks = blocksIn(freeBusy.unavailable);
-              const hasData    = busyBlocks.length + tentBlocks.length + unavBlocks.length > 0;
-
-              return (
-                <div key={day.toISOString()} className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className={cn('text-[11px] font-medium', isToday(day) ? 'text-primary' : 'text-muted-foreground/70')}>
+                return (
+                  <div key={day.toISOString()} className="px-4 py-2.5 space-y-1.5">
+                    {/* Date header */}
+                    <span className={cn('text-[11px] font-semibold', isToday(day) ? 'text-primary' : 'text-muted-foreground/60')}>
                       {format(day, 'EEE, MMM d')}
                     </span>
-                    {!hasData && <span className="text-[10px] text-emerald-500/70">Free</span>}
+
+                    {/* One row per attendee */}
+                    {results.map((fb, idx) => {
+                      const color  = ATTENDEE_COLORS[idx % ATTENDEE_COLORS.length];
+                      const blocks = blocksForAttendee(fb, day);
+                      return (
+                        <div key={fb.email} className="flex items-center gap-2">
+                          {/* Label */}
+                          <div className="flex items-center gap-1 w-24 shrink-0">
+                            <span className={cn('w-2 h-2 rounded-full shrink-0', color.dot)} />
+                            <span className="text-[10px] text-muted-foreground/60 truncate">{fb.email.split('@')[0]}</span>
+                          </div>
+                          {/* Timeline bar */}
+                          <div className="relative flex-1 h-4 bg-muted/20 rounded border border-border/20">
+                            {/* Non-working hours overlay: before 8am and after 6pm */}
+                            <div className="absolute inset-y-0 left-0 bg-muted/40 rounded-l-sm pointer-events-none" style={{ width: `${(8/24)*100}%` }} />
+                            <div className="absolute inset-y-0 right-0 bg-muted/40 rounded-r-sm pointer-events-none" style={{ width: `${(6/24)*100}%` }} />
+                            {blocks.map((b, bi) => (
+                              <Tooltip key={bi}>
+                                <TooltipTrigger asChild>
+                                  <div
+                                    className={cn(
+                                      'absolute h-full rounded-sm cursor-default transition-opacity hover:opacity-80',
+                                      b.type === 'busy' ? color.busy : b.type === 'tent' ? color.tent : 'bg-slate-500/30',
+                                    )}
+                                    style={{ left: `${b.left}%`, width: `${Math.max(1, b.width)}%` }}
+                                  />
+                                </TooltipTrigger>
+                                <TooltipContent side="top" sideOffset={4} className="bg-background text-foreground border border-border/40 shadow-sm text-xs">
+                                  <p className="font-semibold capitalize">{b.type === 'busy' ? 'Busy' : b.type === 'tent' ? 'Tentative' : 'Unavailable'}</p>
+                                  <p className="text-muted-foreground">{b.label}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Free for all row (≥2 attendees) */}
+                    {results.length >= 2 && (
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 w-24 shrink-0">
+                          <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-500/70" />
+                          <span className="text-[10px] text-emerald-600/70 font-medium truncate">Free for all</span>
+                        </div>
+                        <div className="relative flex-1 h-4 bg-muted/20 rounded border border-border/20">
+                          {freeAll.map((fw, fi) => (
+                            <div key={fi}
+                              className="absolute h-full bg-emerald-500/35 rounded-sm"
+                              style={{ left: `${fw.left}%`, width: `${Math.max(1, fw.width)}%` }}
+                            />
+                          ))}
+                          {/* Non-working hours overlay */}
+                          <div className="absolute inset-y-0 left-0 bg-muted/40 rounded-l-sm pointer-events-none" style={{ width: `${(8/24)*100}%` }} />
+                          <div className="absolute inset-y-0 right-0 bg-muted/40 rounded-r-sm pointer-events-none" style={{ width: `${(6/24)*100}%` }} />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  {/* Timeline bar — overflow-visible so tooltips aren't clipped */}
-                  <div className="relative h-5 bg-emerald-500/10 rounded border border-border/20">
-                    {busyBlocks.map((b, i) => (
-                      <Tooltip key={`b${i}`}>
-                        <TooltipTrigger asChild>
-                          <div
-                            className="absolute h-full bg-rose-500/50 hover:bg-rose-500/70 rounded-sm cursor-default transition-colors"
-                            style={{ left: `${b.left}%`, width: `${Math.max(0.5, b.width)}%` }}
-                          />
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={4} className="bg-background text-foreground border border-border/40 shadow-sm text-xs">
-                          <p className="font-semibold text-rose-500">Busy</p>
-                          <p className="text-muted-foreground">{b.label}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    ))}
-                    {tentBlocks.map((b, i) => (
-                      <Tooltip key={`t${i}`}>
-                        <TooltipTrigger asChild>
-                          <div
-                            className="absolute h-full bg-amber-400/50 hover:bg-amber-400/70 rounded-sm cursor-default transition-colors"
-                            style={{ left: `${b.left}%`, width: `${Math.max(0.5, b.width)}%` }}
-                          />
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={4} className="bg-background text-foreground border border-border/40 shadow-sm text-xs">
-                          <p className="font-semibold text-amber-500">Tentative</p>
-                          <p className="text-muted-foreground">{b.label}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    ))}
-                    {unavBlocks.map((b, i) => (
-                      <Tooltip key={`u${i}`}>
-                        <TooltipTrigger asChild>
-                          <div
-                            className="absolute h-full bg-slate-500/40 hover:bg-slate-500/60 rounded-sm cursor-default transition-colors"
-                            style={{ left: `${b.left}%`, width: `${Math.max(0.5, b.width)}%` }}
-                          />
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={4} className="bg-background text-foreground border border-border/40 shadow-sm text-xs">
-                          <p className="font-semibold text-slate-500">Unavailable</p>
-                          <p className="text-muted-foreground">{b.label}</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </ScrollArea>
@@ -1094,7 +1321,7 @@ function EventDetailPanel({
     <div className="w-80 shrink-0 border-l border-border/40 flex flex-col h-full bg-card/60 overflow-x-hidden">
       {/* Header */}
       <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-border/40 shrink-0">
-        <h3 className="text-sm font-semibold text-foreground break-words min-w-0 leading-snug">{event.title}</h3>
+        <h3 className="text-sm font-semibold text-foreground wrap-break-word min-w-0 leading-snug">{event.title}</h3>
         <div className="flex items-center gap-1 shrink-0 mt-0.5">
           <Button variant="ghost" size="sm" onClick={() => onEdit(event)}
             className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title="Edit event">
@@ -1178,7 +1405,7 @@ function EventDetailPanel({
             <div className="flex items-start gap-2 text-sm text-foreground/80">
               <Clock className="w-3.5 h-3.5 text-muted-foreground/40 mt-0.5 shrink-0" />
               <div className="min-w-0">
-                <p className="break-words">{fmtDate(event.startAt)}</p>
+                <p className="wrap-break-word">{fmtDate(event.startAt)}</p>
                 {!event.allDay && (
                   <p className="text-muted-foreground/60 text-xs mt-0.5">
                     {fmtTime(event.startAt)} – {fmtTime(event.endAt)}
@@ -1191,7 +1418,7 @@ function EventDetailPanel({
             {event.location && (
               <div className="flex items-start gap-2 text-sm text-foreground/80">
                 <MapPin className="w-3.5 h-3.5 text-muted-foreground/40 mt-0.5 shrink-0" />
-                <span className="break-words min-w-0 text-sm leading-relaxed">
+                <span className="wrap-break-word min-w-0 text-sm leading-relaxed">
                   <Linkified text={event.location} />
                 </span>
               </div>
@@ -1200,7 +1427,7 @@ function EventDetailPanel({
 
           {/* Description */}
           {event.description && (
-            <div className="text-sm text-foreground/70 leading-relaxed break-words overflow-x-hidden">
+            <div className="text-sm text-foreground/70 leading-relaxed wrap-break-word overflow-x-hidden">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Description</p>
               <Linkified text={event.description} />
             </div>
@@ -1274,8 +1501,9 @@ export default function CalendarPage() {
 
   // Availability
   const [showAvailability, setShowAvailability] = useState(false);
-  const [freeBusy, setFreeBusy]     = useState<FreeBusyData | null>(null);
-  const [loadingFB, setLoadingFB]   = useState(false);
+  const [freeBusyList, setFreeBusyList] = useState<FreeBusyData[]>([]);
+  const [loadingFB, setLoadingFB]       = useState(false);
+  const [suggestSlot, setSuggestSlot]   = useState<{ start: Date; end: Date; attendees: string[] } | null>(null);
 
   // Auth guard
   useEffect(() => {
@@ -1323,17 +1551,17 @@ export default function CalendarPage() {
     loadEvents(rangeStart, rangeEnd);
   }, [hydrated, isAuthenticated, rangeStart.toISOString(), rangeEnd.toISOString()]); // eslint-disable-line
 
-  // Load free/busy for a given email
-  const handleFreeBusySearch = useCallback(async (email: string) => {
-    if (!email) { setFreeBusy(null); return; }
+  // Fetch free/busy for a list of emails in one batch call
+  const handleFreeBusyFetch = useCallback(async (emails: string[]) => {
+    if (!emails.length) { setFreeBusyList([]); return; }
     setLoadingFB(true);
     try {
-      const data = await api.calendar.getFreeBusy(
-        email,
+      const data = await api.calendar.getFreeBusyBatch(
+        emails,
         rangeStart.toISOString(),
         rangeEnd.toISOString(),
       );
-      setFreeBusy(data);
+      setFreeBusyList(data as FreeBusyData[]);
     } catch (err: any) {
       toast.error('Failed to fetch availability', { description: err?.message });
     } finally {
@@ -1342,7 +1570,7 @@ export default function CalendarPage() {
   }, [rangeStart, rangeEnd]);
 
   // Clear free/busy when view range changes (stale data)
-  useEffect(() => { setFreeBusy(null); }, [rangeStart.toISOString()]); // eslint-disable-line
+  useEffect(() => { setFreeBusyList([]); }, [rangeStart.toISOString()]); // eslint-disable-line
 
   const handleDelete = async (e: CalEvent) => {
     if (!window.confirm(`Delete "${e.title}"?`)) return;
@@ -1459,7 +1687,7 @@ export default function CalendarPage() {
               <TimelineView
                 days={timelineDays}
                 events={events}
-                freeBusy={isTimeline ? freeBusy : null}
+                freeBusy={null}
                 onSelectEvent={setSelectedEvent}
                 onCreateForDay={(d) => { setCreateForDay(d); setShowCreate(true); }}
               />
@@ -1503,10 +1731,11 @@ export default function CalendarPage() {
             <AvailabilityPanel
               viewStart={rangeStart}
               viewEnd={rangeEnd}
-              freeBusy={freeBusy}
+              results={freeBusyList}
               loading={loadingFB}
-              onSearch={handleFreeBusySearch}
+              onFetch={handleFreeBusyFetch}
               onClose={() => setShowAvailability(false)}
+              onSuggestTime={(start, end, attendees) => setSuggestSlot({ start, end, attendees })}
             />
           )}
         </div>
@@ -1521,6 +1750,26 @@ export default function CalendarPage() {
             setEvents((prev) => [...prev, event]);
             setShowCreate(false);
             setCreateForDay(undefined);
+            setSelectedEvent(event);
+          }}
+        />
+      )}
+
+      {/* ── Suggested-time event modal (from Find a time) ── */}
+      {suggestSlot && (
+        <CreateEventModal
+          initialDate={suggestSlot.start}
+          initialData={{
+            id: '', zimbraId: '', title: '', description: null, location: null,
+            startAt: suggestSlot.start.toISOString(),
+            endAt:   suggestSlot.end.toISOString(),
+            allDay: false, isRecurring: false, organizer: null,
+            attendees: suggestSlot.attendees.map((email) => ({ email })),
+          }}
+          onClose={() => setSuggestSlot(null)}
+          onCreated={(event) => {
+            setEvents((prev) => [...prev, event]);
+            setSuggestSlot(null);
             setSelectedEvent(event);
           }}
         />

@@ -141,6 +141,14 @@ export const api = {
         body: JSON.stringify({ verb }),
       });
     },
+    /** Batch free/busy: query multiple users in one request (parallel Zimbra calls on server). */
+    getFreeBusyBatch: (emails: string[], start: string, end: string) => {
+      if (USE_MOCK) return delay<any[]>(emails.map((email) => ({ email, busy: [], tentative: [], unavailable: [] })));
+      return request<any[]>('/calendar/freebusy/batch', {
+        method: 'POST',
+        body: JSON.stringify({ emails, start, end }),
+      });
+    },
     /**
      * Query the free/busy schedule for any user on the same Zimbra server.
      * start/end are ISO strings covering the window to query.

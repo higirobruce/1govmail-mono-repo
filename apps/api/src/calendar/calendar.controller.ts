@@ -99,4 +99,25 @@ export class CalendarController {
     const endDate   = end   ? new Date(end)   : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
     return this.calendarService.getFreeBusy(req.user.sub, email.trim(), startDate, endDate);
   }
+
+  /**
+   * POST /calendar/freebusy/batch
+   * Body: { emails: string[], start: ISO, end: ISO }
+   * Returns free/busy data for all supplied emails in parallel.
+   */
+  @Post('freebusy/batch')
+  @HttpCode(HttpStatus.OK)
+  getFreeBusyBatch(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { emails: string[]; start: string; end: string },
+  ) {
+    const { emails, start, end } = body;
+    if (!Array.isArray(emails) || emails.length === 0) {
+      throw new BadRequestException('emails array is required');
+    }
+    const now = new Date();
+    const startDate = start ? new Date(start) : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const endDate   = end   ? new Date(end)   : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    return this.calendarService.getFreeBusyBatch(req.user.sub, emails, startDate, endDate);
+  }
 }

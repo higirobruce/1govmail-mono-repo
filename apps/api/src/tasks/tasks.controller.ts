@@ -15,6 +15,9 @@ import {
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { CreateSubtaskDto } from './dto/create-subtask.dto';
+import { UpdateSubtaskDto } from './dto/update-subtask.dto';
+import { CreateCommentDto } from './dto/create-comment.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 
@@ -75,5 +78,62 @@ export class TasksController {
       body.assigneeEmail,
       body.assigneeName,
     );
+  }
+
+  // ─── Subtasks ───────────────────────────────────────────────────────────────
+
+  /** POST /tasks/:id/subtasks */
+  @Post(':id/subtasks')
+  createSubtask(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CreateSubtaskDto,
+  ) {
+    return this.tasksService.createSubtask(req.user.sub, id, dto);
+  }
+
+  /** PATCH /tasks/:id/subtasks/:sid */
+  @Patch(':id/subtasks/:sid')
+  updateSubtask(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('sid') sid: string,
+    @Body() dto: UpdateSubtaskDto,
+  ) {
+    return this.tasksService.updateSubtask(req.user.sub, id, sid, dto);
+  }
+
+  /** DELETE /tasks/:id/subtasks/:sid */
+  @Delete(':id/subtasks/:sid')
+  @HttpCode(HttpStatus.OK)
+  deleteSubtask(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('sid') sid: string,
+  ) {
+    return this.tasksService.deleteSubtask(req.user.sub, id, sid);
+  }
+
+  // ─── Comments ───────────────────────────────────────────────────────────────
+
+  /** POST /tasks/:id/comments */
+  @Post(':id/comments')
+  createComment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CreateCommentDto,
+  ) {
+    return this.tasksService.createComment(req.user.sub, id, dto);
+  }
+
+  /** DELETE /tasks/:id/comments/:cid */
+  @Delete(':id/comments/:cid')
+  @HttpCode(HttpStatus.OK)
+  deleteComment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('cid') cid: string,
+  ) {
+    return this.tasksService.deleteComment(req.user.sub, id, cid);
   }
 }

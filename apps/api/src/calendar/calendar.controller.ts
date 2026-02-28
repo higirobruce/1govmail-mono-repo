@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Query,
   Body,
@@ -48,6 +49,17 @@ export class CalendarController {
     return this.calendarService.createEvent(req.user.sub, body);
   }
 
+  /** PATCH /calendar/events/:id — update an existing calendar event */
+  @Patch('events/:id')
+  @HttpCode(HttpStatus.OK)
+  updateEvent(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: CalendarEventData,
+  ) {
+    return this.calendarService.updateEvent(req.user.sub, id, body);
+  }
+
   /** DELETE /calendar/events/:id — delete a calendar event */
   @Delete('events/:id')
   @HttpCode(HttpStatus.OK)
@@ -56,6 +68,17 @@ export class CalendarController {
     @Param('id') id: string,
   ) {
     return this.calendarService.deleteEvent(req.user.sub, id);
+  }
+
+  /** POST /calendar/events/:id/rsvp — accept / decline / tentative a calendar invite */
+  @Post('events/:id/rsvp')
+  @HttpCode(HttpStatus.OK)
+  rsvpEvent(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: { verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE' },
+  ) {
+    return this.calendarService.rsvpEvent(req.user.sub, id, body.verb);
   }
 
   /**

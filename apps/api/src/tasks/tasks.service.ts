@@ -8,6 +8,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { CreateTaskDto, TaskStatus } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { CreateSubtaskDto } from './dto/create-subtask.dto';
+import { UpdateSubtaskDto } from './dto/update-subtask.dto';
+import { CreateCommentDto } from './dto/create-comment.dto';
 
 @Injectable()
 export class TasksService {
@@ -28,6 +31,10 @@ export class TasksService {
         userId,
         ...(status ? { status: status as TaskStatus } : {}),
         ...(linkedMessageId ? { linkedMessageId } : {}),
+      },
+      include: {
+        subtasks: { orderBy: { createdAt: 'asc' } },
+        comments: { orderBy: { createdAt: 'asc' } },
       },
       orderBy: [{ createdAt: 'desc' }],
     });
@@ -85,6 +92,73 @@ export class TasksService {
     if (task.userId !== userId) throw new ForbiddenException();
 
     await this.prisma.task.delete({ where: { id } });
+    return { success: true };
+  }
+
+  // ─── Subtasks ───────────────────────────────────────────────────────────────
+
+  private async verifyTaskOwnership(userId: string, taskId: string) {
+    const task = await this.prisma.task.findUnique({ where: { id: taskId } });
+    if (!task) throw new NotFoundException('Task not found');
+    if (task.userId !== userId) throw new ForbiddenException();
+    return task;
+  }
+
+  async createSubtask(userId: string, taskId: string, dto: CreateSubtaskDto) {
+    await this.verifyTaskOwnership(userId, taskId);
+    return this.prisma.subtask.create({
+      data: { taskId, title: dto.title },
+    });
+  }
+
+  async updateSubtask(
+    userId: string,
+    taskId: string,
+    subtaskId: string,
+    dto: UpdateSubtaskDto,
+  ) {
+    await this.verifyTaskOwnership(userId, taskId);
+    const subtask = await this.prisma.subtask.findUnique({ where: { id: subtaskId } });
+    if (!subtask || subtask.taskId !== taskId) throw new NotFoundException('Subtask not found');
+    return this.prisma.subtask.update({
+      where: { id: subtaskId },
+      data: {
+        ...(dto.title !== undefined ? { title: dto.title } : {}),
+        ...(dto.completed !== undefined ? { completed: dto.completed } : {}),
+      },
+    });
+  }
+
+  async deleteSubtask(userId: string, taskId: string, subtaskId: string) {
+    await this.verifyTaskOwnership(userId, taskId);
+    const subtask = await this.prisma.subtask.findUnique({ where: { id: subtaskId } });
+    if (!subtask || subtask.taskId !== taskId) throw new NotFoundException('Subtask not found');
+    await this.prisma.subtask.delete({ where: { id: subtaskId } });
+    return { success: true };
+  }
+
+  // ─── Comments ───────────────────────────────────────────────────────────────
+
+  async createComment(userId: string, taskId: string, dto: CreateCommentDto) {
+    await this.verifyTaskOwnership(userId, taskId);
+    const user = await this.getUser(userId);
+    return this.prisma.taskComment.create({
+      data: {
+        taskId,
+        userId,
+        authorName: user.displayName ?? user.email,
+        authorEmail: user.email,
+        body: dto.body,
+      },
+    });
+  }
+
+  async deleteComment(userId: string, taskId: string, commentId: string) {
+    await this.verifyTaskOwnership(userId, taskId);
+    const comment = await this.prisma.taskComment.findUnique({ where: { id: commentId } });
+    if (!comment || comment.taskId !== taskId) throw new NotFoundException('Comment not found');
+    if (comment.userId !== userId) throw new ForbiddenException();
+    await this.prisma.taskComment.delete({ where: { id: commentId } });
     return { success: true };
   }
 

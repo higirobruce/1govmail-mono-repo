@@ -113,13 +113,33 @@ export const api = {
       startAt: string;
       endAt: string;
       allDay?: boolean;
+      attendees?: string[];
     }) => {
       if (USE_MOCK) return delay({ id: `e-${Date.now()}`, ...data });
       return request<any>('/calendar/events', { method: 'POST', body: JSON.stringify(data) });
     },
+    updateEvent: (id: string, data: {
+      title: string;
+      description?: string;
+      location?: string;
+      startAt: string;
+      endAt: string;
+      allDay?: boolean;
+      attendees?: string[];
+    }) => {
+      if (USE_MOCK) return delay({ id, ...data });
+      return request<any>(`/calendar/events/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+    },
     deleteEvent: (id: string) => {
       if (USE_MOCK) return delay({ success: true });
       return request<{ success: boolean }>(`/calendar/events/${id}`, { method: 'DELETE' });
+    },
+    rsvp: (id: string, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<{ success: boolean }>(`/calendar/events/${id}/rsvp`, {
+        method: 'POST',
+        body: JSON.stringify({ verb }),
+      });
     },
     /**
      * Query the free/busy schedule for any user on the same Zimbra server.
@@ -412,6 +432,26 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ assigneeEmail, assigneeName }),
       });
+    },
+    createSubtask: (taskId: string, title: string) => {
+      if (USE_MOCK) return delay({ id: `s-${Date.now()}`, taskId, title, completed: false, createdAt: new Date().toISOString() });
+      return request<any>(`/tasks/${taskId}/subtasks`, { method: 'POST', body: JSON.stringify({ title }) });
+    },
+    updateSubtask: (taskId: string, subtaskId: string, data: { title?: string; completed?: boolean }) => {
+      if (USE_MOCK) return delay({ id: subtaskId, taskId, ...data });
+      return request<any>(`/tasks/${taskId}/subtasks/${subtaskId}`, { method: 'PATCH', body: JSON.stringify(data) });
+    },
+    deleteSubtask: (taskId: string, subtaskId: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<{ success: boolean }>(`/tasks/${taskId}/subtasks/${subtaskId}`, { method: 'DELETE' });
+    },
+    createComment: (taskId: string, body: string) => {
+      if (USE_MOCK) return delay({ id: `c-${Date.now()}`, taskId, body, createdAt: new Date().toISOString() });
+      return request<any>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+    },
+    deleteComment: (taskId: string, commentId: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<{ success: boolean }>(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' });
     },
   },
 };

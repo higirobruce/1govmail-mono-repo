@@ -13,7 +13,8 @@ import { toast } from 'sonner';
 import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
   Clock, MapPin, Calendar as CalendarIcon, Trash2, Users,
-  Video, Repeat, ExternalLink,
+  Video, Repeat, ExternalLink, Pencil, CheckCircle2,
+  HelpCircle, XCircle,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth,
@@ -49,7 +50,7 @@ interface CalEvent {
   attendees: Array<{ email: string; name?: string }>;
 }
 
-type CalView = 'day' | 'workweek' | 'week' | 'month' | 'year';
+type CalView = 'day' | 'workweek' | 'week' | 'month' | 'year' | 'agenda';
 
 interface FreeBusyData {
   email: string;
@@ -107,6 +108,8 @@ function viewRange(date: Date, view: CalView): { start: Date; end: Date } {
       return { start: startOfMonth(date), end: endOfMonth(date) };
     case 'year':
       return { start: startOfYear(date), end: endOfYear(date) };
+    case 'agenda':
+      return { start: startOfDay(date), end: endOfDay(addDays(date, 29)) };
   }
 }
 
@@ -118,6 +121,7 @@ function navigate(date: Date, view: CalView, dir: 1 | -1): Date {
     case 'week':     return dir > 0 ? addWeeks(date, 1)  : subWeeks(date, 1);
     case 'month':    return dir > 0 ? addMonths(date, 1) : subMonths(date, 1);
     case 'year':     return dir > 0 ? addYears(date, 1)  : subYears(date, 1);
+    case 'agenda':   return dir > 0 ? addDays(date, 30)  : subDays(date, 30);
   }
 }
 
@@ -137,30 +141,142 @@ function viewLabel(date: Date, view: CalView): string {
     }
     case 'month':    return format(date, 'MMMM yyyy');
     case 'year':     return format(date, 'yyyy');
+    case 'agenda':   return `${format(date, 'MMM d')} – ${format(addDays(date, 29), 'MMM d, yyyy')}`;
   }
 }
 
-// ── Create-event modal ─────────────────────────────────────────────────────────
+// ── Attendee picker (shared by Create + Edit modal) ───────────────────────────
+
+function AttendeePicker({
+  attendees,
+  onChange,
+}: {
+  attendees: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [query, setQuery]           = useState('');
+  const [suggestions, setSuggestions] = useState<Array<{ email: string; display: string }>>([]);
+  const [loading, setLoading]       = useState(false);
+  const debRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (debRef.current) clearTimeout(debRef.current);
+    if (query.trim().length < 2) { setSuggestions([]); return; }
+    setLoading(true);
+    debRef.current = setTimeout(async () => {
+      try {
+        const res = await api.contacts.autocomplete(query.trim());
+        setSuggestions(res.filter((r) => !attendees.includes(r.email)));
+      } catch { setSuggestions([]); }
+      finally { setLoading(false); }
+    }, 300);
+  }, [query]); // eslint-disable-line
+
+  const add = (email: string) => {
+    if (!attendees.includes(email)) onChange([...attendees, email]);
+    setQuery('');
+    setSuggestions([]);
+  };
+
+  const addByInput = () => {
+    const e = query.trim().toLowerCase();
+    if (e && e.includes('@')) { add(e); }
+  };
+
+  const remove = (email: string) => onChange(attendees.filter((a) => a !== email));
+
+  return (
+    <div className="space-y-2">
+      <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Attendees</Label>
+      {/* Chip list */}
+      {attendees.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-1">
+          {attendees.map((a) => (
+            <span key={a} className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs rounded-full pl-2 pr-1 py-0.5">
+              <span className="truncate max-w-[140px]">{a}</span>
+              <button type="button" onClick={() => remove(a)}
+                className="w-3.5 h-3.5 rounded-full flex items-center justify-center hover:bg-primary/20">
+                <X className="w-2.5 h-2.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {/* Input */}
+      <div className="relative">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addByInput(); } }}
+          placeholder="Add attendee email…"
+          className="h-8 text-xs bg-muted/30 border-border/50 pr-10"
+        />
+        <button type="button" onClick={addByInput}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-primary transition-colors">
+          <Plus className="w-3.5 h-3.5" />
+        </button>
+        {(loading || suggestions.length > 0) && (
+          <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-lg shadow-lg overflow-hidden">
+            {loading ? (
+              <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground/50">
+                <Loader2 className="w-3 h-3 animate-spin" /> Searching…
+              </div>
+            ) : (
+              <ul className="max-h-36 overflow-y-auto py-1">
+                {suggestions.map((s) => (
+                  <li key={s.email}>
+                    <button type="button" onMouseDown={() => add(s.email)}
+                      className="w-full text-left px-3 py-1.5 hover:bg-muted/60 flex flex-col gap-0.5">
+                      {s.display !== s.email && (
+                        <span className="text-xs font-medium truncate">{s.display}</span>
+                      )}
+                      <span className="text-xs text-muted-foreground/60 truncate">{s.email}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Create / Edit event modal ──────────────────────────────────────────────────
 
 function CreateEventModal({
   initialDate,
+  initialData,
+  isEdit,
   onClose,
   onCreated,
+  onUpdated,
 }: {
   initialDate?: Date;
+  initialData?: CalEvent;
+  isEdit?: boolean;
   onClose: () => void;
   onCreated: (event: CalEvent) => void;
+  onUpdated?: (event: CalEvent) => void;
 }) {
-  const base    = initialDate ?? new Date();
+  const base    = initialDate ?? (initialData ? parseISO(initialData.startAt) : new Date());
   const todayStr = format(base, "yyyy-MM-dd'T'HH:mm");
   const endStr   = format(new Date(base.getTime() + 3_600_000), "yyyy-MM-dd'T'HH:mm");
 
-  const [title, setTitle]       = useState('');
-  const [location, setLocation] = useState('');
-  const [description, setDesc]  = useState('');
-  const [startAt, setStart]     = useState(todayStr);
-  const [endAt, setEnd]         = useState(endStr);
-  const [allDay, setAllDay]     = useState(false);
+  const [title, setTitle]       = useState(initialData?.title ?? '');
+  const [location, setLocation] = useState(initialData?.location ?? '');
+  const [description, setDesc]  = useState(initialData?.description ?? '');
+  const [startAt, setStart]     = useState(
+    initialData ? format(parseISO(initialData.startAt), "yyyy-MM-dd'T'HH:mm") : todayStr,
+  );
+  const [endAt, setEnd]         = useState(
+    initialData ? format(parseISO(initialData.endAt), "yyyy-MM-dd'T'HH:mm") : endStr,
+  );
+  const [allDay, setAllDay]     = useState(initialData?.allDay ?? false);
+  const [attendees, setAttendees] = useState<string[]>(
+    initialData?.attendees?.map((a) => a.email) ?? [],
+  );
   const [saving, setSaving]     = useState(false);
 
   const handleSave = async () => {
@@ -174,19 +290,27 @@ function CreateEventModal({
         ? new Date(endAt.split('T')[0] + 'T23:59:59.000Z').toISOString()
         : new Date(endAt).toISOString();
 
-      const event = await api.calendar.createEvent({
+      const payload = {
         title: title.trim(),
         location: location.trim() || undefined,
         description: description.trim() || undefined,
         startAt: startIso,
         endAt: endIso,
         allDay,
-      }) as CalEvent;
+        attendees: attendees.length > 0 ? attendees : undefined,
+      };
 
-      toast.success('Event created');
-      onCreated(event);
+      if (isEdit && initialData) {
+        const updated = await api.calendar.updateEvent(initialData.id, payload) as CalEvent;
+        toast.success('Event updated');
+        onUpdated?.(updated);
+      } else {
+        const event = await api.calendar.createEvent(payload) as CalEvent;
+        toast.success('Event created');
+        onCreated(event);
+      }
     } catch (err: any) {
-      toast.error('Failed to create event', { description: err?.message });
+      toast.error(isEdit ? 'Failed to update event' : 'Failed to create event', { description: err?.message });
     } finally {
       setSaving(false);
     }
@@ -194,59 +318,64 @@ function CreateEventModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border/60 rounded-xl shadow-2xl w-full max-w-md">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border/40">
-          <h2 className="text-sm font-semibold text-foreground">New Event</h2>
+      <div className="bg-card border border-border/60 rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border/40 shrink-0">
+          <h2 className="text-sm font-semibold text-foreground">{isEdit ? 'Edit Event' : 'New Event'}</h2>
           <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0">
             <X className="w-4 h-4" />
           </Button>
         </div>
-        <div className="px-5 py-4 space-y-3">
-          <Input
-            autoFocus
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Event title"
-            className="text-base font-medium h-10 bg-transparent border-0 border-b border-border/50 rounded-none px-0 focus-visible:ring-0 focus-visible:border-primary/60"
-            onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
-          />
-          <div className="flex items-center gap-2">
-            <input id="allday" type="checkbox" checked={allDay}
-              onChange={(e) => setAllDay(e.target.checked)} className="rounded" />
-            <Label htmlFor="allday" className="text-sm text-muted-foreground/70 cursor-pointer">All day</Label>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Start</Label>
-              <Input type={allDay ? 'date' : 'datetime-local'}
-                value={allDay ? startAt.split('T')[0] : startAt}
-                onChange={(e) => setStart(e.target.value)}
-                className="h-8 text-xs bg-muted/30 border-border/50" />
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="px-5 py-4 space-y-3">
+            <Input
+              autoFocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Event title"
+              className="text-base font-medium h-10 bg-transparent border-0 border-b border-border/50 rounded-none px-0 focus-visible:ring-0 focus-visible:border-primary/60"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
+            />
+            <div className="flex items-center gap-2">
+              <input id="allday" type="checkbox" checked={allDay}
+                onChange={(e) => setAllDay(e.target.checked)} className="rounded" />
+              <Label htmlFor="allday" className="text-sm text-muted-foreground/70 cursor-pointer">All day</Label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Start</Label>
+                <Input type={allDay ? 'date' : 'datetime-local'}
+                  value={allDay ? startAt.split('T')[0] : startAt}
+                  onChange={(e) => setStart(e.target.value)}
+                  className="h-8 text-xs bg-muted/30 border-border/50" />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">End</Label>
+                <Input type={allDay ? 'date' : 'datetime-local'}
+                  value={allDay ? endAt.split('T')[0] : endAt}
+                  onChange={(e) => setEnd(e.target.value)}
+                  className="h-8 text-xs bg-muted/30 border-border/50" />
+              </div>
             </div>
             <div>
-              <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">End</Label>
-              <Input type={allDay ? 'date' : 'datetime-local'}
-                value={allDay ? endAt.split('T')[0] : endAt}
-                onChange={(e) => setEnd(e.target.value)}
-                className="h-8 text-xs bg-muted/30 border-border/50" />
+              <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Location</Label>
+              <Input value={location} onChange={(e) => setLocation(e.target.value)}
+                placeholder="Add location" className="h-8 text-sm bg-muted/30 border-border/50" />
             </div>
+            <div>
+              <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Description</Label>
+              <Input value={description} onChange={(e) => setDesc(e.target.value)}
+                placeholder="Add description" className="h-8 text-sm bg-muted/30 border-border/50" />
+            </div>
+            <AttendeePicker attendees={attendees} onChange={setAttendees} />
           </div>
-          <div>
-            <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Location</Label>
-            <Input value={location} onChange={(e) => setLocation(e.target.value)}
-              placeholder="Add location" className="h-8 text-sm bg-muted/30 border-border/50" />
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Description</Label>
-            <Input value={description} onChange={(e) => setDesc(e.target.value)}
-              placeholder="Add description" className="h-8 text-sm bg-muted/30 border-border/50" />
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 px-5 py-3 border-t border-border/40">
+        </ScrollArea>
+        <div className="flex justify-end gap-2 px-5 py-3 border-t border-border/40 shrink-0">
           <Button variant="ghost" size="sm" onClick={onClose} className="text-muted-foreground/60 h-8">Cancel</Button>
           <Button size="sm" onClick={handleSave} disabled={saving || !title.trim()}
             className="bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-4 gap-1.5">
-            {saving ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving…</> : 'Create Event'}
+            {saving
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving…</>
+              : isEdit ? 'Save Changes' : 'Create Event'}
           </Button>
         </div>
       </div>
@@ -585,6 +714,123 @@ function TimelineView({
   );
 }
 
+// ── Agenda view ────────────────────────────────────────────────────────────────
+
+function AgendaView({
+  currentDate,
+  events,
+  onSelectEvent,
+}: {
+  currentDate: Date;
+  events: CalEvent[];
+  onSelectEvent: (e: CalEvent) => void;
+}) {
+  const days = eachDayOfInterval({
+    start: startOfDay(currentDate),
+    end:   endOfDay(addDays(currentDate, 29)),
+  });
+
+  const eventsForDay = (day: Date) => {
+    const allDay: CalEvent[] = [];
+    const timed:  CalEvent[] = [];
+    for (const e of events) {
+      try {
+        if (!isSameDay(parseISO(e.startAt), day)) continue;
+        (e.allDay ? allDay : timed).push(e);
+      } catch { /* skip */ }
+    }
+    timed.sort((a, b) => a.startAt.localeCompare(b.startAt));
+    return [...allDay, ...timed];
+  };
+
+  const daysWithEvents = days.filter((d) => eventsForDay(d).length > 0);
+
+  return (
+    <ScrollArea className="flex-1 min-h-0">
+      {daysWithEvents.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-64 gap-3">
+          <CalendarIcon className="w-10 h-10 text-muted-foreground/20" />
+          <p className="text-sm text-muted-foreground/40">No events in the next 30 days</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-border/20">
+          {daysWithEvents.map((day) => {
+            const dayEvs = eventsForDay(day);
+            const today  = isToday(day);
+            return (
+              <div key={day.toISOString()} className="flex">
+                {/* Sticky date label */}
+                <div className={cn(
+                  'w-28 shrink-0 px-4 py-3 text-right sticky left-0 bg-background/95 border-r border-border/20',
+                  today && 'bg-primary/5',
+                )}>
+                  <p className={cn('text-xs font-semibold', today ? 'text-primary' : 'text-muted-foreground/70')}>
+                    {format(day, 'EEE')}
+                  </p>
+                  <p className={cn(
+                    'text-lg font-bold leading-tight',
+                    today ? 'text-primary' : 'text-foreground/80',
+                  )}>
+                    {format(day, 'd')}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/40">{format(day, 'MMM')}</p>
+                </div>
+
+                {/* Events for the day */}
+                <div className="flex-1 min-w-0 py-2 px-3 space-y-1.5">
+                  {dayEvs.map((ev) => (
+                    <button
+                      key={ev.id}
+                      onClick={() => onSelectEvent(ev)}
+                      className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted/40 transition-colors group"
+                    >
+                      {/* Color strip */}
+                      <div className={cn('w-1 self-stretch rounded-full shrink-0', eventColor(ev.id).replace(/text-\S+/, '').trim())} />
+
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground/90 truncate group-hover:text-foreground">
+                          {ev.title}
+                        </p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {ev.allDay ? (
+                            <span className="text-xs text-muted-foreground/50">All day</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground/50 flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {fmtTime(ev.startAt)} – {fmtTime(ev.endAt)}
+                            </span>
+                          )}
+                          {ev.location && (
+                            <span className="text-xs text-muted-foreground/40 flex items-center gap-1 truncate">
+                              <MapPin className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{ev.location}</span>
+                            </span>
+                          )}
+                          {ev.isRecurring && (
+                            <span className="text-[10px] text-muted-foreground/40 flex items-center gap-0.5">
+                              <Repeat className="w-3 h-3" /> Recurring
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {ev.attendees.length > 0 && (
+                        <span className="text-[10px] text-muted-foreground/40 flex items-center gap-1 shrink-0">
+                          <Users className="w-3 h-3" /> {ev.attendees.length}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </ScrollArea>
+  );
+}
+
 // ── Availability panel ─────────────────────────────────────────────────────────
 
 function AvailabilityPanel({
@@ -812,25 +1058,52 @@ function isOnlineMeetingLink(url: string | null | undefined): boolean {
 
 function EventDetailPanel({
   event,
+  currentUserEmail,
   onClose,
   onDelete,
+  onEdit,
+  onRsvp,
   deleting,
 }: {
   event: CalEvent;
+  currentUserEmail: string | null | undefined;
   onClose: () => void;
   onDelete: (e: CalEvent) => void;
+  onEdit: (e: CalEvent) => void;
+  onRsvp: (e: CalEvent, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => void;
   deleting: boolean;
 }) {
   const meetingLink = isOnlineMeetingLink(event.location) ? event.location : null;
+  const isOrganizer = event.organizer && currentUserEmail
+    ? event.organizer.toLowerCase() === currentUserEmail.toLowerCase()
+    : true;
+  const isAttendee = event.attendees.some(
+    (a) => a.email.toLowerCase() === currentUserEmail?.toLowerCase(),
+  );
+  const showRsvp = !isOrganizer && (isAttendee || event.attendees.length === 0);
+
+  const [rsvping, setRsvping] = useState<'ACCEPT' | 'DECLINE' | 'TENTATIVE' | null>(null);
+
+  const handleRsvp = async (verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => {
+    setRsvping(verb);
+    await onRsvp(event, verb);
+    setRsvping(null);
+  };
 
   return (
     <div className="w-80 shrink-0 border-l border-border/40 flex flex-col h-full bg-card/60 overflow-x-hidden">
       {/* Header */}
       <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-border/40 shrink-0">
         <h3 className="text-sm font-semibold text-foreground break-words min-w-0 leading-snug">{event.title}</h3>
-        <Button variant="ghost" size="sm" onClick={onClose} className="h-6 w-6 p-0 text-muted-foreground/50 shrink-0 mt-0.5">
-          <X className="w-3.5 h-3.5" />
-        </Button>
+        <div className="flex items-center gap-1 shrink-0 mt-0.5">
+          <Button variant="ghost" size="sm" onClick={() => onEdit(event)}
+            className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title="Edit event">
+            <Pencil className="w-3 h-3" />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onClose} className="h-6 w-6 p-0 text-muted-foreground/50">
+            <X className="w-3.5 h-3.5" />
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
@@ -849,6 +1122,42 @@ function EventDetailPanel({
               </div>
             )}
           </div>
+
+          {/* RSVP buttons — shown for attendees who are not the organizer */}
+          {showRsvp && (
+            <div className="space-y-1.5">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium">RSVP</p>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline"
+                  onClick={() => handleRsvp('ACCEPT')}
+                  disabled={!!rsvping}
+                  className="flex-1 h-8 text-xs gap-1.5 border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-600">
+                  {rsvping === 'ACCEPT'
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <CheckCircle2 className="w-3.5 h-3.5" />}
+                  Accept
+                </Button>
+                <Button size="sm" variant="outline"
+                  onClick={() => handleRsvp('TENTATIVE')}
+                  disabled={!!rsvping}
+                  className="flex-1 h-8 text-xs gap-1.5 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 hover:text-amber-600">
+                  {rsvping === 'TENTATIVE'
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <HelpCircle className="w-3.5 h-3.5" />}
+                  Maybe
+                </Button>
+                <Button size="sm" variant="outline"
+                  onClick={() => handleRsvp('DECLINE')}
+                  disabled={!!rsvping}
+                  className="flex-1 h-8 text-xs gap-1.5 border-rose-500/40 text-rose-600 hover:bg-rose-500/10 hover:text-rose-600">
+                  {rsvping === 'DECLINE'
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <XCircle className="w-3.5 h-3.5" />}
+                  Decline
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Join meeting button — shown when location is a video conferencing URL */}
           {meetingLink && (
@@ -944,12 +1253,13 @@ function EventDetailPanel({
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 const VIEW_LABELS: Record<CalView, string> = {
-  day: 'Day', workweek: 'Work Week', week: 'Week', month: 'Month', year: 'Year',
+  day: 'Day', workweek: 'Work Week', week: 'Week', month: 'Month', year: 'Year', agenda: 'Agenda',
 };
 
 export default function CalendarPage() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const currentUser     = useAuthStore((s) => s.user);
   const [hydrated, setHydrated] = useState(false);
 
   const [calView, setCalView]       = useState<CalView>('month');
@@ -959,6 +1269,7 @@ export default function CalendarPage() {
   const [selectedEvent, setSelectedEvent] = useState<CalEvent | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [createForDay, setCreateForDay]  = useState<Date | undefined>();
+  const [editingEvent, setEditingEvent]  = useState<CalEvent | null>(null);
   const [deleting, setDeleting]     = useState(false);
 
   // Availability
@@ -1047,6 +1358,16 @@ export default function CalendarPage() {
       setDeleting(false);
     }
   };
+
+  const handleRsvp = useCallback(async (event: CalEvent, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => {
+    try {
+      await api.calendar.rsvp(event.id, verb);
+      const label = verb === 'ACCEPT' ? 'Accepted' : verb === 'DECLINE' ? 'Declined' : 'Marked as tentative';
+      toast.success(label);
+    } catch (err: any) {
+      toast.error('RSVP failed', { description: err?.message });
+    }
+  }, []);
 
   if (!hydrated) return null;
 
@@ -1154,14 +1475,25 @@ export default function CalendarPage() {
                 }}
               />
             )}
+
+            {calView === 'agenda' && (
+              <AgendaView
+                currentDate={currentDate}
+                events={events}
+                onSelectEvent={setSelectedEvent}
+              />
+            )}
           </div>
 
           {/* Event detail side panel */}
           {selectedEvent && (
             <EventDetailPanel
               event={selectedEvent}
+              currentUserEmail={currentUser?.email}
               onClose={() => setSelectedEvent(null)}
               onDelete={handleDelete}
+              onEdit={(e) => { setEditingEvent(e); setSelectedEvent(null); }}
+              onRsvp={handleRsvp}
               deleting={deleting}
             />
           )}
@@ -1190,6 +1522,21 @@ export default function CalendarPage() {
             setShowCreate(false);
             setCreateForDay(undefined);
             setSelectedEvent(event);
+          }}
+        />
+      )}
+
+      {/* ── Edit event modal ── */}
+      {editingEvent && (
+        <CreateEventModal
+          isEdit
+          initialData={editingEvent}
+          onClose={() => setEditingEvent(null)}
+          onCreated={() => {}}
+          onUpdated={(updated) => {
+            setEvents((prev) => prev.map((e) => e.id === updated.id ? updated : e));
+            setEditingEvent(null);
+            setSelectedEvent(updated);
           }}
         />
       )}

@@ -1063,6 +1063,7 @@ export class ZimbraService {
       description?: string;
       organizerEmail: string;
       organizerName?: string;
+      attendees?: string[];
     },
     csrfToken?: string,
   ): Promise<string> {
@@ -1087,6 +1088,13 @@ export class ZimbraService {
       ...(payload.organizerName ? { p: payload.organizerName } : {}),
     };
 
+    const at = (payload.attendees ?? []).map((email) => ({
+      a: email,
+      role: 'REQ',
+      ptst: 'NE',
+      rsvp: 1,
+    }));
+
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -1106,6 +1114,7 @@ export class ZimbraService {
                     s: fmtDt(payload.startAt, payload.allDay),
                     e: fmtDt(payload.endAt, payload.allDay),
                     or,
+                    ...(at.length ? { at } : {}),
                     ...(payload.description
                       ? { desc: { _content: payload.description } }
                       : {}),
@@ -1124,6 +1133,113 @@ export class ZimbraService {
       return String(id);
     } catch (err: any) {
       this.handleZimbraError(err, 'createCalendarEvent');
+    }
+  }
+
+  async modifyCalendarEvent(
+    host: string,
+    authToken: string,
+    zimbraId: string,
+    payload: {
+      title: string;
+      location?: string;
+      startAt: Date;
+      endAt: Date;
+      allDay: boolean;
+      description?: string;
+      organizerEmail: string;
+      organizerName?: string;
+      attendees?: string[];
+    },
+    csrfToken?: string,
+  ): Promise<void> {
+    const client = this.buildClient(host, authToken, csrfToken);
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const fmtDt = (d: Date, allDay: boolean) => {
+      if (allDay) {
+        return { d: `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` };
+      }
+      return {
+        d:
+          `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` +
+          `T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00Z`,
+      };
+    };
+
+    const or = {
+      a: payload.organizerEmail,
+      ...(payload.organizerName ? { p: payload.organizerName } : {}),
+    };
+
+    const at = (payload.attendees ?? []).map((email) => ({
+      a: email,
+      role: 'REQ',
+      ptst: 'NE',
+      rsvp: 1,
+    }));
+
+    try {
+      await client.post('/service/soap', {
+        Body: {
+          ModifyAppointmentRequest: {
+            _jsns: 'urn:zimbraMail',
+            id: zimbraId,
+            m: {
+              su: payload.title,
+              e: [{ t: 'f', ...or }],
+              inv: {
+                comp: [
+                  {
+                    name: payload.title,
+                    loc: payload.location ?? '',
+                    allDay: payload.allDay ? 1 : 0,
+                    fb: 'B',
+                    transp: 'O',
+                    s: fmtDt(payload.startAt, payload.allDay),
+                    e: fmtDt(payload.endAt, payload.allDay),
+                    or,
+                    ...(at.length ? { at } : {}),
+                    ...(payload.description
+                      ? { desc: { _content: payload.description } }
+                      : {}),
+                  },
+                ],
+              },
+            },
+          },
+        },
+        Header: this.soapHeader(csrfToken),
+      });
+    } catch (err: any) {
+      this.handleZimbraError(err, `modifyCalendarEvent(${zimbraId})`);
+    }
+  }
+
+  async sendInviteReply(
+    host: string,
+    authToken: string,
+    zimbraId: string,
+    verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE',
+    subject: string,
+    csrfToken?: string,
+  ): Promise<void> {
+    const client = this.buildClient(host, authToken, csrfToken);
+    try {
+      await client.post('/service/soap', {
+        Body: {
+          SendInviteReplyRequest: {
+            _jsns: 'urn:zimbraMail',
+            id: zimbraId,
+            verb,
+            updateOrganizer: '1',
+            m: { su: `Re: ${subject}` },
+          },
+        },
+        Header: this.soapHeader(csrfToken),
+      });
+    } catch (err: any) {
+      this.handleZimbraError(err, `sendInviteReply(${zimbraId}, ${verb})`);
     }
   }
 

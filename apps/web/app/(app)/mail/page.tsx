@@ -10,6 +10,7 @@ import MailList, { type ContextAction } from '@/components/mail/MailList';
 import MailDetail from '@/components/mail/MailDetail';
 import ThreadView from '@/components/mail/ThreadView';
 import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
+import TaskModal from '@/components/tasks/TaskModal';
 import { Input } from '@/components/ui/input';
 import { Search, RefreshCw, X as XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -88,6 +89,9 @@ export default function MailPage() {
       };
     });
   }, [queryClient]);
+
+  // ── Create-task-from-email state ───────────────────────────────────────────
+  const [createTaskPrefill, setCreateTaskPrefill] = useState<{ linkedMessageId: string; linkedSubject: string } | null>(null);
 
   // ── Compose state ──────────────────────────────────────────────────────────
   const [composeOpen, setComposeOpen] = useState(false);
@@ -383,6 +387,11 @@ export default function MailPage() {
     const { type, messageId } = action;
     const msg = [...messages, ...searchResults].find((m) => m.id === messageId);
     if (!msg) return;
+
+    if (type === 'createTask') {
+      setCreateTaskPrefill({ linkedMessageId: messageId, linkedSubject: msg.subject ?? '' });
+      return;
+    }
 
     if (type === 'reply' || type === 'forward') {
       await openMessage(messageId);
@@ -680,6 +689,16 @@ export default function MailPage() {
           refreshKey={threadRefreshKey}
         />
       </div>
+
+      {/* Create task from email */}
+      {createTaskPrefill && (
+        <TaskModal
+          task={null}
+          prefill={createTaskPrefill}
+          onClose={() => setCreateTaskPrefill(null)}
+          onSaved={() => setCreateTaskPrefill(null)}
+        />
+      )}
 
       {/* Floating compose — rendered as a fixed overlay so the thread stays visible */}
       <ComposeModal

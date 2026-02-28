@@ -23,13 +23,14 @@ import type { AuthenticatedRequest } from '../common/interfaces/authenticated-re
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
-  /** GET /tasks?status=TODO */
+  /** GET /tasks?status=TODO&linkedMessageId=X */
   @Get()
   findAll(
     @Req() req: AuthenticatedRequest,
     @Query('status') status?: string,
+    @Query('linkedMessageId') linkedMessageId?: string,
   ) {
-    return this.tasksService.findAll(req.user.sub, status);
+    return this.tasksService.findAll(req.user.sub, status, linkedMessageId);
   }
 
   /** POST /tasks */

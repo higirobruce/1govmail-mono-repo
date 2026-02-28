@@ -22,11 +22,12 @@ export class TasksService {
     return user;
   }
 
-  async findAll(userId: string, status?: string) {
+  async findAll(userId: string, status?: string, linkedMessageId?: string) {
     return this.prisma.task.findMany({
       where: {
         userId,
         ...(status ? { status: status as TaskStatus } : {}),
+        ...(linkedMessageId ? { linkedMessageId } : {}),
       },
       orderBy: [{ createdAt: 'desc' }],
     });
@@ -158,7 +159,7 @@ export class TasksService {
       <td style="padding:8px 12px;border:1px solid #e0e0e0;">${task.linkedSubject}</td>
     </tr>` : ''}
   </table>
-  <p style="color:#888;font-size:12px;">Sent from your email client.</p>
+  <p style="color:#888;font-size:12px;">Sent from 1Gov Mail.</p>
 </body></html>`;
 
     await this.zimbra.sendMessage(

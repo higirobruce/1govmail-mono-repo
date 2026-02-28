@@ -366,9 +366,13 @@ export const api = {
   },
 
   tasks: {
-    getAll: (status?: string) => {
+    getAll: (status?: string, linkedMessageId?: string) => {
       if (USE_MOCK) return delay<any[]>([]);
-      return request<any[]>(`/tasks${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+      const params = new URLSearchParams();
+      if (status) params.set('status', status);
+      if (linkedMessageId) params.set('linkedMessageId', linkedMessageId);
+      const qs = params.toString();
+      return request<any[]>(`/tasks${qs ? `?${qs}` : ''}`);
     },
     create: (data: {
       title: string;

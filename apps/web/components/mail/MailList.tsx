@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { formatDistanceToNowStrict, parseISO, startOfDay, subDays } from 'date-fns';
-import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight } from 'lucide-react';
+import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Message {
@@ -26,7 +26,7 @@ interface FolderItem {
 }
 
 export interface ContextAction {
-  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder';
+  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask';
   messageId: string;
   targetFolderId?: string;
 }
@@ -192,6 +192,7 @@ function ContextMenu({
       {state.message.isStarred
         ? item(Star,       'Unstar',         'unstar')
         : item(Star,       'Star',           'star')}
+      {item(ListTodo,   'Create Task',    'createTask')}
       {labelFolders.length > 0 && (
         <>
           <div className="my-1 h-px bg-border/40" />

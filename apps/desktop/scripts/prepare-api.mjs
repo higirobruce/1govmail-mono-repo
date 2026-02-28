@@ -27,6 +27,9 @@ import {
   readFileSync,
   writeFileSync,
   readdirSync,
+  lstatSync,
+  realpathSync,
+  unlinkSync,
 } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -169,7 +172,11 @@ for (const key of sqlite3Keys) {
       console.error(`  ERROR: prebuild-install not found at ${prebuildBin}`);
       process.exit(1);
     }
-    console.log(`\n  Downloading pre-built ${key} for ${targetPlatform}-${targetArch} (Electron ${electronVersion}) …`);
+    // better-sqlite3 publishes electron-specific prebuilds keyed by the Electron
+    // module version (e.g. electron-v132-win32-x64.tar.gz for Electron 34.x).
+    // Using --runtime=electron --target=<version> makes prebuild-install
+    // resolve the correct ABI and download the matching pre-built binary.
+    console.log(`\n  Downloading electron-v${electronVersion} pre-built ${key} for ${targetPlatform}-${targetArch} …`);
     execFileSync(
       prebuildBin,
       [
@@ -200,6 +207,60 @@ for (const key of sqlite3Keys) {
       },
     );
     console.log(`  ✓ ${key} rebuilt`);
+  }
+}
+
+// ─── 6. Dereference node_modules/better-sqlite3 symlink ──────────────────────
+//
+// pnpm deploy() creates node_modules/better-sqlite3 as a Unix symlink pointing
+// to the virtual store (.pnpm/better-sqlite3@.../node_modules/better-sqlite3).
+// On Windows, NSIS/7-Zip may not create proper junction points when extracting
+// the installer — the symlink becomes a plain text file containing the target
+// path.  When the Electron main process calls require(apiDir/node_modules/
+// better-sqlite3) that text file is parsed as JavaScript, and the literal "."
+// at the start of ".pnpm/…" triggers:
+//   SyntaxError: Unexpected token '.'
+//
+// Fix: replace the symlink with the real directory content (includes the binary
+// just downloaded/rebuilt in step 5) and embed the `bindings` package directly
+// inside it so Node.js can resolve the dependency without the pnpm sibling path.
+console.log('\n═══ Step 6/6 — Dereferencing node_modules/better-sqlite3 ═══');
+{
+  const flatBs3 = join(bundleDir, 'node_modules', 'better-sqlite3');
+  const stat = lstatSync(flatBs3);
+
+  if (stat.isSymbolicLink()) {
+    // Resolve: node_modules/better-sqlite3 → .pnpm/better-sqlite3@.../node_modules/better-sqlite3
+    const realBs3    = realpathSync(flatBs3);
+    // The pnpm sibling dir holds better-sqlite3's runtime deps (bindings, etc.)
+    const pnpmSibDir = dirname(realBs3);
+
+    // Replace the symlink with the real package content (binary is already updated)
+    unlinkSync(flatBs3);
+    cpSync(realBs3, flatBs3, { recursive: true });
+
+    // Embed `bindings` and all its deps into better-sqlite3/node_modules/.
+    // `bindings` depends on `file-uri-to-path` (and any future transitive deps)
+    // which live as siblings in bindings' own pnpm store entry.  We resolve the
+    // real path of `bindings` to find that sibling dir, then copy everything in
+    // it (except the .bin dir) alongside `bindings` itself.
+    const bindingsSrc    = realpathSync(join(pnpmSibDir, 'bindings'));
+    const bindingsSibDir = dirname(bindingsSrc); // .pnpm/bindings@.../node_modules/
+    const bs3NmDir       = join(flatBs3, 'node_modules');
+    mkdirSync(bs3NmDir, { recursive: true });
+
+    for (const dep of readdirSync(bindingsSibDir)) {
+      if (dep === '.bin') continue;
+      const depSrc  = join(bindingsSibDir, dep);
+      const depStat = lstatSync(depSrc);
+      const realSrc = depStat.isSymbolicLink() ? realpathSync(depSrc) : depSrc;
+      cpSync(realSrc, join(bs3NmDir, dep), { recursive: true });
+      console.log(`  Embedded ${dep} from ${realSrc}`);
+    }
+
+    console.log(`  Resolved symlink → ${realBs3}`);
+  } else {
+    console.log('  Already a real directory — skipping.');
   }
 }
 

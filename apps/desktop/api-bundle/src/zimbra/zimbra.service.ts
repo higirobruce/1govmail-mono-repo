@@ -562,14 +562,14 @@ export class ZimbraService {
     },
     csrfToken?: string,
     attachmentAids: string[] = [],
-  ): Promise<void> {
+  ): Promise<{ zimbraId: string; conversationId: string | null }> {
     const client = this.buildClient(host, authToken, csrfToken);
     const toAddrs  = payload.to.map((a) => ({ t: 't', a }));
     const ccAddrs  = (payload.cc  ?? []).map((a) => ({ t: 'c', a }));
     const bccAddrs = (payload.bcc ?? []).map((a) => ({ t: 'b', a }));
 
     try {
-      await client.post('/service/soap', {
+      const res = await client.post('/service/soap', {
         Body: {
           SendMsgRequest: {
             _jsns: 'urn:zimbraMail',
@@ -590,6 +590,11 @@ export class ZimbraService {
         },
         Header: this.soapHeader(csrfToken),
       });
+      const sent = res.data?.Body?.SendMsgResponse?.m?.[0];
+      return {
+        zimbraId:       sent?.id  != null ? String(sent.id)  : '',
+        conversationId: sent?.cid != null ? String(sent.cid) : null,
+      };
     } catch (err: any) {
       this.handleZimbraError(err, 'sendMessage');
     }
@@ -739,6 +744,42 @@ export class ZimbraService {
     } catch (err: any) {
       this.logger.error(`downloadAttachmentBuffer failed for msg=${zimbraMessageId} part=${partId}: ${err?.message}`);
       throw new BadGatewayException('Failed to download attachment from Zimbra');
+    }
+  }
+
+  /**
+   * Download any file at a Zimbra-relative path (e.g. a Briefcase image
+   * referenced in an email signature: "/home/user@domain/Briefcase/logo.gif").
+   * Decodes HTML entities in the path and appends query-param auth so no
+   * cookie session is required.
+   */
+  async downloadZimbraPath(
+    host: string,
+    authToken: string,
+    relativePath: string,
+  ): Promise<{ data: Buffer; contentType: string }> {
+    // Decode HTML entities that Zimbra encodes in <img src="..."> attributes
+    const decoded = relativePath
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+
+    const urlObj = new URL(`https://${host}${decoded}`);
+    urlObj.searchParams.set('auth', 'qp');
+    urlObj.searchParams.set('zauthtoken', authToken);
+
+    try {
+      const response = await axios.get(urlObj.toString(), {
+        responseType: 'arraybuffer',
+        httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
+        timeout: 10_000,
+      });
+      const contentType: string = response.headers['content-type'] ?? 'image/png';
+      return { data: Buffer.from(response.data as ArrayBuffer), contentType };
+    } catch (err: any) {
+      this.logger.error(`downloadZimbraPath failed for path=${relativePath}: ${err?.message}`);
+      throw new BadGatewayException('Failed to download Zimbra resource');
     }
   }
 
@@ -1183,7 +1224,9 @@ export class ZimbraService {
     csrfToken?: string,
   ): Promise<void> {
     const client = this.buildClient(host, authToken, csrfToken);
-    const a = Object.entries(attrs).map(([name, _content]) => ({ name, _content }));
+    const a = Object.entries(attrs)
+      .filter(([, v]) => v !== '')          // Zimbra rejects empty-string _content for ID attrs
+      .map(([name, _content]) => ({ name, _content }));
     try {
       await client.post('/service/soap', {
         Body: {

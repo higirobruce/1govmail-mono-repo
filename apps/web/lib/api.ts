@@ -364,4 +364,50 @@ export const api = {
       });
     },
   },
+
+  tasks: {
+    getAll: (status?: string) => {
+      if (USE_MOCK) return delay<any[]>([]);
+      return request<any[]>(`/tasks${status ? `?status=${encodeURIComponent(status)}` : ''}`);
+    },
+    create: (data: {
+      title: string;
+      description?: string;
+      status?: string;
+      priority?: string;
+      dueDate?: string;
+      linkedMessageId?: string;
+      linkedSubject?: string;
+      assignedToEmail?: string;
+      assignedToName?: string;
+    }) => {
+      if (USE_MOCK) return delay({ id: `t-${Date.now()}`, ...data });
+      return request<any>('/tasks', { method: 'POST', body: JSON.stringify(data) });
+    },
+    update: (id: string, data: Partial<{
+      title: string;
+      description: string;
+      status: string;
+      priority: string;
+      dueDate: string;
+      linkedMessageId: string;
+      linkedSubject: string;
+      assignedToEmail: string;
+      assignedToName: string;
+    }>) => {
+      if (USE_MOCK) return delay({ id, ...data });
+      return request<any>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+    },
+    delete: (id: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<{ success: boolean }>(`/tasks/${id}`, { method: 'DELETE' });
+    },
+    assign: (id: string, assigneeEmail: string, assigneeName?: string) => {
+      if (USE_MOCK) return delay({ id, assignedToEmail: assigneeEmail, assignedToName: assigneeName });
+      return request<any>(`/tasks/${id}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ assigneeEmail, assigneeName }),
+      });
+    },
+  },
 };

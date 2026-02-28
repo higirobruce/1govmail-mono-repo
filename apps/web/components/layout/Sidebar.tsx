@@ -323,7 +323,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
           <NavItem icon={Users} label="Contacts" onClick={() => router.push('/contacts')} />
 
           {/* Upcoming features */}
-          <NavItem icon={ListTodo}   label="Tasks"          comingSoon />
+          <NavItem icon={ListTodo}   label="Tasks"          onClick={() => router.push('/tasks')} />
           <NavItem icon={UsersRound} label="Collaboration"  comingSoon />
           <NavItem icon={Newspaper}  label="News"           comingSoon />
         </div>

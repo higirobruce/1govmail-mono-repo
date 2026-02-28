@@ -7,6 +7,7 @@ import { MailModule } from './mail/mail.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { SettingsModule } from './settings/settings.module';
+import { TasksModule } from './tasks/tasks.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { SettingsModule } from './settings/settings.module';
     ContactsModule,
     CalendarModule,
     SettingsModule,
+    TasksModule,
   ],
 })
 export class AppModule {}

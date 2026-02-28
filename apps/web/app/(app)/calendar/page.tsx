@@ -22,7 +22,7 @@ import {
   addDays, addWeeks, addMonths, addYears,
   subDays, subWeeks, subMonths, subYears,
   startOfDay, endOfDay, startOfYear, endOfYear,
-  isSameYear, parseISO, differenceInMinutes,
+  parseISO, differenceInMinutes,
   getHours, getMinutes,
 } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -61,7 +61,6 @@ interface FreeBusyData {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const SLOT_H = 60; // px per hour in timeline views
-const DAY_START = 0; // first hour shown
 const DAY_HOURS = 24;
 
 const EVENT_COLORS = [
@@ -526,7 +525,7 @@ function TimelineView({
                             onClick={(e) => e.stopPropagation()}
                           />
                         </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={4} className="text-xs">
+                        <TooltipContent side="top" sideOffset={4} className="bg-background text-foreground border border-border/40 shadow-sm text-xs">
                           <p className="font-semibold text-rose-500">Busy</p>
                           <p className="text-muted-foreground">{label}</p>
                         </TooltipContent>
@@ -546,7 +545,7 @@ function TimelineView({
                             onClick={(e) => e.stopPropagation()}
                           />
                         </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={4} className="text-xs">
+                        <TooltipContent side="top" sideOffset={4} className="bg-background text-foreground border border-border/40 shadow-sm text-xs">
                           <p className="font-semibold text-amber-500">Tentative</p>
                           <p className="text-muted-foreground">{label}</p>
                         </TooltipContent>
@@ -608,9 +607,10 @@ function AvailabilityPanel({
   const [loadingSug, setLoadingSug] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Autocomplete suggestions
+  // Autocomplete suggestions; clear parent free/busy when field is emptied
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (email.trim().length === 0) { setSuggestions([]); onSearch(''); return; }
     if (email.trim().length < 2) { setSuggestions([]); return; }
     setLoadingSug(true);
     debounceRef.current = setTimeout(async () => {
@@ -622,8 +622,6 @@ function AvailabilityPanel({
     }, 300);
   }, [email]); // eslint-disable-line
 
-  const totalRangeMs = viewEnd.getTime() - viewStart.getTime();
-  const pct = (ms: number) => Math.min(100, Math.max(0, ((ms - viewStart.getTime()) / totalRangeMs) * 100));
 
   return (
     <div className="w-72 shrink-0 border-l border-border/40 flex flex-col h-full bg-card/60">
@@ -1016,7 +1014,7 @@ export default function CalendarPage() {
 
   // Load free/busy for a given email
   const handleFreeBusySearch = useCallback(async (email: string) => {
-    if (!email) return;
+    if (!email) { setFreeBusy(null); return; }
     setLoadingFB(true);
     try {
       const data = await api.calendar.getFreeBusy(

@@ -108,20 +108,25 @@ console.log('\n═══ Step 4b/6 — Copying generated Prisma client (.prisma/
   console.log(`  Copied .prisma/ → ${targetDotPrisma}`);
 }
 
-// ─── 5. Rebuild better-sqlite3 for Electron ───────────────────────────────────
+// ─── 5. Rebuild / download better-sqlite3 for Electron ───────────────────────
 //
 // There can be MULTIPLE better-sqlite3 versions in the pnpm virtual store:
 //   • one direct dep (e.g. better-sqlite3@11.x)   ← hoisted to node_modules/
 //   • one via @prisma/adapter-better-sqlite3 (e.g. better-sqlite3@12.x)
 //                                                   ← only in .pnpm store
 //
-// @electron/rebuild silently skips the non-hoisted pnpm store copies even
-// with --force.  Use node-gyp directly with the Electron headers instead —
-// this is exactly what @electron/rebuild does internally, just more explicit.
+// Cross-platform strategy
+// ───────────────────────
+// When TARGET_PLATFORM differs from the host OS (e.g. building a Linux AppImage
+// or Windows installer from macOS), node-gyp would compile a host-platform
+// binary (Mach-O on macOS) that the target OS cannot load (ELF on Linux, PE on
+// Windows).  Instead we use `prebuild-install` — already bundled as a dep of
+// better-sqlite3 — to download the correct pre-built binary from GitHub Releases.
 //
-// The Electron headers are downloaded once to ~/.electron-gyp and cached for
-// subsequent builds.  Requires Python (for node-gyp) and internet on first run.
-console.log('\n═══ Step 5/6 — Rebuilding better-sqlite3 for Electron ═══');
+// Native builds (TARGET_PLATFORM === host OS) keep the existing node-gyp path.
+// Set TARGET_PLATFORM and TARGET_ARCH env vars to cross-compile, e.g.:
+//   TARGET_PLATFORM=linux TARGET_ARCH=x64 pnpm build:desktop:linux
+console.log('\n═══ Step 5/6 — Preparing better-sqlite3 for Electron ═══');
 
 // Resolve the Electron version bundled with the desktop workspace.
 const electronPkgPath = join(desktopDir, 'node_modules/electron/package.json');
@@ -130,8 +135,18 @@ if (!existsSync(electronPkgPath)) {
   process.exit(1);
 }
 const electronVersion = JSON.parse(readFileSync(electronPkgPath, 'utf-8')).version;
-const buildArch = process.arch;   // arm64 on Apple Silicon, x64 on Intel
-console.log(`  Electron version: ${electronVersion}  arch: ${buildArch}`);
+
+// TARGET_PLATFORM / TARGET_ARCH let callers specify the build target explicitly.
+// Defaults to the current host so native builds require no extra env vars.
+const targetPlatform = process.env.TARGET_PLATFORM || process.platform; // linux | win32 | darwin
+const targetArch     = process.env.TARGET_ARCH     || process.arch;     // x64 | arm64
+const isCross        = targetPlatform !== process.platform || targetArch !== process.arch;
+
+console.log(
+  `  Electron: ${electronVersion}` +
+  `  target: ${targetPlatform}-${targetArch}` +
+  (isCross ? `  host: ${process.platform}-${process.arch}  [cross-compile → prebuild-install]` : '  [native → node-gyp]'),
+);
 
 const bundlePnpmDir = join(bundleDir, 'node_modules/.pnpm');
 const sqlite3Keys = readdirSync(bundlePnpmDir).filter(d => d.startsWith('better-sqlite3@'));
@@ -144,21 +159,48 @@ console.log(`  Found ${sqlite3Keys.length} better-sqlite3 version(s): ${sqlite3K
 
 for (const key of sqlite3Keys) {
   const pkgDir = join(bundlePnpmDir, key, 'node_modules', 'better-sqlite3');
-  console.log(`\n  Rebuilding ${key} with node-gyp for Electron ${electronVersion} …`);
-  // HOME=~/.electron-gyp keeps Electron headers separate from the Node.js cache.
-  execSync(
-    `npx --yes node-gyp rebuild` +
-    ` --target=${electronVersion}` +
-    ` --arch=${buildArch}` +
-    ` --dist-url=https://electronjs.org/headers` +
-    ` --directory="${pkgDir}"`,
-    {
-      stdio: 'inherit',
-      cwd:   pkgDir,
-      env:   { ...process.env, HOME: join(process.env.HOME ?? '~', '.electron-gyp') },
-    },
-  );
-  console.log(`  ✓ ${key} rebuilt`);
+
+  if (isCross) {
+    // ── Cross-platform: download pre-built binary from GitHub Releases ──────
+    // prebuild-install is a direct dependency of better-sqlite3 and is stored
+    // alongside it in the pnpm virtual store at node_modules/.bin/prebuild-install.
+    const prebuildBin = join(pkgDir, 'node_modules', '.bin', 'prebuild-install');
+    if (!existsSync(prebuildBin)) {
+      console.error(`  ERROR: prebuild-install not found at ${prebuildBin}`);
+      process.exit(1);
+    }
+    console.log(`\n  Downloading pre-built ${key} for ${targetPlatform}-${targetArch} (Electron ${electronVersion}) …`);
+    execFileSync(
+      prebuildBin,
+      [
+        `--runtime=electron`,
+        `--target=${electronVersion}`,
+        `--arch=${targetArch}`,
+        `--platform=${targetPlatform}`,
+        `--tag-prefix=v`,
+        `--force-download`,
+      ],
+      { stdio: 'inherit', cwd: pkgDir },
+    );
+    console.log(`  ✓ ${key} pre-built binary downloaded`);
+  } else {
+    // ── Native: compile with node-gyp targeting the Electron runtime ────────
+    // The Electron headers are downloaded once to ~/.electron-gyp and cached.
+    console.log(`\n  Rebuilding ${key} with node-gyp for Electron ${electronVersion} …`);
+    execSync(
+      `npx --yes node-gyp rebuild` +
+      ` --target=${electronVersion}` +
+      ` --arch=${targetArch}` +
+      ` --dist-url=https://electronjs.org/headers` +
+      ` --directory="${pkgDir}"`,
+      {
+        stdio: 'inherit',
+        cwd:   pkgDir,
+        env:   { ...process.env, HOME: join(process.env.HOME ?? '~', '.electron-gyp') },
+      },
+    );
+    console.log(`  ✓ ${key} rebuilt`);
+  }
 }
 
 console.log('\n✓ API bundle ready at:', bundleDir);

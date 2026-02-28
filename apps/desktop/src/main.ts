@@ -12,7 +12,7 @@ import * as path from 'path';
 import * as http from 'http';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import { spawn, spawnSync, ChildProcess } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const isDev = !app.isPackaged;
@@ -49,45 +49,96 @@ function getOrCreateJwtSecret(): string {
 
 // ─── Production: run Prisma migrations ────────────────────────────────────────
 /**
- * Uses the Electron binary itself in ELECTRON_RUN_AS_NODE=1 mode to execute
- * the Prisma CLI bundled inside api/node_modules and apply any pending
- * SQLite migrations against the user's local database file.
- * This is idempotent — already-applied migrations are skipped.
+ * Applies pending SQLite migrations directly via better-sqlite3, bypassing the
+ * Prisma Rust migration-engine binary entirely.
+ *
+ * Why not `prisma migrate deploy`?  The Prisma CLI bundles a platform-specific
+ * Rust migration-engine binary.  When the app is built on macOS, only the macOS
+ * binary ends up in the bundle — so `prisma migrate deploy` exits with code 1 on
+ * Linux (AppImage) and Windows.
+ *
+ * This implementation replicates what the migration engine does:
+ *  1. Ensures the `_prisma_migrations` tracking table exists.
+ *  2. Reads each migration directory from prisma/migrations/, sorted by name.
+ *  3. Skips migrations already recorded as finished in the tracking table.
+ *  4. Executes the migration SQL in a transaction and records it.
+ *
+ * It is fully compatible with Prisma's own tracking table so switching back to
+ * the CLI (in dev) continues to work without re-applying migrations.
  */
 function runApiMigrations(apiDir: string, dbPath: string): void {
-  const prismaEntry = path.join(apiDir, 'node_modules', 'prisma', 'build', 'index.js');
+  const migrationsDir = path.join(apiDir, 'prisma', 'migrations');
 
-  if (!fs.existsSync(prismaEntry)) {
-    console.warn('[migrations] Prisma CLI not found at', prismaEntry, '— skipping');
+  if (!fs.existsSync(migrationsDir)) {
+    console.warn('[migrations] Migrations directory not found — skipping');
     return;
   }
 
-  const schemaPath = path.join(apiDir, 'prisma', 'schema.prisma');
-  console.log('[migrations] Running prisma migrate deploy …');
+  // Load better-sqlite3 from the bundle (already rebuilt for Electron in prepare-api.mjs).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Database = require(path.join(apiDir, 'node_modules', 'better-sqlite3')) as
+    new (path: string) => {
+      exec(sql: string): void;
+      prepare(sql: string): { get(...args: unknown[]): unknown; run(...args: unknown[]): void };
+      transaction<T>(fn: () => T): () => T;
+      close(): void;
+    };
 
-  const result = spawnSync(
-    process.execPath,
-    [prismaEntry, 'migrate', 'deploy', '--schema', schemaPath],
-    {
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: '1',
-        DATABASE_URL: `file:${dbPath}`,
-      },
-      cwd: apiDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  );
+  const db = new Database(dbPath);
 
-  if (result.status !== 0) {
-    const stderr = result.stderr?.toString() ?? '';
-    const stdout = result.stdout?.toString() ?? '';
-    console.error('[migrations] stdout:', stdout);
-    console.error('[migrations] stderr:', stderr);
-    throw new Error(`prisma migrate deploy exited with code ${result.status}`);
+  try {
+    // Ensure the Prisma migrations tracking table exists.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
+        "id"                  TEXT NOT NULL PRIMARY KEY,
+        "checksum"            TEXT NOT NULL,
+        "finished_at"         DATETIME,
+        "migration_name"      TEXT NOT NULL,
+        "logs"                TEXT,
+        "rolled_back_at"      DATETIME,
+        "started_at"          DATETIME NOT NULL DEFAULT current_timestamp,
+        "applied_steps_count" INTEGER  NOT NULL DEFAULT 0
+      )
+    `);
+
+    const migrationDirs = fs
+      .readdirSync(migrationsDir)
+      .filter((d) => fs.statSync(path.join(migrationsDir, d)).isDirectory())
+      .sort();                         // alphabetical = chronological for Prisma names
+
+    for (const migrationName of migrationDirs) {
+      const sqlFile = path.join(migrationsDir, migrationName, 'migration.sql');
+      if (!fs.existsSync(sqlFile)) continue;
+
+      // Skip if already applied.
+      const applied = db
+        .prepare('SELECT id FROM "_prisma_migrations" WHERE migration_name = ? AND finished_at IS NOT NULL')
+        .get(migrationName);
+      if (applied) continue;
+
+      const sql      = fs.readFileSync(sqlFile, 'utf-8');
+      const checksum = crypto.createHash('sha256').update(sql).digest('hex');
+      const id       = crypto.randomUUID();
+
+      console.log(`[migrations] Applying: ${migrationName}`);
+
+      const apply = db.transaction(() => {
+        db.exec(sql);
+        db.prepare(`
+          INSERT OR REPLACE INTO "_prisma_migrations"
+            (id, checksum, migration_name, finished_at, applied_steps_count)
+          VALUES (?, ?, ?, datetime('now'), 1)
+        `).run(id, checksum, migrationName);
+      });
+      apply();
+
+      console.log(`[migrations] Applied:  ${migrationName}`);
+    }
+
+    console.log('[migrations] All migrations up to date.');
+  } finally {
+    db.close();
   }
-
-  console.log('[migrations] Migrations applied successfully.');
 }
 
 // ─── Production: spawn the bundled NestJS API server ──────────────────────────

@@ -1,0 +1,113 @@
+name: Build Desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:       # allow manual trigger from GitHub UI
+
+# Each platform is built on its own native runner so that node-gyp compiles
+# better-sqlite3 for the correct OS (macOS → Mach-O, Linux → ELF, Windows → PE).
+# Cross-compiling native Node addons from macOS to Linux is not supported
+# without a full cross-compiler toolchain.
+
+jobs:
+  # ── macOS (arm64 + x64 universal DMG) ──────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build macOS DMG
+        run: pnpm build:desktop:mac
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:3457/api
+          NODE_ENV: production
+          # Uncomment and add secrets for notarisation / code signing:
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          # CSC_LINK: ${{ secrets.CSC_LINK }}
+          # CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-dmg
+          path: apps/desktop/dist/*.dmg
+
+  # ── Linux (AppImage x64) ────────────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install system build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            build-essential python3 \
+            libc6-dev libssl-dev \
+            rpm fakeroot         # needed by electron-builder for AppImage
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build Linux AppImage
+        run: pnpm build:desktop:linux
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:3457/api
+          NODE_ENV: production
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: apps/desktop/dist/*.AppImage
+
+  # ── Windows (NSIS installer x64) ───────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build Windows installer
+        run: pnpm build:desktop:win
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:3457/api
+          NODE_ENV: production
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: apps/desktop/dist/*.exe

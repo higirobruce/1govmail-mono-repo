@@ -11,15 +11,18 @@
     "dev": "concurrently \"pnpm --filter web dev\" \"pnpm --filter api start:dev\"",
     "build": "pnpm --filter web build && pnpm --filter api build",
     "lint": "pnpm --filter web lint && pnpm --filter api lint",
-
     "dev:desktop": "concurrently \"pnpm --filter web dev\" \"pnpm --filter api start:dev\" \"pnpm --filter desktop dev:electron\"",
-
     "build:desktop": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build",
     "build:desktop:mac": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:mac",
-    "build:desktop:win": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:win",
-    "build:desktop:linux": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build:linux"
+    "build:desktop:win": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production TARGET_PLATFORM=win32 TARGET_ARCH=x64 pnpm --filter web build && pnpm --filter desktop build:win",
+    "build:desktop:linux": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production TARGET_PLATFORM=linux TARGET_ARCH=x64 pnpm --filter web build && pnpm --filter desktop build:linux",
+
+    "release": "release-it",
+    "release:dry": "release-it --dry-run"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "@release-it/conventional-changelog": "^10.0.5",
+    "concurrently": "^9.1.2",
+    "release-it": "^19.2.4"
   }
 }

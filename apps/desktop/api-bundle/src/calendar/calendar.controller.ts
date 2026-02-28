@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Query,
   Body,
@@ -48,6 +49,17 @@ export class CalendarController {
     return this.calendarService.createEvent(req.user.sub, body);
   }
 
+  /** PATCH /calendar/events/:id — update an existing calendar event */
+  @Patch('events/:id')
+  @HttpCode(HttpStatus.OK)
+  updateEvent(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: CalendarEventData,
+  ) {
+    return this.calendarService.updateEvent(req.user.sub, id, body);
+  }
+
   /** DELETE /calendar/events/:id — delete a calendar event */
   @Delete('events/:id')
   @HttpCode(HttpStatus.OK)
@@ -56,6 +68,17 @@ export class CalendarController {
     @Param('id') id: string,
   ) {
     return this.calendarService.deleteEvent(req.user.sub, id);
+  }
+
+  /** POST /calendar/events/:id/rsvp — accept / decline / tentative a calendar invite */
+  @Post('events/:id/rsvp')
+  @HttpCode(HttpStatus.OK)
+  rsvpEvent(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: { verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE' },
+  ) {
+    return this.calendarService.rsvpEvent(req.user.sub, id, body.verb);
   }
 
   /**
@@ -75,5 +98,26 @@ export class CalendarController {
     const startDate = start ? new Date(start) : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
     const endDate   = end   ? new Date(end)   : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
     return this.calendarService.getFreeBusy(req.user.sub, email.trim(), startDate, endDate);
+  }
+
+  /**
+   * POST /calendar/freebusy/batch
+   * Body: { emails: string[], start: ISO, end: ISO }
+   * Returns free/busy data for all supplied emails in parallel.
+   */
+  @Post('freebusy/batch')
+  @HttpCode(HttpStatus.OK)
+  getFreeBusyBatch(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { emails: string[]; start: string; end: string },
+  ) {
+    const { emails, start, end } = body;
+    if (!Array.isArray(emails) || emails.length === 0) {
+      throw new BadRequestException('emails array is required');
+    }
+    const now = new Date();
+    const startDate = start ? new Date(start) : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const endDate   = end   ? new Date(end)   : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    return this.calendarService.getFreeBusyBatch(req.user.sub, emails, startDate, endDate);
   }
 }

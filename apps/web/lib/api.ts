@@ -412,6 +412,9 @@ export const api = {
       linkedSubject?: string;
       assignedToEmail?: string;
       assignedToName?: string;
+      recurrence?: string;
+      recurrenceEndDate?: string;
+      reminderAt?: string;
     }) => {
       if (USE_MOCK) return delay({ id: `t-${Date.now()}`, ...data });
       return request<any>('/tasks', { method: 'POST', body: JSON.stringify(data) });
@@ -426,6 +429,9 @@ export const api = {
       linkedSubject: string;
       assignedToEmail: string;
       assignedToName: string;
+      recurrence: string;
+      recurrenceEndDate: string;
+      reminderAt: string;
     }>) => {
       if (USE_MOCK) return delay({ id, ...data });
       return request<any>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
@@ -460,6 +466,46 @@ export const api = {
     deleteComment: (taskId: string, commentId: string) => {
       if (USE_MOCK) return delay({ success: true });
       return request<{ success: boolean }>(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' });
+    },
+
+    // ─── Attachments ───────────────────────────────────────────────────────────
+
+    uploadAttachments: (taskId: string, files: File[]): Promise<any> => {
+      if (USE_MOCK) return delay({});
+      const token = getToken();
+      const fd = new FormData();
+      files.forEach((f) => fd.append('attachments', f, f.name));
+      return fetch(`${API_BASE}/tasks/${taskId}/attachments`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      }).then(async (res) => {
+        if (!res.ok) {
+          if (res.status === 401 && typeof window !== 'undefined') {
+            localStorage.removeItem('auth');
+            window.location.replace('/login');
+            throw new Error('Session expired');
+          }
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err as any).message ?? 'Upload failed');
+        }
+        return res.json();
+      });
+    },
+
+    deleteAttachment: (taskId: string, attId: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<{ success: boolean }>(`/tasks/${taskId}/attachments/${attId}`, { method: 'DELETE' });
+    },
+
+    downloadAttachment: async (taskId: string, attId: string): Promise<string> => {
+      if (USE_MOCK) return '';
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/tasks/${taskId}/attachments/${attId}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('Download failed');
+      return URL.createObjectURL(await res.blob());
     },
   },
 };

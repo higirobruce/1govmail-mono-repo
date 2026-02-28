@@ -10,7 +10,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import {
   Plus, Loader2, ListTodo, Pencil, Trash2, Check,
-  Calendar, User, Link, List, Columns, ChevronDown,
+  Calendar, User, Link, List, Columns, ChevronDown, X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import TaskModal, {
@@ -23,7 +23,7 @@ import TaskModal, {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type FilterTab = 'ALL' | TaskStatus;
+type FilterTab = 'ALL' | 'TODAY' | TaskStatus;
 type ViewMode  = 'list' | 'board';
 type SortKey   = 'due_asc' | 'due_desc' | 'priority_high' | 'priority_low' | 'newest' | 'oldest';
 
@@ -33,6 +33,7 @@ const PRIORITY_ORDER: Record<TaskPriority, number> = { URGENT: 0, HIGH: 1, MEDIU
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
   { key: 'ALL',         label: 'All' },
+  { key: 'TODAY',       label: 'My Day' },
   { key: 'TODO',        label: 'To Do' },
   { key: 'IN_PROGRESS', label: 'In Progress' },
   { key: 'DONE',        label: 'Done' },
@@ -102,6 +103,9 @@ function TaskCard({
   onDelete,
   draggable,
   onDragStart,
+  selectable,
+  selected,
+  onSelect,
 }: {
   task: Task;
   onToggle: () => void;
@@ -109,6 +113,9 @@ function TaskCard({
   onDelete: () => void;
   draggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelect?: () => void;
 }) {
   const done = task.status === 'DONE';
   const cancelled = task.status === 'CANCELLED';
@@ -129,7 +136,22 @@ function TaskCard({
       draggable={draggable}
       onDragStart={onDragStart}
     >
-      {/* Checkbox */}
+      {/* Selection checkbox */}
+      {selectable && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
+          className={cn(
+            'mt-0.5 w-5 h-5 rounded border-2 shrink-0 flex items-center justify-center transition-all',
+            selected
+              ? 'bg-primary border-primary'
+              : 'border-border/50 opacity-0 group-hover:opacity-100',
+          )}
+        >
+          {selected && <Check className="w-3 h-3 text-primary-foreground" />}
+        </button>
+      )}
+
+      {/* Status checkbox */}
       <button
         onClick={onToggle}
         className={cn(
@@ -235,6 +257,8 @@ export default function TasksPage() {
   const [modalTask, setModalTask] = useState<Task | null | 'new'>('new');
   const [showModal, setShowModal] = useState(false);
   const [dragOverColumn, setDragOverColumn] = useState<TaskStatus | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   // Auth guard
   useEffect(() => {
@@ -262,8 +286,13 @@ export default function TasksPage() {
 
   useEffect(() => {
     if (!hydrated || !isAuthenticated) return;
-    loadTasks(filter === 'ALL' ? undefined : filter);
+    // TODAY is a client-side filter — load all tasks and filter locally
+    const statusParam = filter === 'ALL' || filter === 'TODAY' ? undefined : filter;
+    loadTasks(statusParam);
   }, [hydrated, isAuthenticated, filter, loadTasks]);
+
+  // Clear selection when filter changes
+  useEffect(() => { setSelectedIds(new Set()); }, [filter]);
 
   const handleToggle = async (task: Task) => {
     const newStatus: TaskStatus = task.status === 'DONE' ? 'TODO' : 'DONE';
@@ -323,11 +352,64 @@ export default function TasksPage() {
     });
   };
 
+  // TODAY client-side filter
+  const isTodayTask = (task: Task): boolean => {
+    if (!task.dueDate) return false;
+    const due = new Date(task.dueDate);
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
+    return due >= todayStart && due <= todayEnd;
+  };
+
+  const todayCount = tasks.filter(isTodayTask).length;
+
+  const filteredByTab = filter === 'TODAY' ? tasks.filter(isTodayTask) : tasks;
+
   // Apply overdue filter + sort
   const displayedTasks = sortTasks(
-    overdueOnly ? tasks.filter(isOverdue) : tasks,
+    overdueOnly ? filteredByTab.filter(isOverdue) : filteredByTab,
     sortKey,
   );
+
+  // ── Bulk actions ───────────────────────────────────────────────────────────
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const handleBulkDone = async () => {
+    if (!selectedIds.size || bulkLoading) return;
+    setBulkLoading(true);
+    const ids = Array.from(selectedIds);
+    let failures = 0;
+    for (const id of ids) {
+      try {
+        const updated = (await api.tasks.update(id, { status: 'DONE' })) as Task;
+        setTasks((prev) => prev.map((t) => t.id === id ? { ...updated, subtasks: t.subtasks, comments: t.comments } : t));
+      } catch { failures++; }
+    }
+    if (failures) toast.error(`${failures} task(s) could not be updated`);
+    else toast.success(`${ids.length} task(s) marked as done`);
+    setSelectedIds(new Set());
+    setBulkLoading(false);
+  };
+
+  const handleBulkDelete = async () => {
+    if (!selectedIds.size || bulkLoading) return;
+    if (!window.confirm(`Delete ${selectedIds.size} task(s)?`)) return;
+    setBulkLoading(true);
+    const ids = Array.from(selectedIds);
+    let failures = 0;
+    for (const id of ids) {
+      try {
+        await api.tasks.delete(id);
+        setTasks((prev) => prev.filter((t) => t.id !== id));
+      } catch { failures++; }
+    }
+    if (failures) toast.error(`${failures} task(s) could not be deleted`);
+    else toast.success(`${ids.length} task(s) deleted`);
+    setSelectedIds(new Set());
+    setBulkLoading(false);
+  };
 
   if (!hydrated) return null;
 
@@ -386,13 +468,18 @@ export default function TasksPage() {
                 key={tab.key}
                 onClick={() => setFilter(tab.key)}
                 className={cn(
-                  'px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-colors',
+                  'px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 transition-colors flex items-center gap-1.5',
                   filter === tab.key
                     ? 'border-primary text-primary'
                     : 'border-transparent text-muted-foreground/60 hover:text-foreground',
                 )}
               >
                 {tab.label}
+                {tab.key === 'TODAY' && todayCount > 0 && (
+                  <span className="text-[10px] bg-primary/15 text-primary rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none">
+                    {todayCount}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -468,6 +555,9 @@ export default function TasksPage() {
                       onToggle={() => handleToggle(task)}
                       onEdit={() => openEdit(task)}
                       onDelete={() => handleDelete(task)}
+                      selectable
+                      selected={selectedIds.has(task.id)}
+                      onSelect={() => toggleSelect(task.id)}
                     />
                   ))}
                 </div>
@@ -526,6 +616,9 @@ export default function TasksPage() {
                                 onDelete={() => handleDelete(task)}
                                 draggable
                                 onDragStart={(e) => handleDragStart(e, task.id)}
+                                selectable
+                                selected={selectedIds.has(task.id)}
+                                onSelect={() => toggleSelect(task.id)}
                               />
                             ))
                           )}
@@ -539,6 +632,41 @@ export default function TasksPage() {
           </div>
         )}
       </div>
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2.5 bg-background border border-border/50 rounded-2xl shadow-2xl">
+          <span className="text-xs text-muted-foreground/70 mr-1">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleBulkDone}
+            disabled={bulkLoading}
+            className="h-7 text-xs gap-1.5 text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-900/30"
+          >
+            {bulkLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+            Mark done
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleBulkDelete}
+            disabled={bulkLoading}
+            className="h-7 text-xs gap-1.5 text-red-700 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-700 dark:hover:bg-red-900/30"
+          >
+            <Trash2 className="w-3 h-3" />
+            Delete
+          </Button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="ml-1 w-6 h-6 flex items-center justify-center rounded-lg text-muted-foreground/50 hover:bg-muted/60"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Modal */}
       {showModal && (

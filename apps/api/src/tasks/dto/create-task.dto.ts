@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsDateString } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDateString, IsIn } from 'class-validator';
 
 export enum TaskStatus {
   TODO = 'TODO',
@@ -49,4 +49,16 @@ export class CreateTaskDto {
   @IsOptional()
   @IsString()
   assignedToName?: string;
+
+  @IsOptional()
+  @IsIn(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'])
+  recurrence?: string;
+
+  @IsOptional()
+  @IsDateString()
+  recurrenceEndDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  reminderAt?: string;
 }

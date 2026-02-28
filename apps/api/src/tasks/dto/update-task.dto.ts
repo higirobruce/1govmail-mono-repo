@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsDateString } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDateString, IsIn } from 'class-validator';
 import { TaskStatus, TaskPriority } from './create-task.dto';
 
 export class UpdateTaskDto {
@@ -37,4 +37,16 @@ export class UpdateTaskDto {
   @IsOptional()
   @IsString()
   assignedToName?: string;
+
+  @IsOptional()
+  @IsIn(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'])
+  recurrence?: string;
+
+  @IsOptional()
+  @IsDateString()
+  recurrenceEndDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  reminderAt?: string;
 }

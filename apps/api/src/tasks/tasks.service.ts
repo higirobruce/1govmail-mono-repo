@@ -2,8 +2,17 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
   UnauthorizedException,
 } from '@nestjs/common';
+
+interface AttachmentEntry {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  data: string; // base64
+}
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { CreateTaskDto, TaskStatus } from './dto/create-task.dto';
@@ -26,7 +35,7 @@ export class TasksService {
   }
 
   async findAll(userId: string, status?: string, linkedMessageId?: string) {
-    return this.prisma.task.findMany({
+    const tasks = await this.prisma.task.findMany({
       where: {
         userId,
         ...(status ? { status: status as TaskStatus } : {}),
@@ -38,6 +47,13 @@ export class TasksService {
       },
       orderBy: [{ createdAt: 'desc' }],
     });
+    // Strip base64 data from attachment entries to keep list response small
+    return tasks.map((t) => ({
+      ...t,
+      attachments: t.attachments
+        ? (t.attachments as unknown as AttachmentEntry[]).map(({ data: _data, ...meta }) => meta)
+        : null,
+    }));
   }
 
   async create(userId: string, dto: CreateTaskDto) {
@@ -54,6 +70,9 @@ export class TasksService {
         assignedToEmail: dto.assignedToEmail,
         assignedToName: dto.assignedToName,
         assignedAt: dto.assignedToEmail ? new Date() : null,
+        recurrence: dto.recurrence ?? null,
+        recurrenceEndDate: dto.recurrenceEndDate ? new Date(dto.recurrenceEndDate) : null,
+        reminderAt: dto.reminderAt ? new Date(dto.reminderAt) : null,
       },
     });
   }
@@ -68,7 +87,7 @@ export class TasksService {
     const leavingDone =
       dto.status && dto.status !== TaskStatus.DONE && task.status === TaskStatus.DONE;
 
-    return this.prisma.task.update({
+    const updated = await this.prisma.task.update({
       where: { id },
       data: {
         ...(dto.title !== undefined ? { title: dto.title } : {}),
@@ -80,10 +99,61 @@ export class TasksService {
         ...(dto.linkedSubject !== undefined ? { linkedSubject: dto.linkedSubject } : {}),
         ...(dto.assignedToEmail !== undefined ? { assignedToEmail: dto.assignedToEmail } : {}),
         ...(dto.assignedToName !== undefined ? { assignedToName: dto.assignedToName } : {}),
+        ...(dto.recurrence !== undefined ? { recurrence: dto.recurrence || null } : {}),
+        ...(dto.recurrenceEndDate !== undefined
+          ? { recurrenceEndDate: dto.recurrenceEndDate ? new Date(dto.recurrenceEndDate) : null }
+          : {}),
+        ...(dto.reminderAt !== undefined
+          ? { reminderAt: dto.reminderAt ? new Date(dto.reminderAt) : null, reminderSentAt: null }
+          : {}),
         ...(goingDone ? { completedAt: new Date() } : {}),
         ...(leavingDone ? { completedAt: null } : {}),
       },
     });
+
+    // Recurrence spawn: when marking DONE and task has a recurrence rule + due date
+    if (goingDone && task.recurrence && task.dueDate) {
+      const nextDue = this.computeNextDue(new Date(task.dueDate), task.recurrence);
+      const endDate = task.recurrenceEndDate ? new Date(task.recurrenceEndDate) : null;
+
+      if (!endDate || nextDue <= endDate) {
+        // Preserve the same reminder offset for the next occurrence
+        let nextReminderAt: Date | null = null;
+        if (task.reminderAt && task.dueDate) {
+          const offsetMs = new Date(task.dueDate).getTime() - new Date(task.reminderAt).getTime();
+          nextReminderAt = new Date(nextDue.getTime() - offsetMs);
+        }
+
+        await this.prisma.task.create({
+          data: {
+            userId: task.userId,
+            title: task.title,
+            description: task.description,
+            status: TaskStatus.TODO,
+            priority: task.priority,
+            dueDate: nextDue,
+            linkedMessageId: task.linkedMessageId,
+            linkedSubject: task.linkedSubject,
+            recurrence: task.recurrence,
+            recurrenceEndDate: task.recurrenceEndDate,
+            reminderAt: nextReminderAt,
+          },
+        });
+      }
+    }
+
+    return updated;
+  }
+
+  private computeNextDue(current: Date, recurrence: string): Date {
+    const next = new Date(current);
+    switch (recurrence) {
+      case 'DAILY':   next.setDate(next.getDate() + 1); break;
+      case 'WEEKLY':  next.setDate(next.getDate() + 7); break;
+      case 'MONTHLY': next.setMonth(next.getMonth() + 1); break;
+      case 'YEARLY':  next.setFullYear(next.getFullYear() + 1); break;
+    }
+    return next;
   }
 
   async remove(userId: string, id: string) {
@@ -93,6 +163,77 @@ export class TasksService {
 
     await this.prisma.task.delete({ where: { id } });
     return { success: true };
+  }
+
+  // ─── Attachments ─────────────────────────────────────────────────────────────
+
+  async addAttachments(
+    userId: string,
+    taskId: string,
+    files: Express.Multer.File[],
+  ) {
+    const task = await this.verifyTaskOwnership(userId, taskId);
+    const existing: AttachmentEntry[] = (task.attachments as unknown as AttachmentEntry[] | null) ?? [];
+
+    if (existing.length + files.length > 5) {
+      throw new BadRequestException('Maximum 5 attachments per task');
+    }
+
+    const newEntries: AttachmentEntry[] = files.map((f) => ({
+      id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      filename: f.originalname,
+      mimeType: f.mimetype,
+      size: f.size,
+      data: f.buffer.toString('base64'),
+    }));
+
+    const merged = [...existing, ...newEntries];
+    const updated = await this.prisma.task.update({
+      where: { id: taskId },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      data: { attachments: merged as any },
+    });
+
+    // Return metadata without base64 data
+    return {
+      ...updated,
+      attachments: (updated.attachments as unknown as AttachmentEntry[]).map(
+        ({ data: _data, ...meta }) => meta,
+      ),
+    };
+  }
+
+  async deleteAttachment(userId: string, taskId: string, attachmentId: string) {
+    const task = await this.verifyTaskOwnership(userId, taskId);
+    const existing: AttachmentEntry[] = (task.attachments as unknown as AttachmentEntry[] | null) ?? [];
+    const filtered = existing.filter((a) => a.id !== attachmentId);
+
+    if (filtered.length === existing.length) {
+      throw new NotFoundException('Attachment not found');
+    }
+
+    return this.prisma.task.update({
+      where: { id: taskId },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      data: { attachments: filtered as any },
+    });
+  }
+
+  async downloadAttachment(
+    userId: string,
+    taskId: string,
+    attachmentId: string,
+  ): Promise<{ filename: string; mimeType: string; buffer: Buffer }> {
+    const task = await this.verifyTaskOwnership(userId, taskId);
+    const entries: AttachmentEntry[] = (task.attachments as unknown as AttachmentEntry[] | null) ?? [];
+    const entry = entries.find((a) => a.id === attachmentId);
+    if (!entry) throw new NotFoundException('Attachment not found');
+
+    return {
+      filename: entry.filename,
+      mimeType: entry.mimeType,
+      buffer: Buffer.from(entry.data, 'base64'),
+    };
   }
 
   // ─── Subtasks ───────────────────────────────────────────────────────────────

@@ -9,9 +9,16 @@ import {
   Param,
   UseGuards,
   Req,
+  Res,
   HttpCode,
   HttpStatus,
+  BadRequestException,
+  UseInterceptors,
+  UploadedFiles,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import type { Response } from 'express';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -135,5 +142,53 @@ export class TasksController {
     @Param('cid') cid: string,
   ) {
     return this.tasksService.deleteComment(req.user.sub, id, cid);
+  }
+
+  // ─── Attachments ─────────────────────────────────────────────────────────────
+
+  /** POST /tasks/:id/attachments — upload files (multipart/form-data, field: "attachments") */
+  @Post(':id/attachments')
+  @UseInterceptors(
+    FilesInterceptor('attachments', 5, {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB per file
+    }),
+  )
+  addAttachments(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    if (!files?.length) throw new BadRequestException('No files uploaded');
+    return this.tasksService.addAttachments(req.user.sub, id, files);
+  }
+
+  /** DELETE /tasks/:id/attachments/:attId */
+  @Delete(':id/attachments/:attId')
+  @HttpCode(HttpStatus.OK)
+  deleteAttachment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('attId') attId: string,
+  ) {
+    return this.tasksService.deleteAttachment(req.user.sub, id, attId);
+  }
+
+  /** GET /tasks/:id/attachments/:attId/download */
+  @Get(':id/attachments/:attId/download')
+  async downloadAttachment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('attId') attId: string,
+    @Res() res: Response,
+  ) {
+    const { filename, mimeType, buffer } =
+      await this.tasksService.downloadAttachment(req.user.sub, id, attId);
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(filename)}"`,
+    );
+    res.send(buffer);
   }
 }

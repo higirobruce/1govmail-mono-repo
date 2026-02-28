@@ -13,6 +13,7 @@ export interface CalendarEventData {
   startAt: string;  // ISO string
   endAt: string;    // ISO string
   allDay?: boolean;
+  attendees?: string[];
 }
 
 @Injectable()
@@ -137,6 +138,7 @@ export class CalendarService {
         description:    data.description,
         organizerEmail: user.email,
         organizerName:  user.displayName ?? undefined,
+        attendees:      data.attendees ?? [],
       },
       user.csrfToken ?? undefined,
     );
@@ -153,7 +155,52 @@ export class CalendarService {
         allDay:      data.allDay ?? false,
         isRecurring: false,
         organizer:   user.email,
-        attendees:   [],
+        attendees:   (data.attendees ?? []).map((a) => ({ email: a })) as any,
+        syncedAt:    new Date(),
+      },
+    });
+  }
+
+  // ── Update event ──────────────────────────────────────────────────────────
+
+  async updateEvent(userId: string, eventId: string, data: CalendarEventData): Promise<any> {
+    const user = await this.getUser(userId);
+    const event = await this.prisma.calendarEvent.findFirst({
+      where: { id: eventId, userId },
+    });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const startAt = new Date(data.startAt);
+    const endAt   = new Date(data.endAt);
+
+    await this.zimbra.modifyCalendarEvent(
+      user.zimbraHost,
+      user.authToken!,
+      event.zimbraId,
+      {
+        title:          data.title,
+        location:       data.location,
+        startAt,
+        endAt,
+        allDay:         data.allDay ?? false,
+        description:    data.description,
+        organizerEmail: user.email,
+        organizerName:  user.displayName ?? undefined,
+        attendees:      data.attendees ?? [],
+      },
+      user.csrfToken ?? undefined,
+    );
+
+    return this.prisma.calendarEvent.update({
+      where: { id: eventId },
+      data: {
+        title:       data.title,
+        description: data.description ?? null,
+        location:    data.location    ?? null,
+        startAt,
+        endAt,
+        allDay:      data.allDay ?? false,
+        attendees:   (data.attendees ?? []).map((a) => ({ email: a })) as any,
         syncedAt:    new Date(),
       },
     });
@@ -178,6 +225,30 @@ export class CalendarService {
       user.csrfToken ?? undefined,
     );
     await this.prisma.calendarEvent.delete({ where: { id: eventId } });
+    return { success: true };
+  }
+
+  // ── RSVP ─────────────────────────────────────────────────────────────────
+
+  async rsvpEvent(
+    userId: string,
+    eventId: string,
+    verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE',
+  ): Promise<{ success: boolean }> {
+    const user = await this.getUser(userId);
+    const event = await this.prisma.calendarEvent.findFirst({
+      where: { id: eventId, userId },
+    });
+    if (!event) throw new NotFoundException('Event not found');
+
+    await this.zimbra.sendInviteReply(
+      user.zimbraHost,
+      user.authToken!,
+      event.zimbraId,
+      verb,
+      event.title,
+      user.csrfToken ?? undefined,
+    );
     return { success: true };
   }
 
@@ -209,5 +280,38 @@ export class CalendarService {
       user.csrfToken ?? undefined,
     );
     return { email, ...data };
+  }
+
+  // ── Batch Free / Busy ─────────────────────────────────────────────────────
+
+  /**
+   * Return free/busy for multiple users in parallel (one Zimbra call per email).
+   */
+  async getFreeBusyBatch(
+    userId: string,
+    emails: string[],
+    start: Date,
+    end: Date,
+  ): Promise<Array<{
+    email: string;
+    busy:        Array<{ s: number; e: number }>;
+    tentative:   Array<{ s: number; e: number }>;
+    unavailable: Array<{ s: number; e: number }>;
+  }>> {
+    const user = await this.getUser(userId);
+    return Promise.all(
+      emails.map((email) =>
+        this.zimbra
+          .getFreeBusy(
+            user.zimbraHost,
+            user.authToken!,
+            email,
+            start.getTime(),
+            end.getTime(),
+            user.csrfToken ?? undefined,
+          )
+          .then((data) => ({ email, ...data })),
+      ),
+    );
   }
 }

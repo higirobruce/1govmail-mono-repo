@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth.store';
 import { Button } from '@/components/ui/button';
@@ -37,6 +37,13 @@ export interface TaskComment {
   createdAt: string;
 }
 
+export interface TaskAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -50,6 +57,10 @@ export interface Task {
   assignedToEmail: string | null;
   assignedToName: string | null;
   assignedAt: string | null;
+  attachments: TaskAttachment[] | null;
+  recurrence: string | null;
+  recurrenceEndDate: string | null;
+  reminderAt: string | null;
   createdAt: string;
   subtasks: Subtask[];
   comments: TaskComment[];
@@ -65,6 +76,9 @@ export interface TaskForm {
   linkedSubject: string;
   assignedToEmail: string;
   assignedToName: string;
+  recurrence: string;
+  recurrenceEndDate: string;
+  reminderOffset: string; // '' | '15' | '30' | '60' | '1440' (minutes before due)
 }
 
 export const EMPTY_FORM: TaskForm = {
@@ -77,7 +91,12 @@ export const EMPTY_FORM: TaskForm = {
   linkedSubject: '',
   assignedToEmail: '',
   assignedToName: '',
+  recurrence: '',
+  recurrenceEndDate: '',
+  reminderOffset: '',
 };
+
+const REMINDER_PRESETS = ['15', '30', '60', '1440'] as const;
 
 export const PRIORITY_META: Record<TaskPriority, { label: string; cls: string }> = {
   LOW:    { label: 'Low',    cls: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
@@ -119,30 +138,49 @@ export default function TaskModal({
 }) {
   const currentUser = useAuthStore((s) => s.user);
 
-  const [form, setForm] = useState<TaskForm>(
-    task
-      ? {
-          title: task.title,
-          description: task.description ?? '',
-          status: task.status,
-          priority: task.priority,
-          dueDate: task.dueDate ? task.dueDate.slice(0, 10) : '',
-          linkedMessageId: task.linkedMessageId ?? '',
-          linkedSubject: task.linkedSubject ?? '',
-          assignedToEmail: task.assignedToEmail ?? '',
-          assignedToName: task.assignedToName ?? '',
+  const [form, setForm] = useState<TaskForm>(() => {
+    if (task) {
+      // Reverse-compute reminderOffset from task.reminderAt and task.dueDate
+      let reminderOffset = '';
+      if (task.reminderAt && task.dueDate) {
+        const offsetMin = Math.round(
+          (new Date(task.dueDate).getTime() - new Date(task.reminderAt).getTime()) / 60000,
+        );
+        if ((REMINDER_PRESETS as readonly string[]).includes(String(offsetMin))) {
+          reminderOffset = String(offsetMin);
         }
-      : {
-          ...EMPTY_FORM,
-          ...(prefill?.linkedMessageId ? { linkedMessageId: prefill.linkedMessageId } : {}),
-          ...(prefill?.linkedSubject ? { linkedSubject: prefill.linkedSubject } : {}),
-        },
-  );
+      }
+      return {
+        title: task.title,
+        description: task.description ?? '',
+        status: task.status,
+        priority: task.priority,
+        dueDate: task.dueDate ? task.dueDate.slice(0, 10) : '',
+        linkedMessageId: task.linkedMessageId ?? '',
+        linkedSubject: task.linkedSubject ?? '',
+        assignedToEmail: task.assignedToEmail ?? '',
+        assignedToName: task.assignedToName ?? '',
+        recurrence: task.recurrence ?? '',
+        recurrenceEndDate: task.recurrenceEndDate ? task.recurrenceEndDate.slice(0, 10) : '',
+        reminderOffset,
+      };
+    }
+    return {
+      ...EMPTY_FORM,
+      ...(prefill?.linkedMessageId ? { linkedMessageId: prefill.linkedMessageId } : {}),
+      ...(prefill?.linkedSubject ? { linkedSubject: prefill.linkedSubject } : {}),
+    };
+  });
   const [saving, setSaving] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [autocomplete, setAutocomplete] = useState<Array<{ email: string; display: string }>>([]);
   const [showAc, setShowAc] = useState(false);
   const acTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Attachment state ─────────────────────────────────────────────────────────
+  const [attachments, setAttachments] = useState<TaskAttachment[]>(task?.attachments ?? []);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Subtasks state ──────────────────────────────────────────────────────────
   const [subtasks, setSubtasks] = useState<Subtask[]>(task?.subtasks ?? []);
@@ -252,12 +290,79 @@ export default function TaskModal({
     }
   };
 
+  // ── Attachment actions ──────────────────────────────────────────────────────
+
+  const handleFileUpload = useCallback(async (files: FileList | null) => {
+    if (!task || !files?.length) return;
+    const arr = Array.from(files);
+    if (arr.length + attachments.length > 5) {
+      toast.error('Maximum 5 attachments per task');
+      return;
+    }
+    const oversized = arr.filter((f) => f.size > 5 * 1024 * 1024);
+    if (oversized.length) {
+      toast.error('Each file must be under 5 MB');
+      return;
+    }
+    setUploadingFiles(true);
+    try {
+      const updated = await api.tasks.uploadAttachments(task.id, arr) as Task;
+      setAttachments(updated.attachments ?? []);
+      toast.success(`${arr.length} file${arr.length > 1 ? 's' : ''} attached`);
+    } catch (err: any) {
+      toast.error('Failed to upload', { description: err?.message });
+    } finally {
+      setUploadingFiles(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [task, attachments.length]);
+
+  const handleDeleteAttachment = async (attId: string) => {
+    if (!task) return;
+    try {
+      await api.tasks.deleteAttachment(task.id, attId);
+      setAttachments((prev) => prev.filter((a) => a.id !== attId));
+    } catch (err: any) {
+      toast.error('Failed to delete attachment', { description: err?.message });
+    }
+  };
+
+  const handleDownloadAttachment = async (att: TaskAttachment) => {
+    if (!task) return;
+    try {
+      const url = await api.tasks.downloadAttachment(task.id, att.id);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = att.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err: any) {
+      toast.error('Failed to download', { description: err?.message });
+    }
+  };
+
   // ── Save ────────────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
     if (!form.title.trim()) { toast.error('Title is required'); return; }
+    if (form.reminderOffset && !form.dueDate) {
+      toast.error('Set a due date before adding a reminder');
+      return;
+    }
     setSaving(true);
     try {
+      // Compute reminderAt from dueDate - reminderOffset
+      let reminderAt: string | undefined;
+      if (form.reminderOffset && form.dueDate) {
+        const dueMs = new Date(form.dueDate).getTime();
+        const offsetMs = parseInt(form.reminderOffset, 10) * 60 * 1000;
+        reminderAt = new Date(dueMs - offsetMs).toISOString();
+      } else if (!form.reminderOffset) {
+        reminderAt = undefined; // will not be sent unless field was present
+      }
+
       const payload = {
         title: form.title.trim(),
         description: form.description || undefined,
@@ -268,6 +373,9 @@ export default function TaskModal({
         linkedSubject: form.linkedSubject || undefined,
         assignedToEmail: form.assignedToEmail || undefined,
         assignedToName: form.assignedToName || undefined,
+        recurrence: form.recurrence || undefined,
+        recurrenceEndDate: form.recurrenceEndDate || undefined,
+        ...(reminderAt !== undefined ? { reminderAt } : {}),
       };
 
       let saved: Task;
@@ -406,6 +514,54 @@ export default function TaskModal({
               />
             </Field>
 
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Recurrence">
+                <div className="relative">
+                  <select
+                    value={form.recurrence}
+                    onChange={(e) => set('recurrence')(e.target.value)}
+                    className="w-full h-9 text-sm bg-muted/30 border border-border/50 rounded-md px-3 pr-8 appearance-none focus:outline-none focus:border-primary/50 text-foreground"
+                  >
+                    <option value="">None</option>
+                    <option value="DAILY">Daily</option>
+                    <option value="WEEKLY">Weekly</option>
+                    <option value="MONTHLY">Monthly</option>
+                    <option value="YEARLY">Yearly</option>
+                  </select>
+                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40 pointer-events-none" />
+                </div>
+              </Field>
+
+              <Field label="Reminder">
+                <div className="relative">
+                  <select
+                    value={form.reminderOffset}
+                    onChange={(e) => set('reminderOffset')(e.target.value)}
+                    disabled={!form.dueDate}
+                    className="w-full h-9 text-sm bg-muted/30 border border-border/50 rounded-md px-3 pr-8 appearance-none focus:outline-none focus:border-primary/50 text-foreground disabled:opacity-40"
+                  >
+                    <option value="">None</option>
+                    <option value="15">15 min before</option>
+                    <option value="30">30 min before</option>
+                    <option value="60">1 hour before</option>
+                    <option value="1440">1 day before</option>
+                  </select>
+                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40 pointer-events-none" />
+                </div>
+              </Field>
+            </div>
+
+            {form.recurrence && (
+              <Field label="Repeat until (optional)">
+                <Input
+                  type="date"
+                  value={form.recurrenceEndDate}
+                  onChange={(e) => set('recurrenceEndDate')(e.target.value)}
+                  className="h-9 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
+                />
+              </Field>
+            )}
+
             {/* Subtasks section */}
             <div className="pt-1 border-t border-border/30 space-y-2">
               <div className="flex items-center justify-between">
@@ -542,6 +698,66 @@ export default function TaskModal({
                 </p>
               )}
             </div>
+
+            {/* Attachments — only in edit mode (needs a task ID) */}
+            {task && (
+              <div className="pt-1 border-t border-border/30 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+                    Attachments{attachments.length > 0 && ` (${attachments.length}/5)`}
+                  </p>
+                  {attachments.length < 5 && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingFiles}
+                      className="flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-primary transition-colors"
+                    >
+                      {uploadingFiles
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <Plus className="w-3 h-3" />}
+                      Attach
+                    </button>
+                  )}
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => handleFileUpload(e.target.files)}
+                />
+                {attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {attachments.map((att) => (
+                      <div
+                        key={att.id}
+                        className="group flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/40 border border-border/40 text-xs max-w-[200px]"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadAttachment(att)}
+                          className="text-foreground/70 hover:text-primary truncate"
+                          title={att.filename}
+                        >
+                          {att.filename}
+                        </button>
+                        <span className="text-muted-foreground/40 text-[10px] shrink-0">
+                          {(att.size / 1024).toFixed(0)}KB
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAttachment(att.id)}
+                          className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground/40 hover:text-destructive transition-all"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Comments — only in edit mode */}
             {task && (

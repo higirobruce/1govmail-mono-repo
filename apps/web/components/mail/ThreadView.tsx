@@ -324,7 +324,10 @@ export default function ThreadView({
                 <span className="font-medium">{hiddenCount}</span> earlier not shown
               </div>
             )}
-            {visibleMessages.map((msg) => (
+            {/* Timeline spine — centered behind the 28px-wide avatars in px-4 rows */}
+            <div className="relative py-3">
+              <div className="absolute left-[30px] top-0 bottom-0 w-px bg-border/25 pointer-events-none" />
+              {visibleMessages.map((msg) => (
               <ThreadMessage
                 key={msg.id}
                 message={msg}
@@ -359,7 +362,8 @@ export default function ThreadView({
                     }
                   : undefined}
               />
-            ))}
+              ))}
+            </div>
           </>
         )}
 

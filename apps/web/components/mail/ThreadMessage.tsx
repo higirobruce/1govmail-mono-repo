@@ -325,7 +325,7 @@ export default function ThreadMessage({
     return (
       <div
         className={cn(
-          'w-full flex items-start gap-3 px-4 py-3 transition-colors hover:bg-muted/30 border-b border-border/15',
+          'relative flex items-center gap-2.5 px-4 py-2 cursor-pointer transition-colors hover:bg-muted/25',
           !message.isRead && !message.isDraft && 'bg-primary/[0.02]',
           message.isDraft && 'bg-amber-50/40 dark:bg-amber-900/10',
         )}
@@ -336,49 +336,52 @@ export default function ThreadMessage({
         aria-expanded={false}
         aria-label={`${message.isDraft ? 'Draft: ' : ''}Message from ${displayName}, ${timeStr}${!message.isRead ? ', unread' : ''}`}
       >
+        {/* Avatar node — ring punches through spine line */}
         <div className={cn(
-          'w-7 h-7 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0 mt-0.5',
-          message.isDraft ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400' : 'bg-primary/10 text-primary',
+          'w-7 h-7 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0 relative z-10 ring-2 ring-background',
+          message.isDraft
+            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+            : 'bg-primary/10 text-primary',
         )}>
           {initials}
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className={cn(
-                'text-[13px] truncate',
-                message.isRead ? 'text-foreground/75' : 'text-foreground font-semibold',
-              )}>
-                {displayName}
-              </span>
-              {message.isDraft && (
-                <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
-                  DRAFT
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {message.hasAttachments && (
-                <Paperclip className="w-3 h-3 text-muted-foreground/50" />
-              )}
-              <span className="text-[11px] text-muted-foreground/50">{timeStr}</span>
-              {message.isDraft ? (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                  className="p-0.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                  title="Delete draft"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              ) : (
-                <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/35" />
-              )}
-            </div>
-          </div>
-          {message.snippet && (
-            <p className="text-[12px] text-muted-foreground/55 truncate mt-0.5">
-              {message.snippet}
-            </p>
+
+        {/* Sender name */}
+        <span className={cn(
+          'text-[13px] shrink-0',
+          !message.isRead && !message.isDraft ? 'text-foreground font-semibold' : 'text-foreground/75',
+        )}>
+          {displayName}
+        </span>
+
+        {/* Draft badge */}
+        {message.isDraft && (
+          <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+            DRAFT
+          </span>
+        )}
+
+        {/* Snippet — takes remaining space */}
+        <span className="text-[12px] text-muted-foreground/50 truncate flex-1 min-w-0">
+          {message.snippet ?? ''}
+        </span>
+
+        {/* Right: attachment icon + time + action */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {message.hasAttachments && (
+            <Paperclip className="w-3 h-3 text-muted-foreground/40" />
+          )}
+          <span className="text-[11px] text-muted-foreground/40">{timeStr}</span>
+          {message.isDraft ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              className="p-0.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Delete draft"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/35" />
           )}
         </div>
       </div>
@@ -389,171 +392,176 @@ export default function ThreadMessage({
 
   return (
     <div
-      className="border-b border-border/15 bg-background"
+      className="flex items-start gap-3 px-4 py-2"
       role="article"
       aria-label={`Message from ${displayName}, ${timeStr}`}
       aria-expanded={true}
     >
-      {/* Header — click to collapse */}
-      <div
-        className="flex items-start gap-3 px-4 pt-3 pb-2 cursor-pointer select-none hover:bg-muted/20 transition-colors"
-        onClick={handleToggle}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleToggle(); }}
-        aria-label="Collapse message"
-      >
-        <div className="w-7 h-7 rounded-full bg-primary/10 text-primary text-[11px] font-semibold flex items-center justify-center shrink-0 mt-0.5">
-          {initials}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[13px] text-foreground font-semibold">{displayName}</span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {message.hasAttachments && (
-                <Paperclip className="w-3 h-3 text-muted-foreground/50" />
+      {/* Avatar node — sits on the spine */}
+      <div className="w-7 h-7 rounded-full bg-primary/10 text-primary text-[11px] font-semibold flex items-center justify-center shrink-0 mt-1 relative z-10 ring-2 ring-background">
+        {initials}
+      </div>
+
+      {/* Card */}
+      <div className="flex-1 min-w-0 rounded-xl border border-border/30 bg-card shadow-sm overflow-hidden mb-2">
+        {/* Header — click to collapse */}
+        <div
+          className="flex items-start px-4 pt-3 pb-2 cursor-pointer select-none hover:bg-muted/20 transition-colors"
+          onClick={handleToggle}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleToggle(); }}
+          aria-label="Collapse message"
+        >
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] text-foreground font-semibold">{displayName}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {message.hasAttachments && (
+                  <Paperclip className="w-3 h-3 text-muted-foreground/50" />
+                )}
+                <span className="text-[11px] text-muted-foreground/50">{timeStr}</span>
+                <ChevronUp className="w-3.5 h-3.5 text-muted-foreground/35" />
+              </div>
+            </div>
+            {/* Recipient summary */}
+            <div className="flex flex-wrap gap-x-3 text-[11px] text-muted-foreground/50 mt-0.5">
+              <span className="text-muted-foreground/65">{`<${message.fromEmail}>`}</span>
+              {message.toRecipients.length > 0 && (
+                <span>
+                  To:{' '}
+                  {message.toRecipients
+                    .slice(0, 3)
+                    .map((r) => r.name ?? r.email)
+                    .join(', ')}
+                  {message.toRecipients.length > 3 && ` +${message.toRecipients.length - 3}`}
+                </span>
               )}
-              <span className="text-[11px] text-muted-foreground/50">{timeStr}</span>
-              <ChevronUp className="w-3.5 h-3.5 text-muted-foreground/35" />
+              {message.ccRecipients.length > 0 && (
+                <span>
+                  CC:{' '}
+                  {message.ccRecipients
+                    .slice(0, 2)
+                    .map((r) => r.name ?? r.email)
+                    .join(', ')}
+                  {message.ccRecipients.length > 2 && ` +${message.ccRecipients.length - 2}`}
+                </span>
+              )}
             </div>
           </div>
-          {/* Recipient summary */}
-          <div className="flex flex-wrap gap-x-3 text-[11px] text-muted-foreground/50 mt-0.5">
-            <span className="text-muted-foreground/65">{`<${message.fromEmail}>`}</span>
-            {message.toRecipients.length > 0 && (
-              <span>
-                To:{' '}
-                {message.toRecipients
-                  .slice(0, 3)
-                  .map((r) => r.name ?? r.email)
-                  .join(', ')}
-                {message.toRecipients.length > 3 && ` +${message.toRecipients.length - 3}`}
-              </span>
-            )}
-            {message.ccRecipients.length > 0 && (
-              <span>
-                CC:{' '}
-                {message.ccRecipients
-                  .slice(0, 2)
-                  .map((r) => r.name ?? r.email)
-                  .join(', ')}
-                {message.ccRecipients.length > 2 && ` +${message.ccRecipients.length - 2}`}
-              </span>
-            )}
-          </div>
         </div>
-      </div>
 
-      {/* Body */}
-      <div>
-        {loadingBody ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40" />
-          </div>
-        ) : bodyError ? (
-          <div className="px-4 py-4 text-[13px] text-destructive/60">
-            Could not load message.{' '}
-            <button
-              onClick={() => { setBodyError(false); setLoadingBody(true); api.mail.getMessage(message.id).then(setFullMessage).catch(() => setBodyError(true)).finally(() => setLoadingBody(false)); }}
-              className="underline hover:text-destructive"
-            >
-              Retry
-            </button>
-          </div>
-        ) : fullMessage ? (
-          <div className="border-t border-border/10">
-            <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} />
-          </div>
-        ) : (
-          <div className="px-4 py-4 text-[13px] text-muted-foreground/50">
-            {message.snippet ?? 'No content'}
-          </div>
-        )}
-
-        {/* Attachments */}
-        {(fullMessage?.attachments?.length ?? 0) > 0 && (
-          <div className="px-4 pt-2 pb-3 flex flex-wrap gap-2 border-t border-border/10">
-            {fullMessage.attachments.map((att: any) => (
+        {/* Body */}
+        <div>
+          {loadingBody ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40" />
+            </div>
+          ) : bodyError ? (
+            <div className="px-4 py-4 text-[13px] text-destructive/60">
+              Could not load message.{' '}
               <button
-                key={att.id}
-                onClick={() =>
-                  api.mail
-                    .downloadAttachment(message.id, att.id)
-                    .then((url) => {
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = att.filename;
-                      a.click();
-                      setTimeout(() => URL.revokeObjectURL(url), 5_000);
-                    })
-                    .catch(() => {})
-                }
-                className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/40 hover:bg-muted text-[11px] text-foreground/70 transition-colors"
+                onClick={() => { setBodyError(false); setLoadingBody(true); api.mail.getMessage(message.id).then(setFullMessage).catch(() => setBodyError(true)).finally(() => setLoadingBody(false)); }}
+                className="underline hover:text-destructive"
               >
-                <Paperclip className="w-3 h-3 text-muted-foreground/50 shrink-0" />
-                <span className="max-w-[140px] truncate">{att.filename}</span>
-                {att.size > 0 && (
-                  <span className="text-muted-foreground/40 shrink-0">{formatBytes(att.size)}</span>
-                )}
+                Retry
               </button>
-            ))}
-          </div>
-        )}
-      </div>
+            </div>
+          ) : fullMessage ? (
+            <div className="border-t border-border/10">
+              <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} />
+            </div>
+          ) : (
+            <div className="px-4 py-4 text-[13px] text-muted-foreground/50">
+              {message.snippet ?? 'No content'}
+            </div>
+          )}
 
-      {/* Action bar */}
-      <div className="flex items-center gap-0.5 px-4 pb-3 pt-1 border-t border-border/10">
-        <button
-          onClick={() => onReply(detail)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-        >
-          <Reply className="w-3.5 h-3.5" />
-          Reply
-        </button>
-        <button
-          onClick={() => onReplyAll(detail)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-        >
-          <ReplyAll className="w-3.5 h-3.5" />
-          Reply All
-        </button>
-        <button
-          onClick={() => onForward(detail)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-        >
-          <Forward className="w-3.5 h-3.5" />
-          Forward
-        </button>
-        <div className="flex-1" />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={onToggleStar}
-              className={cn(
-                'p-1.5 rounded-md transition-colors',
-                message.isStarred
-                  ? 'text-amber-400 hover:bg-muted'
-                  : 'text-muted-foreground/40 hover:text-foreground hover:bg-muted',
-              )}
-            >
-              <Star className={cn('w-4 h-4', message.isStarred && 'fill-amber-400')} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">
-            {message.isStarred ? 'Unstar' : 'Star'}
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={onDelete}
-              className="p-1.5 rounded-md text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">Delete</TooltipContent>
-        </Tooltip>
+          {/* Attachments */}
+          {(fullMessage?.attachments?.length ?? 0) > 0 && (
+            <div className="px-4 pt-2 pb-3 flex flex-wrap gap-2 border-t border-border/10">
+              {fullMessage.attachments.map((att: any) => (
+                <button
+                  key={att.id}
+                  onClick={() =>
+                    api.mail
+                      .downloadAttachment(message.id, att.id)
+                      .then((url) => {
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = att.filename;
+                        a.click();
+                        setTimeout(() => URL.revokeObjectURL(url), 5_000);
+                      })
+                      .catch(() => {})
+                  }
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/40 hover:bg-muted text-[11px] text-foreground/70 transition-colors"
+                >
+                  <Paperclip className="w-3 h-3 text-muted-foreground/50 shrink-0" />
+                  <span className="max-w-[140px] truncate">{att.filename}</span>
+                  {att.size > 0 && (
+                    <span className="text-muted-foreground/40 shrink-0">{formatBytes(att.size)}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Action bar */}
+        <div className="flex items-center gap-0.5 px-4 pb-3 pt-1 border-t border-border/10">
+          <button
+            onClick={() => onReply(detail)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <Reply className="w-3.5 h-3.5" />
+            Reply
+          </button>
+          <button
+            onClick={() => onReplyAll(detail)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <ReplyAll className="w-3.5 h-3.5" />
+            Reply All
+          </button>
+          <button
+            onClick={() => onForward(detail)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <Forward className="w-3.5 h-3.5" />
+            Forward
+          </button>
+          <div className="flex-1" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onToggleStar}
+                className={cn(
+                  'p-1.5 rounded-md transition-colors',
+                  message.isStarred
+                    ? 'text-amber-400 hover:bg-muted'
+                    : 'text-muted-foreground/40 hover:text-foreground hover:bg-muted',
+                )}
+              >
+                <Star className={cn('w-4 h-4', message.isStarred && 'fill-amber-400')} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {message.isStarred ? 'Unstar' : 'Star'}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onDelete}
+                className="p-1.5 rounded-md text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">Delete</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
     </div>
   );

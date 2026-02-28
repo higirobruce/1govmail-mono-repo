@@ -704,8 +704,9 @@ function AvailabilityPanel({
               const dayDur   = dayEnd - dayStart;
               const blocksIn = (arr: Array<{ s: number; e: number }>) =>
                 arr.filter((b) => b.e > dayStart && b.s < dayEnd).map((b) => ({
-                  left: ((Math.max(b.s, dayStart) - dayStart) / dayDur) * 100,
+                  left:  ((Math.max(b.s, dayStart) - dayStart) / dayDur) * 100,
                   width: ((Math.min(b.e, dayEnd) - Math.max(b.s, dayStart)) / dayDur) * 100,
+                  label: `${format(new Date(b.s), 'HH:mm')} – ${format(new Date(b.e), 'HH:mm')}`,
                 }));
 
               const busyBlocks = blocksIn(freeBusy.busy);
@@ -721,19 +722,49 @@ function AvailabilityPanel({
                     </span>
                     {!hasData && <span className="text-[10px] text-emerald-500/70">Free</span>}
                   </div>
-                  {/* Timeline bar */}
-                  <div className="relative h-5 bg-emerald-500/10 rounded overflow-hidden border border-border/20">
+                  {/* Timeline bar — overflow-visible so tooltips aren't clipped */}
+                  <div className="relative h-5 bg-emerald-500/10 rounded border border-border/20">
                     {busyBlocks.map((b, i) => (
-                      <div key={`b${i}`} className="absolute h-full bg-rose-500/50 rounded-sm"
-                        style={{ left: `${b.left}%`, width: `${Math.max(0.5, b.width)}%` }} />
+                      <Tooltip key={`b${i}`}>
+                        <TooltipTrigger asChild>
+                          <div
+                            className="absolute h-full bg-rose-500/50 hover:bg-rose-500/70 rounded-sm cursor-default transition-colors"
+                            style={{ left: `${b.left}%`, width: `${Math.max(0.5, b.width)}%` }}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={4} className="bg-background text-foreground border border-border/40 shadow-sm text-xs">
+                          <p className="font-semibold text-rose-500">Busy</p>
+                          <p className="text-muted-foreground">{b.label}</p>
+                        </TooltipContent>
+                      </Tooltip>
                     ))}
                     {tentBlocks.map((b, i) => (
-                      <div key={`t${i}`} className="absolute h-full bg-amber-400/50 rounded-sm"
-                        style={{ left: `${b.left}%`, width: `${Math.max(0.5, b.width)}%` }} />
+                      <Tooltip key={`t${i}`}>
+                        <TooltipTrigger asChild>
+                          <div
+                            className="absolute h-full bg-amber-400/50 hover:bg-amber-400/70 rounded-sm cursor-default transition-colors"
+                            style={{ left: `${b.left}%`, width: `${Math.max(0.5, b.width)}%` }}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={4} className="bg-background text-foreground border border-border/40 shadow-sm text-xs">
+                          <p className="font-semibold text-amber-500">Tentative</p>
+                          <p className="text-muted-foreground">{b.label}</p>
+                        </TooltipContent>
+                      </Tooltip>
                     ))}
                     {unavBlocks.map((b, i) => (
-                      <div key={`u${i}`} className="absolute h-full bg-slate-500/40 rounded-sm"
-                        style={{ left: `${b.left}%`, width: `${Math.max(0.5, b.width)}%` }} />
+                      <Tooltip key={`u${i}`}>
+                        <TooltipTrigger asChild>
+                          <div
+                            className="absolute h-full bg-slate-500/40 hover:bg-slate-500/60 rounded-sm cursor-default transition-colors"
+                            style={{ left: `${b.left}%`, width: `${Math.max(0.5, b.width)}%` }}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={4} className="bg-background text-foreground border border-border/40 shadow-sm text-xs">
+                          <p className="font-semibold text-slate-500">Unavailable</p>
+                          <p className="text-muted-foreground">{b.label}</p>
+                        </TooltipContent>
+                      </Tooltip>
                     ))}
                   </div>
                 </div>

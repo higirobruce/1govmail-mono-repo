@@ -509,18 +509,17 @@ export default function ThreadView({
           </div>
         )}
 
-        {/* Task modal — create from overview */}
-        {taskModalOpen && (
-          <TaskModal
-            task={null}
-            prefill={{ linkedMessageId: message.id, linkedSubject: message.subject ?? '' }}
-            onClose={() => setTaskModalOpen(false)}
-            onSaved={(saved) => {
-              setLinkedTasks((prev) => [saved, ...prev]);
-              setTaskModalOpen(false);
-            }}
-          />
-        )}
+        {/* Task sheet — create from overview */}
+        <TaskModal
+          open={taskModalOpen}
+          task={null}
+          prefill={{ linkedMessageId: message.id, linkedSubject: message.subject ?? '' }}
+          onClose={() => setTaskModalOpen(false)}
+          onSaved={(saved) => {
+            setLinkedTasks((prev) => [saved, ...prev]);
+            setTaskModalOpen(false);
+          }}
+        />
 
         {/* ── Messages tab ─────────────────────────────────────────────────── */}
         {activeTab === 'messages' && (

@@ -668,14 +668,13 @@ export default function TasksPage() {
         </div>
       )}
 
-      {/* Modal */}
-      {showModal && (
-        <TaskModal
-          task={modalTask === 'new' ? null : modalTask}
-          onClose={closeModal}
-          onSaved={handleSaved}
-        />
-      )}
+      {/* Sheet — always rendered so close animation plays */}
+      <TaskModal
+        open={showModal}
+        task={modalTask === 'new' ? null : modalTask}
+        onClose={closeModal}
+        onSaved={handleSaved}
+      />
     </div>
   );
 }

@@ -7,6 +7,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { toast } from 'sonner';
 import {
   Loader2, Check, X, User, Mail, ChevronDown,
@@ -126,11 +134,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // ── TaskModal ──────────────────────────────────────────────────────────────────
 
 export default function TaskModal({
+  open,
   task,
   onClose,
   onSaved,
   prefill,
 }: {
+  open: boolean;
   task: Task | null;
   onClose: () => void;
   onSaved: (t: Task) => void;
@@ -437,18 +447,23 @@ export default function TaskModal({
   const isLoading = saving || assigning;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="w-full max-w-md bg-background border border-border/50 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+    <Sheet open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent
+        side="right"
+        showCloseButton={false}
+        className="sm:max-w-[480px] p-0 gap-0 flex flex-col"
+      >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border/40">
-          <h2 className="text-sm font-semibold">{task ? 'Edit Task' : 'New Task'}</h2>
-          <button
-            onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground/50 hover:bg-muted/50 hover:text-foreground transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        <SheetHeader className="flex-row items-center justify-between px-5 py-4 border-b border-border/40 space-y-0 gap-0">
+          <SheetTitle className="text-sm font-semibold">
+            {task ? 'Edit Task' : 'New Task'}
+          </SheetTitle>
+          <SheetClose asChild>
+            <button className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground/50 hover:bg-muted/50 hover:text-foreground transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </SheetClose>
+        </SheetHeader>
 
         {/* Body */}
         <ScrollArea className="flex-1 min-h-0">
@@ -829,16 +844,17 @@ export default function TaskModal({
         </ScrollArea>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border/40">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClose}
-            disabled={isLoading}
-            className="text-muted-foreground/60 hover:text-foreground h-8 text-xs"
-          >
-            Cancel
-          </Button>
+        <SheetFooter className="flex-row items-center justify-end gap-2 px-5 py-3 border-t border-border/40 space-y-0">
+          <SheetClose asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isLoading}
+              className="text-muted-foreground/60 hover:text-foreground h-8 text-xs"
+            >
+              Cancel
+            </Button>
+          </SheetClose>
           <Button
             size="sm"
             onClick={handleSave}
@@ -849,8 +865,8 @@ export default function TaskModal({
               ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />{assigning ? 'Sending…' : 'Saving…'}</>
               : <><Check className="w-3.5 h-3.5" />{task ? 'Save' : 'Create'}</>}
           </Button>
-        </div>
-      </div>
-    </div>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }

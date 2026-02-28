@@ -690,15 +690,14 @@ export default function MailPage() {
         />
       </div>
 
-      {/* Create task from email */}
-      {createTaskPrefill && (
-        <TaskModal
-          task={null}
-          prefill={createTaskPrefill}
-          onClose={() => setCreateTaskPrefill(null)}
-          onSaved={() => setCreateTaskPrefill(null)}
-        />
-      )}
+      {/* Create task from email — Sheet */}
+      <TaskModal
+        open={!!createTaskPrefill}
+        task={null}
+        prefill={createTaskPrefill ?? undefined}
+        onClose={() => setCreateTaskPrefill(null)}
+        onSaved={() => setCreateTaskPrefill(null)}
+      />
 
       {/* Floating compose — rendered as a fixed overlay so the thread stays visible */}
       <ComposeModal

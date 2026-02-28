@@ -102,31 +102,96 @@ function EmailBodyFrame({ html, text }: { html: string | null; text: string | nu
       '#divRplyFwdMsg', '#divReplyFwdMsg', '#appendonsend',
       '.OutlookMessageHeader', '.x_OutlookMessageHeader',
       '[id^="ms-outlook"]',
+      '[class*="BodyFragment"] blockquote',
     ].forEach((sel) => {
       doc.querySelectorAll(sel).forEach((el) => el.remove());
     });
 
     // Pass 2 — remove a recognised quote-separator and everything after it.
     //
-    // Selector priority (to avoid false-positives on <hr> in new content):
-    //   1. Zimbra     <hr id="zwchr">                      — authoritative
+    // Detection priority (most-specific → least-specific to avoid false positives):
+    //   1. Zimbra     <hr id="zwchr">
     //   2. Apple Mail <hr class*="Apple-interchange">
-    //   3. Heuristic  any <hr> whose next sibling text looks like "On … wrote:" / "From:"
-    //   4. Fallback   first <hr> in the body
+    //   3. Outlook    <div style="border-top:solid …"> wrapping From/Sent/To lines
+    //   4. <hr> whose next-sibling text starts with "On … wrote:" / "From:" / etc.
+    //   5. "On Mon, 1 Jan 2024 at 12:00, Name <email> wrote:" standalone block
+    //   6. Outlook "From: Name <email>" block confirmed by sibling "Date:" / "Sent:"
+    //   7. Pure separator line "________" or "--------" followed by "From:" / "On…"
+    //   8. "---- Original Message ----" / "---- Forwarded Message ----" dividers
     const findQuoteSep = (): Element | null => {
       if (!doc.body) return null;
+
+      // 1. Zimbra
       const byId = doc.body.querySelector<Element>('#zwchr');
       if (byId) return byId;
+
+      // 2. Apple Mail
       const byApple = doc.body.querySelector<Element>('hr[class*="Apple-interchange"]');
       if (byApple) return byApple;
-      const byHeuristic = Array.from(doc.body.querySelectorAll<Element>('hr')).find((hr) => {
+
+      // 3. Outlook reply wrapper: <div style="…border-top:solid…"> that Outlook inserts
+      //    above the quoted message header. Confirmed by "From:" / "Sent:" inside it.
+      for (const div of Array.from(doc.body.querySelectorAll<Element>('div[style*="border-top"]'))) {
+        if (/From\s*:|Sent\s*:/i.test(div.textContent ?? '')) return div;
+      }
+
+      // 4. <hr> whose next sibling looks like an email quote header
+      const byHrHeuristic = Array.from(doc.body.querySelectorAll<Element>('hr')).find((hr) => {
         const t = hr.nextElementSibling?.textContent ?? '';
-        return /^\s*(On .+wrote:|From\s*:|De\s*:|Von\s*:|-{3,})/i.test(t);
+        return /^\s*(On\s.+wrote:|From\s*:|Sent\s*:|De\s*:|Von\s*:|-{3,})/i.test(t);
       });
-      if (byHeuristic) return byHeuristic;
+      if (byHrHeuristic) return byHrHeuristic;
+
+      // 5. "On Mon, 1 Jan 2024 at 12:00, Name <email> wrote:" — Gmail / Apple / Zimbra
+      const onWroteRe = /^On\s+\S[\s\S]{5,250}wrote\s*:\s*$/i;
+      const byOnWrote = Array.from(doc.body.querySelectorAll<Element>('div, p, span'))
+        .find((el) => {
+          if (el.children.length > 4) return false;
+          const t = (el.textContent ?? '').trim();
+          return t.length < 300 && onWroteRe.test(t);
+        });
+      if (byOnWrote) return byOnWrote;
+
+      // 6. Outlook / calendar "From: Name <email>" or "From: email@domain" block.
+      //    Angle brackets are optional (calendar invites omit them).
+      //    Confirmed by a sibling or inline field: Date/Sent/When/To/Subject.
+      const emailFromRe = /^From\s*:\s*(?:[^<\n]{0,100}<)?[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+/i;
+      const byOutlookFrom = Array.from(doc.body.querySelectorAll<Element>('p, div, td'))
+        .find((el) => {
+          if (el.children.length > 6) return false;
+          const t = (el.textContent ?? '').trim();
+          // Multi-line single element: contains the whole header block inline
+          if (emailFromRe.test(t) && /(Date|Sent|When)\s*:/i.test(t) && /(To|Subject)\s*:/i.test(t)) return true;
+          // Single "From:" line — next sibling must be a header field
+          if (emailFromRe.test(t) && t.length <= 250) {
+            const nextT = el.nextElementSibling?.textContent?.trim() ?? '';
+            return /^(Date|Sent|To|When|Subject|À|An)\s*:/i.test(nextT);
+          }
+          return false;
+        });
+      if (byOutlookFrom) return byOutlookFrom;
+
+      // 7. Pure separator line ("________", "--------", "========") followed by "From:" or "On…wrote:"
+      const pureSepRe = /^[-_=*]{5,}$/;
+      const byPureSep = Array.from(doc.body.querySelectorAll<Element>('p, div, span'))
+        .find((el) => {
+          if ((el.textContent ?? '').trim().match(pureSepRe) === null) return false;
+          const nextT = el.nextElementSibling?.textContent?.trim() ?? '';
+          return /^From\s*:/i.test(nextT) || /^On\s+\S.{5,}wrote\s*:/i.test(nextT);
+        });
+      if (byPureSep) return byPureSep;
+
+      // 8. "---- Original Message ----" / "---- Forwarded Message ----" dividers
+      const dashMsgRe = /^[-_*\s]{2,}(Original|Forwarded)\s+(Message|mail|e-?mail)[-_*\s]*/i;
+      const byDashMsg = Array.from(doc.body.querySelectorAll<Element>('div, p'))
+        .find((el) => {
+          const t = (el.textContent ?? '').trim();
+          return dashMsgRe.test(t) && t.length < 80;
+        });
+      if (byDashMsg) return byDashMsg;
+
       // Do NOT fall back to the first <hr> unconditionally — newsletters and
-      // formatted emails use <hr> for design/layout, and removing everything
-      // after the first one would wipe out images and content.
+      // formatted emails use <hr> for design/layout.
       return null;
     };
 

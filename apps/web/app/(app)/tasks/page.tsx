@@ -258,6 +258,9 @@ export default function TasksPage() {
   const [modalTask, setModalTask] = useState<Task | null | 'new'>('new');
   const [showModal, setShowModal] = useState(false);
   const [dragOverColumn, setDragOverColumn] = useState<TaskStatus | null>(null);
+  const [mailDragOver, setMailDragOver] = useState(false);
+  const [mailDragPrefill, setMailDragPrefill] = useState<{ linkedMessageId?: string; linkedSubject?: string } | null>(null);
+  const [showMailDropModal, setShowMailDropModal] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
   const confirm = useConfirmStore((s) => s.confirm);
@@ -438,7 +441,29 @@ export default function TasksPage() {
         onCompose={() => router.push('/mail')}
       />
 
-      <div className="flex-1 min-w-0 flex flex-col h-full">
+      <div
+        className="flex-1 min-w-0 flex flex-col h-full relative"
+        onDragEnter={() => setMailDragOver(true)}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setMailDragOver(false); }}
+        onDragOver={(e) => { e.preventDefault(); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setMailDragOver(false);
+          try {
+            const raw = e.dataTransfer.getData('application/x-govmail-msg');
+            if (!raw) return;
+            const msg = JSON.parse(raw);
+            setMailDragPrefill({ linkedMessageId: msg.id, linkedSubject: msg.subject ?? '' });
+            setShowMailDropModal(true);
+          } catch { /* ignore */ }
+        }}
+      >
+        {/* Drop banner */}
+        {mailDragOver && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-primary/5 border-2 border-dashed border-primary/40 rounded-lg pointer-events-none">
+            <p className="text-sm font-medium text-primary">Drop to create task from email</p>
+          </div>
+        )}
         {/* Top bar */}
         <div className="px-6 py-4 border-b border-border/40 flex items-center gap-3 shrink-0">
           <h1 className="text-sm font-semibold text-foreground">Tasks</h1>
@@ -691,6 +716,20 @@ export default function TasksPage() {
         task={modalTask === 'new' ? null : modalTask}
         onClose={closeModal}
         onSaved={handleSaved}
+      />
+
+      {/* Task created by dragging an email */}
+      <TaskModal
+        key={mailDragPrefill?.linkedMessageId ?? 'mail-drop'}
+        open={showMailDropModal}
+        task={null}
+        prefill={mailDragPrefill ?? undefined}
+        onClose={() => { setShowMailDropModal(false); setMailDragPrefill(null); }}
+        onSaved={(task) => {
+          handleSaved(task);
+          setShowMailDropModal(false);
+          setMailDragPrefill(null);
+        }}
       />
     </div>
   );

@@ -249,6 +249,7 @@ function AttendeePicker({
 function CreateEventModal({
   initialDate,
   initialData,
+  prefillData,
   isEdit,
   onClose,
   onCreated,
@@ -256,6 +257,7 @@ function CreateEventModal({
 }: {
   initialDate?: Date;
   initialData?: CalEvent;
+  prefillData?: { title?: string; description?: string };
   isEdit?: boolean;
   onClose: () => void;
   onCreated: (event: CalEvent) => void;
@@ -265,9 +267,9 @@ function CreateEventModal({
   const todayStr = format(base, "yyyy-MM-dd'T'HH:mm");
   const endStr   = format(new Date(base.getTime() + 3_600_000), "yyyy-MM-dd'T'HH:mm");
 
-  const [title, setTitle]       = useState(initialData?.title ?? '');
+  const [title, setTitle]       = useState(initialData?.title ?? prefillData?.title ?? '');
   const [location, setLocation] = useState(initialData?.location ?? '');
-  const [description, setDesc]  = useState(initialData?.description ?? '');
+  const [description, setDesc]  = useState(initialData?.description ?? prefillData?.description ?? '');
   const [startAt, setStart]     = useState(
     initialData ? format(parseISO(initialData.startAt), "yyyy-MM-dd'T'HH:mm") : todayStr,
   );
@@ -1499,6 +1501,7 @@ export default function CalendarPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createForDay, setCreateForDay]  = useState<Date | undefined>();
   const [editingEvent, setEditingEvent]  = useState<CalEvent | null>(null);
+  const [dragPrefill, setDragPrefill] = useState<{ title?: string; description?: string } | null>(null);
   const [deleting, setDeleting]     = useState(false);
 
   // Availability
@@ -1606,6 +1609,20 @@ export default function CalendarPage() {
     }
   }, []);
 
+  const handleMailDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    try {
+      const raw = e.dataTransfer.getData('application/x-govmail-msg');
+      if (!raw) return;
+      const msg = JSON.parse(raw);
+      setDragPrefill({
+        title: msg.subject ?? '',
+        description: msg.snippet ? `From: ${msg.from}\n\n${msg.snippet}` : `From: ${msg.from}`,
+      });
+      setShowCreate(true);
+    } catch { /* ignore */ }
+  };
+
   if (!hydrated) return null;
 
   const isTimeline = calView === 'day' || calView === 'workweek' || calView === 'week';
@@ -1620,7 +1637,11 @@ export default function CalendarPage() {
         onCompose={() => router.push('/mail')}
       />
 
-      <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
+      <div
+        className="flex-1 min-w-0 flex flex-col h-full overflow-hidden"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleMailDrop}
+      >
         {/* ── Top bar ── */}
         <div className="flex items-center justify-between px-6 py-3 border-b border-border/40 shrink-0 gap-4">
           {/* Navigation */}
@@ -1754,11 +1775,13 @@ export default function CalendarPage() {
       {showCreate && (
         <CreateEventModal
           initialDate={createForDay}
-          onClose={() => { setShowCreate(false); setCreateForDay(undefined); }}
+          prefillData={dragPrefill ?? undefined}
+          onClose={() => { setShowCreate(false); setCreateForDay(undefined); setDragPrefill(null); }}
           onCreated={(event) => {
             setEvents((prev) => [...prev, event]);
             setShowCreate(false);
             setCreateForDay(undefined);
+            setDragPrefill(null);
             setSelectedEvent(event);
           }}
         />

@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import { ThemeProvider } from "@/components/providers/ThemeProvider";
 // ElectronTitleBarLoader is a Client Component that wraps ElectronTitleBar with
 // next/dynamic ssr:false — keeping it 100 % browser-only so it never runs
 // during Next.js prerendering (including the /_global-error static page).
@@ -37,6 +38,7 @@ export default function RootLayout({
         {/* Renders a drag-region title bar only in the Electron desktop app on macOS */}
         <ElectronTitleBarLoader />
         <QueryProvider>
+        <ThemeProvider>
         <TooltipProvider delayDuration={300}>
           {children}
           <Toaster
@@ -53,6 +55,7 @@ export default function RootLayout({
             }}
           />
         </TooltipProvider>
+        </ThemeProvider>
         </QueryProvider>
       </body>
     </html>

@@ -264,6 +264,16 @@ function MailRow({
 }) {
   return (
     <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('application/x-govmail-msg', JSON.stringify({
+          id: message.id,
+          subject: message.subject,
+          snippet: message.snippet,
+          from: typeof message.from === 'string' ? message.from : message.from?.email ?? '',
+        }));
+        e.dataTransfer.effectAllowed = 'copy';
+      }}
       className={cn(
         'w-full text-left border-b border-border/25 transition-all group relative',
         active

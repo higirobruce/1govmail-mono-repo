@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
+import { useThemeStore } from '@/stores/theme.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
@@ -152,6 +153,35 @@ function SettingRow({ label, description, children }: {
         {description && <p className="text-xs text-muted-foreground/55 mt-0.5">{description}</p>}
       </div>
       <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+// ── Theme selector ─────────────────────────────────────────────────────────────
+
+function ThemeSelector() {
+  const { theme, setTheme } = useThemeStore();
+  const options = [
+    { value: 'light',  label: 'Light' },
+    { value: 'dark',   label: 'Dark' },
+    { value: 'system', label: 'System' },
+  ] as const;
+  return (
+    <div className="flex gap-2">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          onClick={() => setTheme(opt.value)}
+          className={cn(
+            'px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
+            theme === opt.value
+              ? 'bg-primary/10 border-primary/40 text-primary'
+              : 'border-border/50 text-muted-foreground hover:border-border hover:text-foreground',
+          )}
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -680,6 +710,54 @@ function SignaturesSection({ data, onUpdate }: { data: SettingsData; onUpdate: (
 // Vacation reply section
 // ══════════════════════════════════════════════════════════════════════════════
 
+const OOO_TEMPLATES = [
+  {
+    label: 'Brief',
+    text: 'Thank you for your message. I am currently out of office and will respond upon my return.',
+  },
+  {
+    label: 'With return date',
+    text: 'I am out of office until {date}. I will reply to your message as soon as possible after that date.',
+  },
+  {
+    label: 'Urgent contact',
+    text: 'I am currently out of office. For urgent matters, please contact {contact}. I will respond to all other emails upon my return.',
+  },
+  {
+    label: 'Conference / travel',
+    text: 'I am attending a conference and have limited access to email. I will respond to your message as soon as possible.',
+  },
+] as const;
+
+function OooTemplateInserter({ onInsert }: { onInsert: (text: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="text-[11px] text-primary hover:text-primary/80 transition-colors"
+      >
+        Insert template ▾
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-20 bg-card border border-border rounded-xl shadow-lg py-1 w-52">
+          {OOO_TEMPLATES.map((t) => (
+            <button
+              key={t.label}
+              type="button"
+              onClick={() => { onInsert(t.text); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/50 text-foreground transition-colors"
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () => void }) {
   const p = data.prefs;
 
@@ -690,6 +768,10 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
   const [extEnabled, setExtEnabled] = useState(p.zimbraPrefOutOfOfficeExternalReplyEnabled === 'TRUE');
   const [extMessage, setExtMessage] = useState(p.zimbraPrefOutOfOfficeExternalReply ?? '');
   const [saving, setSaving]         = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const isPastDate = enabled && fromDate && fromDate.slice(0, 10) < today;
 
   const handleSave = async () => {
     setSaving(true);
@@ -725,6 +807,14 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
         </SettingRow>
       </div>
 
+      {/* Past-date warning */}
+      {isPastDate && (
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[12px] text-amber-600 dark:text-amber-400">
+          <span className="shrink-0 mt-0.5">⚠</span>
+          Your out-of-office period may have already started or passed. Check the dates below.
+        </div>
+      )}
+
       {enabled && (
         <div className="mt-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -749,7 +839,10 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Message</Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Message</Label>
+              <OooTemplateInserter onInsert={(t) => setMessage((m) => m ? `${m}\n\n${t}` : t)} />
+            </div>
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
@@ -772,7 +865,10 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
 
           {extEnabled && (
             <div className="flex flex-col gap-1.5">
-              <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">External message</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">External message</Label>
+                <OooTemplateInserter onInsert={(t) => setExtMessage((m) => m ? `${m}\n\n${t}` : t)} />
+              </div>
               <textarea
                 value={extMessage}
                 onChange={(e) => setExtMessage(e.target.value)}
@@ -782,6 +878,34 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
               />
             </div>
           )}
+
+          {/* Live preview */}
+          <div className="border border-border/40 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowPreview((o) => !o)}
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-muted/20 hover:bg-muted/40 transition-colors text-[12px] font-medium text-muted-foreground"
+            >
+              <span>Preview auto-reply</span>
+              <span>{showPreview ? '▲' : '▼'}</span>
+            </button>
+            {showPreview && (
+              <div className="p-4 bg-card space-y-2 text-[12px]">
+                <div className="flex items-center gap-2 text-muted-foreground/60">
+                  <span className="font-medium text-foreground/60">Subject:</span>
+                  <span>Out of Office: Re: [your subject]</span>
+                </div>
+                <div className="flex items-center gap-2 text-muted-foreground/60">
+                  <span className="font-medium text-foreground/60">From:</span>
+                  <span>{data.email}</span>
+                </div>
+                <Separator />
+                <pre className="whitespace-pre-wrap text-foreground/80 text-[12px] font-sans leading-relaxed">
+                  {message || '(no message set)'}
+                </pre>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -872,6 +996,14 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
         title="Mail Preferences"
         description="Customise how messages are displayed and composed."
       />
+
+      {/* Appearance */}
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/40 mb-3">Appearance</p>
+      <div className="divide-y divide-border/30 mb-6">
+        <SettingRow label="Theme" description="Choose light, dark, or follow your system preference.">
+          <ThemeSelector />
+        </SettingRow>
+      </div>
 
       {/* Reading */}
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/40 mb-3">Reading</p>

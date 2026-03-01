@@ -96,6 +96,24 @@ export const api = {
       if (USE_MOCK) return delay({ success: true });
       return request<{ success: boolean }>(`/contacts/${id}`, { method: 'DELETE' });
     },
+    groups: {
+      getAll: () => {
+        if (USE_MOCK) return delay<any[]>([]);
+        return request<any[]>('/contacts/groups');
+      },
+      create: (data: { name: string; description?: string; members?: { email: string; name?: string }[] }) => {
+        if (USE_MOCK) return delay({ id: `g-${Date.now()}`, ...data });
+        return request<any>('/contacts/groups', { method: 'POST', body: JSON.stringify(data) });
+      },
+      update: (id: string, data: { name?: string; description?: string; members?: { email: string; name?: string }[] }) => {
+        if (USE_MOCK) return delay({ id, ...data });
+        return request<any>(`/contacts/groups/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+      },
+      delete: (id: string) => {
+        if (USE_MOCK) return delay({ success: true });
+        return request<{ success: boolean }>(`/contacts/groups/${id}`, { method: 'DELETE' });
+      },
+    },
   },
 
   calendar: {
@@ -598,6 +616,29 @@ export const api = {
       });
       if (!res.ok) throw new Error('Download failed');
       return URL.createObjectURL(await res.blob());
+    },
+  },
+
+  notifications: {
+    getAll: (limit = 50) => {
+      if (USE_MOCK) return delay<any[]>([]);
+      return request<any[]>(`/notifications?limit=${limit}`);
+    },
+    getUnreadCount: () => {
+      if (USE_MOCK) return delay({ count: 0 });
+      return request<{ count: number }>('/notifications/unread-count');
+    },
+    markRead: (id: string) => {
+      if (USE_MOCK) return delay({});
+      return request<any>(`/notifications/${id}/read`, { method: 'PATCH' });
+    },
+    markAllRead: () => {
+      if (USE_MOCK) return delay({});
+      return request<any>('/notifications/read-all', { method: 'PATCH' });
+    },
+    delete: (id: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<{ success: boolean }>(`/notifications/${id}`, { method: 'DELETE' });
     },
   },
 };

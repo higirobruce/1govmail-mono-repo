@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import { QuickReplyBar } from '@/components/mail/QuickReplyBar';
+import { AttachmentLightbox } from '@/components/mail/AttachmentLightbox';
 
 interface MessageDetail {
   id: string;
@@ -246,20 +248,6 @@ function EmailBody({
 // Fetches a blob: URL and renders its content as plain text — avoids any
 // embedded-frame restrictions that privacy-first browsers (e.g. Dia) impose on
 // blob: URLs loaded inside iframes.
-function TextPreview({ url }: { url: string }) {
-  const [content, setContent] = useState('');
-  useEffect(() => {
-    fetch(url)
-      .then((r) => r.text())
-      .then(setContent)
-      .catch(() => setContent('(Could not load text content)'));
-  }, [url]);
-  return (
-    <pre className="w-full max-h-[400px] overflow-auto text-[13px] text-foreground/80 bg-muted/30 rounded-lg p-4 whitespace-pre-wrap break-words font-mono">
-      {content || 'Loading…'}
-    </pre>
-  );
-}
 
 function MetaRow({ icon: Icon, label, children }: {
   icon: React.ElementType;
@@ -298,14 +286,8 @@ export default function MailDetail({
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [folderDropdownOpen, setFolderDropdownOpen] = useState(false);
   const folderDropdownRef = useRef<HTMLDivElement>(null);
-  const [previewState, setPreviewState] = useState<{
-    id: string;
-    url: string;
-    mimeType: string;
-    filename: string;
-  } | null>(null);
-  const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
-  const previewUrlRef = useRef<string | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxSelectedId, setLightboxSelectedId] = useState<string | null>(null);
 
   const labelFolders = folders.filter(
     (f) => !BUILTIN_PATHS_DETAIL.has(f.path) && (f.type === 'MAIL' || !f.type),
@@ -328,14 +310,10 @@ export default function MailDetail({
     setActiveTab('message');
   }, [message?.id]);
 
-  // Clear preview when navigating to a different message
+  // Close lightbox when navigating to a different message
   useEffect(() => {
-    if (previewUrlRef.current) {
-      URL.revokeObjectURL(previewUrlRef.current);
-      previewUrlRef.current = null;
-    }
-    setPreviewState(null);
-    setPreviewLoadingId(null);
+    setLightboxOpen(false);
+    setLightboxSelectedId(null);
   }, [message?.id]);
 
   const handlePrint = useCallback(() => {
@@ -379,28 +357,6 @@ export default function MailDetail({
       setDownloadingId(null);
     }
   }, [message, downloadingId]);
-
-  const handlePreview = useCallback(async (att: { id: string; filename: string; mimeType: string }) => {
-    if (!message || previewLoadingId) return;
-    // Toggle off if this attachment is already open in the preview
-    if (previewState?.id === att.id) {
-      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-      previewUrlRef.current = null;
-      setPreviewState(null);
-      return;
-    }
-    setPreviewLoadingId(att.id);
-    try {
-      const url = await api.mail.downloadAttachment(message.id, att.id);
-      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-      previewUrlRef.current = url;
-      setPreviewState({ id: att.id, url, mimeType: att.mimeType, filename: att.filename });
-    } catch (err: any) {
-      toast.error('Preview failed', { description: err?.message });
-    } finally {
-      setPreviewLoadingId(null);
-    }
-  }, [message, previewLoadingId, previewState?.id]);
 
   // ── Loading skeleton ──────────────────────────────────────────────────────
   if (loading) {
@@ -729,6 +685,13 @@ export default function MailDetail({
                 </div>
               </div>
             )}
+
+            {/* Quick reply bar */}
+            <QuickReplyBar
+              message={message}
+              onSent={() => {}}
+              onExpand={() => onReply?.()}
+            />
           </div>
         )}
 
@@ -748,14 +711,10 @@ export default function MailDetail({
                 const FileIcon = att.mimeType.startsWith('image/') ? ImageIcon
                   : (att.mimeType === 'application/pdf' || att.filename.toLowerCase().endsWith('.pdf')) ? FileText
                   : File;
-                const isActive = previewState?.id === att.id;
                 return (
                   <div
                     key={att.id}
-                    className={cn(
-                      'flex items-center gap-2.5 p-3 bg-card border rounded-xl group hover:bg-muted/30 transition-colors',
-                      isActive ? 'border-primary/30 bg-primary/5' : 'border-border/45',
-                    )}
+                    className="flex items-center gap-2.5 p-3 bg-card border border-border/45 rounded-xl group hover:bg-muted/30 transition-colors"
                   >
                     <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                       <FileIcon className="w-4 h-4 text-primary/60" />
@@ -767,25 +726,17 @@ export default function MailDetail({
                     <div className="flex items-center gap-0.5 shrink-0">
                       {isPreviewable && (
                         <button
-                          onClick={() => handlePreview(att)}
-                          disabled={!!previewLoadingId || !!downloadingId}
-                          className={cn(
-                            'opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded disabled:opacity-30',
-                            isActive
-                              ? 'text-primary opacity-100'
-                              : 'text-muted-foreground/45 hover:text-foreground',
-                          )}
-                          title={isActive ? 'Close preview' : 'Preview'}
+                          onClick={() => { setLightboxSelectedId(att.id); setLightboxOpen(true); }}
+                          disabled={!!downloadingId}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-muted-foreground/45 hover:text-foreground disabled:opacity-30"
+                          title="Open lightbox"
                         >
-                          {previewLoadingId === att.id
-                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            : <Eye className="w-3.5 h-3.5" />
-                          }
+                          <Eye className="w-3.5 h-3.5" />
                         </button>
                       )}
                       <button
                         onClick={() => handleDownload(att)}
-                        disabled={!!downloadingId || !!previewLoadingId}
+                        disabled={!!downloadingId}
                         className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/45 hover:text-foreground disabled:opacity-30 p-1 rounded"
                         title="Download"
                       >
@@ -800,60 +751,6 @@ export default function MailDetail({
               })}
             </div>
 
-            {/* Inline preview panel */}
-            {previewState && (
-              <div className="mt-4 border border-border/40 rounded-xl overflow-hidden bg-card">
-                <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/30 bg-muted/20">
-                  <span className="text-[12px] font-medium text-foreground/70 truncate flex-1 mr-3">
-                    {previewState.filename}
-                  </span>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => handleDownload({ id: previewState.id, filename: previewState.filename })}
-                      className="p-1 rounded text-muted-foreground/45 hover:text-foreground transition-colors"
-                      title="Download"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-                        previewUrlRef.current = null;
-                        setPreviewState(null);
-                      }}
-                      className="p-1 rounded text-muted-foreground/45 hover:text-foreground transition-colors"
-                      title="Close preview"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-                <div className="p-4 bg-muted/10">
-                  {previewState.mimeType.startsWith('image/') ? (
-                    /* Images — plain <img>, works in all browsers */
-                    <img
-                      src={previewState.url}
-                      alt={previewState.filename}
-                      className="max-w-full h-auto rounded-lg block mx-auto shadow-sm"
-                      style={{ maxHeight: 520 }}
-                    />
-                  ) : previewState.mimeType.startsWith('text/') ? (
-                    /* Text — fetched and rendered as <pre>; no iframe needed */
-                    <TextPreview url={previewState.url} />
-                  ) : (
-                    /* PDFs & other binary types — <embed> avoids the iframe+blob
-                       block that Dia (and similar browsers) impose on sandboxed
-                       iframes loading blob: URLs. */
-                    <embed
-                      src={previewState.url}
-                      type={previewState.mimeType}
-                      className="w-full rounded-lg border-0"
-                      style={{ height: 600 }}
-                    />
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -884,6 +781,17 @@ export default function MailDetail({
           <Forward className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* Attachment lightbox */}
+      {lightboxOpen && lightboxSelectedId && message.attachments.length > 0 && (
+        <AttachmentLightbox
+          open={lightboxOpen}
+          attachments={message.attachments}
+          selectedId={lightboxSelectedId}
+          messageId={message.id}
+          onClose={() => { setLightboxOpen(false); setLightboxSelectedId(null); }}
+        />
+      )}
     </div>
   );
 }

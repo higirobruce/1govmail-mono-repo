@@ -10,10 +10,13 @@ import {
   ChevronDown, LogOut, Settings, Plus, X,
   Calendar, Users, FolderOpen,
   ListTodo, UsersRound, Newspaper, Sparkles,
+  Sun, Moon, Monitor,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
 import { AppTour } from '@/components/tour/AppTour';
+import { useThemeStore, type Theme } from '@/stores/theme.store';
+import { NotificationsBell } from '@/components/layout/NotificationsBell';
 
 interface Folder {
   id: string;
@@ -197,6 +200,12 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
     }
   };
 
+  const { theme, setTheme } = useThemeStore();
+  const THEME_CYCLE: Theme[] = ['light', 'dark', 'system'];
+  const ThemeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
+  const nextTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
+  const themeLabel = `Theme: ${theme} (click for ${nextTheme})`;
+
   const initials = user?.displayName
     ?.split(' ')
     .map((w) => w[0])
@@ -344,7 +353,16 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
 
       {/* Footer */}
       <div className="px-2 py-2 border-t border-sidebar-border/50 space-y-0.5">
+        <NotificationsBell />
         <NavItem icon={Settings} label="Settings" onClick={() => router.push('/settings')} />
+        <button
+          onClick={() => setTheme(nextTheme)}
+          title={themeLabel}
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all"
+        >
+          <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
+          <span className="flex-1 text-left capitalize">Theme: {theme}</span>
+        </button>
         <button
           onClick={() => setTourActive(true)}
           className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all"

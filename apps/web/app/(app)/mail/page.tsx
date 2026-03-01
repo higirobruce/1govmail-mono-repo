@@ -12,6 +12,9 @@ import MailDetail from '@/components/mail/MailDetail';
 import ThreadView from '@/components/mail/ThreadView';
 import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
 import TaskModal from '@/components/tasks/TaskModal';
+import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
+import { GlobalSearch } from '@/components/GlobalSearch';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Input } from '@/components/ui/input';
 import { Search, RefreshCw, X as XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -130,6 +133,13 @@ export default function MailPage() {
   const [loadingMoreSearch, setLoadingMoreSearch] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSearchMode = searchQuery.trim().length > 0;
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Keyboard shortcuts modal ────────────────────────────────────────────────
+  const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false);
+
+  // ── Global search (⌘K) ─────────────────────────────────────────────────────
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
 
   // ── Electron background polling ────────────────────────────────────────────
   // Tracks the last known inbox unread count so we can detect new arrivals.
@@ -589,6 +599,49 @@ export default function MailPage() {
     setSearchResults([]);
   }, []);
 
+  // ── Keyboard navigation helpers ─────────────────────────────────────────────
+  const displayedMessages = isSearchMode ? searchResults : messages;
+  const currentIndex = displayedMessages.findIndex((m) => m.id === activeMessageId);
+
+  useKeyboardShortcuts({
+    j: () => {
+      if (displayedMessages.length === 0) return;
+      const next = currentIndex < displayedMessages.length - 1 ? currentIndex + 1 : 0;
+      openMessage(displayedMessages[next].id);
+    },
+    k: () => {
+      if (displayedMessages.length === 0) return;
+      const prev = currentIndex > 0 ? currentIndex - 1 : displayedMessages.length - 1;
+      openMessage(displayedMessages[prev].id);
+    },
+    c: () => openCompose('new'),
+    r: () => { if (activeMessage) openCompose('reply'); },
+    a: () => { if (activeMessage) openCompose('replyAll'); },
+    f: () => { if (activeMessage) openCompose('forward'); },
+    s: toggleStar,
+    e: () => {
+      const archiveFolder = folders.find((f) => f.path === '/Archive');
+      if (activeMessageId && archiveFolder) handleMoveToFolder(archiveFolder.id);
+    },
+    d: () => { if (activeMessageId) deleteMessage(); },
+    u: () => {
+      if (activeMessage) {
+        const read = activeMessage.isRead;
+        updateMessageInCache(activeFolderId, activeMessage.id, (m) => ({ ...m, isRead: !read }));
+        setActiveMessage((m: any) => m && { ...m, isRead: !read });
+        api.mail.markRead(activeMessage.id, !read).catch(() => {});
+      }
+    },
+    escape: () => {
+      if (shortcutsModalOpen) { setShortcutsModalOpen(false); return; }
+      if (globalSearchOpen) { setGlobalSearchOpen(false); return; }
+      if (activeMessageId) { setActiveMessageId(undefined); setActiveMessage(null); }
+    },
+    slash: () => { searchInputRef.current?.focus(); searchInputRef.current?.select(); },
+    question: () => setShortcutsModalOpen((o) => !o),
+    cmdK: () => setGlobalSearchOpen((o) => !o),
+  });
+
   const handleCreateFolder = useCallback(async (name: string) => {
     try {
       await api.mail.createFolder(name);
@@ -688,6 +741,7 @@ export default function MailPage() {
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/35" />
             <Input
+              ref={searchInputRef}
               value={searchInput}
               onChange={(e) => handleSearchInput(e.target.value)}
               placeholder="Search messages…"
@@ -829,6 +883,16 @@ export default function MailPage() {
         initialBcc={composeDraftProps?.bcc}
         initialSubject={composeDraftProps?.subject}
         initialBody={composeDraftProps?.body}
+      />
+
+      <KeyboardShortcutsModal
+        open={shortcutsModalOpen}
+        onClose={() => setShortcutsModalOpen(false)}
+      />
+
+      <GlobalSearch
+        open={globalSearchOpen}
+        onClose={() => setGlobalSearchOpen(false)}
       />
     </div>
   );

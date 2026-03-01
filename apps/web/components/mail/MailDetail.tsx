@@ -7,7 +7,7 @@ import {
   Reply, ReplyAll, Forward, Trash2, Archive, Star, Inbox, Tag, FolderOpen,
   Paperclip, Download, Loader2, MoreHorizontal,
   ChevronLeft, ChevronRight, X, Mail, User, Calendar,
-  Eye, File, FileText, Image as ImageIcon,
+  Eye, File, FileText, Image as ImageIcon, Printer, BellOff, Bell,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -56,6 +56,8 @@ interface MailDetailProps {
   onMoveToInbox?: () => void;
   folders?: FolderItem[];
   onMoveToFolder?: (folderId: string) => void;
+  onMute?: () => void;
+  isMuted?: boolean;
 }
 
 type DetailTab = 'overview' | 'message' | 'attachments';
@@ -289,6 +291,8 @@ export default function MailDetail({
   onMoveToInbox,
   folders = [],
   onMoveToFolder,
+  onMute,
+  isMuted = false,
 }: MailDetailProps) {
   const [activeTab, setActiveTab] = useState<DetailTab>('message');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -333,6 +337,29 @@ export default function MailDetail({
     setPreviewState(null);
     setPreviewLoadingId(null);
   }, [message?.id]);
+
+  const handlePrint = useCallback(() => {
+    if (!message) return;
+    const css = `body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;color:#111;padding:24px;max-width:800px;margin:0 auto}
+      h1{font-size:20px;margin-bottom:4px}
+      .meta{font-size:12px;color:#666;margin-bottom:16px;border-bottom:1px solid #e5e7eb;padding-bottom:12px}
+      .meta span{margin-right:16px}`;
+    const body = message.bodyHtml ?? `<pre style="white-space:pre-wrap">${message.bodyText ?? ''}</pre>`;
+    const printWin = window.open('', '_blank', 'width=800,height=600');
+    if (!printWin) return;
+    printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style><title>${message.subject ?? 'Email'}</title></head><body>
+      <h1>${message.subject ?? '(no subject)'}</h1>
+      <div class="meta">
+        <span><b>From:</b> ${message.fromName ? `${message.fromName} &lt;${message.fromEmail}&gt;` : message.fromEmail}</span>
+        <span><b>To:</b> ${message.toRecipients.map((r) => r.name ?? r.email).join(', ')}</span>
+        <span><b>Date:</b> ${message.receivedAt}</span>
+      </div>
+      ${body}
+      </body></html>`);
+    printWin.document.close();
+    printWin.focus();
+    setTimeout(() => { printWin.print(); }, 400);
+  }, [message]);
 
   const handleDownload = useCallback(async (att: { id: string; filename: string }) => {
     if (!message || downloadingId) return;
@@ -498,6 +525,14 @@ export default function MailDetail({
                 </div>
               )}
             </div>
+          )}
+          <ActionBtn icon={Printer} label="Print" onClick={handlePrint} />
+          {onMute && (
+            <ActionBtn
+              icon={isMuted ? Bell : BellOff}
+              label={isMuted ? 'Unmute conversation' : 'Mute conversation'}
+              onClick={onMute}
+            />
           )}
           <ActionBtn icon={MoreHorizontal} label="More" />
           <ActionBtn icon={Trash2}         label="Delete"    onClick={onDelete} danger />

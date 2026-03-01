@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Delete,
   Patch,
   Param,
@@ -23,6 +24,10 @@ import { MailService } from './mail.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SendMessageDto } from './dto/send-message.dto';
 import { SaveDraftDto } from './dto/save-draft.dto';
+import { SnoozeMessageDto } from './dto/snooze-message.dto';
+import { ScheduleMessageDto } from './dto/schedule-message.dto';
+import { CreateTemplateDto } from './dto/create-template.dto';
+import { CreateRuleDto } from './dto/create-rule.dto';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 
 @UseGuards(JwtAuthGuard)
@@ -176,5 +181,140 @@ export class MailController {
       'Cache-Control': 'private, max-age=3600',
     });
     stream.pipe(res);
+  }
+
+  // ── Snooze ───────────────────────────────────────────────────────────────────
+
+  @Post('snooze')
+  @HttpCode(HttpStatus.OK)
+  snoozeMessage(@Req() req: AuthenticatedRequest, @Body() dto: SnoozeMessageDto) {
+    return this.mailService.snoozeMessage(req.user.sub, dto.messageId, dto.snoozedUntil, dto.originalFolderId);
+  }
+
+  @Delete('snooze/:messageId')
+  @HttpCode(HttpStatus.OK)
+  unsnoozeMessage(@Req() req: AuthenticatedRequest, @Param('messageId') messageId: string) {
+    return this.mailService.unsnoozeMessage(req.user.sub, messageId);
+  }
+
+  @Get('snoozed')
+  getSnoozed(@Req() req: AuthenticatedRequest) {
+    return this.mailService.getSnoozed(req.user.sub);
+  }
+
+  // ── Scheduled Send ───────────────────────────────────────────────────────────
+
+  @Post('scheduled')
+  @HttpCode(HttpStatus.OK)
+  scheduleMessage(@Req() req: AuthenticatedRequest, @Body() dto: ScheduleMessageDto) {
+    return this.mailService.scheduleMessage(req.user.sub, dto);
+  }
+
+  @Delete('scheduled/:id')
+  @HttpCode(HttpStatus.OK)
+  cancelScheduledMessage(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.mailService.cancelScheduledMessage(req.user.sub, id);
+  }
+
+  @Get('scheduled')
+  getScheduledMessages(@Req() req: AuthenticatedRequest) {
+    return this.mailService.getScheduledMessages(req.user.sub);
+  }
+
+  // ── Templates ────────────────────────────────────────────────────────────────
+
+  @Get('templates')
+  getTemplates(@Req() req: AuthenticatedRequest) {
+    return this.mailService.getTemplates(req.user.sub);
+  }
+
+  @Post('templates')
+  @HttpCode(HttpStatus.OK)
+  createTemplate(@Req() req: AuthenticatedRequest, @Body() dto: CreateTemplateDto) {
+    return this.mailService.createTemplate(req.user.sub, dto);
+  }
+
+  @Put('templates/:id')
+  @HttpCode(HttpStatus.OK)
+  updateTemplate(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: Partial<CreateTemplateDto>) {
+    return this.mailService.updateTemplate(req.user.sub, id, dto);
+  }
+
+  @Delete('templates/:id')
+  @HttpCode(HttpStatus.OK)
+  deleteTemplate(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.mailService.deleteTemplate(req.user.sub, id);
+  }
+
+  // ── Rules ────────────────────────────────────────────────────────────────────
+
+  @Get('rules')
+  getRules(@Req() req: AuthenticatedRequest) {
+    return this.mailService.getRules(req.user.sub);
+  }
+
+  @Post('rules')
+  @HttpCode(HttpStatus.OK)
+  createRule(@Req() req: AuthenticatedRequest, @Body() dto: CreateRuleDto) {
+    return this.mailService.createRule(req.user.sub, dto);
+  }
+
+  @Put('rules/:id')
+  @HttpCode(HttpStatus.OK)
+  updateRule(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: Partial<CreateRuleDto>) {
+    return this.mailService.updateRule(req.user.sub, id, dto);
+  }
+
+  @Delete('rules/:id')
+  @HttpCode(HttpStatus.OK)
+  deleteRule(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.mailService.deleteRule(req.user.sub, id);
+  }
+
+  // ── Mute ─────────────────────────────────────────────────────────────────────
+
+  @Post('mute/:conversationId')
+  @HttpCode(HttpStatus.OK)
+  muteConversation(@Req() req: AuthenticatedRequest, @Param('conversationId') conversationId: string) {
+    return this.mailService.muteConversation(req.user.sub, conversationId);
+  }
+
+  @Delete('mute/:conversationId')
+  @HttpCode(HttpStatus.OK)
+  unmuteConversation(@Req() req: AuthenticatedRequest, @Param('conversationId') conversationId: string) {
+    return this.mailService.unmuteConversation(req.user.sub, conversationId);
+  }
+
+  @Get('muted')
+  getMutedConversations(@Req() req: AuthenticatedRequest) {
+    return this.mailService.getMutedConversations(req.user.sub);
+  }
+
+  // ── Bulk ─────────────────────────────────────────────────────────────────────
+
+  @Post('bulk/mark-read')
+  @HttpCode(HttpStatus.OK)
+  bulkMarkRead(
+    @Req() req: AuthenticatedRequest,
+    @Body('messageIds') messageIds: string[],
+    @Body('read') read: boolean,
+  ) {
+    return this.mailService.bulkMarkRead(req.user.sub, messageIds, read);
+  }
+
+  @Post('bulk/delete')
+  @HttpCode(HttpStatus.OK)
+  bulkDelete(@Req() req: AuthenticatedRequest, @Body('messageIds') messageIds: string[]) {
+    return this.mailService.bulkDelete(req.user.sub, messageIds);
+  }
+
+  @Post('bulk/move')
+  @HttpCode(HttpStatus.OK)
+  bulkMove(
+    @Req() req: AuthenticatedRequest,
+    @Body('messageIds') messageIds: string[],
+    @Body('folderId') folderId: string,
+  ) {
+    return this.mailService.bulkMove(req.user.sub, messageIds, folderId);
   }
 }

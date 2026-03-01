@@ -11,6 +11,11 @@ directories:
   # Packaged installers are written here
   output: release
 
+# The API's better-sqlite3 is already rebuilt for Electron by prepare-api.mjs
+# (run via the prebuild npm hook before electron-builder).  Disabling electron-
+# builder's own rebuild avoids a spurious `git fetch` for @electron/node-gyp.
+npmRebuild: false
+
 # ─── Files included in the packaged app ───────────────────────────────────────
 # electron-builder v25 glob change: patterns like dist/** and dist/**/* fail
 # the partial-directory filter check (dist dir gets EXCLUDED → walk never

@@ -889,4 +889,241 @@ export class MailService {
     );
     return { success: true };
   }
+
+  // ─── Snooze ─────────────────────────────────────────────────────────────────
+
+  async snoozeMessage(userId: string, messageId: string, snoozedUntil: string, originalFolderId: string) {
+    await this.getUser(userId);
+    const snoozeId = `snooze-${userId}-${messageId}`;
+    return this.prisma.snoozedMessage.upsert({
+      where: { id: snoozeId },
+      create: { id: snoozeId, userId, messageId, snoozedUntil: new Date(snoozedUntil), originalFolderId },
+      update: { snoozedUntil: new Date(snoozedUntil), originalFolderId },
+    });
+  }
+
+  async unsnoozeMessage(userId: string, messageId: string) {
+    await this.prisma.snoozedMessage.deleteMany({ where: { userId, messageId } });
+    return { success: true };
+  }
+
+  async getSnoozed(userId: string) {
+    await this.getUser(userId);
+    return this.prisma.snoozedMessage.findMany({ where: { userId }, orderBy: { snoozedUntil: 'asc' } });
+  }
+
+  /** Called by MailScheduler — move messages whose snooze has expired back to their folder */
+  async processExpiredSnoozes() {
+    const expired = await this.prisma.snoozedMessage.findMany({
+      where: { snoozedUntil: { lte: new Date() } },
+      include: { user: true },
+    });
+    for (const snooze of expired) {
+      try {
+        const user = snooze.user as any;
+        if (!user.authToken) { await this.prisma.snoozedMessage.delete({ where: { id: snooze.id } }); continue; }
+        const msg = await this.prisma.message.findFirst({ where: { userId: snooze.userId, id: snooze.messageId } });
+        if (msg) {
+          const targetFolder = await this.prisma.folder.findFirst({ where: { userId: snooze.userId, id: snooze.originalFolderId } });
+          if (targetFolder) {
+            await this.zimbra.moveMessage(user.zimbraHost, user.authToken, msg.zimbraId, targetFolder.zimbraId, user.csrfToken ?? undefined);
+            await this.prisma.message.update({ where: { id: msg.id }, data: { folderId: snooze.originalFolderId } });
+          }
+        }
+        await this.prisma.snoozedMessage.delete({ where: { id: snooze.id } });
+      } catch (err: any) {
+        this.logger.warn(`Failed to unsnooze message ${snooze.messageId}: ${err?.message}`);
+      }
+    }
+  }
+
+  // ─── Scheduled Send ──────────────────────────────────────────────────────────
+
+  async scheduleMessage(userId: string, payload: {
+    sendAt: string; to: string[]; cc?: string[]; bcc?: string[]; subject?: string; body?: string;
+  }) {
+    await this.getUser(userId);
+    return this.prisma.scheduledMessage.create({
+      data: {
+        userId,
+        sendAt: new Date(payload.sendAt),
+        to: payload.to,
+        cc: payload.cc ?? [],
+        bcc: payload.bcc ?? [],
+        subject: payload.subject ?? null,
+        body: payload.body ?? null,
+      },
+    });
+  }
+
+  async cancelScheduledMessage(userId: string, id: string) {
+    const msg = await this.prisma.scheduledMessage.findFirst({ where: { userId, id } });
+    if (!msg) throw new NotFoundException('Scheduled message not found');
+    return this.prisma.scheduledMessage.update({ where: { id }, data: { status: 'CANCELLED' } });
+  }
+
+  async getScheduledMessages(userId: string) {
+    await this.getUser(userId);
+    return this.prisma.scheduledMessage.findMany({
+      where: { userId, status: 'PENDING' },
+      orderBy: { sendAt: 'asc' },
+    });
+  }
+
+  /** Called by MailScheduler — send all due scheduled messages */
+  async processDueScheduled() {
+    const due = await this.prisma.scheduledMessage.findMany({
+      where: { status: 'PENDING', sendAt: { lte: new Date() } },
+      include: { user: true },
+    });
+    for (const msg of due) {
+      const user = msg.user as any;
+      if (!user.authToken) continue;
+      try {
+        await this.zimbra.sendMessage(
+          user.zimbraHost,
+          user.authToken,
+          {
+            to: msg.to as string[],
+            cc: (msg.cc as string[]) ?? [],
+            bcc: (msg.bcc as string[]) ?? [],
+            subject: msg.subject ?? '',
+            body: msg.body ?? '',
+          },
+          user.csrfToken ?? undefined,
+        );
+        await this.prisma.scheduledMessage.update({ where: { id: msg.id }, data: { status: 'SENT' } });
+      } catch (err: any) {
+        this.logger.warn(`Scheduled message ${msg.id} failed: ${err?.message}`);
+        await this.prisma.scheduledMessage.update({
+          where: { id: msg.id },
+          data: { status: 'FAILED', errorMsg: err?.message ?? 'Unknown error' },
+        });
+      }
+    }
+  }
+
+  // ─── Email Templates ─────────────────────────────────────────────────────────
+
+  async getTemplates(userId: string) {
+    await this.getUser(userId);
+    return this.prisma.emailTemplate.findMany({ where: { userId }, orderBy: { name: 'asc' } });
+  }
+
+  async createTemplate(userId: string, data: { name: string; subject?: string; body: string }) {
+    await this.getUser(userId);
+    return this.prisma.emailTemplate.create({ data: { userId, name: data.name, subject: data.subject, body: data.body } });
+  }
+
+  async updateTemplate(userId: string, id: string, data: { name?: string; subject?: string; body?: string }) {
+    const tmpl = await this.prisma.emailTemplate.findFirst({ where: { userId, id } });
+    if (!tmpl) throw new NotFoundException('Template not found');
+    return this.prisma.emailTemplate.update({ where: { id }, data });
+  }
+
+  async deleteTemplate(userId: string, id: string) {
+    const tmpl = await this.prisma.emailTemplate.findFirst({ where: { userId, id } });
+    if (!tmpl) throw new NotFoundException('Template not found');
+    await this.prisma.emailTemplate.delete({ where: { id } });
+    return { success: true };
+  }
+
+  // ─── Mail Rules ──────────────────────────────────────────────────────────────
+
+  async getRules(userId: string) {
+    await this.getUser(userId);
+    return this.prisma.mailRule.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+  }
+
+  async createRule(userId: string, data: { name: string; enabled?: boolean; conditions: any[]; actions: any[] }) {
+    await this.getUser(userId);
+    return this.prisma.mailRule.create({
+      data: { userId, name: data.name, enabled: data.enabled ?? true, conditions: data.conditions, actions: data.actions },
+    });
+  }
+
+  async updateRule(userId: string, id: string, data: Partial<{ name: string; enabled: boolean; conditions: any[]; actions: any[] }>) {
+    const rule = await this.prisma.mailRule.findFirst({ where: { userId, id } });
+    if (!rule) throw new NotFoundException('Rule not found');
+    return this.prisma.mailRule.update({ where: { id }, data });
+  }
+
+  async deleteRule(userId: string, id: string) {
+    const rule = await this.prisma.mailRule.findFirst({ where: { userId, id } });
+    if (!rule) throw new NotFoundException('Rule not found');
+    await this.prisma.mailRule.delete({ where: { id } });
+    return { success: true };
+  }
+
+  // ─── Mute Conversation ───────────────────────────────────────────────────────
+
+  async muteConversation(userId: string, conversationId: string) {
+    await this.getUser(userId);
+    await this.prisma.mutedConversation.upsert({
+      where: { userId_conversationId: { userId, conversationId } },
+      create: { userId, conversationId },
+      update: {},
+    });
+    return { success: true, muted: true };
+  }
+
+  async unmuteConversation(userId: string, conversationId: string) {
+    await this.prisma.mutedConversation.deleteMany({ where: { userId, conversationId } });
+    return { success: true, muted: false };
+  }
+
+  async getMutedConversations(userId: string) {
+    await this.getUser(userId);
+    const muted = await this.prisma.mutedConversation.findMany({ where: { userId } });
+    return muted.map((m) => m.conversationId);
+  }
+
+  // ─── Bulk Operations ─────────────────────────────────────────────────────────
+
+  async bulkMarkRead(userId: string, messageIds: string[], read: boolean) {
+    const user = await this.getUser(userId);
+    const results: { id: string; success: boolean }[] = [];
+    for (const messageId of messageIds) {
+      try {
+        const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
+        if (!msg) { results.push({ id: messageId, success: false }); continue; }
+        await this.zimbra.markRead(user.zimbraHost, user.authToken!, msg.zimbraId, read, user.csrfToken ?? undefined);
+        await this.prisma.message.update({ where: { id: messageId }, data: { isRead: read } });
+        results.push({ id: messageId, success: true });
+      } catch { results.push({ id: messageId, success: false }); }
+    }
+    return { results };
+  }
+
+  async bulkDelete(userId: string, messageIds: string[]) {
+    const user = await this.getUser(userId);
+    const results: { id: string; success: boolean }[] = [];
+    for (const messageId of messageIds) {
+      try {
+        const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
+        if (!msg) { results.push({ id: messageId, success: false }); continue; }
+        await this.zimbra.deleteMessage(user.zimbraHost, user.authToken!, msg.zimbraId, user.csrfToken ?? undefined);
+        await this.prisma.message.delete({ where: { id: messageId } });
+        results.push({ id: messageId, success: true });
+      } catch { results.push({ id: messageId, success: false }); }
+    }
+    return { results };
+  }
+
+  async bulkMove(userId: string, messageIds: string[], targetFolderId: string) {
+    const user = await this.getUser(userId);
+    const targetFolder = await this.prisma.folder.findFirst({ where: { userId, id: targetFolderId } });
+    if (!targetFolder) throw new NotFoundException('Target folder not found');
+    const results: { id: string; success: boolean }[] = [];
+    for (const messageId of messageIds) {
+      try {
+        const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
+        if (!msg) { results.push({ id: messageId, success: false }); continue; }
+        await this.zimbra.moveMessage(user.zimbraHost, user.authToken!, msg.zimbraId, targetFolder.zimbraId, user.csrfToken ?? undefined);
+        await this.prisma.message.update({ where: { id: messageId }, data: { folderId: targetFolderId } });
+        results.push({ id: messageId, success: true });
+      } catch { results.push({ id: messageId, success: false }); }
+    }
+    return { results };
+  }
 }

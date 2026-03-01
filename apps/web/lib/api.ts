@@ -322,6 +322,98 @@ export const api = {
       const blob = await res.blob();
       return URL.createObjectURL(blob);
     },
+
+    // ── Snooze ────────────────────────────────────────────────────────────────
+    snooze: (messageId: string, snoozedUntil: string, originalFolderId: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<any>('/mail/snooze', { method: 'POST', body: JSON.stringify({ messageId, snoozedUntil, originalFolderId }) });
+    },
+    unsnooze: (messageId: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<any>(`/mail/snooze/${messageId}`, { method: 'DELETE' });
+    },
+    getSnoozed: () => {
+      if (USE_MOCK) return delay<any[]>([]);
+      return request<any[]>('/mail/snoozed');
+    },
+
+    // ── Scheduled Send ────────────────────────────────────────────────────────
+    scheduleMessage: (payload: { sendAt: string; to: string[]; cc?: string[]; bcc?: string[]; subject?: string; body?: string }) => {
+      if (USE_MOCK) return delay({ id: `sched-${Date.now()}`, ...payload, status: 'PENDING' });
+      return request<any>('/mail/scheduled', { method: 'POST', body: JSON.stringify(payload) });
+    },
+    cancelScheduled: (id: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<any>(`/mail/scheduled/${id}`, { method: 'DELETE' });
+    },
+    getScheduled: () => {
+      if (USE_MOCK) return delay<any[]>([]);
+      return request<any[]>('/mail/scheduled');
+    },
+
+    // ── Templates ─────────────────────────────────────────────────────────────
+    getTemplates: () => {
+      if (USE_MOCK) return delay<any[]>([]);
+      return request<any[]>('/mail/templates');
+    },
+    createTemplate: (data: { name: string; subject?: string; body: string }) => {
+      if (USE_MOCK) return delay({ id: `tmpl-${Date.now()}`, ...data });
+      return request<any>('/mail/templates', { method: 'POST', body: JSON.stringify(data) });
+    },
+    updateTemplate: (id: string, data: { name?: string; subject?: string; body?: string }) => {
+      if (USE_MOCK) return delay({ id, ...data });
+      return request<any>(`/mail/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    },
+    deleteTemplate: (id: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<any>(`/mail/templates/${id}`, { method: 'DELETE' });
+    },
+
+    // ── Rules ─────────────────────────────────────────────────────────────────
+    getRules: () => {
+      if (USE_MOCK) return delay<any[]>([]);
+      return request<any[]>('/mail/rules');
+    },
+    createRule: (data: { name: string; enabled?: boolean; conditions: any[]; actions: any[] }) => {
+      if (USE_MOCK) return delay({ id: `rule-${Date.now()}`, ...data });
+      return request<any>('/mail/rules', { method: 'POST', body: JSON.stringify(data) });
+    },
+    updateRule: (id: string, data: Partial<{ name: string; enabled: boolean; conditions: any[]; actions: any[] }>) => {
+      if (USE_MOCK) return delay({ id, ...data });
+      return request<any>(`/mail/rules/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    },
+    deleteRule: (id: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<any>(`/mail/rules/${id}`, { method: 'DELETE' });
+    },
+
+    // ── Mute ──────────────────────────────────────────────────────────────────
+    muteConversation: (conversationId: string) => {
+      if (USE_MOCK) return delay({ success: true, muted: true });
+      return request<any>(`/mail/mute/${conversationId}`, { method: 'POST' });
+    },
+    unmuteConversation: (conversationId: string) => {
+      if (USE_MOCK) return delay({ success: true, muted: false });
+      return request<any>(`/mail/mute/${conversationId}`, { method: 'DELETE' });
+    },
+    getMuted: () => {
+      if (USE_MOCK) return delay<string[]>([]);
+      return request<string[]>('/mail/muted');
+    },
+
+    // ── Bulk ──────────────────────────────────────────────────────────────────
+    bulkMarkRead: (messageIds: string[], read: boolean) => {
+      if (USE_MOCK) return delay({ results: messageIds.map((id) => ({ id, success: true })) });
+      return request<any>('/mail/bulk/mark-read', { method: 'POST', body: JSON.stringify({ messageIds, read }) });
+    },
+    bulkDelete: (messageIds: string[]) => {
+      if (USE_MOCK) return delay({ results: messageIds.map((id) => ({ id, success: true })) });
+      return request<any>('/mail/bulk/delete', { method: 'POST', body: JSON.stringify({ messageIds }) });
+    },
+    bulkMove: (messageIds: string[], folderId: string) => {
+      if (USE_MOCK) return delay({ results: messageIds.map((id) => ({ id, success: true })) });
+      return request<any>('/mail/bulk/move', { method: 'POST', body: JSON.stringify({ messageIds, folderId }) });
+    },
   },
 
   settings: {

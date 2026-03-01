@@ -163,6 +163,8 @@ interface Props {
   onMoveToFolder?: (folderId: string) => void;
   /** Increment to force the thread conversation to re-fetch (e.g. after sending a reply). */
   refreshKey?: number;
+  onMute?: () => void;
+  isMuted?: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -178,6 +180,8 @@ export default function ThreadView({
   folders,
   onMoveToFolder,
   refreshKey,
+  onMute,
+  isMuted,
 }: Props) {
   const user = useAuthStore((s) => s.user);
 
@@ -305,6 +309,8 @@ export default function ThreadView({
       onMoveToInbox={onMoveToInbox}
       folders={folders}
       onMoveToFolder={onMoveToFolder}
+      onMute={onMute}
+      isMuted={isMuted}
     />
   );
 

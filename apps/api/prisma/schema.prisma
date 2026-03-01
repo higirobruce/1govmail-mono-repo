@@ -26,12 +26,17 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  sessions       Session[]
-  folders        Folder[]
-  messages       Message[]
-  contacts       Contact[]
-  calendarEvents CalendarEvent[]
-  tasks          Task[]
+  sessions           Session[]
+  folders            Folder[]
+  messages           Message[]
+  contacts           Contact[]
+  calendarEvents     CalendarEvent[]
+  tasks              Task[]
+  snoozedMessages    SnoozedMessage[]
+  scheduledMessages  ScheduledMessage[]
+  emailTemplates     EmailTemplate[]
+  mailRules          MailRule[]
+  mutedConversations MutedConversation[]
 
   @@map("users")
 }
@@ -227,6 +232,97 @@ model TaskComment {
 
   @@index([taskId])
   @@map("task_comments")
+}
+
+// ─── Mail Features ────────────────────────────────────────────────────────────
+
+model SnoozedMessage {
+  id               String   @id @default(cuid())
+  userId           String
+  messageId        String
+  snoozedUntil     DateTime
+  originalFolderId String
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([snoozedUntil])
+  @@map("snoozed_messages")
+}
+
+enum ScheduledMessageStatus {
+  PENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+model ScheduledMessage {
+  id        String                 @id @default(cuid())
+  userId    String
+  sendAt    DateTime
+  to        Json
+  cc        Json                   @default("[]")
+  bcc       Json                   @default("[]")
+  subject   String?
+  body      String?
+  status    ScheduledMessageStatus @default(PENDING)
+  errorMsg  String?
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status, sendAt])
+  @@map("scheduled_messages")
+}
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  subject   String?
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_templates")
+}
+
+model MailRule {
+  id         String   @id @default(cuid())
+  userId     String
+  name       String
+  enabled    Boolean  @default(true)
+  // conditions: [{ field: 'from'|'subject'|'to', op: 'contains'|'equals'|'startsWith', value: string }]
+  conditions Json
+  // actions:    [{ type: 'move'|'markRead'|'star'|'delete', folderId?: string }]
+  actions    Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("mail_rules")
+}
+
+model MutedConversation {
+  id             String   @id @default(cuid())
+  userId         String
+  conversationId String
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, conversationId])
+  @@index([userId])
+  @@map("muted_conversations")
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────

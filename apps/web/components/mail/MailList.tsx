@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { formatDistanceToNowStrict, parseISO, startOfDay, subDays } from 'date-fns';
-import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo } from 'lucide-react';
+import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Message {
@@ -26,8 +26,14 @@ interface FolderItem {
 }
 
 export interface ContextAction {
-  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask';
+  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'snooze' | 'mute' | 'print';
   messageId: string;
+  targetFolderId?: string;
+}
+
+export interface BulkAction {
+  type: 'markRead' | 'markUnread' | 'delete' | 'move';
+  messageIds: string[];
   targetFolderId?: string;
 }
 
@@ -40,7 +46,9 @@ interface MailListProps {
   onLoadMore?: () => void;
   hasMore?: boolean;
   onContextAction?: (action: ContextAction) => void;
+  onBulkAction?: (action: BulkAction) => void;
   folders?: FolderItem[];
+  mutedConversationIds?: string[];
 }
 
 type Tab = 'all' | 'unread' | 'starred';
@@ -118,11 +126,13 @@ function ContextMenu({
   onAction,
   onClose,
   folders = [],
+  mutedConversationIds = [],
 }: {
   state: CtxMenuState;
   onAction: (action: ContextAction) => void;
   onClose: () => void;
   folders?: FolderItem[];
+  mutedConversationIds?: string[];
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [showFolders, setShowFolders] = useState(false);
@@ -177,6 +187,9 @@ function ContextMenu({
     );
   };
 
+  const conversationId = (state.message as any).conversationId;
+  const isMuted = conversationId && mutedConversationIds.includes(conversationId);
+
   return (
     <div
       ref={menuRef}
@@ -192,6 +205,8 @@ function ContextMenu({
       {state.message.isStarred
         ? item(Star,       'Unstar',         'unstar')
         : item(Star,       'Star',           'star')}
+      {item(AlarmClock, 'Snooze',         'snooze')}
+      {item(BellOff,    isMuted ? 'Unmute conversation' : 'Mute conversation', 'mute')}
       {item(ListTodo,   'Create Task',    'createTask')}
       {labelFolders.length > 0 && (
         <>
@@ -237,56 +252,84 @@ function MailRow({
   active,
   onClick,
   onContextMenu,
+  selected,
+  onSelect,
 }: {
   message: Message;
   active: boolean;
   onClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  selected?: boolean;
+  onSelect?: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      onContextMenu={onContextMenu}
+    <div
       className={cn(
-        'w-full text-left px-4 py-3 border-b border-border/25 transition-all group relative',
+        'w-full text-left border-b border-border/25 transition-all group relative',
         active
           ? 'bg-primary/8 border-l-2 border-l-primary'
+          : selected
+          ? 'bg-primary/5 border-l-2 border-l-primary/50'
           : 'hover:bg-muted/30 border-l-2 border-l-transparent',
       )}
     >
-      <div className="flex items-start gap-3">
-        {/* Unread dot */}
-        <div className="mt-[9px] shrink-0 w-1.5 h-1.5">
-          {!message.isRead && <div className="w-1.5 h-1.5 rounded-full bg-primary" />}
-        </div>
-
-        {/* Text */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-0.5">
-            <span className={cn(
-              'text-[13px] truncate pr-2',
-              message.isRead ? 'text-foreground/80 font-normal' : 'text-foreground font-semibold',
-            )}>
-              {message.fromName ?? message.fromEmail}
-            </span>
-            <span className="text-[11px] text-muted-foreground/65 shrink-0 tabular-nums">
-              {formatDate(message.receivedAt)}
-            </span>
-          </div>
-
-          <p className={cn(
-            'text-[12px] truncate mb-0.5',
-            message.isRead ? 'text-muted-foreground/80' : 'text-foreground/80 font-medium',
+      <div className="flex items-center">
+        {/* Checkbox — shown on hover or when already selected */}
+        <div
+          className={cn(
+            'pl-2 shrink-0 flex items-center justify-center w-7 self-stretch',
+            selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+          )}
+          onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
+        >
+          <div className={cn(
+            'w-4 h-4 rounded border-2 flex items-center justify-center transition-colors cursor-pointer',
+            selected ? 'bg-primary border-primary' : 'border-muted-foreground/30 hover:border-primary/50',
           )}>
-            {message.subject ?? '(no subject)'}
-          </p>
-
-          <p className="text-[11px] text-muted-foreground/65 truncate leading-relaxed">
-            {message.snippet}
-          </p>
+            {selected && <div className="w-2 h-2 rounded-sm bg-primary-foreground" />}
+          </div>
         </div>
+
+        <button
+          onClick={onClick}
+          onContextMenu={onContextMenu}
+          className="flex-1 min-w-0 px-3 py-3 text-left"
+        >
+          <div className="flex items-start gap-3">
+            {/* Unread dot */}
+            <div className="mt-[9px] shrink-0 w-1.5 h-1.5">
+              {!message.isRead && <div className="w-1.5 h-1.5 rounded-full bg-primary" />}
+            </div>
+
+            {/* Text */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between mb-0.5">
+                <span className={cn(
+                  'text-[13px] truncate pr-2',
+                  message.isRead ? 'text-foreground/80 font-normal' : 'text-foreground font-semibold',
+                )}>
+                  {message.fromName ?? message.fromEmail}
+                </span>
+                <span className="text-[11px] text-muted-foreground/65 shrink-0 tabular-nums">
+                  {formatDate(message.receivedAt)}
+                </span>
+              </div>
+
+              <p className={cn(
+                'text-[12px] truncate mb-0.5',
+                message.isRead ? 'text-muted-foreground/80' : 'text-foreground/80 font-medium',
+              )}>
+                {message.subject ?? '(no subject)'}
+              </p>
+
+              <p className="text-[11px] text-muted-foreground/65 truncate leading-relaxed">
+                {message.snippet}
+              </p>
+            </div>
+          </div>
+        </button>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -305,10 +348,23 @@ export default function MailList({
   onLoadMore,
   hasMore,
   onContextAction,
+  onBulkAction,
   folders = [],
+  mutedConversationIds = [],
 }: MailListProps) {
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
   // Infinite scroll
   const scrollRef      = useRef<HTMLDivElement>(null);
@@ -427,6 +483,8 @@ export default function MailList({
                   active={activeMessageId === msg.id}
                   onClick={() => onSelect(msg.id)}
                   onContextMenu={(e) => handleContextMenu(e, msg)}
+                  selected={selectedIds.has(msg.id)}
+                  onSelect={() => toggleSelect(msg.id)}
                 />
               ))}
             </div>
@@ -457,7 +515,41 @@ export default function MailList({
           onAction={handleContextAction}
           onClose={() => setCtxMenu(null)}
           folders={folders}
+          mutedConversationIds={mutedConversationIds}
         />
+      )}
+
+      {/* Floating bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 bg-card border border-border/60 rounded-2xl shadow-xl">
+          <span className="text-[12px] font-medium text-foreground/70 mr-1">
+            {selectedIds.size} selected
+          </span>
+          <button
+            onClick={() => { onBulkAction?.({ type: 'markRead', messageIds: [...selectedIds] }); clearSelection(); }}
+            className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-blue-500/10 text-blue-600 hover:bg-blue-500/20 transition-colors"
+          >
+            Mark read
+          </button>
+          <button
+            onClick={() => { onBulkAction?.({ type: 'markUnread', messageIds: [...selectedIds] }); clearSelection(); }}
+            className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-muted/60 text-foreground/70 hover:bg-muted transition-colors"
+          >
+            Mark unread
+          </button>
+          <button
+            onClick={() => { onBulkAction?.({ type: 'delete', messageIds: [...selectedIds] }); clearSelection(); }}
+            className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+          >
+            Delete
+          </button>
+          <button
+            onClick={clearSelection}
+            className="ml-1 p-1 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       )}
     </>
   );

@@ -19,6 +19,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   X, Send, Loader2, ChevronDown, ChevronUp, Minus,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Link2, Paperclip,
+  Clock, FileText, Calendar,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth.store';
@@ -331,6 +332,35 @@ export default function ComposeModal({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Undo send ──────────────────────────────────────────────────────────────
+  const undoCancelledRef = useRef(false);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Scheduled send ─────────────────────────────────────────────────────────
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('09:00');
+
+  // ── Templates ─────────────────────────────────────────────────────────────
+  const [showTemplates, setShowTemplates] = useState(false);
+  const templatesRef = useRef<HTMLDivElement>(null);
+  const { data: templates = [] } = useQuery({
+    queryKey: ['mail-templates'],
+    queryFn: () => api.mail.getTemplates(),
+    staleTime: 5 * 60_000,
+    enabled: open,
+  });
+
+  // Close templates dropdown on outside click
+  useEffect(() => {
+    if (!showTemplates) return;
+    const handler = (e: MouseEvent) => {
+      if (templatesRef.current && !templatesRef.current.contains(e.target as Node)) setShowTemplates(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showTemplates]);
+
   // ── Attachments ────────────────────────────────────────────────────────────
   const [attachments, setAttachments] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -373,6 +403,7 @@ export default function ComposeModal({
           '[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5',
           '[&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground/60',
         ].join(' '),
+        spellcheck: 'true',
       },
       handleKeyDown(_view, event) {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
@@ -497,10 +528,10 @@ export default function ComposeModal({
     onClose();
   };
 
-  // ── Send ───────────────────────────────────────────────────────────────────
+  // ── Send (with 5-second undo window) ──────────────────────────────────────
   const handleSend = async () => {
     if (to.length === 0) { setError('Please add at least one recipient'); return; }
-    setError(null); setSending(true);
+    setError(null);
     const currentHtml = editor?.getHTML() ?? '';
     const finalBody = buildHtmlBody(currentHtml, mode, originalMessage);
     const payload = {
@@ -511,19 +542,71 @@ export default function ComposeModal({
       body: finalBody,
       ...(mode === 'reply' || mode === 'replyAll' ? { replyToId: originalMessage?.id } : {}),
     };
-    try {
-      if (attachments.length > 0) {
-        await api.mail.sendWithFiles(payload, attachments);
-      } else {
-        await api.mail.send(payload);
+
+    undoCancelledRef.current = false;
+    // Dismiss the compose modal immediately so it feels fast
+    onSent?.(); onClose();
+    if (savedDraftId) { api.mail.discardDraft(savedDraftId).catch(() => {}); }
+
+    // Show undo toast for 5 seconds
+    const toastId = toast.message('Sending in 5 seconds…', {
+      duration: 5200,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          undoCancelledRef.current = true;
+          if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+          toast.success('Send cancelled');
+        },
+      },
+    });
+
+    undoTimerRef.current = setTimeout(async () => {
+      if (undoCancelledRef.current) return;
+      try {
+        if (attachments.length > 0) {
+          await api.mail.sendWithFiles(payload, attachments);
+        } else {
+          await api.mail.send(payload);
+        }
+        toast.dismiss(toastId);
+        toast.success('Message sent');
+      } catch (err: any) {
+        const msg = err.message ?? 'Failed to send message';
+        toast.error('Failed to send', { description: msg });
       }
-      toast.success('Message sent');
-      if (savedDraftId) { api.mail.discardDraft(savedDraftId).catch(() => {}); setSavedDraftId(null); }
+    }, 5000);
+  };
+
+  // ── Scheduled Send ────────────────────────────────────────────────────────
+  const handleScheduledSend = async () => {
+    if (to.length === 0) { setError('Please add at least one recipient'); return; }
+    if (!scheduleDate) { setError('Please pick a date to schedule'); return; }
+    setError(null);
+
+    const [h, m] = scheduleTime.split(':').map(Number);
+    const sendAt = new Date(scheduleDate);
+    sendAt.setHours(h, m, 0, 0);
+    if (sendAt <= new Date()) { setError('Scheduled time must be in the future'); return; }
+
+    const currentHtml = editor?.getHTML() ?? '';
+    const finalBody = buildHtmlBody(currentHtml, mode, originalMessage);
+    try {
+      await api.mail.scheduleMessage({
+        sendAt: sendAt.toISOString(),
+        to,
+        cc: cc.length > 0 ? cc : undefined,
+        bcc: bcc.length > 0 ? bcc : undefined,
+        subject,
+        body: finalBody,
+      });
+      toast.success(`Message scheduled for ${sendAt.toLocaleString()}`);
+      if (savedDraftId) { api.mail.discardDraft(savedDraftId).catch(() => {}); }
       onSent?.(); onClose();
     } catch (err: any) {
-      const msg = err.message ?? 'Failed to send message';
-      setError(msg); toast.error('Failed to send', { description: msg });
-    } finally { setSending(false); }
+      const msg = err.message ?? 'Failed to schedule message';
+      setError(msg); toast.error('Schedule failed', { description: msg });
+    }
   };
 
   // Keep the ref current so TipTap's keydown handler can call it
@@ -732,6 +815,40 @@ export default function ComposeModal({
                     e.target.value = '';
                   }}
                 />
+
+                {/* Templates */}
+                {(templates as any[]).length > 0 && (
+                  <div ref={templatesRef} className="relative">
+                    <ToolbarBtn title="Insert template" onClick={() => setShowTemplates((v) => !v)} active={showTemplates}>
+                      <FileText className="w-3.5 h-3.5" />
+                    </ToolbarBtn>
+                    {showTemplates && (
+                      <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[200px]">
+                        <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                          Templates
+                        </p>
+                        <ul className="py-1 max-h-52 overflow-y-auto">
+                          {(templates as any[]).map((t) => (
+                            <li key={t.id}>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  if (t.subject && !subject) setSubject(t.subject);
+                                  editor?.chain().focus().insertContent(t.body).run();
+                                  setShowTemplates(false);
+                                }}
+                                className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/60 text-foreground transition-colors"
+                              >
+                                {t.name}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* TipTap editor */}
@@ -757,24 +874,60 @@ export default function ComposeModal({
             </div>
           </div>
 
+          {/* ── Schedule picker (shown when showSchedule is true) ── */}
+          {showSchedule && (
+            <div className="px-5 py-3 border-t border-border/40 shrink-0 bg-muted/10">
+              <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">Schedule send</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={scheduleDate}
+                  min={new Date().toISOString().split('T')[0]}
+                  onChange={(e) => setScheduleDate(e.target.value)}
+                  className="flex-1 h-8 text-[12px] bg-muted/30 border border-border/50 rounded-lg px-2 text-foreground focus:outline-none focus:border-primary/50"
+                />
+                <input
+                  type="time"
+                  value={scheduleTime}
+                  onChange={(e) => setScheduleTime(e.target.value)}
+                  className="w-24 h-8 text-[12px] bg-muted/30 border border-border/50 rounded-lg px-2 text-foreground focus:outline-none focus:border-primary/50"
+                />
+                <Button size="sm" onClick={handleScheduledSend} disabled={!scheduleDate || to.length === 0}
+                  className="h-8 px-3 gap-1.5 bg-primary/90 hover:bg-primary text-primary-foreground">
+                  <Calendar className="w-3.5 h-3.5" /> Schedule
+                </Button>
+                <button onClick={() => setShowSchedule(false)} className="p-1 rounded text-muted-foreground/50 hover:text-foreground">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ── Footer ── */}
           <div className="px-5 py-3 border-t border-border/60 shrink-0 flex items-center justify-between">
             <div className="flex-1">
               {error && <p className="text-xs text-destructive">{error}</p>}
               {!error && (
                 <p className="text-xs text-muted-foreground/30">
-                  {typeof navigator !== 'undefined' && navigator?.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Enter to send
+                  {typeof navigator !== 'undefined' && navigator?.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Enter to send · 5s undo window
                 </p>
               )}
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={handleDiscard} disabled={sending}
+              <Button variant="ghost" size="sm" onClick={handleDiscard}
                 className="text-muted-foreground/60 hover:text-destructive/70 h-8">Discard</Button>
-              <Button size="sm" onClick={handleSend} disabled={sending || to.length === 0}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setShowSchedule((v) => !v); }}
+                title="Schedule send"
+                className="h-8 w-8 p-0 text-muted-foreground/50 hover:text-foreground"
+              >
+                <Clock className="w-3.5 h-3.5" />
+              </Button>
+              <Button size="sm" onClick={handleSend} disabled={to.length === 0}
                 className="bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-4 gap-1.5">
-                {sending
-                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending…</>
-                  : <><Send className="w-3.5 h-3.5" /> Send{attachments.length > 0 ? ` (+${attachments.length})` : ''}</>}
+                <Send className="w-3.5 h-3.5" /> Send{attachments.length > 0 ? ` (+${attachments.length})` : ''}
               </Button>
             </div>
           </div>

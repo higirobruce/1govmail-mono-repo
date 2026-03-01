@@ -6,7 +6,8 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
-import MailList, { type ContextAction } from '@/components/mail/MailList';
+import MailList, { type ContextAction, type BulkAction } from '@/components/mail/MailList';
+import SnoozeModal from '@/components/mail/SnoozeModal';
 import MailDetail from '@/components/mail/MailDetail';
 import ThreadView from '@/components/mail/ThreadView';
 import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
@@ -89,6 +90,18 @@ export default function MailPage() {
       };
     });
   }, [queryClient]);
+
+  // ── Snooze state ───────────────────────────────────────────────────────────
+  const [snoozeTarget, setSnoozeTarget] = useState<{ messageId: string; folderId: string } | null>(null);
+
+  // ── Mute state ─────────────────────────────────────────────────────────────
+  const [mutedConversationIds, setMutedConversationIds] = useState<string[]>([]);
+
+  // Load muted conversations once on mount
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    api.mail.getMuted().then(setMutedConversationIds).catch(() => {});
+  }, [isAuthenticated]);
 
   // ── Create-task-from-email state ───────────────────────────────────────────
   const [createTaskPrefill, setCreateTaskPrefill] = useState<{ linkedMessageId: string; linkedSubject: string } | null>(null);
@@ -346,6 +359,33 @@ export default function MailPage() {
     }
   }, [activeMessageId, messages, activeFolderId, updateFolderCounts, removeMessageFromCache, invalidateMessages]);
 
+  const handleBulkAction = useCallback(async (action: BulkAction) => {
+    const { messageIds } = action;
+    if (!messageIds.length) return;
+    try {
+      if (action.type === 'markRead' || action.type === 'markUnread') {
+        const read = action.type === 'markRead';
+        messageIds.forEach((id) => updateMessageInCache(activeFolderId, id, (m) => ({ ...m, isRead: read })));
+        await api.mail.bulkMarkRead(messageIds, read);
+        toast.success(`Marked ${messageIds.length} message${messageIds.length !== 1 ? 's' : ''} as ${read ? 'read' : 'unread'}`);
+      } else if (action.type === 'delete') {
+        messageIds.forEach((id) => removeMessageFromCache(activeFolderId, id));
+        if (activeMessageId && messageIds.includes(activeMessageId)) { setActiveMessageId(undefined); setActiveMessage(null); }
+        await api.mail.bulkDelete(messageIds);
+        toast.success(`Deleted ${messageIds.length} message${messageIds.length !== 1 ? 's' : ''}`);
+      } else if (action.type === 'move' && action.targetFolderId) {
+        messageIds.forEach((id) => removeMessageFromCache(activeFolderId, id));
+        if (activeMessageId && messageIds.includes(activeMessageId)) { setActiveMessageId(undefined); setActiveMessage(null); }
+        await api.mail.bulkMove(messageIds, action.targetFolderId);
+        const targetName = folders.find((f) => f.id === action.targetFolderId)?.name ?? 'folder';
+        toast.success(`Moved ${messageIds.length} message${messageIds.length !== 1 ? 's' : ''} to ${targetName}`);
+      }
+    } catch (err: any) {
+      invalidateMessages();
+      toast.error('Bulk action failed', { description: err?.message });
+    }
+  }, [activeFolderId, activeMessageId, folders, updateMessageInCache, removeMessageFromCache, invalidateMessages]);
+
   const openCompose = useCallback((mode: ComposeMode) => {
     setComposeDraftProps(null); // clear any draft — this is a fresh reply/forward/new
     setComposeMode(mode);
@@ -390,6 +430,37 @@ export default function MailPage() {
 
     if (type === 'createTask') {
       setCreateTaskPrefill({ linkedMessageId: messageId, linkedSubject: msg.subject ?? '' });
+      return;
+    }
+
+    if (type === 'snooze') {
+      setSnoozeTarget({ messageId, folderId: activeFolderId });
+      return;
+    }
+
+    if (type === 'mute') {
+      const convId = msg.conversationId as string | undefined;
+      if (!convId) { toast.info('This message is not part of a conversation'); return; }
+      const alreadyMuted = mutedConversationIds.includes(convId);
+      try {
+        if (alreadyMuted) {
+          await api.mail.unmuteConversation(convId);
+          setMutedConversationIds((prev) => prev.filter((id) => id !== convId));
+          toast.success('Conversation unmuted');
+        } else {
+          await api.mail.muteConversation(convId);
+          setMutedConversationIds((prev) => [...prev, convId]);
+          toast.success('Conversation muted — you won\'t be notified of new messages');
+        }
+      } catch (err: any) {
+        toast.error('Failed to update mute', { description: err?.message });
+      }
+      return;
+    }
+
+    if (type === 'print') {
+      // Handled by MailDetail's print button — if triggered from context menu, open message first
+      await openMessage(messageId);
       return;
     }
 
@@ -652,7 +723,9 @@ export default function MailPage() {
             onLoadMore={() => { if (!loadingMoreSearch && searchHasMore) runSearch(searchQuery, false); }}
             hasMore={searchHasMore}
             onContextAction={handleContextAction}
+            onBulkAction={handleBulkAction}
             folders={folders}
+            mutedConversationIds={mutedConversationIds}
           />
         ) : (
           <MailList
@@ -664,7 +737,9 @@ export default function MailPage() {
             onLoadMore={() => { if (!loadingMore && hasNextPage) fetchNextPage(); }}
             hasMore={!!hasNextPage}
             onContextAction={handleContextAction}
+            onBulkAction={handleBulkAction}
             folders={folders}
+            mutedConversationIds={mutedConversationIds}
           />
         )}
       </div>
@@ -687,8 +762,44 @@ export default function MailPage() {
           folders={folders}
           onMoveToFolder={(folderId) => { if (activeMessageId) handleMoveToFolder(folderId); }}
           refreshKey={threadRefreshKey}
+          onMute={activeMessage?.conversationId ? async () => {
+            const convId = activeMessage.conversationId as string;
+            const alreadyMuted = mutedConversationIds.includes(convId);
+            try {
+              if (alreadyMuted) {
+                await api.mail.unmuteConversation(convId);
+                setMutedConversationIds((prev) => prev.filter((id) => id !== convId));
+                toast.success('Conversation unmuted');
+              } else {
+                await api.mail.muteConversation(convId);
+                setMutedConversationIds((prev) => [...prev, convId]);
+                toast.success('Conversation muted');
+              }
+            } catch (err: any) {
+              toast.error('Failed to update mute', { description: err?.message });
+            }
+          } : undefined}
+          isMuted={activeMessage?.conversationId ? mutedConversationIds.includes(activeMessage.conversationId) : false}
         />
       </div>
+
+      {/* Snooze modal */}
+      <SnoozeModal
+        open={!!snoozeTarget}
+        onClose={() => setSnoozeTarget(null)}
+        onSnooze={async (until) => {
+          if (!snoozeTarget) return;
+          try {
+            await api.mail.snooze(snoozeTarget.messageId, until.toISOString(), snoozeTarget.folderId);
+            removeMessageFromCache(activeFolderId, snoozeTarget.messageId);
+            if (activeMessageId === snoozeTarget.messageId) { setActiveMessageId(undefined); setActiveMessage(null); }
+            toast.success(`Snoozed until ${until.toLocaleString()}`);
+          } catch (err: any) {
+            toast.error('Failed to snooze', { description: err?.message });
+          }
+          setSnoozeTarget(null);
+        }}
+      />
 
       {/* Create task from email — Sheet */}
       <TaskModal

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { useConfirmStore } from '@/stores/confirm.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
@@ -259,6 +260,7 @@ export default function TasksPage() {
   const [dragOverColumn, setDragOverColumn] = useState<TaskStatus | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  const confirm = useConfirmStore((s) => s.confirm);
 
   // Auth guard
   useEffect(() => {
@@ -304,15 +306,22 @@ export default function TasksPage() {
     }
   };
 
-  const handleDelete = async (task: Task) => {
-    if (!window.confirm(`Delete task "${task.title}"?`)) return;
-    try {
-      await api.tasks.delete(task.id);
-      setTasks((prev) => prev.filter((t) => t.id !== task.id));
-      toast.success('Task deleted');
-    } catch (err: any) {
-      toast.error('Failed to delete task', { description: err?.message });
-    }
+  const handleDelete = (task: Task) => {
+    confirm({
+      title: `Delete "${task.title}"?`,
+      description: 'This task will be permanently deleted.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await api.tasks.delete(task.id);
+          setTasks((prev) => prev.filter((t) => t.id !== task.id));
+          toast.success('Task deleted');
+        } catch (err: any) {
+          toast.error('Failed to delete task', { description: err?.message });
+        }
+      },
+    });
   };
 
   // Kanban drag-and-drop
@@ -393,22 +402,29 @@ export default function TasksPage() {
     setBulkLoading(false);
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (!selectedIds.size || bulkLoading) return;
-    if (!window.confirm(`Delete ${selectedIds.size} task(s)?`)) return;
-    setBulkLoading(true);
-    const ids = Array.from(selectedIds);
-    let failures = 0;
-    for (const id of ids) {
-      try {
-        await api.tasks.delete(id);
-        setTasks((prev) => prev.filter((t) => t.id !== id));
-      } catch { failures++; }
-    }
-    if (failures) toast.error(`${failures} task(s) could not be deleted`);
-    else toast.success(`${ids.length} task(s) deleted`);
-    setSelectedIds(new Set());
-    setBulkLoading(false);
+    confirm({
+      title: `Delete ${selectedIds.size} task${selectedIds.size > 1 ? 's' : ''}?`,
+      description: 'These tasks will be permanently deleted.',
+      confirmLabel: 'Delete all',
+      destructive: true,
+      onConfirm: async () => {
+        setBulkLoading(true);
+        const ids = Array.from(selectedIds);
+        let failures = 0;
+        for (const id of ids) {
+          try {
+            await api.tasks.delete(id);
+            setTasks((prev) => prev.filter((t) => t.id !== id));
+          } catch { failures++; }
+        }
+        if (failures) toast.error(`${failures} task(s) could not be deleted`);
+        else toast.success(`${ids.length} task(s) deleted`);
+        setSelectedIds(new Set());
+        setBulkLoading(false);
+      },
+    });
   };
 
   if (!hydrated) return null;
@@ -668,8 +684,9 @@ export default function TasksPage() {
         </div>
       )}
 
-      {/* Sheet — always rendered so close animation plays */}
+      {/* key resets form state when switching between tasks or new-task */}
       <TaskModal
+        key={modalTask === 'new' ? 'new' : (modalTask as Task)?.id ?? 'new'}
         open={showModal}
         task={modalTask === 'new' ? null : modalTask}
         onClose={closeModal}

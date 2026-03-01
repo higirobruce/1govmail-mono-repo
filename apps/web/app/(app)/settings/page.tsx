@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
+import { useConfirmStore } from '@/stores/confirm.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
@@ -528,6 +529,7 @@ function SignaturesSection({ data, onUpdate }: { data: SettingsData; onUpdate: (
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const confirm = useConfirmStore((s) => s.confirm);
 
   const editingSig = editingId === 'new'
     ? { id: 'new', name: '', contentHtml: '', contentText: '' }
@@ -561,20 +563,27 @@ function SignaturesSection({ data, onUpdate }: { data: SettingsData; onUpdate: (
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this signature?')) return;
-    setDeletingId(id);
-    try {
-      await api.settings.deleteSignature(id);
-      setSignatures((prev) => prev.filter((s) => s.id !== id));
-      if (editingId === id) setEditingId(null);
-      toast.success('Signature deleted');
-      onUpdate();
-    } catch (err: any) {
-      toast.error('Failed to delete signature', { description: err?.message });
-    } finally {
-      setDeletingId(null);
-    }
+  const handleDelete = (id: string) => {
+    confirm({
+      title: 'Delete this signature?',
+      description: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
+        setDeletingId(id);
+        try {
+          await api.settings.deleteSignature(id);
+          setSignatures((prev) => prev.filter((s) => s.id !== id));
+          if (editingId === id) setEditingId(null);
+          toast.success('Signature deleted');
+          onUpdate();
+        } catch (err: any) {
+          toast.error('Failed to delete signature', { description: err?.message });
+        } finally {
+          setDeletingId(null);
+        }
+      },
+    });
   };
 
   return (

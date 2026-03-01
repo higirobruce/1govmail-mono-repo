@@ -4,13 +4,16 @@ import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth.store';
+import { useConfirmStore } from '@/stores/confirm.store';
 import {
   Inbox, Send, FileText, Trash2, Archive,
   ChevronDown, LogOut, Settings, Plus, X,
   Calendar, Users, FolderOpen,
-  ListTodo, UsersRound, Newspaper,
+  ListTodo, UsersRound, Newspaper, Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
+import { AppTour } from '@/components/tour/AppTour';
 
 interface Folder {
   id: string;
@@ -72,6 +75,7 @@ function NavItem({
   onClick,
   iconBg,
   comingSoon,
+  tourId,
 }: {
   icon: React.ElementType;
   label: string;
@@ -80,9 +84,11 @@ function NavItem({
   onClick?: () => void;
   iconBg?: string;
   comingSoon?: boolean;
+  tourId?: string;
 }) {
   return (
     <button
+      data-tour={tourId}
       onClick={comingSoon ? undefined : onClick}
       disabled={comingSoon}
       className={cn(
@@ -131,17 +137,22 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
   const [newFolderName, setNewFolderName] = useState('');
   const [savingFolder, setSavingFolder] = useState(false);
   const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
+  const [tourActive, setTourActive] = useState(false);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
+  const confirm = useConfirmStore((s) => s.confirm);
 
-  const handleDeleteFolder = async (folderId: string, folderName: string) => {
+  const handleDeleteFolder = (folderId: string, folderName: string) => {
     if (!onDeleteFolder) return;
-    if (!window.confirm(`Delete folder "${folderName}"? Messages inside will not be deleted.`)) return;
-    setDeletingFolderId(folderId);
-    try {
-      await onDeleteFolder(folderId);
-    } finally {
-      setDeletingFolderId(null);
-    }
+    confirm({
+      title: `Delete folder "${folderName}"?`,
+      description: 'Messages inside will not be deleted.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
+        setDeletingFolderId(folderId);
+        try { await onDeleteFolder!(folderId); } finally { setDeletingFolderId(null); }
+      },
+    });
   };
 
   const handleLogout = async () => {
@@ -214,6 +225,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
       {/* Compose button */}
       <div className="px-3 pb-3">
         <button
+          data-tour="compose"
           onClick={onCompose}
           className="w-full flex items-center gap-2 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[13px] font-medium transition-all"
         >
@@ -236,6 +248,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
               active={activeFolderId === folder.id}
               onClick={() => onFolderSelect(folder.id)}
               iconBg={folder.iconBg}
+              tourId={folder.id === 'inbox' ? 'inbox' : undefined}
             />
           ))}
 
@@ -319,11 +332,11 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
           </div>
 
           {/* Utility nav */}
-          <NavItem icon={Calendar} label="Calendar" onClick={() => router.push('/calendar')} />
-          <NavItem icon={Users} label="Contacts" onClick={() => router.push('/contacts')} />
+          <NavItem icon={Calendar} label="Calendar" onClick={() => router.push('/calendar')} tourId="calendar-nav" />
+          <NavItem icon={Users} label="Contacts" onClick={() => router.push('/contacts')} tourId="contacts-nav" />
 
           {/* Upcoming features */}
-          <NavItem icon={ListTodo}   label="Tasks"          onClick={() => router.push('/tasks')} />
+          <NavItem icon={ListTodo}   label="Tasks"          onClick={() => router.push('/tasks')} tourId="tasks-nav" />
           <NavItem icon={UsersRound} label="Collaboration"  comingSoon />
           <NavItem icon={Newspaper}  label="News"           comingSoon />
         </div>
@@ -332,12 +345,22 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
       {/* Footer */}
       <div className="px-2 py-2 border-t border-sidebar-border/50 space-y-0.5">
         <NavItem icon={Settings} label="Settings" onClick={() => router.push('/settings')} />
+        <button
+          onClick={() => setTourActive(true)}
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all"
+        >
+          <Sparkles className="w-3.5 h-3.5 shrink-0" />
+          Take a tour
+        </button>
         <NavItem
           icon={LogOut}
           label={loggingOut ? 'Signing out…' : 'Sign out'}
           onClick={handleLogout}
         />
       </div>
+
+      <GlobalConfirmDialog />
+      <AppTour active={tourActive} onClose={() => setTourActive(false)} />
     </div>
   );
 }

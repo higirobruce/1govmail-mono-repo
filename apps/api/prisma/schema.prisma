@@ -235,6 +235,7 @@ model CalendarEvent {
   id              String   @id @default(cuid())
   userId          String
   zimbraId        String
+  zimbraInviteId  String?
   title           String
   description     String?
   location        String?

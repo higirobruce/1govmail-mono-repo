@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
+import { useConfirmStore } from '@/stores/confirm.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { Button } from '@/components/ui/button';
@@ -1489,7 +1490,8 @@ export default function CalendarPage() {
   const currentUser     = useAuthStore((s) => s.user);
   const [hydrated, setHydrated] = useState(false);
 
-  const [calView, setCalView]       = useState<CalView>('month');
+  const [calView, setCalView]       = useState<CalView>('agenda');
+  const confirm = useConfirmStore((s) => s.confirm);
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [events, setEvents]         = useState<CalEvent[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -1572,19 +1574,26 @@ export default function CalendarPage() {
   // Clear free/busy when view range changes (stale data)
   useEffect(() => { setFreeBusyList([]); }, [rangeStart.toISOString()]); // eslint-disable-line
 
-  const handleDelete = async (e: CalEvent) => {
-    if (!window.confirm(`Delete "${e.title}"?`)) return;
-    setDeleting(true);
-    try {
-      await api.calendar.deleteEvent(e.id);
-      setEvents((prev) => prev.filter((x) => x.id !== e.id));
-      if (selectedEvent?.id === e.id) setSelectedEvent(null);
-      toast.success('Event deleted');
-    } catch (err: any) {
-      toast.error('Failed to delete event', { description: err?.message });
-    } finally {
-      setDeleting(false);
-    }
+  const handleDelete = (e: CalEvent) => {
+    confirm({
+      title: `Delete "${e.title}"?`,
+      description: 'This event will be permanently removed from your calendar.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
+        setDeleting(true);
+        try {
+          await api.calendar.deleteEvent(e.id);
+          setEvents((prev) => prev.filter((x) => x.id !== e.id));
+          if (selectedEvent?.id === e.id) setSelectedEvent(null);
+          toast.success('Event deleted');
+        } catch (err: any) {
+          toast.error('Failed to delete event', { description: err?.message });
+        } finally {
+          setDeleting(false);
+        }
+      },
+    });
   };
 
   const handleRsvp = useCallback(async (event: CalEvent, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => {

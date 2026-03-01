@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
+import { useConfirmStore } from '@/stores/confirm.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
@@ -128,6 +129,7 @@ export default function ContactsPage() {
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const confirm = useConfirmStore((s) => s.confirm);
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Auth guard ──────────────────────────────────────────────────────────────
@@ -228,22 +230,29 @@ export default function ContactsPage() {
   };
 
   // ── Delete ──────────────────────────────────────────────────────────────────
-  const handleDelete = async (c: Contact) => {
-    if (!window.confirm(`Delete contact "${contactDisplayName(c)}"?`)) return;
-    setDeleting(true);
-    try {
-      await api.contacts.delete(c.id);
-      setContacts(prev => prev.filter(x => x.id !== c.id));
-      if (selectedContact?.id === c.id) {
-        setSelectedContact(null);
-        setFormMode('view');
-      }
-      toast.success('Contact deleted');
-    } catch (err: any) {
-      toast.error('Failed to delete contact', { description: err?.message });
-    } finally {
-      setDeleting(false);
-    }
+  const handleDelete = (c: Contact) => {
+    confirm({
+      title: `Delete "${contactDisplayName(c)}"?`,
+      description: 'This contact will be permanently deleted.',
+      confirmLabel: 'Delete',
+      destructive: true,
+      onConfirm: async () => {
+        setDeleting(true);
+        try {
+          await api.contacts.delete(c.id);
+          setContacts(prev => prev.filter(x => x.id !== c.id));
+          if (selectedContact?.id === c.id) {
+            setSelectedContact(null);
+            setFormMode('view');
+          }
+          toast.success('Contact deleted');
+        } catch (err: any) {
+          toast.error('Failed to delete contact', { description: err?.message });
+        } finally {
+          setDeleting(false);
+        }
+      },
+    });
   };
 
   const setF = (key: keyof typeof EMPTY_FORM) => (v: string) =>

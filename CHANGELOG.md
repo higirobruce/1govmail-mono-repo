@@ -2,6 +2,23 @@
 
 All notable changes to 1Gov Mail are documented here.
 
+## [1.4.0](https://github.com/1govmail/email-client/compare/v1.3.0...v1.4.0) (2026-03-01)
+
+### Features
+
+* **mail:** snooze any message — resurfaces it at a chosen time (later today, tonight, tomorrow, next week, or a custom date/time) via a persistent DB record and a per-minute cron job ([#mail-snooze])
+* **mail:** undo send — compose closes immediately after clicking Send; a 5-second toast with an Undo action cancels the outgoing message before it is dispatched ([#mail-undo-send])
+* **mail:** scheduled send — compose a message and pick any future date/time for delivery; the backend scheduler processes due messages every minute ([#mail-scheduled-send])
+* **mail:** email templates — save reusable canned responses (name, subject, body) and insert them into the compose editor from the toolbar dropdown ([#mail-templates])
+* **mail:** mail rules — create if/then filters (field · operator · value → move/label/forward) stored per-user and managed via full CRUD endpoints ([#mail-rules])
+* **mail:** mute conversations — silence a thread so it stays out of the way; muted state is surfaced in the message list and toggled from the thread header ([#mail-mute])
+* **mail:** print view — opens a formatted, printer-friendly window for any email thread with a clean layout and no application chrome ([#mail-print])
+* **mail:** bulk operations — checkbox-select multiple messages in the list; floating action bar lets you mark read/unread or delete all selected in one click ([#mail-bulk])
+* **mail:** inline spell check — native browser spell check enabled in the TipTap compose editor, flagging typos in real time ([#mail-spellcheck])
+* **web:** landing page at `/` showcasing the nine new features with links to sign in and open inbox
+
+---
+
 ## [1.3.0](https://github.com/1govmail/email-client/compare/v1.2.0...v1.3.0) (2026-03-01)
 
 ### Features

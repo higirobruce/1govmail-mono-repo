@@ -15,7 +15,8 @@
  * 4b. Copy generated .prisma/client/ from root pnpm store into api-bundle/ pnpm store
  *     (`pnpm deploy` copies @prisma/client but NOT the generated client output)
  * 5. Rebuild better-sqlite3 native module for the Electron runtime using
- *    @electron/rebuild, so the packaged app can load it without issues.
+ *    node-gyp (native) or prebuild-install (cross-platform), so the packaged
+ *    app can load it without issues.
  */
 
 import { execSync, execFileSync } from 'child_process';

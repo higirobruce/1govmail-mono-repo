@@ -12,6 +12,7 @@ import { Loader2, Mail, Lock, Building2, ShieldCheck } from 'lucide-react';
 // Add new institutions here — they will appear in the sign-in dropdown.
 const INSTITUTIONS = [
   { label: 'RISA', host: 'mail.risa.gov.rw:8443' },
+  { label: 'MINICT', host: 'mail.minict.gov.rw' },
 ];
 
 export default function LoginPage() {

@@ -17,7 +17,6 @@
     "build:linux": "tsc && electron-builder --linux"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.1",
     "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^20",
     "concurrently": "^9.1.2",

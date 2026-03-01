@@ -183,9 +183,14 @@ model Task {
   linkedSubject   String?
   assignedToEmail String?
   assignedToName  String?
-  assignedAt      DateTime?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  assignedAt        DateTime?
+  attachments       Json?
+  recurrence        String?
+  recurrenceEndDate DateTime?
+  reminderAt        DateTime?
+  reminderSentAt    DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   subtasks Subtask[]
@@ -230,6 +235,7 @@ model CalendarEvent {
   id              String   @id @default(cuid())
   userId          String
   zimbraId        String
+  zimbraInviteId  String?
   title           String
   description     String?
   location        String?

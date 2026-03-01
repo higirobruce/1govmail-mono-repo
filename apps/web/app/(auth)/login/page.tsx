@@ -6,7 +6,13 @@ import { useAuthStore } from '@/stores/auth.store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, Mail, Lock, Globe, ShieldCheck } from 'lucide-react';
+import { Loader2, Mail, Lock, Building2, ShieldCheck } from 'lucide-react';
+
+// ── Institution registry ───────────────────────────────────────────────────────
+// Add new institutions here — they will appear in the sign-in dropdown.
+const INSTITUTIONS = [
+  { label: 'RISA', host: 'mail.risa.gov.rw:8443' },
+];
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,7 +20,11 @@ export default function LoginPage() {
   const twoFactor = useAuthStore((s) => s.twoFactor);
 
   // ── Credentials step ──────────────────────────────────────────────────────
-  const [form, setForm] = useState({ email: '', password: '', zimbraHost: '' });
+  const [form, setForm] = useState({
+    email: '',
+    password: '',
+    zimbraHost: INSTITUTIONS[0].host,
+  });
 
   // ── 2FA step ──────────────────────────────────────────────────────────────
   const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
@@ -156,23 +166,27 @@ export default function LoginPage() {
 
             /* ── Credentials step ── */
             <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Zimbra Host */}
+              {/* Institution */}
               <div className="space-y-1.5">
-                <Label htmlFor="host" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Zimbra Server
+                <Label htmlFor="institution" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Institution
                 </Label>
                 <div className="relative">
-                  <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
-                  <Input
-                    id="host"
-                    type="text"
-                    placeholder="mail.yourcompany.com"
-                    className="pl-10 bg-muted/50 border-border/60 focus-visible:border-primary/60 focus-visible:ring-primary/20"
+                  <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60 pointer-events-none z-10" />
+                  <select
+                    id="institution"
+                    className="flex h-10 w-full rounded-md border border-border/60 bg-muted/50 pl-10 pr-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 disabled:opacity-50 disabled:cursor-not-allowed appearance-none"
                     value={form.zimbraHost}
                     onChange={(e) => setForm((f) => ({ ...f, zimbraHost: e.target.value }))}
                     required
                     disabled={loading}
-                  />
+                  >
+                    {INSTITUTIONS.map((inst) => (
+                      <option key={inst.host} value={inst.host}>
+                        {inst.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

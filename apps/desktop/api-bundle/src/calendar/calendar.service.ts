@@ -34,6 +34,7 @@ export class CalendarService {
   /** Parse a raw Zimbra appointment node into a structured event. */
   private parseAppt(appt: any): {
     zimbraId: string;
+    zimbraInviteId: string | null;
     title: string;
     description: string | null;
     location: string | null;
@@ -54,6 +55,8 @@ export class CalendarService {
 
     return {
       zimbraId: String(appt.id),
+      // invId is the inbox message ID of the original invite — required by SendInviteReplyRequest
+      zimbraInviteId: appt.invId != null ? String(appt.invId) : null,
       title: appt.name ?? appt.su ?? '(No title)',
       description: appt.desc ?? null,
       location: appt.loc ?? null,
@@ -89,29 +92,31 @@ export class CalendarService {
         where: { userId_zimbraId: { userId, zimbraId: parsed.zimbraId } },
         create: {
           userId,
-          zimbraId:     parsed.zimbraId,
-          title:        parsed.title,
-          description:  parsed.description,
-          location:     parsed.location,
-          startAt:      parsed.startAt,
-          endAt:        parsed.endAt,
-          allDay:       parsed.allDay,
-          isRecurring:  parsed.isRecurring,
-          organizer:    parsed.organizer,
-          attendees:    parsed.attendees as any,
-          syncedAt:     new Date(),
+          zimbraId:       parsed.zimbraId,
+          zimbraInviteId: parsed.zimbraInviteId,
+          title:          parsed.title,
+          description:    parsed.description,
+          location:       parsed.location,
+          startAt:        parsed.startAt,
+          endAt:          parsed.endAt,
+          allDay:         parsed.allDay,
+          isRecurring:    parsed.isRecurring,
+          organizer:      parsed.organizer,
+          attendees:      parsed.attendees as any,
+          syncedAt:       new Date(),
         },
         update: {
-          title:        parsed.title,
-          description:  parsed.description,
-          location:     parsed.location,
-          startAt:      parsed.startAt,
-          endAt:        parsed.endAt,
-          allDay:       parsed.allDay,
-          isRecurring:  parsed.isRecurring,
-          organizer:    parsed.organizer,
-          attendees:    parsed.attendees as any,
-          syncedAt:     new Date(),
+          zimbraInviteId: parsed.zimbraInviteId,
+          title:          parsed.title,
+          description:    parsed.description,
+          location:       parsed.location,
+          startAt:        parsed.startAt,
+          endAt:          parsed.endAt,
+          allDay:         parsed.allDay,
+          isRecurring:    parsed.isRecurring,
+          organizer:      parsed.organizer,
+          attendees:      parsed.attendees as any,
+          syncedAt:       new Date(),
         },
       });
       results.push(cached);
@@ -241,12 +246,16 @@ export class CalendarService {
     });
     if (!event) throw new NotFoundException('Event not found');
 
+    // SendInviteReplyRequest requires the invite message ID (invId), not the
+    // calendar item ID. Fall back to zimbraId for events created locally.
+    const replyId = event.zimbraInviteId ?? event.zimbraId;
     await this.zimbra.sendInviteReply(
       user.zimbraHost,
       user.authToken!,
-      event.zimbraId,
+      replyId,
       verb,
       event.title,
+      event.organizer ?? undefined,
       user.csrfToken ?? undefined,
     );
     return { success: true };

@@ -2,6 +2,24 @@
 
 All notable changes to 1Gov Mail are documented here.
 
+## [1.3.0](https://github.com/1govmail/email-client/compare/v1.2.0...v1.3.0) (2026-03-01)
+
+### Features
+
+* **onboarding:** interactive step-by-step guided tour launched from the sidebar — covers compose, inbox, tasks, calendar, and contacts
+* **ui:** confirmation modals replace all `window.confirm` dialogs for destructive actions (delete task, event, contact, folder, signature)
+
+### Improvements
+
+* **calendar:** agenda view is now the default on page load
+* **tasks:** task edit sheet correctly pre-fills all fields (title, description, status, priority, due date, recurrence, reminder, assignee) when reopening a saved task
+
+### Bug Fixes
+
+* **calendar:** RSVP (Accept / Decline / Tentative) no longer triggers a Zimbra Java NullPointerException
+
+---
+
 ## [1.2.0](https://github.com/1govmail/email-client/compare/v1.1.0...v1.2.0) (2026-02-28)
 
 ### Features

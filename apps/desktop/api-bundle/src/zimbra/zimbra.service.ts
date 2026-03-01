@@ -1222,6 +1222,7 @@ export class ZimbraService {
     zimbraId: string,
     verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE',
     subject: string,
+    organizerEmail?: string,
     csrfToken?: string,
   ): Promise<void> {
     const client = this.buildClient(host, authToken, csrfToken);
@@ -1231,9 +1232,9 @@ export class ZimbraService {
           SendInviteReplyRequest: {
             _jsns: 'urn:zimbraMail',
             id: zimbraId,
+            compNum: 0,
             verb,
-            updateOrganizer: '1',
-            m: { su: `Re: ${subject}` },
+            updateOrganizer: '0',
           },
         },
         Header: this.soapHeader(csrfToken),

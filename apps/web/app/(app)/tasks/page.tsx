@@ -49,11 +49,11 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'priority_low',  label: 'Priority low→high' },
 ];
 
-const BOARD_COLUMNS: { status: TaskStatus; label: string; color: string }[] = [
-  { status: 'TODO',        label: 'To Do',       color: 'border-t-slate-400' },
-  { status: 'IN_PROGRESS', label: 'In Progress',  color: 'border-t-blue-500' },
-  { status: 'DONE',        label: 'Done',         color: 'border-t-green-500' },
-  { status: 'CANCELLED',   label: 'Cancelled',    color: 'border-t-rose-400' },
+const BOARD_COLUMNS: { status: TaskStatus; label: string; dot: string; bg: string }[] = [
+  { status: 'TODO',        label: 'To Do',       dot: 'bg-slate-400',  bg: 'bg-slate-400/[0.04]' },
+  { status: 'IN_PROGRESS', label: 'In Progress',  dot: 'bg-blue-500',   bg: 'bg-blue-500/[0.04]'  },
+  { status: 'DONE',        label: 'Done',         dot: 'bg-emerald-500', bg: 'bg-emerald-500/[0.04]' },
+  { status: 'CANCELLED',   label: 'Cancelled',    dot: 'bg-rose-400',   bg: 'bg-rose-400/[0.04]'  },
 ];
 
 function isOverdue(task: Task): boolean {
@@ -636,8 +636,8 @@ export default function TasksPage() {
                     <div
                       key={col.status}
                       className={cn(
-                        'flex flex-col w-72 shrink-0 rounded-xl border border-border/30 border-t-4 transition-colors',
-                        col.color,
+                        'flex flex-col w-72 shrink-0 rounded-xl border border-border/30 transition-colors',
+                        col.bg,
                         isOver && 'bg-muted/30 border-border/50',
                       )}
                       onDragOver={(e) => { e.preventDefault(); setDragOverColumn(col.status); }}
@@ -646,8 +646,11 @@ export default function TasksPage() {
                     >
                       {/* Column header */}
                       <div className="flex items-center justify-between px-3 py-2.5 border-b border-border/20">
-                        <span className="text-xs font-semibold text-foreground/70">{col.label}</span>
-                        <span className="text-[11px] bg-muted/60 text-muted-foreground/60 rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
+                        <div className="flex items-center gap-2">
+                          <span className={cn('w-2 h-2 rounded-full shrink-0', col.dot)} />
+                          <span className="text-xs font-semibold text-foreground/70">{col.label}</span>
+                        </div>
+                        <span className="text-[11px] bg-muted/60 text-muted-foreground/60 rounded-full px-1.5 py-0.5 min-w-[20px] text-center tabular-nums">
                           {colTasks.length}
                         </span>
                       </div>

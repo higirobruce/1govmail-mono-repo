@@ -299,6 +299,19 @@ export default function TasksPage() {
   // Clear selection when filter changes
   useEffect(() => { setSelectedIds(new Set()); }, [filter]);
 
+  // Open create modal with prefill if navigated here via email drag-and-drop
+  useEffect(() => {
+    if (!hydrated) return;
+    const raw = sessionStorage.getItem('govmail-prefill-tasks');
+    if (!raw) return;
+    sessionStorage.removeItem('govmail-prefill-tasks');
+    try {
+      const msg = JSON.parse(raw);
+      setMailDragPrefill({ linkedMessageId: msg.id, linkedSubject: msg.subject ?? '' });
+      setShowMailDropModal(true);
+    } catch { /* ignore */ }
+  }, [hydrated]); // eslint-disable-line
+
   const handleToggle = async (task: Task) => {
     const newStatus: TaskStatus = task.status === 'DONE' ? 'TODO' : 'DONE';
     try {

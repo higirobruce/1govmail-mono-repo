@@ -141,8 +141,22 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
   const [savingFolder, setSavingFolder] = useState(false);
   const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
   const [tourActive, setTourActive] = useState(false);
+  const [calDragOver, setCalDragOver] = useState(false);
+  const [tasksDragOver, setTasksDragOver] = useState(false);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
   const confirm = useConfirmStore((s) => s.confirm);
+
+  const handleMailNavDrop = (target: 'calendar' | 'tasks') => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (target === 'calendar') setCalDragOver(false);
+    else setTasksDragOver(false);
+    try {
+      const raw = e.dataTransfer.getData('application/x-govmail-msg');
+      if (!raw) return;
+      sessionStorage.setItem(`govmail-prefill-${target}`, raw);
+      router.push(`/${target}`);
+    } catch { /* ignore */ }
+  };
 
   const handleDeleteFolder = (folderId: string, folderName: string) => {
     if (!onDeleteFolder) return;
@@ -341,11 +355,25 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
           </div>
 
           {/* Utility nav */}
-          <NavItem icon={Calendar} label="Calendar" onClick={() => router.push('/calendar')} tourId="calendar-nav" />
+          <div
+            onDragOver={(e) => { e.preventDefault(); setCalDragOver(true); }}
+            onDragLeave={() => setCalDragOver(false)}
+            onDrop={handleMailNavDrop('calendar')}
+            className={calDragOver ? 'rounded-lg ring-2 ring-primary/40 bg-primary/5' : undefined}
+          >
+            <NavItem icon={Calendar} label="Calendar" onClick={() => router.push('/calendar')} tourId="calendar-nav" />
+          </div>
           <NavItem icon={Users} label="Contacts" onClick={() => router.push('/contacts')} tourId="contacts-nav" />
 
           {/* Upcoming features */}
-          <NavItem icon={ListTodo}   label="Tasks"          onClick={() => router.push('/tasks')} tourId="tasks-nav" />
+          <div
+            onDragOver={(e) => { e.preventDefault(); setTasksDragOver(true); }}
+            onDragLeave={() => setTasksDragOver(false)}
+            onDrop={handleMailNavDrop('tasks')}
+            className={tasksDragOver ? 'rounded-lg ring-2 ring-primary/40 bg-primary/5' : undefined}
+          >
+            <NavItem icon={ListTodo} label="Tasks" onClick={() => router.push('/tasks')} tourId="tasks-nav" />
+          </div>
           <NavItem icon={UsersRound} label="Collaboration"  comingSoon />
           <NavItem icon={Newspaper}  label="News"           comingSoon />
         </div>

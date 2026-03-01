@@ -20,6 +20,8 @@ import {
   Eye,
   Video,
   Music,
+  Mail,
+  MessageSquare,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
@@ -328,7 +330,9 @@ export default function ThreadView({
 
   // Participants (deduplicated, in appearance order)
   const seenEmails = new Set<string>();
-  const participants: ThreadParticipant[] = [];
+  const participants: ThreadParticipant[] = [];       // from + to
+  const ccParticipants: ThreadParticipant[] = [];     // cc-only
+  const seenCcEmails = new Set<string>();
   threadMessages.forEach((m) => {
     if (!seenEmails.has(m.fromEmail)) {
       seenEmails.add(m.fromEmail);
@@ -338,6 +342,12 @@ export default function ThreadView({
       if (!seenEmails.has(r.email)) {
         seenEmails.add(r.email);
         participants.push({ email: r.email, name: r.name ?? null });
+      }
+    });
+    m.ccRecipients.forEach((r) => {
+      if (!seenEmails.has(r.email) && !seenCcEmails.has(r.email)) {
+        seenCcEmails.add(r.email);
+        ccParticipants.push({ email: r.email, name: r.name ?? null });
       }
     });
   });
@@ -381,6 +391,11 @@ export default function ThreadView({
       ? displayMessages.slice(0, MAX_VISIBLE)
       : displayMessages;
   const hiddenCount = displayMessages.length - visibleMessages.length;
+
+  // ── Overview helpers ──────────────────────────────────────────────────────
+  const P_COLORS = ['bg-blue-500','bg-emerald-500','bg-violet-500','bg-amber-500','bg-rose-500','bg-cyan-500','bg-indigo-500','bg-pink-500'];
+  const pColor = (email: string) => { let h = 0; for (let i = 0; i < email.length; i++) h = email.charCodeAt(i) + ((h << 5) - h); return P_COLORS[Math.abs(h) % P_COLORS.length]; };
+  const pInitials = (name: string | null, email: string) => { if (name) { const p = name.trim().split(/\s+/); return ((p[0]?.[0] ?? '') + (p[1]?.[0] ?? '')).toUpperCase() || '?'; } return (email?.[0] ?? '?').toUpperCase(); };
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -447,71 +462,191 @@ export default function ThreadView({
 
         {/* ── Overview tab ─────────────────────────────────────────────────── */}
         {activeTab === 'overview' && (
-          <div className="p-4 flex flex-col gap-4">
-            {/* Header row */}
-            <div className="flex items-center justify-between">
-              <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider">
-                Linked Tasks
-              </p>
-              <button
-                onClick={() => setTaskModalOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                New Task
-              </button>
+          <div className="p-4 flex flex-col gap-5 overflow-y-auto">
+
+            {/* Stats row */}
+            <div className="flex items-center gap-3 px-1">
+              {[
+                { value: threadMessages.length, label: 'message' },
+                { value: participants.length,   label: 'participant' },
+                { value: allAttachments.length, label: 'attachment' },
+              ].map(({ value, label }, i, arr) => (
+                <div key={label} className="flex items-center gap-3">
+                  <div className="text-center">
+                    <p className="text-[22px] font-semibold text-foreground tabular-nums leading-none">{value}</p>
+                    <p className="text-[11px] text-muted-foreground/45 mt-0.5">{label}{value !== 1 ? 's' : ''}</p>
+                  </div>
+                  {i < arr.length - 1 && <div className="w-px h-8 bg-border/40" />}
+                </div>
+              ))}
             </div>
 
-            {loadingTasks ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/30" />
-              </div>
-            ) : linkedTasks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 gap-2 text-center">
-                <ListTodo className="w-7 h-7 text-muted-foreground/20" />
-                <p className="text-[13px] text-muted-foreground/50">No tasks linked to this email</p>
-                <button
-                  onClick={() => setTaskModalOpen(true)}
-                  className="mt-1 text-[12px] text-primary hover:underline"
-                >
-                  Create one
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {linkedTasks.map((task) => {
-                  const pri = PRIORITY_META[task.priority];
-                  const done = task.status === 'DONE';
-                  const cancelled = task.status === 'CANCELLED';
+            {/* Participants */}
+            <div>
+              <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">
+                Participants
+              </p>
+              <div className="flex flex-col gap-0.5">
+                {participants.map((p) => {
+                  const isMe = p.email === user?.email;
                   return (
-                    <div
-                      key={task.id}
-                      className={cn(
-                        'flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors',
-                        done || cancelled ? 'bg-muted/20 border-border/20' : 'bg-card border-border/30',
+                    <div key={p.email} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group">
+                      <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold shrink-0', pColor(p.email))}>
+                        {pInitials(p.name, p.email)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-medium text-foreground truncate">
+                          {isMe ? 'You' : (p.name || p.email)}
+                        </p>
+                        {!isMe && p.name && (
+                          <p className="text-[11px] text-muted-foreground/50 truncate">{p.email}</p>
+                        )}
+                      </div>
+                      {!isMe && (
+                        <button
+                          onClick={() => onComposeWith('new', { ...message, toRecipients: [{ email: p.email, name: p.name }] })}
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded text-muted-foreground/40 hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+                          title={`New email to ${p.email}`}
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                        </button>
                       )}
-                    >
-                      <span className={cn('text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0', pri.cls)}>
-                        {pri.label}
-                      </span>
-                      <span className={cn(
-                        'flex-1 text-[13px] min-w-0 truncate',
-                        done || cancelled ? 'line-through text-muted-foreground/50' : 'text-foreground',
-                      )}>
-                        {task.title}
-                      </span>
-                      <button
-                        onClick={() => router.push('/tasks')}
-                        className="shrink-0 p-1 rounded-md text-muted-foreground/40 hover:text-foreground hover:bg-muted transition-colors"
-                        title="Open in Tasks"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </button>
                     </div>
                   );
                 })}
+
+                {ccParticipants.length > 0 && (
+                  <>
+                    <div className="flex items-center gap-2 my-1 px-2">
+                      <div className="flex-1 h-px bg-border/30" />
+                      <span className="text-[10px] font-semibold text-muted-foreground/35 uppercase tracking-wider">CC</span>
+                      <div className="flex-1 h-px bg-border/30" />
+                    </div>
+                    {ccParticipants.map((p) => {
+                      const isMe = p.email === user?.email;
+                      return (
+                        <div key={p.email} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group">
+                          <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold shrink-0 opacity-70', pColor(p.email))}>
+                            {pInitials(p.name, p.email)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[13px] text-foreground/80 truncate">
+                              {isMe ? 'You' : (p.name || p.email)}
+                            </p>
+                            {!isMe && p.name && (
+                              <p className="text-[11px] text-muted-foreground/50 truncate">{p.email}</p>
+                            )}
+                          </div>
+                          {!isMe && (
+                            <button
+                              onClick={() => onComposeWith('new', { ...message, toRecipients: [{ email: p.email, name: p.name }] })}
+                              className="opacity-0 group-hover:opacity-100 p-1 rounded text-muted-foreground/40 hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+                              title={`New email to ${p.email}`}
+                            >
+                              <Mail className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </div>
-            )}
+            </div>
+
+            {/* Linked Tasks */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider">
+                  Linked Tasks
+                </p>
+                <button
+                  onClick={() => setTaskModalOpen(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  New Task
+                </button>
+              </div>
+
+              {loadingTasks ? (
+                <div className="flex justify-center py-6">
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/30" />
+                </div>
+              ) : linkedTasks.length === 0 ? (
+                <div className="flex items-center gap-2.5 px-3 py-3 rounded-xl border border-dashed border-border/40 text-muted-foreground/40">
+                  <ListTodo className="w-4 h-4 shrink-0" />
+                  <span className="text-[12px]">No tasks linked —{' '}
+                    <button onClick={() => setTaskModalOpen(true)} className="text-primary hover:underline">create one</button>
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {linkedTasks.map((task) => {
+                    const pri = PRIORITY_META[task.priority];
+                    const done = task.status === 'DONE';
+                    const cancelled = task.status === 'CANCELLED';
+                    return (
+                      <div
+                        key={task.id}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors',
+                          done || cancelled ? 'bg-muted/20 border-border/20' : 'bg-card border-border/30',
+                        )}
+                      >
+                        <span className={cn('text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0', pri.cls)}>
+                          {pri.label}
+                        </span>
+                        <span className={cn(
+                          'flex-1 text-[13px] min-w-0 truncate',
+                          done || cancelled ? 'line-through text-muted-foreground/50' : 'text-foreground',
+                        )}>
+                          {task.title}
+                        </span>
+                        <button
+                          onClick={() => router.push('/tasks')}
+                          className="shrink-0 p-1 rounded-md text-muted-foreground/40 hover:text-foreground hover:bg-muted transition-colors"
+                          title="Open in Tasks"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Quick reply to thread */}
+            <div>
+              <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">
+                Actions
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onComposeWith('reply', lastMessage)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[12px] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  Reply
+                </button>
+                <button
+                  onClick={() => onComposeWith('replyAll', lastMessage)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[12px] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  Reply all
+                </button>
+                <button
+                  onClick={() => onComposeWith('forward', lastMessage)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[12px] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Forward
+                </button>
+              </div>
+            </div>
+
           </div>
         )}
 

@@ -1556,6 +1556,22 @@ export default function CalendarPage() {
     loadEvents(rangeStart, rangeEnd);
   }, [hydrated, isAuthenticated, rangeStart.toISOString(), rangeEnd.toISOString()]); // eslint-disable-line
 
+  // Open create modal with prefill if navigated here via email drag-and-drop
+  useEffect(() => {
+    if (!hydrated) return;
+    const raw = sessionStorage.getItem('govmail-prefill-calendar');
+    if (!raw) return;
+    sessionStorage.removeItem('govmail-prefill-calendar');
+    try {
+      const msg = JSON.parse(raw);
+      setDragPrefill({
+        title: msg.subject ?? '',
+        description: msg.snippet ? `From: ${msg.from}\n\n${msg.snippet}` : `From: ${msg.from}`,
+      });
+      setShowCreate(true);
+    } catch { /* ignore */ }
+  }, [hydrated]); // eslint-disable-line
+
   // Fetch free/busy for a list of emails in one batch call
   const handleFreeBusyFetch = useCallback(async (emails: string[]) => {
     if (!emails.length) { setFreeBusyList([]); return; }

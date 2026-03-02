@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
+import { createCollabServer } from './collab/collab.server';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
@@ -21,5 +22,9 @@ async function bootstrap() {
 
   await app.listen(process.env.PORT ?? 3001);
   console.log(`API running on: http://localhost:${process.env.PORT ?? 3001}/api`);
+
+  const collab = createCollabServer();
+  await collab.listen();
+  console.log(`Collab WS:   ws://localhost:${process.env.HOCUSPOCUS_PORT ?? 1234}`);
 }
 bootstrap();

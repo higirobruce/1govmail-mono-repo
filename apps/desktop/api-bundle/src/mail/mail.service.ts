@@ -887,6 +887,8 @@ export class MailService {
       zimbraId,
       user.csrfToken ?? undefined,
     );
+    // Remove the draft from the local DB so it no longer appears in conversation fetches.
+    await this.prisma.message.deleteMany({ where: { userId, zimbraId } });
     return { success: true };
   }
 

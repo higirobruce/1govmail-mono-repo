@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth.store';
+import { api } from '@/lib/api';
 import { useConfirmStore } from '@/stores/confirm.store';
 import {
   Inbox, Send, FileText, Trash2, Archive,
@@ -134,6 +135,7 @@ function NavItem({
 export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, onCompose, onCreateFolder, onDeleteFolder }: SidebarProps) {
   const router = useRouter();
   const { user, logout } = useAuthStore();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [loggingOut, setLoggingOut] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -145,6 +147,24 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
   const [tasksDragOver, setTasksDragOver] = useState(false);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
   const confirm = useConfirmStore((s) => s.confirm);
+
+  // When no folders are supplied by the parent page (i.e. non-mail pages),
+  // fetch them internally so unread counters are always visible.
+  const [fetchedFolders, setFetchedFolders] = useState<Folder[]>([]);
+  const activeFolders = folders.length > 0 ? folders : fetchedFolders;
+
+  useEffect(() => {
+    if (!isAuthenticated || folders.length > 0) return;
+    let cancelled = false;
+    const load = () => {
+      api.mail.getFolders()
+        .then((data: any[]) => { if (!cancelled) setFetchedFolders(data); })
+        .catch(() => { /* non-fatal */ });
+    };
+    load();
+    const timer = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [isAuthenticated, folders.length]);
 
   const handleMailNavDrop = (target: 'calendar' | 'tasks') => (e: React.DragEvent) => {
     e.preventDefault();
@@ -185,7 +205,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
   };
 
   const systemFolders = SYSTEM_FOLDERS.map((sf) => {
-    const synced = folders.find((f) => f.path === sf.path);
+    const synced = activeFolders.find((f) => f.path === sf.path);
     // Drafts folder: show total message count (drafts are never "unread")
     // All other folders: show unread count
     const badgeCount = sf.path === '/Drafts'
@@ -195,7 +215,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
   });
 
   // Only show user-created MAIL folders — exclude built-in paths AND non-mail view types
-  const customFolders = folders.filter(
+  const customFolders = activeFolders.filter(
     (f) => !BUILTIN_PATHS.has(f.path) && (f.type === 'MAIL' || !f.type),
   );
 

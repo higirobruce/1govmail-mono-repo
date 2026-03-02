@@ -60,6 +60,59 @@ interface FreeBusyData {
   unavailable: Array<{ s: number; e: number }>;
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/**
+ * Assigns side-by-side column positions to overlapping events.
+ * Returns a map of event id → { col, totalCols } so the renderer can
+ * split the column width and offset each event horizontally.
+ */
+function layoutOverlapping(events: CalEvent[]): Map<string, { col: number; totalCols: number }> {
+  const sorted = [...events].sort((a, b) => {
+    const diff = parseISO(a.startAt).getTime() - parseISO(b.startAt).getTime();
+    if (diff !== 0) return diff;
+    return parseISO(b.endAt).getTime() - parseISO(a.endAt).getTime();
+  });
+
+  // colEndTimes[c] = end time of the last event placed in column c
+  const colEndTimes: number[] = [];
+  const assigned: Array<{ ev: CalEvent; col: number }> = [];
+
+  for (const ev of sorted) {
+    const start = parseISO(ev.startAt).getTime();
+    const end   = parseISO(ev.endAt).getTime();
+    let placed = false;
+    for (let c = 0; c < colEndTimes.length; c++) {
+      if (colEndTimes[c] <= start) {
+        colEndTimes[c] = end;
+        assigned.push({ ev, col: c });
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      colEndTimes.push(end);
+      assigned.push({ ev, col: colEndTimes.length - 1 });
+    }
+  }
+
+  // totalCols for each event = max column index among all time-overlapping events + 1
+  const result = new Map<string, { col: number; totalCols: number }>();
+  for (const { ev, col } of assigned) {
+    const start = parseISO(ev.startAt).getTime();
+    const end   = parseISO(ev.endAt).getTime();
+    let maxCol = col;
+    for (const { ev: other, col: otherCol } of assigned) {
+      if (other.id === ev.id) continue;
+      const os = parseISO(other.startAt).getTime();
+      const oe = parseISO(other.endAt).getTime();
+      if (os < end && oe > start) maxCol = Math.max(maxCol, otherCol);
+    }
+    result.set(ev.id, { col, totalCols: maxCol + 1 });
+  }
+  return result;
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const SLOT_H = 60; // px per hour in timeline views
@@ -687,19 +740,26 @@ function TimelineView({
                 </>
               )}
 
-              {/* Timed events */}
-              {timedFor(day).map((ev) => {
-                const top = eventTop(ev.startAt);
-                const h   = eventHeight(ev.startAt, ev.endAt);
-                return (
-                  <button key={ev.id} onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
-                    className={cn('absolute left-0.5 right-0.5 rounded px-1.5 py-0.5 text-[11px] font-medium text-left overflow-hidden transition-opacity hover:opacity-80 z-10', eventColor(ev.id))}
-                    style={{ top, height: h }}>
-                    <span className="block truncate leading-tight">{ev.title}</span>
-                    {h > 28 && <span className="block text-[10px] opacity-75 leading-tight truncate">{fmtTime(ev.startAt)}</span>}
-                  </button>
-                );
-              })}
+              {/* Timed events — side-by-side when overlapping */}
+              {(() => {
+                const dayEvents = timedFor(day);
+                const layout    = layoutOverlapping(dayEvents);
+                return dayEvents.map((ev) => {
+                  const top = eventTop(ev.startAt);
+                  const h   = eventHeight(ev.startAt, ev.endAt);
+                  const { col, totalCols } = layout.get(ev.id) ?? { col: 0, totalCols: 1 };
+                  const widthPct = 100 / totalCols;
+                  const leftPct  = col * widthPct;
+                  return (
+                    <button key={ev.id} onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
+                      className={cn('absolute rounded px-1.5 py-0.5 text-[11px] font-medium text-left overflow-hidden transition-opacity hover:opacity-80 z-10', eventColor(ev.id))}
+                      style={{ top, height: h, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)` }}>
+                      <span className="block truncate leading-tight">{ev.title}</span>
+                      {h > 28 && <span className="block text-[10px] opacity-75 leading-tight truncate">{fmtTime(ev.startAt)}</span>}
+                    </button>
+                  );
+                });
+              })()}
 
               {/* Current-time indicator */}
               {colIdx === todayIdx && (

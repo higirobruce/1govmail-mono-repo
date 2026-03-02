@@ -50,10 +50,10 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
 ];
 
 const BOARD_COLUMNS: { status: TaskStatus; label: string; dot: string; bg: string }[] = [
-  { status: 'TODO',        label: 'To Do',       dot: 'bg-slate-400',  bg: 'bg-slate-400/[0.04]' },
-  { status: 'IN_PROGRESS', label: 'In Progress',  dot: 'bg-blue-500',   bg: 'bg-blue-500/[0.04]'  },
-  { status: 'DONE',        label: 'Done',         dot: 'bg-emerald-500', bg: 'bg-emerald-500/[0.04]' },
-  { status: 'CANCELLED',   label: 'Cancelled',    dot: 'bg-rose-400',   bg: 'bg-rose-400/[0.04]'  },
+  { status: 'TODO',        label: 'To Do',      dot: 'bg-slate-400',   bg: 'bg-slate-50 dark:bg-slate-900/20'    },
+  { status: 'IN_PROGRESS', label: 'In Progress', dot: 'bg-blue-500',    bg: 'bg-blue-50 dark:bg-blue-900/20'     },
+  { status: 'DONE',        label: 'Done',        dot: 'bg-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
+  { status: 'CANCELLED',   label: 'Cancelled',   dot: 'bg-rose-400',    bg: 'bg-rose-50 dark:bg-rose-900/20'     },
 ];
 
 function isOverdue(task: Task): boolean {
@@ -183,7 +183,13 @@ function TaskCard({
 
         {/* Meta chips */}
         <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-          <span className={cn('text-[10px] font-medium px-1.5 py-0.5 rounded-full', pri.cls)}>
+          <span className={cn(
+            'text-[10px] font-medium px-1.5 py-0.5 rounded-full',
+            task.priority === 'LOW'    && 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+            task.priority === 'MEDIUM' && 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
+            task.priority === 'HIGH'   && 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300',
+            task.priority === 'URGENT' && 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
+          )}>
             {pri.label}
           </span>
 
@@ -200,9 +206,9 @@ function TaskCard({
           )}
 
           {task.assignedToEmail && (
-            <span className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
-              <User className="w-2.5 h-2.5" />
-              {task.assignedToName ?? task.assignedToEmail}
+            <span className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 max-w-[140px]">
+              <User className="w-2.5 h-2.5 shrink-0" />
+              <span className="truncate">{task.assignedToName ?? task.assignedToEmail}</span>
             </span>
           )}
 
@@ -636,7 +642,7 @@ export default function TasksPage() {
                     <div
                       key={col.status}
                       className={cn(
-                        'flex flex-col w-72 shrink-0 rounded-xl border border-border/30 transition-colors',
+                        'flex flex-col w-72 shrink-0 rounded-xl border border-border/30 overflow-hidden transition-colors',
                         col.bg,
                         isOver && 'bg-muted/30 border-border/50',
                       )}

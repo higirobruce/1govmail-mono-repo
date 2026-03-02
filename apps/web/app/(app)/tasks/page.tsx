@@ -227,8 +227,11 @@ function TaskCard({
         </div>
       </div>
 
-      {/* Actions (show on hover) */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5">
+      {/* Actions (always visible in board/draggable mode, hover-only in list) */}
+      <div className={cn(
+        'flex items-center gap-1 transition-opacity shrink-0 mt-0.5',
+        draggable ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+      )}>
         <button
           onClick={onEdit}
           className="w-7 h-7 flex items-center justify-center rounded-lg text-muted-foreground/50 hover:bg-muted/60 hover:text-foreground transition-colors"
@@ -663,27 +666,30 @@ export default function TasksPage() {
 
                       {/* Column cards */}
                       <ScrollArea className="flex-1 min-h-0">
-                        <div className="p-2 space-y-2">
+                        {/* w-full min-w-0 counters Radix's internal display:table wrapper */}
+                        <div className="w-full min-w-0 py-2">
                           {colTasks.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/30">
                               <ListTodo className="w-6 h-6 mb-1" />
                               <span className="text-[11px]">Drop tasks here</span>
                             </div>
                           ) : (
-                            colTasks.map((task) => (
-                              <TaskCard
-                                key={task.id}
-                                task={task}
-                                onToggle={() => handleToggle(task)}
-                                onEdit={() => openEdit(task)}
-                                onDelete={() => handleDelete(task)}
-                                draggable
-                                onDragStart={(e) => handleDragStart(e, task.id)}
-                                selectable
-                                selected={selectedIds.has(task.id)}
-                                onSelect={() => toggleSelect(task.id)}
-                              />
-                            ))
+                            <div className="flex flex-col gap-2 px-3 pb-1">
+                              {colTasks.map((task) => (
+                                <TaskCard
+                                  key={task.id}
+                                  task={task}
+                                  onToggle={() => handleToggle(task)}
+                                  onEdit={() => openEdit(task)}
+                                  onDelete={() => handleDelete(task)}
+                                  draggable
+                                  onDragStart={(e) => handleDragStart(e, task.id)}
+                                  selectable
+                                  selected={selectedIds.has(task.id)}
+                                  onSelect={() => toggleSelect(task.id)}
+                                />
+                              ))}
+                            </div>
                           )}
                         </div>
                       </ScrollArea>

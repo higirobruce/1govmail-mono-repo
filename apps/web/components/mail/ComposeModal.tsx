@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
 import {
   X, Send, Loader2, ChevronDown, ChevronUp, Minus,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Link2, Paperclip,
@@ -338,8 +339,7 @@ export default function ComposeModal({
 
   // ── Scheduled send ─────────────────────────────────────────────────────────
   const [showSchedule, setShowSchedule] = useState(false);
-  const [scheduleDate, setScheduleDate] = useState('');
-  const [scheduleTime, setScheduleTime] = useState('09:00');
+  const [scheduleDateTime, setScheduleDateTime] = useState('');
 
   // ── Templates ─────────────────────────────────────────────────────────────
   const [showTemplates, setShowTemplates] = useState(false);
@@ -581,12 +581,10 @@ export default function ComposeModal({
   // ── Scheduled Send ────────────────────────────────────────────────────────
   const handleScheduledSend = async () => {
     if (to.length === 0) { setError('Please add at least one recipient'); return; }
-    if (!scheduleDate) { setError('Please pick a date to schedule'); return; }
+    if (!scheduleDateTime) { setError('Please pick a date to schedule'); return; }
     setError(null);
 
-    const [h, m] = scheduleTime.split(':').map(Number);
-    const sendAt = new Date(scheduleDate);
-    sendAt.setHours(h, m, 0, 0);
+    const sendAt = new Date(scheduleDateTime);
     if (sendAt <= new Date()) { setError('Scheduled time must be in the future'); return; }
 
     const currentHtml = editor?.getHTML() ?? '';
@@ -879,20 +877,12 @@ export default function ComposeModal({
             <div className="px-5 py-3 border-t border-border/40 shrink-0 bg-muted/10">
               <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">Schedule send</p>
               <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={scheduleDate}
-                  min={new Date().toISOString().split('T')[0]}
-                  onChange={(e) => setScheduleDate(e.target.value)}
-                  className="flex-1 h-8 text-[12px] bg-muted/30 border border-border/50 rounded-lg px-2 text-foreground focus:outline-none focus:border-primary/50"
+                <DateTimePicker
+                  value={scheduleDateTime}
+                  onChange={setScheduleDateTime}
+                  className="flex-1 h-8 text-[12px]"
                 />
-                <input
-                  type="time"
-                  value={scheduleTime}
-                  onChange={(e) => setScheduleTime(e.target.value)}
-                  className="w-24 h-8 text-[12px] bg-muted/30 border border-border/50 rounded-lg px-2 text-foreground focus:outline-none focus:border-primary/50"
-                />
-                <Button size="sm" onClick={handleScheduledSend} disabled={!scheduleDate || to.length === 0}
+                <Button size="sm" onClick={handleScheduledSend} disabled={!scheduleDateTime || to.length === 0}
                   className="h-8 px-3 gap-1.5 bg-primary/90 hover:bg-primary text-primary-foreground">
                   <Calendar className="w-3.5 h-3.5" /> Schedule
                 </Button>

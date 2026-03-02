@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { X, Clock, AlarmClock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
 
 interface SnoozeOption {
   label: string;
@@ -53,18 +54,15 @@ interface SnoozeModalProps {
 }
 
 export default function SnoozeModal({ open, onClose, onSnooze }: SnoozeModalProps) {
-  const [customDate, setCustomDate] = useState('');
-  const [customTime, setCustomTime] = useState('08:00');
+  const [customDateTime, setCustomDateTime] = useState('');
 
   if (!open) return null;
 
   const options = getSnoozeOptions();
 
   const handleCustom = () => {
-    if (!customDate) return;
-    const [h, m] = customTime.split(':').map(Number);
-    const d = new Date(customDate);
-    d.setHours(h, m, 0, 0);
+    if (!customDateTime) return;
+    const d = new Date(customDateTime);
     if (d > new Date()) {
       onSnooze(d);
       onClose();
@@ -109,25 +107,17 @@ export default function SnoozeModal({ open, onClose, onSnooze }: SnoozeModalProp
         <div className="px-4 pb-4 pt-1 border-t border-border/20 mt-1">
           <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">Custom time</p>
           <div className="flex gap-2 items-center">
-            <input
-              type="date"
-              value={customDate}
-              min={new Date().toISOString().split('T')[0]}
-              onChange={(e) => setCustomDate(e.target.value)}
-              className="flex-1 h-8 text-[12px] bg-muted/30 border border-border/50 rounded-lg px-2 text-foreground focus:outline-none focus:border-primary/50"
-            />
-            <input
-              type="time"
-              value={customTime}
-              onChange={(e) => setCustomTime(e.target.value)}
-              className="w-20 h-8 text-[12px] bg-muted/30 border border-border/50 rounded-lg px-2 text-foreground focus:outline-none focus:border-primary/50"
+            <DateTimePicker
+              value={customDateTime}
+              onChange={setCustomDateTime}
+              className="flex-1 h-8 text-[12px]"
             />
             <button
               onClick={handleCustom}
-              disabled={!customDate}
+              disabled={!customDateTime}
               className={cn(
                 'h-8 px-3 rounded-lg text-[12px] font-medium transition-colors',
-                customDate
+                customDateTime
                   ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                   : 'bg-muted text-muted-foreground/40 cursor-not-allowed',
               )}

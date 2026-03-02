@@ -11,6 +11,7 @@ import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
@@ -820,20 +821,20 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Away from</Label>
-              <Input
-                type="date"
+              <DateTimePicker
                 value={fromDate ? fromDate.slice(0, 10) : ''}
-                onChange={(e) => setFromDate(e.target.value)}
-                className="h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/30"
+                onChange={setFromDate}
+                dateOnly
+                className="h-8 text-sm"
               />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Until</Label>
-              <Input
-                type="date"
+              <DateTimePicker
                 value={untilDate ? untilDate.slice(0, 10) : ''}
-                onChange={(e) => setUntilDate(e.target.value)}
-                className="h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/30"
+                onChange={setUntilDate}
+                dateOnly
+                className="h-8 text-sm"
               />
             </div>
           </div>

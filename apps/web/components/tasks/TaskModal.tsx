@@ -6,7 +6,15 @@ import { useAuthStore } from '@/stores/auth.store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Sheet,
   SheetClose,
@@ -17,7 +25,7 @@ import {
 } from '@/components/ui/sheet';
 import { toast } from 'sonner';
 import {
-  Loader2, Check, X, User, Mail, ChevronDown,
+  Loader2, Check, X, User, Mail,
   Plus, Trash2, Square, CheckSquare, MessageSquare,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
@@ -490,89 +498,84 @@ export default function TaskModal({
 
             <div className="grid grid-cols-2 gap-3">
               <Field label="Status">
-                <div className="relative">
-                  <select
-                    value={form.status}
-                    onChange={(e) => set('status')(e.target.value as TaskStatus)}
-                    className="w-full h-9 text-sm bg-muted/30 border border-border/50 rounded-md px-3 pr-8 appearance-none focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 text-foreground"
-                  >
+                <Select value={form.status} onValueChange={(v) => set('status')(v as TaskStatus)}>
+                  <SelectTrigger size="sm" className="h-9 text-sm bg-muted/30 border-border/50">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
                     {(Object.keys(STATUS_META) as TaskStatus[]).map((s) => (
-                      <option key={s} value={s}>{STATUS_META[s].label}</option>
+                      <SelectItem key={s} value={s}>{STATUS_META[s].label}</SelectItem>
                     ))}
-                  </select>
-                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40 pointer-events-none" />
-                </div>
+                  </SelectContent>
+                </Select>
               </Field>
 
               <Field label="Priority">
-                <div className="relative">
-                  <select
-                    value={form.priority}
-                    onChange={(e) => set('priority')(e.target.value as TaskPriority)}
-                    className="w-full h-9 text-sm bg-muted/30 border border-border/50 rounded-md px-3 pr-8 appearance-none focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 text-foreground"
-                  >
+                <Select value={form.priority} onValueChange={(v) => set('priority')(v as TaskPriority)}>
+                  <SelectTrigger size="sm" className="h-9 text-sm bg-muted/30 border-border/50">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
                     {(Object.keys(PRIORITY_META) as TaskPriority[]).map((p) => (
-                      <option key={p} value={p}>{PRIORITY_META[p].label}</option>
+                      <SelectItem key={p} value={p}>{PRIORITY_META[p].label}</SelectItem>
                     ))}
-                  </select>
-                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40 pointer-events-none" />
-                </div>
+                  </SelectContent>
+                </Select>
               </Field>
             </div>
 
             <Field label="Due date">
-              <Input
-                type="date"
+              <DateTimePicker
                 value={form.dueDate}
-                onChange={(e) => set('dueDate')(e.target.value)}
-                className="h-9 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
+                onChange={set('dueDate')}
+                dateOnly
+                className="h-9 text-sm"
               />
             </Field>
 
             <div className="grid grid-cols-2 gap-3">
               <Field label="Recurrence">
-                <div className="relative">
-                  <select
-                    value={form.recurrence}
-                    onChange={(e) => set('recurrence')(e.target.value)}
-                    className="w-full h-9 text-sm bg-muted/30 border border-border/50 rounded-md px-3 pr-8 appearance-none focus:outline-none focus:border-primary/50 text-foreground"
-                  >
-                    <option value="">None</option>
-                    <option value="DAILY">Daily</option>
-                    <option value="WEEKLY">Weekly</option>
-                    <option value="MONTHLY">Monthly</option>
-                    <option value="YEARLY">Yearly</option>
-                  </select>
-                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40 pointer-events-none" />
-                </div>
+                <Select value={form.recurrence || '__none__'} onValueChange={(v) => set('recurrence')(v === '__none__' ? '' : v)}>
+                  <SelectTrigger size="sm" className="h-9 text-sm bg-muted/30 border-border/50">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    <SelectItem value="DAILY">Daily</SelectItem>
+                    <SelectItem value="WEEKLY">Weekly</SelectItem>
+                    <SelectItem value="MONTHLY">Monthly</SelectItem>
+                    <SelectItem value="YEARLY">Yearly</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
 
               <Field label="Reminder">
-                <div className="relative">
-                  <select
-                    value={form.reminderOffset}
-                    onChange={(e) => set('reminderOffset')(e.target.value)}
-                    disabled={!form.dueDate}
-                    className="w-full h-9 text-sm bg-muted/30 border border-border/50 rounded-md px-3 pr-8 appearance-none focus:outline-none focus:border-primary/50 text-foreground disabled:opacity-40"
-                  >
-                    <option value="">None</option>
-                    <option value="15">15 min before</option>
-                    <option value="30">30 min before</option>
-                    <option value="60">1 hour before</option>
-                    <option value="1440">1 day before</option>
-                  </select>
-                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40 pointer-events-none" />
-                </div>
+                <Select
+                  value={form.reminderOffset || '__none__'}
+                  onValueChange={(v) => set('reminderOffset')(v === '__none__' ? '' : v)}
+                  disabled={!form.dueDate}
+                >
+                  <SelectTrigger size="sm" className="h-9 text-sm bg-muted/30 border-border/50 disabled:opacity-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    <SelectItem value="15">15 min before</SelectItem>
+                    <SelectItem value="30">30 min before</SelectItem>
+                    <SelectItem value="60">1 hour before</SelectItem>
+                    <SelectItem value="1440">1 day before</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
             </div>
 
             {form.recurrence && (
               <Field label="Repeat until (optional)">
-                <Input
-                  type="date"
+                <DateTimePicker
                   value={form.recurrenceEndDate}
-                  onChange={(e) => set('recurrenceEndDate')(e.target.value)}
-                  className="h-9 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
+                  onChange={set('recurrenceEndDate')}
+                  dateOnly
+                  className="h-9 text-sm"
                 />
               </Field>
             )}
@@ -809,7 +812,7 @@ export default function TaskModal({
                               </button>
                             )}
                           </div>
-                          <p className="text-sm text-foreground/80 mt-0.5 break-words">{c.body}</p>
+                          <p className="text-sm text-foreground/80 mt-0.5 wrap-break-word">{c.body}</p>
                         </div>
                       </div>
                     ))}

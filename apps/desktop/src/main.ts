@@ -153,6 +153,11 @@ function startApiServer(apiDir: string, dbPath: string, jwtSecret: string): Prom
       return;
     }
 
+    // Pipe API stdout/stderr to a log file so crashes are diagnosable.
+    const logPath   = path.join(app.getPath('userData'), 'api.log');
+    const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+    logStream.write(`\n--- API start ${new Date().toISOString()} ---\n`);
+
     apiProcess = spawn(
       process.execPath,
       [serverScript],
@@ -168,23 +173,41 @@ function startApiServer(apiDir: string, dbPath: string, jwtSecret: string): Prom
           FRONTEND_URL: `http://127.0.0.1:${WEB_PROD_PORT}`,
         },
         cwd:   apiDir,
-        stdio: 'ignore',
+        stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
 
+    apiProcess.stdout?.pipe(logStream, { end: false });
+    apiProcess.stderr?.pipe(logStream, { end: false });
+
     apiProcess.on('error', (err) => reject(err));
+
+    // If the process exits before we resolve, fail immediately instead of
+    // waiting out the full 20-second polling window.
+    let settled = false;
+    apiProcess.on('exit', (code, signal) => {
+      if (!settled) {
+        settled = true;
+        reject(new Error(
+          `API server process exited early (code ${code ?? signal}).\n` +
+          `Check log for details: ${logPath}`,
+        ));
+      }
+    });
 
     // Poll until the API accepts connections (max ~20 s)
     const poll = (attempts = 40) => {
       http
         .get(`http://127.0.0.1:${API_PROD_PORT}/api`, (res) => {
           // Any HTTP response (even 404) means the server is up
-          resolve();
+          if (!settled) { settled = true; resolve(); }
           res.resume();
         })
         .on('error', () => {
-          if (attempts > 0) setTimeout(() => poll(attempts - 1), 500);
-          else reject(new Error('API server did not become ready in time'));
+          if (!settled) {
+            if (attempts > 0) setTimeout(() => poll(attempts - 1), 500);
+            else { settled = true; reject(new Error(`API server did not become ready in time.\nCheck log: ${logPath}`)); }
+          }
         });
     };
 

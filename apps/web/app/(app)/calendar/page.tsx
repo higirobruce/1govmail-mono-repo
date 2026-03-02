@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Checkbox } from '@/components/ui/checkbox';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
 import { toast } from 'sonner';
 import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
@@ -392,24 +394,29 @@ function CreateEventModal({
               onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
             />
             <div className="flex items-center gap-2">
-              <input id="allday" type="checkbox" checked={allDay}
-                onChange={(e) => setAllDay(e.target.checked)} className="rounded" />
+              <Checkbox
+                id="allday"
+                checked={allDay}
+                onCheckedChange={(v) => setAllDay(v === true)}
+              />
               <Label htmlFor="allday" className="text-sm text-muted-foreground/70 cursor-pointer">All day</Label>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Start</Label>
-                <Input type={allDay ? 'date' : 'datetime-local'}
+                <DateTimePicker
                   value={allDay ? startAt.split('T')[0] : startAt}
-                  onChange={(e) => setStart(e.target.value)}
-                  className="h-8 text-xs bg-muted/30 border-border/50" />
+                  onChange={setStart}
+                  dateOnly={allDay}
+                />
               </div>
               <div>
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">End</Label>
-                <Input type={allDay ? 'date' : 'datetime-local'}
+                <DateTimePicker
                   value={allDay ? endAt.split('T')[0] : endAt}
-                  onChange={(e) => setEnd(e.target.value)}
-                  className="h-8 text-xs bg-muted/30 border-border/50" />
+                  onChange={setEnd}
+                  dateOnly={allDay}
+                />
               </div>
             </div>
             <div>

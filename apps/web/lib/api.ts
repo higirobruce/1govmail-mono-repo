@@ -648,21 +648,31 @@ export const api = {
       return request<Doc[]>('/docs');
     },
     getOne: (id: string) => {
-      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>(`/docs/${id}`);
     },
     create: (data?: { title?: string; emoji?: string }) => {
-      if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: data?.title ?? 'Untitled', emoji: data?.emoji ?? null, position: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: data?.title ?? 'Untitled', emoji: data?.emoji ?? null, position: 0, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>('/docs', { method: 'POST', body: JSON.stringify(data ?? {}) });
     },
     update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number }>) => {
-      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>(`/docs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
     },
     delete: (id: string) => {
       if (USE_MOCK) return delay({ success: true });
       return request<{ success: boolean }>(`/docs/${id}`, { method: 'DELETE' });
     },
+    share: {
+      enable:  (id: string) => request<{ shareToken: string; isShared: boolean }>(`/docs/${id}/share`, { method: 'POST' }),
+      disable: (id: string) => request<{ shareToken: null; isShared: false }>(`/docs/${id}/share`, { method: 'DELETE' }),
+    },
+  },
+
+  shared: {
+    getOne: (token: string) => request<Doc>(`/docs/shared/${token}`),
+    update: (token: string, data: Partial<{ title: string; content: string }>) =>
+      request<Doc>(`/docs/shared/${token}`, { method: 'PATCH', body: JSON.stringify(data) }),
   },
 };
 
@@ -672,6 +682,8 @@ export interface Doc {
   emoji: string | null;
   content?: string;
   position: number;
+  shareToken: string | null;
+  isShared: boolean;
   createdAt: string;
   updatedAt: string;
 }

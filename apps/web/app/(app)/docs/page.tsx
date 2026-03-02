@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
@@ -9,14 +9,29 @@ import Sidebar from '@/components/layout/Sidebar';
 import { DocsEditor } from '@/components/docs/DocsEditor';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { Plus, FileText, MoreHorizontal, Trash2, Loader2, BookOpen } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Plus, FileText, MoreHorizontal, Trash2, Loader2, BookOpen, Share2 } from 'lucide-react';
+import { cn, getUserColor } from '@/lib/utils';
+import { ShareDocDialog } from '@/components/docs/ShareDocDialog';
 
 export default function DocsPage() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const authToken = useAuthStore((s) => s.token);
+  const authUser  = useAuthStore((s) => s.user);
   const [hydrated, setHydrated] = useState(false);
   const confirm = useConfirmStore((s) => s.confirm);
+
+  const collabToken = useMemo(
+    () => (authToken ? JSON.stringify({ type: 'jwt', value: authToken }) : ''),
+    [authToken],
+  );
+  const collabUser = useMemo(
+    () => ({
+      name:  authUser?.displayName ?? authUser?.email ?? 'Unknown',
+      color: getUserColor(authUser?.id ?? 'unknown'),
+    }),
+    [authUser],
+  );
 
   const [docs, setDocs] = useState<Doc[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -24,6 +39,7 @@ export default function DocsPage() {
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   // Auth hydration
   useEffect(() => {
@@ -215,13 +231,41 @@ export default function DocsPage() {
             <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
           </div>
         ) : activeDocs ? (
-          <DocsEditor
-            key={activeDocs.id}
-            docId={activeDocs.id}
-            initialContent={activeDocs.content}
-            title={activeDocs.title}
-            onTitleChange={handleTitleChange}
-          />
+          <>
+            {/* Editor toolbar */}
+            <div className="flex items-center justify-end px-8 py-2 border-b border-border shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => setShareDialogOpen(true)}
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                Share
+              </Button>
+            </div>
+
+            <DocsEditor
+              key={activeDocs.id}
+              docId={activeDocs.id}
+              initialContent={activeDocs.content}
+              title={activeDocs.title}
+              onTitleChange={handleTitleChange}
+              collaborationToken={collabToken}
+              collaborationUser={collabUser}
+            />
+
+            <ShareDocDialog
+              docId={activeDocs.id}
+              open={shareDialogOpen}
+              onOpenChange={setShareDialogOpen}
+              isShared={activeDocs.isShared}
+              shareToken={activeDocs.shareToken}
+              onShareChange={({ isShared, shareToken }) => {
+                setActiveDocs((prev) => prev ? { ...prev, isShared, shareToken } : prev);
+              }}
+            />
+          </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center">
             <BookOpen className="w-10 h-10 text-muted-foreground/30" />

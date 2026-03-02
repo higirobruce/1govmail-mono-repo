@@ -9,9 +9,11 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@hocuspocus/provider": "^3.4.4",
     "@tailwindcss/typography": "^0.5.19",
     "@tanstack/react-query": "^5.90.21",
     "@tiptap/extension-code-block-lowlight": "^3.20.0",
+    "@tiptap/extension-collaboration": "^3.20.0",
     "@tiptap/extension-color": "^3.20.0",
     "@tiptap/extension-font-family": "^3.20.0",
     "@tiptap/extension-image": "^3.20.0",
@@ -29,6 +31,7 @@
     "@tiptap/react": "^3.20.0",
     "@tiptap/starter-kit": "^3.20.0",
     "@tiptap/suggestion": "^3.20.0",
+    "@tiptap/y-tiptap": "^3.0.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -41,6 +44,7 @@
     "react-dom": "19.2.3",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
+    "yjs": "^13.6.29",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

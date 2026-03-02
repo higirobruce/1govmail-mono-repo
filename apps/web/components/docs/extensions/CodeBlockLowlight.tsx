@@ -81,6 +81,7 @@ function CodeBlockNodeView({
 
         {/* Code area */}
         <pre className="!m-0 !rounded-none !border-0 overflow-x-auto">
+          {/* @ts-expect-error NodeViewContent `as` accepts any tag */}
           <NodeViewContent as="code" className={lang ? `language-${lang} hljs` : 'hljs'} />
         </pre>
       </div>

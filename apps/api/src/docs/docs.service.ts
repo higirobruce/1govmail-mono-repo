@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import {
   ForbiddenException,
   Injectable,
@@ -70,6 +71,43 @@ export class DocsService {
     await this.verifyOwnership(userId, id);
     await this.prisma.document.delete({ where: { id } });
     return { success: true };
+  }
+
+  async enableSharing(userId: string, id: string) {
+    await this.verifyOwnership(userId, id);
+    const shareToken = randomUUID();
+    return this.prisma.document.update({
+      where: { id },
+      data: { shareToken, isShared: true },
+      select: { shareToken: true, isShared: true },
+    });
+  }
+
+  async disableSharing(userId: string, id: string) {
+    await this.verifyOwnership(userId, id);
+    return this.prisma.document.update({
+      where: { id },
+      data: { shareToken: null, isShared: false },
+      select: { shareToken: true, isShared: true },
+    });
+  }
+
+  async findByShareToken(token: string) {
+    const doc = await this.prisma.document.findUnique({ where: { shareToken: token } });
+    if (!doc || !doc.isShared) throw new NotFoundException('Shared document not found');
+    return doc;
+  }
+
+  async updateByShareToken(token: string, dto: UpdateDocDto) {
+    const doc = await this.prisma.document.findUnique({ where: { shareToken: token } });
+    if (!doc || !doc.isShared) throw new NotFoundException('Shared document not found');
+    return this.prisma.document.update({
+      where: { id: doc.id },
+      data: {
+        ...(dto.title   !== undefined ? { title:   dto.title   } : {}),
+        ...(dto.content !== undefined ? { content: dto.content } : {}),
+      },
+    });
   }
 
   private async verifyOwnership(userId: string, id: string) {

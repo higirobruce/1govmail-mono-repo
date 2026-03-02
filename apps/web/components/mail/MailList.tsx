@@ -381,23 +381,27 @@ export default function MailList({
   const sentinelRef    = useRef<HTMLDivElement>(null);
   const onLoadMoreRef  = useRef(onLoadMore);
   onLoadMoreRef.current = onLoadMore;
-  // Keep a ref for `loading` so the observer callback always reads the latest
-  // value without needing it in the deps array (avoids re-creating observer mid-load)
+  // Keep refs so observer callbacks always read latest values without needing
+  // them in deps (avoids recreating the observer on every render).
   const loadingRef = useRef(loading);
   loadingRef.current = loading;
+  const hasMoreRef = useRef(hasMore);
+  hasMoreRef.current = hasMore;
 
   useEffect(() => {
     const el   = sentinelRef.current;
     const root = scrollRef.current;
     if (!el || !root) return;
-    // Re-create the observer whenever messages.length changes so that if the
-    // sentinel is already visible after a batch loads, the observer fires again
-    // (IntersectionObserver fires immediately on initial observation).
+    // Create the observer ONCE.  IntersectionObserver fires naturally whenever
+    // the sentinel enters the viewport (initial observation + user scroll + tab
+    // switch that makes the list shorter).  We deliberately do NOT depend on
+    // messages.length because that caused a cascade on filtered tabs (unread /
+    // starred): the short filtered list kept the sentinel in view, so every
+    // page load recreated the observer which immediately fired again, triggering
+    // the next page load in a tight loop and making the UI unstable.
     const observer = new IntersectionObserver(
       (entries) => {
-        // Guard: don't fire during an initial/reset load — prevents a race where
-        // stale hasMore=true from a previous folder triggers loadMore on the new folder
-        if (entries[0].isIntersecting && !loadingRef.current) {
+        if (entries[0].isIntersecting && !loadingRef.current && hasMoreRef.current) {
           onLoadMoreRef.current?.();
         }
       },
@@ -405,7 +409,7 @@ export default function MailList({
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleContextMenu = useCallback((e: React.MouseEvent, message: Message) => {
     if (!onContextAction) return;
@@ -417,6 +421,37 @@ export default function MailList({
     onContextAction?.(action);
     setCtxMenu(null);
   }, [onContextAction]);
+
+  // After a page finishes loading on the 'all' tab, do a one-shot re-observe so
+  // the IntersectionObserver fires again if the sentinel is still in view (e.g.
+  // the new batch didn't push it below the fold).  We intentionally skip this
+  // for filtered tabs (unread / starred) — those are short client-side views
+  // where the sentinel is almost always visible, and firing repeatedly would
+  // cascade through all pages causing the UI instability we just fixed.
+  const loadingMoreRef = useRef(loadingMore);
+  loadingMoreRef.current = loadingMore;
+  useEffect(() => {
+    if (activeTab !== 'all') return;
+    if (loadingMore) return;               // load in progress — wait for it to finish
+    if (!hasMoreRef.current) return;       // nothing left to fetch
+    const el   = sentinelRef.current;
+    const root = scrollRef.current;
+    if (!el || !root) return;
+    // Re-observe once: if the sentinel is still intersecting after the load, the
+    // callback fires immediately and fetches the next page; if not, the observer
+    // idles until the user scrolls.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loadingRef.current && hasMoreRef.current) {
+          onLoadMoreRef.current?.();
+        }
+        observer.disconnect();
+      },
+      { root, threshold: 0, rootMargin: '100px' },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loadingMore, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const groups = useMemo(() => groupMessages(messages, activeTab), [messages, activeTab]);
   const totalFiltered = groups.reduce((s, g) => s + g.messages.length, 0);

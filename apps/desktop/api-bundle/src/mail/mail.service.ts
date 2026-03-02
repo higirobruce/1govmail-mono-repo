@@ -461,14 +461,64 @@ export class MailService {
       zimbraReplyToId = orig?.zimbraId ?? payload.replyToId;
     }
 
-    // Strip embedded base64 data URIs from the outgoing body.
-    // When a user replies to a thread, the quoted body may contain images we
-    // previously embedded as data URIs for display.  Those URIs are meaningless
-    // to the recipient and inflate the payload well beyond 10 MB.
-    const cleanBody = payload.body.replace(
-      /src=["']data:[^"']*["']/gi,
-      'src=""',
+    // ── Clean the outgoing HTML body + extract inline images ─────────────────
+    //
+    // Every data:image/… URI in the body (signature logos, small pasted images)
+    // is converted to a proper CID inline attachment so recipients see the image
+    // regardless of their email client.  Large data URIs in quoted content (>50 KB)
+    // that are NOT images, or images we fail to upload, are stripped to src="".
+    //
+    // Step 1 — collect all data:image/… URIs and schedule them for upload.
+    interface InlineImageInfo {
+      dataUri: string;          // full "data:image/png;base64,…" string
+      contentType: string;      // e.g. "image/png"
+      base64Data: string;       // raw base64 payload
+      cid: string;              // generated Content-ID (without angle brackets)
+    }
+
+    const pendingImages: InlineImageInfo[] = [];
+    // Strip data-zimbra-src while collecting — that attribute was only needed
+    // for the round-trip save path and is meaningless in outgoing mail.
+    let cleanBody = payload.body
+      .replace(/\s*data-zimbra-src="[^"]*"/gi, '')
+      .replace(
+        /src="(data:(image\/[^;]+);base64,([^"]{1,5000000}))"/gi,
+        (_m: string, dataUri: string, contentType: string, base64Data: string) => {
+          const cid = `img${pendingImages.length}-${Date.now()}@govmail`;
+          pendingImages.push({ dataUri, contentType, base64Data, cid });
+          return `src="cid:${cid}"`;
+        },
+      );
+
+    // Step 2 — strip any remaining large data URIs (non-image or upload-failed).
+    cleanBody = cleanBody.replace(/src=["']data:[^"']{50000,}["']/gi, 'src=""');
+
+    // Step 3 — upload each collected image to Zimbra and get an attachment ID.
+    const inlineImageAids: Array<{ aid: string; cid: string; ct: string }> = [];
+    const failedCids: string[] = [];
+    await Promise.all(
+      pendingImages.map(async (img) => {
+        try {
+          const buf = Buffer.from(img.base64Data, 'base64');
+          const ext = img.contentType.split('/')[1]?.replace(/\+.*$/, '') || 'bin';
+          const aid = await this.zimbra.uploadAttachment(
+            user.zimbraHost,
+            user.authToken!,
+            buf,
+            `inline.${ext}`,
+            img.contentType,
+          );
+          inlineImageAids.push({ aid, cid: img.cid, ct: img.contentType });
+        } catch (err: any) {
+          this.logger.warn(`Failed to upload inline image (${img.contentType}): ${err?.message}`);
+          failedCids.push(img.cid);
+        }
+      }),
     );
+    // Replace failed CID references with empty src (safe sequential mutation)
+    for (const cid of failedCids) {
+      cleanBody = cleanBody.replace(`src="cid:${cid}"`, 'src=""');
+    }
 
     // Upload each attachment to Zimbra and collect their attachment IDs.
     let attachmentAids: string[] = [];
@@ -493,6 +543,7 @@ export class MailService {
         { ...payload, body: cleanBody, replyToId: zimbraReplyToId },
         user.csrfToken ?? undefined,
         attachmentAids,
+        inlineImageAids,
       );
 
     // Persist the sent message to the local DB so it appears in thread view.
@@ -596,7 +647,10 @@ export class MailService {
               img.partId,
             );
             const dataUri = `data:${contentType};base64,${data.toString('base64')}`;
-            const esc     = img.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            // CIDs are stored with surrounding angle brackets (e.g. <img0@govmail>)
+            // but HTML src="cid:..." references never include them — strip before matching.
+            const rawCid  = img.cid.replace(/^<|>$/g, '');
+            const esc     = rawCid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             // HTML may encode '@' as '&#64;' or '&#x40;' — match all variants
             const escCid  = esc.replace(/@/g, '(?:@|&#(?:64|x40);)');
             const escBase = esc.split('@')[0];

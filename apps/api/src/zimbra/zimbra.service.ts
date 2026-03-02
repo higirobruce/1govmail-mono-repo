@@ -562,11 +562,39 @@ export class ZimbraService {
     },
     csrfToken?: string,
     attachmentAids: string[] = [],
+    inlineImageAids: Array<{ aid: string; cid: string; ct: string }> = [],
   ): Promise<{ zimbraId: string; conversationId: string | null }> {
     const client = this.buildClient(host, authToken, csrfToken);
     const toAddrs  = payload.to.map((a) => ({ t: 't', a }));
     const ccAddrs  = (payload.cc  ?? []).map((a) => ({ t: 'c', a }));
     const bccAddrs = (payload.bcc ?? []).map((a) => ({ t: 'b', a }));
+
+    // Build the top-level MIME part.
+    // When there are inline images (signature logos etc.) we use multipart/related
+    // so that recipients see the images embedded in the message body.
+    // The HTML part references each image by CID (src="cid:…") and each image
+    // is attached as a separate inline MIME part identified by that CID.
+    // Note: ci must NOT include angle brackets — Zimbra adds them when building
+    // the MIME Content-ID header.  The HTML src="cid:xxx" also has no brackets.
+    const htmlPart = {
+      ct: 'text/html',
+      content: { _content: payload.body },
+    };
+
+    const topMp = inlineImageAids.length > 0
+      ? {
+          ct: 'multipart/related',
+          mp: [
+            htmlPart,
+            ...inlineImageAids.map(({ aid, cid, ct }) => ({
+              ct,           // use the real image content type (image/gif, image/png, …)
+              attach: { aid },
+              ci: cid,      // no angle brackets — Zimbra wraps in <…> itself
+              cd: 'inline',
+            })),
+          ],
+        }
+      : htmlPart;
 
     try {
       const res = await client.post('/service/soap', {
@@ -577,10 +605,7 @@ export class ZimbraService {
               ...(payload.replyToId ? { origid: payload.replyToId } : {}),
               e: [...toAddrs, ...ccAddrs, ...bccAddrs],
               su: { _content: payload.subject },
-              mp: {
-                ct: 'text/html',
-                content: { _content: payload.body },
-              },
+              mp: topMp,
               // Attach pre-uploaded files by their Zimbra attachment IDs
               ...(attachmentAids.length > 0
                 ? { attach: { aid: attachmentAids.join(',') } }

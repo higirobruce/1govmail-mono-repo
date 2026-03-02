@@ -2,6 +2,33 @@
 
 All notable changes to 1Gov Mail are documented here.
 
+## [1.5.0](https://github.com/1govmail/email-client/compare/v1.4.0...v1.5.0) (2026-03-02)
+
+### Features
+
+* **docs:** new Documents module with rich TipTap editor — create, edit, delete, and organise documents inside the app
+* **docs:** real-time collaborative editing — multiple users can edit the same document simultaneously with conflict-free Yjs CRDT sync and live remote cursors
+* **docs:** document sharing — share any document via a secure read-only link; recipients can view without an account
+* **docs:** live title sync — document title changes broadcast instantly to all collaborators via Yjs metadata
+* **contacts:** contact groups and in-app notification support
+* **mail:** drag email to create task or event — drag any message from the inbox to pre-fill a new task or calendar event with the subject and sender
+* **ui:** theme switcher — toggle between Light, Dark, and System (follows OS) from settings
+* **ui:** native OS desktop notifications for new mail and task reminders
+* **ui:** keyboard shortcuts for common actions (compose, reply, archive, delete, navigate folders)
+* **calendar:** full event detail view with per-attendee RSVP status indicators
+
+### Improvements
+
+* **tasks:** board column backgrounds and card styling refreshed for better readability and contrast
+* **ui:** reusable DateTimePicker component — consistent date and time selection across all scheduling features
+* **calendar:** improved layout; sidebar folder list no longer fails on slow API responses
+
+### Bug Fixes
+
+* **docs:** share dialog URL field is now a proper text input, making it easy to select and copy the link
+
+---
+
 ## [1.4.0](https://github.com/1govmail/email-client/compare/v1.3.0...v1.4.0) (2026-03-01)
 
 ### Features

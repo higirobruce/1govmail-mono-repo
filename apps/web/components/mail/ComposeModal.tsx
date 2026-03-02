@@ -300,6 +300,8 @@ export default function ComposeModal({
   // Check both identity attrs AND prefs — Zimbra may store the ID in either.
   // Falls back to the first available signature when no default is configured or
   // when the configured default ID no longer matches any existing signature.
+  // If a signature has no HTML content (text-only Zimbra signature), the plain
+  // text is converted to simple HTML paragraphs so it still gets injected.
   const signatureHtml = useMemo(() => {
     const settings = settingsData as any;
     const sigs: any[] = settings?.signatures ?? [];
@@ -313,14 +315,27 @@ export default function ComposeModal({
       ? (attrs.zimbraPrefDefaultSignatureId        || prefs.zimbraPrefDefaultSignatureId        || '')
       : (attrs.zimbraPrefForwardReplySignatureId   || prefs.zimbraPrefForwardReplySignatureId   || '');
 
+    const resolveSig = (sig: any): string => {
+      if (sig?.contentHtml) return sig.contentHtml;
+      // Fallback: convert plain-text signature to HTML paragraphs
+      if (sig?.contentText) {
+        return sig.contentText
+          .split('\n')
+          .map((line: string) => `<p>${line || '<br>'}</p>`)
+          .join('');
+      }
+      return '';
+    };
+
     // If an explicit default is configured and found, use it
     if (id) {
-      const found = sigs.find((s: any) => s.id === id)?.contentHtml;
-      if (found) return found;
+      const found = sigs.find((s: any) => s.id === id);
+      const html = resolveSig(found);
+      if (html) return html;
       // Configured signature no longer exists — fall through to first available
     }
     // No default configured (or configured sig not found) — use first available signature
-    return sigs[0]?.contentHtml ?? '';
+    return resolveSig(sigs[0]);
   }, [settingsData, mode]);
 
   const [minimised, setMinimised] = useState(false);
@@ -388,7 +403,25 @@ export default function ComposeModal({
       Color,
       FontFamily,
       FontSize,
-      TiptapImage.configure({ inline: true, allowBase64: true }),
+      // Extend Image to preserve the data-zimbra-src attribute that
+      // processSignatureImages (backend) attaches alongside the base64 data URI.
+      // Without this, TipTap drops the attribute and we lose the original
+      // Zimbra Briefcase path, making it impossible to restore it before sending.
+      TiptapImage.extend({
+        addAttributes() {
+          return {
+            ...this.parent?.(),
+            'data-zimbra-src': {
+              default: null,
+              parseHTML: (el) => el.getAttribute('data-zimbra-src'),
+              renderHTML: (attrs) =>
+                attrs['data-zimbra-src']
+                  ? { 'data-zimbra-src': attrs['data-zimbra-src'] }
+                  : {},
+            },
+          };
+        },
+      }).configure({ inline: true, allowBase64: true }),
       Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { class: 'text-primary underline' } }),
     ],
     content: '',
@@ -488,10 +521,20 @@ export default function ComposeModal({
   // before this one, guaranteeing sigInserted is reset before we try to inject.
   useEffect(() => {
     if (!editor || !open || sigInserted.current || initialDraftZimbraId || !signatureHtml) return;
-    if (editor.getText().trim().length > 0) return;
     sigInserted.current = true;
-    editor.commands.setContent(`<p></p><div data-sig="1">${signatureHtml}</div>`);
-    editor.commands.focus('start');
+    const sigNode = `<div data-sig="1">${signatureHtml}</div>`;
+    if (editor.getText().trim().length === 0) {
+      // Editor is still empty — set the canonical initial content with signature below.
+      editor.commands.setContent(`<p></p>${sigNode}`);
+      editor.commands.focus('start');
+    } else {
+      // Settings resolved AFTER the user started typing — append the signature at
+      // the very bottom so it doesn't interrupt in-progress text.
+      editor.chain()
+        .insertContentAt(editor.state.doc.content.size, sigNode)
+        .focus('start')
+        .run();
+    }
   }, [editor, open, signatureHtml, initialDraftZimbraId]);
 
   // ── Auto-save draft ────────────────────────────────────────────────────────

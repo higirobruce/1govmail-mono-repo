@@ -641,4 +641,37 @@ export const api = {
       return request<{ success: boolean }>(`/notifications/${id}`, { method: 'DELETE' });
     },
   },
+
+  docs: {
+    getAll: () => {
+      if (USE_MOCK) return delay<Doc[]>([]);
+      return request<Doc[]>('/docs');
+    },
+    getOne: (id: string) => {
+      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      return request<Doc>(`/docs/${id}`);
+    },
+    create: (data?: { title?: string; emoji?: string }) => {
+      if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: data?.title ?? 'Untitled', emoji: data?.emoji ?? null, position: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      return request<Doc>('/docs', { method: 'POST', body: JSON.stringify(data ?? {}) });
+    },
+    update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number }>) => {
+      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      return request<Doc>(`/docs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+    },
+    delete: (id: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<{ success: boolean }>(`/docs/${id}`, { method: 'DELETE' });
+    },
+  },
 };
+
+export interface Doc {
+  id: string;
+  title: string;
+  emoji: string | null;
+  content?: string;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}

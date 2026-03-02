@@ -10,7 +10,7 @@ import {
   ChevronDown, LogOut, Settings, Plus, X,
   Calendar, Users, FolderOpen,
   ListTodo, UsersRound, Newspaper, Sparkles,
-  Sun, Moon, Monitor,
+  Sun, Moon, Monitor, BookOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -364,6 +364,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
             <NavItem icon={Calendar} label="Calendar" onClick={() => router.push('/calendar')} tourId="calendar-nav" />
           </div>
           <NavItem icon={Users} label="Contacts" onClick={() => router.push('/contacts')} tourId="contacts-nav" />
+          <NavItem icon={BookOpen} label="Docs" onClick={() => router.push('/docs')} tourId="docs-nav" />
 
           {/* Upcoming features */}
           <div

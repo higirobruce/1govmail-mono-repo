@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -222,4 +223,73 @@ html[data-electron='true'] body {
   border-left: 2px solid hsl(var(--border));
   padding-left: 0.75rem;
   color: hsl(var(--muted-foreground));
+}
+
+/* ── Code block (lowlight / highlight.js) ──────────────────────────────────── */
+.code-block-wrapper pre {
+  background: #1e1e2e;
+  padding: 1rem 1.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.code-block-wrapper code {
+  background: transparent !important;
+  color: #cdd6f4;           /* Catppuccin Mocha text */
+  font-family: var(--font-mono, ui-monospace, monospace);
+  white-space: pre;
+}
+
+/* highlight.js token colours — Catppuccin Mocha palette */
+.hljs-comment,
+.hljs-quote           { color: #585b70; font-style: italic; }
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name,
+.hljs-tag             { color: #cba6f7; }   /* mauve */
+
+.hljs-string,
+.hljs-attr,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-addition        { color: #a6e3a1; }   /* green */
+
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-selector-attr,
+.hljs-selector-pseudo { color: #fab387; }   /* peach */
+
+.hljs-regexp,
+.hljs-link            { color: #f38ba8; }   /* red */
+
+.hljs-title,
+.hljs-section         { color: #89b4fa; font-weight: 600; }   /* blue */
+
+.hljs-subst,
+.hljs-function,
+.hljs-class           { color: #89dceb; }   /* sky */
+
+.hljs-symbol,
+.hljs-bullet,
+.hljs-meta,
+.hljs-params          { color: #f9e2af; }   /* yellow */
+
+.hljs-deletion        { color: #f38ba8; }
+.hljs-emphasis        { font-style: italic; }
+.hljs-strong          { font-weight: 700; }
+
+/* Inline code — better contrast against light and dark surfaces */
+.ProseMirror p code,
+.ProseMirror li code,
+.ProseMirror td code,
+.ProseMirror th code {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  font-size: 0.8em;
+  padding: 0.15em 0.35em;
+  border-radius: 0.25rem;
 }

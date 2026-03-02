@@ -49,6 +49,19 @@ export class CalendarController {
     return this.calendarService.createEvent(req.user.sub, body);
   }
 
+  /**
+   * GET /calendar/events/:id
+   * Fetches full event details from Zimbra (complete attendee list with RSVP
+   * status). Updates the local DB cache and returns the enriched record.
+   */
+  @Get('events/:id')
+  getEvent(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.calendarService.getEvent(req.user.sub, id);
+  }
+
   /** PATCH /calendar/events/:id — update an existing calendar event */
   @Patch('events/:id')
   @HttpCode(HttpStatus.OK)

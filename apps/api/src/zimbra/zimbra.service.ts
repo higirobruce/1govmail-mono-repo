@@ -1051,6 +1051,36 @@ export class ZimbraService {
     }
   }
 
+  /**
+   * Fetch full details for a single appointment via GetAppointmentRequest.
+   * Unlike SearchRequest, this always returns the complete attendee list with
+   * participation status (ptst) for each invitee.
+   * Returns the raw appointment node, or null if not found.
+   */
+  async getAppointment(
+    host: string,
+    authToken: string,
+    zimbraId: string,
+    csrfToken?: string,
+  ): Promise<any | null> {
+    const client = this.buildClient(host, authToken, csrfToken);
+    try {
+      const response = await client.post('/service/soap', {
+        Body: {
+          GetAppointmentRequest: {
+            _jsns: 'urn:zimbraMail',
+            id: zimbraId,
+            includeContent: 1,
+          },
+        },
+        Header: this.soapHeader(csrfToken),
+      });
+      return response.data?.Body?.GetAppointmentResponse?.appt?.[0] ?? null;
+    } catch (err: any) {
+      this.handleZimbraError(err, `getAppointment(${zimbraId})`);
+    }
+  }
+
   async createCalendarEvent(
     host: string,
     authToken: string,

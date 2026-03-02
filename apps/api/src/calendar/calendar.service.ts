@@ -124,6 +124,50 @@ export class CalendarService {
     return results;
   }
 
+  // ── Get single event (full detail from Zimbra) ────────────────────────────
+
+  /**
+   * Fetch full event details from Zimbra's GetAppointmentRequest, which always
+   * returns the complete attendee list. The DB record is updated in-place so
+   * subsequent calls can use the cache.
+   */
+  async getEvent(userId: string, eventId: string): Promise<any> {
+    const user = await this.getUser(userId);
+    const event = await this.prisma.calendarEvent.findFirst({
+      where: { id: eventId, userId },
+    });
+    if (!event) throw new NotFoundException('Event not found');
+
+    const raw = await this.zimbra.getAppointment(
+      user.zimbraHost,
+      user.authToken!,
+      event.zimbraId,
+      user.csrfToken ?? undefined,
+    );
+
+    if (!raw) return event;
+
+    // GetAppointmentResponse: attendees live in inv[0].comp[0].at
+    const comp = raw.inv?.[0]?.comp?.[0];
+    const attendees: Array<{ email: string; name?: string; ptst?: string }> = Array.isArray(comp?.at)
+      ? comp.at.map((a: any) => ({
+          email: a.a,
+          name: a.d ?? undefined,
+          ptst: a.ptst ?? undefined, // participation status: AC/DE/TE/NE
+        }))
+      : (Array.isArray(raw.at)
+          ? raw.at.map((a: any) => ({ email: a.a, name: a.d ?? undefined, ptst: a.ptst ?? undefined }))
+          : (event.attendees as any) ?? []);
+
+    const organizer: string | null = comp?.or?.a ?? raw.or?.a ?? event.organizer;
+
+    // Persist the enriched attendees so the event list is also up to date
+    return this.prisma.calendarEvent.update({
+      where: { id: eventId },
+      data: { attendees: attendees as any, organizer, syncedAt: new Date() },
+    });
+  }
+
   // ── Create event ──────────────────────────────────────────────────────────
 
   async createEvent(userId: string, data: CalendarEventData): Promise<any> {

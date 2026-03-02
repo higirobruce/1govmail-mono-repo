@@ -48,7 +48,7 @@ interface CalEvent {
   allDay: boolean;
   isRecurring: boolean;
   organizer: string | null;
-  attendees: Array<{ email: string; name?: string }>;
+  attendees: Array<{ email: string; name?: string; ptst?: string }>;
 }
 
 type CalView = 'day' | 'workweek' | 'week' | 'month' | 'year' | 'agenda';
@@ -1294,6 +1294,7 @@ function EventDetailPanel({
   onEdit,
   onRsvp,
   deleting,
+  attendeesLoading,
 }: {
   event: CalEvent;
   currentUserEmail: string | null | undefined;
@@ -1302,6 +1303,7 @@ function EventDetailPanel({
   onEdit: (e: CalEvent) => void;
   onRsvp: (e: CalEvent, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => void;
   deleting: boolean;
+  attendeesLoading?: boolean;
 }) {
   const meetingLink = isOnlineMeetingLink(event.location) ? event.location : null;
   const isOrganizer = event.organizer && currentUserEmail
@@ -1445,23 +1447,58 @@ function EventDetailPanel({
           )}
 
           {/* Attendees */}
-          {event.attendees.length > 0 && (
+          {(attendeesLoading || event.attendees.length > 0) && (
             <div>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-2">
-                Attendees ({event.attendees.length})
+                {attendeesLoading
+                  ? 'Attendees'
+                  : `Attendees (${event.attendees.length})`}
               </p>
               <div className="space-y-2">
-                {event.attendees.map((a) => (
-                  <div key={a.email} className="flex items-start gap-2">
-                    <div className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[9px] font-semibold flex items-center justify-center shrink-0 mt-0.5">
-                      {(a.name ?? a.email).slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      {a.name && <p className="text-xs font-medium text-foreground/80 truncate">{a.name}</p>}
-                      <p className="text-[11px] text-muted-foreground/55 break-all">{a.email}</p>
-                    </div>
-                  </div>
-                ))}
+                {attendeesLoading
+                  ? /* skeleton rows while Zimbra fetch is in-flight */
+                    [0, 1, 2].map((i) => (
+                      <div key={i} className="flex items-center gap-2 animate-pulse">
+                        <div className="w-5 h-5 rounded-full bg-muted/60 shrink-0" />
+                        <div className="flex-1 space-y-1">
+                          <div className="h-2.5 bg-muted/60 rounded w-2/3" />
+                          <div className="h-2 bg-muted/40 rounded w-1/2" />
+                        </div>
+                      </div>
+                    ))
+                  : event.attendees.map((a) => {
+                      const ptst = a.ptst;
+                      const ptstLabel =
+                        ptst === 'AC' ? 'Accepted'
+                        : ptst === 'DE' ? 'Declined'
+                        : ptst === 'TE' ? 'Tentative'
+                        : null;
+                      const ptstColor =
+                        ptst === 'AC' ? 'text-emerald-500'
+                        : ptst === 'DE' ? 'text-rose-500'
+                        : ptst === 'TE' ? 'text-amber-500'
+                        : 'text-muted-foreground/40';
+                      return (
+                        <div key={a.email} className="flex items-start gap-2">
+                          <div className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[9px] font-semibold flex items-center justify-center shrink-0 mt-0.5">
+                            {(a.name ?? a.email).slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {a.name && (
+                                <p className="text-xs font-medium text-foreground/80 truncate">{a.name}</p>
+                              )}
+                              {ptstLabel && (
+                                <span className={cn('text-[10px] font-medium', ptstColor)}>
+                                  · {ptstLabel}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-muted-foreground/55 break-all">{a.email}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
               </div>
             </div>
           )}
@@ -1498,6 +1535,7 @@ export default function CalendarPage() {
   const [events, setEvents]         = useState<CalEvent[]>([]);
   const [loading, setLoading]       = useState(true);
   const [selectedEvent, setSelectedEvent] = useState<CalEvent | null>(null);
+  const [selectedEventLoading, setSelectedEventLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [createForDay, setCreateForDay]  = useState<Date | undefined>();
   const [editingEvent, setEditingEvent]  = useState<CalEvent | null>(null);
@@ -1555,6 +1593,23 @@ export default function CalendarPage() {
     if (!hydrated || !isAuthenticated) return;
     loadEvents(rangeStart, rangeEnd);
   }, [hydrated, isAuthenticated, rangeStart.toISOString(), rangeEnd.toISOString()]); // eslint-disable-line
+
+  // When an event is selected, fetch full details from Zimbra (complete attendee list)
+  useEffect(() => {
+    if (!selectedEvent) return;
+    let cancelled = false;
+    setSelectedEventLoading(true);
+    api.calendar.getEvent(selectedEvent.id)
+      .then((full) => {
+        if (cancelled || !full) return;
+        // Update the panel and also patch the event in the list
+        setSelectedEvent((prev) => prev?.id === full.id ? { ...prev, ...full } : prev);
+        setEvents((prev) => prev.map((e) => e.id === full.id ? { ...e, ...full } : e));
+      })
+      .catch(() => { /* non-fatal — panel already shows cached data */ })
+      .finally(() => { if (!cancelled) setSelectedEventLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedEvent?.id]); // eslint-disable-line
 
   // Open create modal with prefill if navigated here via email drag-and-drop
   useEffect(() => {
@@ -1769,6 +1824,7 @@ export default function CalendarPage() {
               onEdit={(e) => { setEditingEvent(e); setSelectedEvent(null); }}
               onRsvp={handleRsvp}
               deleting={deleting}
+              attendeesLoading={selectedEventLoading}
             />
           )}
 

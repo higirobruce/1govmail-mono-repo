@@ -124,6 +124,11 @@ export const api = {
         `/calendar/events?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
       );
     },
+    /** Fetch full event details from Zimbra (complete attendee list). */
+    getEvent: (id: string) => {
+      if (USE_MOCK) return delay<any>(null);
+      return request<any>(`/calendar/events/${id}`);
+    },
     createEvent: (data: {
       title: string;
       description?: string;

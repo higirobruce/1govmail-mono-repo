@@ -22,6 +22,9 @@ export function createCollabServer() {
   return new Server({
     port: Number(process.env.HOCUSPOCUS_PORT ?? 1234),
     quiet: true,
+    debounce: 300,         // persist yjsState 300ms after last update (default: 2000)
+    maxDebounce: 2000,     // cap at 2s during continuous editing (default: 10000)
+    stopOnSignals: false,  // NestJS manages process lifecycle
 
     // ── Authentication ──────────────────────────────────────────────────────
     async onAuthenticate({ token, documentName }) {

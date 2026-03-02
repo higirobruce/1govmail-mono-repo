@@ -9,7 +9,7 @@ import { TaskList } from '@tiptap/extension-task-list';
 import { TaskItem } from '@tiptap/extension-task-item';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import Placeholder from '@tiptap/extension-placeholder';
-import { Collaboration } from '@tiptap/extension-collaboration';
+import { Collaboration, isChangeOrigin } from '@tiptap/extension-collaboration';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { Callout } from './extensions/Callout';
@@ -57,6 +57,7 @@ export function DocsEditor({
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [synced, setSynced] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const destroyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<Editor | null>(null);
   // Use ref so onUpdate (captured once by useEditor) always sees current synced state
@@ -94,14 +95,25 @@ export function DocsEditor({
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
-  // Cleanup on unmount
-  useEffect(
-    () => () => {
-      provider.destroy();
-      ydoc.destroy();
-    },
-    [provider, ydoc],
-  );
+  // Cleanup on unmount — deferred by one macrotask so React 18 Strict Mode's
+  // simulated unmount/remount cycle can cancel the destroy before it fires.
+  // (In production Strict Mode is a no-op, so the timer fires immediately.)
+  useEffect(() => {
+    // Cancel any pending destroy from the previous Strict Mode cleanup cycle.
+    if (destroyTimer.current !== null) {
+      clearTimeout(destroyTimer.current);
+      destroyTimer.current = null;
+    }
+    const p = provider;
+    const y = ydoc;
+    return () => {
+      destroyTimer.current = setTimeout(() => {
+        destroyTimer.current = null;
+        p.destroy();
+        y.destroy();
+      }, 0);
+    };
+  }, [provider, ydoc]);
 
   // ── Content persistence (REST fallback — keeps content JSON fresh) ─────────
   const persistContent = useCallback(
@@ -141,8 +153,10 @@ export function DocsEditor({
       }),
     ],
     // No `content` prop — Yjs controls document state
-    onUpdate({ editor: ed }) {
+    onUpdate({ editor: ed, transaction }) {
       if (!syncedRef.current) return; // don't save during initial Yjs sync
+      // Skip REST save for remote Yjs updates — Hocuspocus already persists yjsState
+      if (isChangeOrigin(transaction)) return;
       setSaveState('unsaved');
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {

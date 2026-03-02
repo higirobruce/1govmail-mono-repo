@@ -78,4 +78,37 @@ export class ContactsController {
   ) {
     return this.contactsService.deleteContact(req.user.sub, id);
   }
+
+  // ── Contact Groups ─────────────────────────────────────────────────────────
+
+  /** GET /contacts/groups */
+  @Get('groups')
+  getGroups(@Req() req: AuthenticatedRequest) {
+    return this.contactsService.getGroups(req.user.sub);
+  }
+
+  /** POST /contacts/groups */
+  @Post('groups')
+  @HttpCode(HttpStatus.OK)
+  createGroup(@Req() req: AuthenticatedRequest, @Body() body: any) {
+    return this.contactsService.createGroup(req.user.sub, body);
+  }
+
+  /** PATCH /contacts/groups/:id */
+  @Patch('groups/:id')
+  @HttpCode(HttpStatus.OK)
+  updateGroup(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.contactsService.updateGroup(req.user.sub, id, body);
+  }
+
+  /** DELETE /contacts/groups/:id */
+  @Delete('groups/:id')
+  @HttpCode(HttpStatus.OK)
+  deleteGroup(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.contactsService.deleteGroup(req.user.sub, id);
+  }
 }

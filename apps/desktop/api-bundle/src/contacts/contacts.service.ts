@@ -356,4 +356,44 @@ export class ContactsService {
     await this.prisma.contact.delete({ where: { id: contactId } });
     return { success: true };
   }
+
+  // ── Contact Groups ────────────────────────────────────────────────────────
+
+  async getGroups(userId: string) {
+    return this.prisma.contactGroup.findMany({
+      where: { userId },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async createGroup(userId: string, data: { name: string; description?: string; members?: { email: string; name?: string }[] }) {
+    return this.prisma.contactGroup.create({
+      data: {
+        userId,
+        name: data.name,
+        description: data.description ?? null,
+        members: (data.members ?? []) as any,
+      },
+    });
+  }
+
+  async updateGroup(userId: string, groupId: string, data: { name?: string; description?: string; members?: { email: string; name?: string }[] }) {
+    const group = await this.prisma.contactGroup.findFirst({ where: { id: groupId, userId } });
+    if (!group) throw new NotFoundException('Group not found');
+    return this.prisma.contactGroup.update({
+      where: { id: groupId },
+      data: {
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.description !== undefined && { description: data.description }),
+        ...(data.members !== undefined && { members: data.members as any }),
+      },
+    });
+  }
+
+  async deleteGroup(userId: string, groupId: string): Promise<{ success: boolean }> {
+    const group = await this.prisma.contactGroup.findFirst({ where: { id: groupId, userId } });
+    if (!group) throw new NotFoundException('Group not found');
+    await this.prisma.contactGroup.delete({ where: { id: groupId } });
+    return { success: true };
+  }
 }

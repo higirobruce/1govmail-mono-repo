@@ -37,6 +37,8 @@ model User {
   emailTemplates     EmailTemplate[]
   mailRules          MailRule[]
   mutedConversations MutedConversation[]
+  contactGroups      ContactGroup[]
+  notifications      Notification[]
 
   @@map("users")
 }
@@ -323,6 +325,43 @@ model MutedConversation {
   @@unique([userId, conversationId])
   @@index([userId])
   @@map("muted_conversations")
+}
+
+// ─── Contact Groups ───────────────────────────────────────────────────────────
+
+model ContactGroup {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  members     Json     @default("[]") // [{ email: string, name: string }]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("contact_groups")
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   // MAIL_SNOOZE_EXPIRED | SCHEDULED_SENT | TASK_DUE | EVENT_SOON
+  title     String
+  body      String?
+  isRead    Boolean  @default(false)
+  actionUrl String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────

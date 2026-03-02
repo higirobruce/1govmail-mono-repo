@@ -270,7 +270,7 @@ function MailRow({
           id: message.id,
           subject: message.subject,
           snippet: message.snippet,
-          from: typeof message.from === 'string' ? message.from : message.from?.email ?? '',
+          from: message.fromName ? `${message.fromName} <${message.fromEmail}>` : message.fromEmail,
         }));
         e.dataTransfer.effectAllowed = 'copy';
       }}

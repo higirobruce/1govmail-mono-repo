@@ -107,9 +107,14 @@ export function ShareDocDialog({
           {/* Share link */}
           {isShared && shareToken ? (
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 min-w-0">
+              <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 min-w-0 overflow-hidden">
                 <Link className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                <span className="text-xs text-muted-foreground truncate flex-1">{shareUrl}</span>
+                <input
+                  readOnly
+                  value={shareUrl}
+                  className="flex-1 min-w-0 bg-transparent text-xs text-muted-foreground outline-none cursor-text"
+                  onFocus={(e) => e.currentTarget.select()}
+                />
               </div>
               <Button size="sm" variant="outline" onClick={handleCopy} className="gap-1.5 shrink-0">
                 <Copy className="w-3.5 h-3.5" />

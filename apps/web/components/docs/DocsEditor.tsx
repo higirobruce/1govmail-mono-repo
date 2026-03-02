@@ -170,6 +170,32 @@ export function DocsEditor({
     editorRef.current = editor;
   }, [editor]);
 
+  // ── Real-time title sync via Yjs ────────────────────────────────────────────
+  useEffect(() => {
+    if (!synced) return;
+    const metaMap = ydoc.getMap<string>('meta');
+
+    // On first sync: if another peer already stored a title, apply it immediately
+    const yjsTitle = metaMap.get('title');
+    if (yjsTitle && titleRef.current) {
+      titleRef.current.value = yjsTitle;
+      onTitleChange(yjsTitle);
+    }
+
+    // Observe future remote title changes; skip if the user is actively editing
+    const observer = (event: Y.YMapEvent<string>) => {
+      if (!event.keysChanged.has('title')) return;
+      const remoteTitle = metaMap.get('title') ?? '';
+      if (titleRef.current && document.activeElement !== titleRef.current) {
+        titleRef.current.value = remoteTitle;
+        onTitleChange(remoteTitle);
+      }
+    };
+
+    metaMap.observe(observer);
+    return () => metaMap.unobserve(observer);
+  }, [synced, ydoc, onTitleChange]);
+
   // ── Slash command detection ─────────────────────────────────────────────────
   useEffect(() => {
     if (!editor) return;
@@ -251,13 +277,15 @@ export function DocsEditor({
     (e: React.FocusEvent<HTMLInputElement>) => {
       const text = e.currentTarget.value.trim() || 'Untitled';
       onTitleChange(text);
+      // Broadcast the new title to all connected peers via Yjs
+      ydoc.getMap<string>('meta').set('title', text);
       if (onTitleSave) {
         void onTitleSave(text);
       } else {
         void api.docs.update(docId, { title: text });
       }
     },
-    [docId, onTitleChange, onTitleSave],
+    [docId, onTitleChange, onTitleSave, ydoc],
   );
 
   const handleTitleKeyDown = useCallback(

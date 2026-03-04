@@ -1831,11 +1831,13 @@ export default function CalendarPage() {
 
           {/* Row 2 on mobile / middle+right on desktop: view switcher + actions */}
           <div className="flex items-center justify-between gap-2">
-            {/* View switcher — scrollable */}
+            {/* View switcher — scrollable; mobile shows only day + agenda */}
             <div className="flex items-center rounded-lg border border-border/40 overflow-x-auto shrink-0 min-w-0">
               {(Object.keys(VIEW_LABELS) as CalView[]).map((v) => (
                 <button key={v} onClick={() => setCalView(v)}
-                  className={cn('px-2 lg:px-3 py-1.5 text-xs font-medium transition-colors border-r border-border/30 last:border-r-0 whitespace-nowrap',
+                  className={cn(
+                    'px-2 lg:px-3 py-1.5 text-xs font-medium transition-colors border-r border-border/30 last:border-r-0 whitespace-nowrap',
+                    v !== 'day' && v !== 'agenda' && 'hidden lg:block',
                     calView === v
                       ? 'bg-primary text-primary-foreground'
                       : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/50')}>

@@ -1,18 +1,10 @@
 import { Server } from '@hocuspocus/server';
 import { Database } from '@hocuspocus/extension-database';
 import { PrismaClient } from '@prisma/client';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import * as jwt from 'jsonwebtoken';
 
-function makePrisma(): PrismaClient {
-  const dbUrl = process.env.DATABASE_URL ?? 'file:./dev.db';
-  const dbPath = dbUrl.replace(/^file:/, '');
-  const adapter = new PrismaBetterSqlite3({ url: dbPath });
-  return new PrismaClient({ adapter } as ConstructorParameters<typeof PrismaClient>[0]);
-}
-
 export function createCollabServer() {
-  const prisma = makePrisma();
+  const prisma = new PrismaClient();
   const jwtSecret = process.env.JWT_SECRET;
 
   if (!jwtSecret) {
@@ -22,9 +14,9 @@ export function createCollabServer() {
   return new Server({
     port: Number(process.env.HOCUSPOCUS_PORT ?? 1234),
     quiet: true,
-    debounce: 300,         // persist yjsState 300ms after last update (default: 2000)
-    maxDebounce: 2000,     // cap at 2s during continuous editing (default: 10000)
-    stopOnSignals: false,  // NestJS manages process lifecycle
+    debounce: 300,
+    maxDebounce: 2000,
+    stopOnSignals: false,
 
     // ── Authentication ──────────────────────────────────────────────────────
     async onAuthenticate({ token, documentName }) {
@@ -69,7 +61,6 @@ export function createCollabServer() {
             where: { id: documentName },
             select: { yjsState: true },
           });
-          // null → client will bootstrap from initialContent JSON
           return doc?.yjsState ?? null;
         },
 

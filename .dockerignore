@@ -1,0 +1,38 @@
+# Root .dockerignore — applied when build context is the monorepo root
+
+# Version control
+.git
+.gitignore
+
+# Dependencies (rebuilt inside Docker)
+node_modules
+**/node_modules
+
+# Build outputs
+**/.next
+**/dist
+**/build
+
+# Electron desktop (not needed in server images)
+apps/desktop
+
+# Test / dev artifacts
+**/*.test.ts
+**/*.spec.ts
+**/coverage
+**/.turbo
+
+# Env files (secrets must come from docker-compose environment, not the image)
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+**/.DS_Store
+.vscode
+*.log
+
+# SQLite databases (desktop-only)
+**/*.db
+**/*.db-journal

@@ -1,0 +1,109 @@
+# 1Gov Mail — Production Docker Compose
+# Usage: cp .env.example .env  →  edit .env  →  docker compose up -d
+#
+# Build args for the web image (NEXT_PUBLIC_* are baked in at build time):
+#   docker compose build --build-arg NEXT_PUBLIC_API_URL=https://mail.yourdomain.gov/api \
+#                        --build-arg NEXT_PUBLIC_COLLAB_WS_URL=wss://mail.yourdomain.gov/collab
+
+x-api-env: &api-env
+  DATABASE_URL: postgresql://govmail:${POSTGRES_PASSWORD}@postgres:5432/govmail
+  JWT_SECRET: ${JWT_SECRET}
+  JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+  FRONTEND_URL: ${FRONTEND_URL}
+  PORT: "3001"
+  HOCUSPOCUS_PORT: "1234"
+  NODE_ENV: production
+
+services:
+  # ── Database ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: govmail
+      POSTGRES_USER: govmail
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U govmail -d govmail"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Cache / pub-sub ───────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── DB migrations (one-off, exits when done) ──────────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["node_modules/.bin/prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"]
+    environment:
+      <<: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ── NestJS API + Hocuspocus collab server ─────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    # Ports are NOT exposed to the host — Nginx is the only public entry point.
+    expose:
+      - "3001"
+      - "1234"
+
+  # ── Next.js web app ───────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_COLLAB_WS_URL: ${NEXT_PUBLIC_COLLAB_WS_URL}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    depends_on:
+      - api
+    expose:
+      - "3000"
+
+  # ── Reverse proxy ─────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - api
+      - web
+
+volumes:
+  pgdata:
+  redisdata:

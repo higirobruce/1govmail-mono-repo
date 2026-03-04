@@ -1,16 +1,13 @@
 generator client {
-  provider = "prisma-client-js"
-  // With the better-sqlite3 driver adapter the Rust query engine binary is
-  // only needed for `prisma migrate`; the runtime client is pure JavaScript.
-  // "native" covers the current build machine; the others cover packaging targets.
-  binaryTargets = ["native", "darwin", "darwin-arm64", "windows", "debian-openssl-3.0.x", "linux-musl"]
+  provider      = "prisma-client-js"
+  // "native" covers dev machines. linux targets cover Docker (glibc + musl/Alpine).
+  // darwin targets kept for local development.
+  binaryTargets = ["native", "darwin", "darwin-arm64", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "sqlite"
-  // url is intentionally absent: in Prisma 7 the connection is established
-  // via a driver adapter passed to PrismaClient at construction time (runtime)
-  // and via prisma.config.ts for the Prisma CLI / migrations.
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────

@@ -3,11 +3,15 @@ FROM node:22-alpine AS builder
 RUN corepack enable
 WORKDIR /repo
 
-# Copy workspace manifests only — maximises layer cache
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+# Copy ALL workspace manifests — pnpm needs the full workspace graph to
+# correctly resolve and link packages (e.g. @tiptap/core) across apps.
+COPY .npmrc package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/web/package.json ./apps/web/
+COPY apps/api/package.json ./apps/api/
 
-RUN pnpm install --filter web --frozen-lockfile
+# --filter "web..." installs only web's dependency tree — avoids triggering
+# native module builds (better-sqlite3) from the api workspace package.
+RUN pnpm install --filter "web..." --frozen-lockfile
 
 COPY apps/web ./apps/web
 
@@ -36,4 +40,6 @@ COPY --from=builder /repo/apps/web/public           ./apps/web/public/
 EXPOSE 3000
 
 # server.js is emitted at the standalone root by Next.js
-CMD ["node", "server.js"]
+# In a pnpm monorepo the standalone output nests server.js under the workspace path:
+# .next/standalone/apps/web/server.js — not at the standalone root.
+CMD ["node", "apps/web/server.js"]

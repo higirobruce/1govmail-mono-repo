@@ -1,16 +1,21 @@
 # ─── Stage 1: Install dependencies ───────────────────────────────────────────
 FROM node:22-alpine AS deps
 
-# Build tools needed for native modules (better-sqlite3, bcrypt, etc.)
+# Build tools needed for native modules (better-sqlite3 for desktop compat)
 RUN apk add --no-cache python3 make g++
 RUN corepack enable
 
 WORKDIR /repo
 
-# Copy workspace manifests only — maximises layer cache
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+# Copy ALL workspace manifests — pnpm needs the full workspace graph.
+# .npmrc sets shamefully-hoist=true so all binaries land in node_modules/.bin/
+COPY .npmrc package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
 
+# Full install (no --filter) so the virtual store is complete.
+# apps/desktop is excluded by .dockerignore so better-sqlite3 is never installed.
+# A complete store is required for pnpm deploy --legacy to work offline (no registry calls).
 RUN pnpm install --frozen-lockfile
 
 # ─── Stage 2: Build ───────────────────────────────────────────────────────────
@@ -20,19 +25,32 @@ WORKDIR /repo
 
 COPY --from=deps /repo/node_modules ./node_modules
 COPY apps/api ./apps/api
-COPY package.json pnpm-workspace.yaml ./
+# pnpm-workspace.yaml references apps/* — pnpm deploy needs all package.json manifests
+# to resolve the workspace graph, even if the app itself isn't used here.
+COPY apps/web/package.json ./apps/web/
+COPY .npmrc package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 
-# Generate Prisma client for linux targets
-RUN pnpm --filter api exec prisma generate
+# Run prisma generate from apps/api so it auto-discovers prisma.config.ts
+# and uses the correct schema + adapter for client generation.
+RUN cd apps/api && ../../node_modules/.bin/prisma generate
 
-# Compile TypeScript
-RUN pnpm --filter api build
+# Compile TypeScript — run from apps/api so nest finds tsconfig.json
+RUN cd apps/api && ../../node_modules/.bin/nest build
 
 # Produce a self-contained production bundle (no devDependencies)
-RUN pnpm deploy --filter api --prod /deploy
+RUN pnpm deploy --filter api --prod --legacy /deploy
 
-# Overwrite with the compiled Prisma client (pnpm deploy uses pre-generate snapshot)
-RUN cp -r /repo/node_modules/.prisma /deploy/node_modules/.prisma
+# Copy prisma schema, config, and migrations into the deploy root so that
+# `prisma generate` (below) and `prisma migrate deploy` (in the migrate service)
+# can find them at runtime.
+RUN cp -r /repo/apps/api/prisma /deploy/prisma
+RUN cp /repo/apps/api/prisma.config.ts /deploy/prisma.config.ts
+
+# Re-run prisma generate inside the deployed node_modules.
+# pnpm deploy creates a fresh copy of @prisma/client WITHOUT the generated code;
+# running generate here writes the .prisma/client/* files into the correct
+# pnpm virtual-store path inside /deploy/node_modules.
+RUN cd /deploy && node_modules/.bin/prisma generate
 
 # ─── Stage 3: Production image ────────────────────────────────────────────────
 FROM node:22-alpine AS production
@@ -40,14 +58,12 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Self-contained app directory from pnpm deploy
+# /deploy contains: node_modules (with generated Prisma client), package.json,
+# prisma/ (schema + migrations), prisma.config.ts
 COPY --from=builder /deploy ./
 
 # NestJS compiled output
 COPY --from=builder /repo/apps/api/dist ./dist
-
-# Prisma migrations (needed by `prisma migrate deploy` at startup)
-COPY --from=builder /repo/apps/api/prisma ./prisma
 
 EXPOSE 3001 1234
 

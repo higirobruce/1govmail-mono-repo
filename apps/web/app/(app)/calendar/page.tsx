@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
+import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,7 +18,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
   Clock, MapPin, Calendar as CalendarIcon, Trash2, Users,
   Video, Repeat, ExternalLink, Pencil, CheckCircle2,
-  HelpCircle, XCircle,
+  HelpCircle, XCircle, Menu,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth,
@@ -1595,6 +1596,7 @@ export default function CalendarPage() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const currentUser     = useAuthStore((s) => s.user);
   const [hydrated, setHydrated] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [calView, setCalView]       = useState<CalView>('agenda');
   const confirm = useConfirmStore((s) => s.confirm);
@@ -1774,6 +1776,14 @@ export default function CalendarPage() {
         onFolderSelect={() => router.push('/mail')}
         onCompose={() => router.push('/mail')}
       />
+      <MobileSidebarSheet
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        folders={[]}
+        activeFolderId=""
+        onFolderSelect={() => router.push('/mail')}
+        onCompose={() => router.push('/mail')}
+      />
 
       <div
         className="flex-1 min-w-0 flex flex-col h-full overflow-hidden"
@@ -1781,54 +1791,73 @@ export default function CalendarPage() {
         onDrop={handleMailDrop}
       >
         {/* ── Top bar ── */}
-        <div className="flex items-center justify-between px-6 py-3 border-b border-border/40 shrink-0 gap-4">
-          {/* Navigation */}
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm"
-              onClick={() => setCurrentDate((d) => navigate(d, calView, -1))}
-              className="h-8 w-8 p-0 text-muted-foreground/60 hover:text-foreground">
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <h1 className="text-sm font-semibold text-foreground min-w-[200px] text-center">
-              {viewLabel(currentDate, calView)}
-            </h1>
-            <Button variant="ghost" size="sm"
-              onClick={() => setCurrentDate((d) => navigate(d, calView, 1))}
-              className="h-8 w-8 p-0 text-muted-foreground/60 hover:text-foreground">
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-            <Button variant="ghost" size="sm"
-              onClick={() => setCurrentDate(new Date())}
-              className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-foreground">
-              Today
-            </Button>
-          </div>
-
-          {/* View switcher */}
-          <div className="flex items-center rounded-lg border border-border/40 overflow-hidden shrink-0">
-            {(Object.keys(VIEW_LABELS) as CalView[]).map((v) => (
-              <button key={v} onClick={() => setCalView(v)}
-                className={cn('px-3 py-1.5 text-xs font-medium transition-colors border-r border-border/30 last:border-r-0',
-                  calView === v
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/50')}>
-                {VIEW_LABELS[v]}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between px-3 lg:px-6 py-2 lg:py-3 border-b border-border/40 shrink-0 gap-2">
+          {/* Row 1: navigation + New Event (mobile) */}
+          <div className="flex items-center justify-between gap-1 lg:gap-2">
+            <div className="flex items-center gap-1 lg:gap-2">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-1.5 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                aria-label="Open navigation"
+              >
+                <Menu className="w-4 h-4" />
               </button>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm"
-              onClick={() => setShowAvailability((v) => !v)}
-              className={cn('h-8 px-3 text-xs gap-1.5', showAvailability ? 'text-primary bg-primary/10' : 'text-muted-foreground/60 hover:text-foreground')}>
-              <Users className="w-3.5 h-3.5" /> Availability
-            </Button>
+              <Button variant="ghost" size="sm"
+                onClick={() => setCurrentDate((d) => navigate(d, calView, -1))}
+                className="h-8 w-8 p-0 text-muted-foreground/60 hover:text-foreground">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <h1 className="text-xs lg:text-sm font-semibold text-foreground min-w-[100px] lg:min-w-[200px] text-center">
+                {viewLabel(currentDate, calView)}
+              </h1>
+              <Button variant="ghost" size="sm"
+                onClick={() => setCurrentDate((d) => navigate(d, calView, 1))}
+                className="h-8 w-8 p-0 text-muted-foreground/60 hover:text-foreground">
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="sm"
+                onClick={() => setCurrentDate(new Date())}
+                className="h-8 px-2 lg:px-3 text-xs text-muted-foreground/60 hover:text-foreground">
+                Today
+              </Button>
+            </div>
+            {/* New Event — shown on mobile right side of row 1 */}
             <Button size="sm"
               onClick={() => { setCreateForDay(undefined); setShowCreate(true); }}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-4 gap-1.5">
-              <Plus className="w-3.5 h-3.5" /> New Event
+              className="lg:hidden bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-3 gap-1.5">
+              <Plus className="w-3.5 h-3.5" /> New
             </Button>
+          </div>
+
+          {/* Row 2 on mobile / middle+right on desktop: view switcher + actions */}
+          <div className="flex items-center justify-between gap-2">
+            {/* View switcher — scrollable */}
+            <div className="flex items-center rounded-lg border border-border/40 overflow-x-auto shrink-0 min-w-0">
+              {(Object.keys(VIEW_LABELS) as CalView[]).map((v) => (
+                <button key={v} onClick={() => setCalView(v)}
+                  className={cn('px-2 lg:px-3 py-1.5 text-xs font-medium transition-colors border-r border-border/30 last:border-r-0 whitespace-nowrap',
+                    calView === v
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/50')}>
+                  {VIEW_LABELS[v]}
+                </button>
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2 shrink-0">
+              <Button variant="ghost" size="sm"
+                onClick={() => setShowAvailability((v) => !v)}
+                className={cn('h-8 px-3 text-xs gap-1.5', showAvailability ? 'text-primary bg-primary/10' : 'text-muted-foreground/60 hover:text-foreground')}>
+                <Users className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Availability</span>
+              </Button>
+              <Button size="sm"
+                onClick={() => { setCreateForDay(undefined); setShowCreate(true); }}
+                className="hidden lg:flex bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-4 gap-1.5">
+                <Plus className="w-3.5 h-3.5" /> New Event
+              </Button>
+            </div>
           </div>
         </div>
 

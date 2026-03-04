@@ -6,6 +6,7 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
+import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import MailList, { type ContextAction, type BulkAction } from '@/components/mail/MailList';
 import SnoozeModal from '@/components/mail/SnoozeModal';
 import MailDetail from '@/components/mail/MailDetail';
@@ -16,7 +17,7 @@ import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Input } from '@/components/ui/input';
-import { Search, RefreshCw, X as XIcon } from 'lucide-react';
+import { Search, RefreshCw, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -27,6 +28,7 @@ export default function MailPage() {
 
   const queryClient = useQueryClient();
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [folders, setFolders] = useState<any[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string>('');
   const [activeMessageId, setActiveMessageId] = useState<string | undefined>();
@@ -697,14 +699,36 @@ export default function MailPage() {
         onCreateFolder={handleCreateFolder}
         onDeleteFolder={handleDeleteFolder}
       />
+      <MobileSidebarSheet
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        folders={folders}
+        activeFolderId={activeFolderId}
+        onFolderSelect={(id) => setActiveFolderId(id)}
+        onCompose={() => { setComposeOpen(true); setComposeMode('new'); }}
+        onCreateFolder={handleCreateFolder}
+        onDeleteFolder={handleDeleteFolder}
+      />
 
-      {/* Mail list pane */}
-      <div className="w-[300px] shrink-0 flex flex-col h-full border-r border-border/50">
+      {/* Mail list pane — full width on mobile, fixed 300px on desktop */}
+      <div className={cn(
+        'shrink-0 flex flex-col h-full border-r border-border/50',
+        'w-full lg:w-[300px]',
+        activeMessageId ? 'hidden lg:flex' : 'flex',
+      )}>
         {/* List header */}
         <div className="px-3 pt-3 pb-2.5 border-b border-border/25 shrink-0">
           {/* Title row */}
           <div className="flex items-center justify-between mb-2.5">
             <div className="flex items-center gap-1">
+              {/* Hamburger — mobile only */}
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-1 -ml-1 mr-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                aria-label="Open navigation"
+              >
+                <Menu className="w-4 h-4" />
+              </button>
               <h2 className="text-[14px] font-semibold text-foreground">
                 {isSearchMode
                   ? 'Search'
@@ -798,8 +822,19 @@ export default function MailPage() {
         )}
       </div>
 
-      {/* Detail pane — always visible so clicking a message always shows it */}
-      <div className="flex-1 min-w-0 h-full">
+      {/* Detail pane — full width on mobile when message selected, always visible on desktop */}
+      <div className={cn('flex-1 min-w-0 h-full flex flex-col', !activeMessageId && 'hidden lg:flex')}>
+        {/* Mobile back button */}
+        <div className="lg:hidden flex items-center px-3 py-2 border-b border-border/25 shrink-0">
+          <button
+            onClick={() => { setActiveMessageId(undefined); setActiveMessage(null); }}
+            className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70 hover:text-foreground transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back
+          </button>
+        </div>
+        <div className="flex-1 min-h-0">
         <ThreadView
           message={activeMessage}
           loading={loadingMessage}
@@ -835,6 +870,7 @@ export default function MailPage() {
           } : undefined}
           isMuted={activeMessage?.conversationId ? mutedConversationIds.includes(activeMessage.conversationId) : false}
         />
+        </div>
       </div>
 
       {/* Snooze modal */}

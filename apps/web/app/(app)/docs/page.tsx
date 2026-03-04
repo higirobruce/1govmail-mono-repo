@@ -6,10 +6,11 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { api, type Doc } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
+import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { DocsEditor } from '@/components/docs/DocsEditor';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { Plus, FileText, MoreHorizontal, Trash2, Loader2, BookOpen, Share2 } from 'lucide-react';
+import { Plus, FileText, MoreHorizontal, Trash2, Loader2, BookOpen, Share2, Menu, ChevronLeft } from 'lucide-react';
 import { cn, getUserColor } from '@/lib/utils';
 import { ShareDocDialog } from '@/components/docs/ShareDocDialog';
 
@@ -19,6 +20,7 @@ export default function DocsPage() {
   const authToken = useAuthStore((s) => s.token);
   const authUser  = useAuthStore((s) => s.user);
   const [hydrated, setHydrated] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const confirm = useConfirmStore((s) => s.confirm);
 
   const collabToken = useMemo(
@@ -141,11 +143,32 @@ export default function DocsPage() {
         onFolderSelect={() => router.push('/mail')}
         onCompose={() => router.push('/mail')}
       />
+      <MobileSidebarSheet
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        folders={[]}
+        activeFolderId=""
+        onFolderSelect={() => router.push('/mail')}
+        onCompose={() => router.push('/mail')}
+      />
 
-      {/* Page list panel */}
-      <div className="w-56 shrink-0 flex flex-col border-r border-border bg-muted/30">
+      {/* Page list panel — full width on mobile when no doc open */}
+      <div className={cn(
+        'shrink-0 flex flex-col border-r border-border bg-muted/30',
+        'w-full lg:w-56',
+        selectedId ? 'hidden lg:flex' : 'flex',
+      )}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <span className="text-sm font-semibold text-foreground">Pages</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-1 -ml-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+              aria-label="Open navigation"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+            <span className="text-sm font-semibold text-foreground">Pages</span>
+          </div>
           <Button
             size="icon"
             variant="ghost"
@@ -224,8 +247,21 @@ export default function DocsPage() {
         </div>
       </div>
 
-      {/* Editor panel */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Editor panel — full width on mobile when a doc is open */}
+      <div className={cn(
+        'flex-1 flex flex-col overflow-hidden',
+        !selectedId && 'hidden lg:flex',
+      )}>
+        {/* Mobile back button */}
+        <div className="lg:hidden flex items-center px-4 py-2 border-b border-border shrink-0">
+          <button
+            onClick={() => { setSelectedId(null); setActiveDocs(null); }}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground/70 hover:text-foreground transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Pages
+          </button>
+        </div>
         {loadingDoc ? (
           <div className="flex-1 flex items-center justify-center">
             <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />

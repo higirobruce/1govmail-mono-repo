@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
+import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -13,7 +14,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import {
   Search, Plus, User, Mail, Phone, Building2, Briefcase,
-  Pencil, Trash2, X, Check, Loader2, ChevronLeft, UsersRound,
+  Pencil, Trash2, X, Check, Loader2, ChevronLeft, UsersRound, Menu,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -129,6 +130,7 @@ export default function ContactsPage() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [hydrated, setHydrated] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [tab, setTab] = useState<Tab>('contacts');
 
@@ -395,6 +397,8 @@ export default function ContactsPage() {
 
   if (!hydrated) return null;
 
+  const detailOpen = selectedContact !== null || selectedGroup !== null || formMode !== 'view';
+
   return (
     <div className="flex h-screen bg-background overflow-hidden">
       <Sidebar
@@ -403,12 +407,33 @@ export default function ContactsPage() {
         onFolderSelect={() => router.push('/mail')}
         onCompose={() => router.push('/mail')}
       />
+      <MobileSidebarSheet
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        folders={[]}
+        activeFolderId=""
+        onFolderSelect={() => router.push('/mail')}
+        onCompose={() => router.push('/mail')}
+      />
 
-      {/* ── Left panel ── */}
-      <div className="w-72 shrink-0 flex flex-col border-r border-border/50 h-full bg-card/50">
+      {/* ── Left panel ── full width on mobile when nothing selected */}
+      <div className={cn(
+        'shrink-0 flex flex-col border-r border-border/50 h-full bg-card/50',
+        'w-full lg:w-72',
+        detailOpen ? 'hidden lg:flex' : 'flex',
+      )}>
         <div className="px-4 pt-4 pb-3 border-b border-border/40 space-y-2.5">
           <div className="flex items-center justify-between">
-            <h1 className="text-sm font-semibold text-foreground">Contacts</h1>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-1 -ml-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                aria-label="Open navigation"
+              >
+                <Menu className="w-4 h-4" />
+              </button>
+              <h1 className="text-sm font-semibold text-foreground">Contacts</h1>
+            </div>
             <Button
               size="sm" variant="ghost"
               onClick={tab === 'groups' ? openCreateGroup : openCreate}
@@ -546,8 +571,8 @@ export default function ContactsPage() {
         </ScrollArea>
       </div>
 
-      {/* ── Detail / form panel ── */}
-      <div className="flex-1 min-w-0 flex flex-col h-full">
+      {/* ── Detail / form panel — full width on mobile when open */}
+      <div className={cn('flex-1 min-w-0 flex flex-col h-full', !detailOpen && 'hidden lg:flex')}>
         {tab === 'contacts' ? (
           formMode === 'create' || formMode === 'edit' ? (
             /* ── Edit / Create contact form ── */
@@ -618,7 +643,14 @@ export default function ContactsPage() {
           ) : selectedContact ? (
             /* ── Contact detail view ── */
             <div className="flex flex-col h-full">
-              <div className="px-6 py-4 border-b border-border/40 flex items-center gap-3">
+              <div className="px-4 lg:px-6 py-3 lg:py-4 border-b border-border/40 flex items-center gap-3">
+                <button
+                  onClick={() => setSelectedContact(null)}
+                  className="lg:hidden p-1 -ml-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                  aria-label="Back to contacts"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
                 <h2 className="text-sm font-semibold text-foreground flex-1 truncate">
                   {contactDisplayName(selectedContact)}
                 </h2>
@@ -819,7 +851,14 @@ export default function ContactsPage() {
           ) : selectedGroup ? (
             /* Group detail view */
             <div className="flex flex-col h-full">
-              <div className="px-6 py-4 border-b border-border/40 flex items-center gap-3">
+              <div className="px-4 lg:px-6 py-3 lg:py-4 border-b border-border/40 flex items-center gap-3">
+                <button
+                  onClick={() => setSelectedGroup(null)}
+                  className="lg:hidden p-1 -ml-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                  aria-label="Back to groups"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
                 <h2 className="text-sm font-semibold text-foreground flex-1 truncate">{selectedGroup.name}</h2>
                 <Button
                   variant="ghost" size="sm"

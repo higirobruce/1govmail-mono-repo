@@ -35,6 +35,10 @@ interface SidebarProps {
   onCompose?: () => void;
   onCreateFolder?: (name: string) => Promise<void>;
   onDeleteFolder?: (folderId: string) => Promise<void>;
+  /** Called after a nav action on mobile so the parent can close the drawer */
+  onClose?: () => void;
+  /** Extra classes for the root div — used to override hidden-on-mobile inside Sheet */
+  className?: string;
 }
 
 // All built-in Zimbra folder paths — user-created folders have paths not in this set
@@ -133,7 +137,7 @@ function NavItem({
   );
 }
 
-export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, onCompose, onCreateFolder, onDeleteFolder }: SidebarProps) {
+export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, onCompose, onCreateFolder, onDeleteFolder, onClose, className }: SidebarProps) {
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -251,7 +255,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
   const displayName = user?.displayName ?? user?.email ?? 'Mailbox';
 
   return (
-    <div className="w-[220px] shrink-0 flex flex-col h-full bg-sidebar border-r border-sidebar-border/60">
+    <div className={cn('w-[220px] shrink-0 hidden lg:flex flex-col h-full bg-sidebar border-r border-sidebar-border/60', className)}>
 
       {/* User / org header */}
       <div className="px-3 pt-4 pb-2">
@@ -270,7 +274,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
       <div className="px-3 pb-3">
         <button
           data-tour="compose"
-          onClick={onCompose}
+          onClick={() => { onCompose?.(); onClose?.(); }}
           className="w-full flex items-center gap-2 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[13px] font-medium transition-all"
         >
           <Plus className="w-3.5 h-3.5 shrink-0" />
@@ -290,7 +294,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
               label={folder.name}
               unread={folder.unread}
               active={activeFolderId === folder.id}
-              onClick={() => onFolderSelect(folder.id)}
+              onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
               iconBg={folder.iconBg}
               tourId={folder.id === 'inbox' ? 'inbox' : undefined}
             />
@@ -330,7 +334,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
                         label={folder.name}
                         unread={folder.unreadCount}
                         active={activeFolderId === folder.id}
-                        onClick={() => onFolderSelect(folder.id)}
+                        onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
                         iconBg={getLabelColor(folder.name)}
                       />
                       {onDeleteFolder && (
@@ -382,10 +386,10 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
             onDrop={handleMailNavDrop('calendar')}
             className={calDragOver ? 'rounded-lg ring-2 ring-primary/40 bg-primary/5' : undefined}
           >
-            <NavItem icon={Calendar} label="Calendar" onClick={() => router.push('/calendar')} tourId="calendar-nav" />
+            <NavItem icon={Calendar} label="Calendar" onClick={() => { router.push('/calendar'); onClose?.(); }} tourId="calendar-nav" />
           </div>
-          <NavItem icon={Users} label="Contacts" onClick={() => router.push('/contacts')} tourId="contacts-nav" />
-          <NavItem icon={BookOpen} label="Docs" onClick={() => router.push('/docs')} tourId="docs-nav" />
+          <NavItem icon={Users} label="Contacts" onClick={() => { router.push('/contacts'); onClose?.(); }} tourId="contacts-nav" />
+          <NavItem icon={BookOpen} label="Docs" onClick={() => { router.push('/docs'); onClose?.(); }} tourId="docs-nav" />
 
           {/* Upcoming features */}
           <div
@@ -394,7 +398,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
             onDrop={handleMailNavDrop('tasks')}
             className={tasksDragOver ? 'rounded-lg ring-2 ring-primary/40 bg-primary/5' : undefined}
           >
-            <NavItem icon={ListTodo} label="Tasks" onClick={() => router.push('/tasks')} tourId="tasks-nav" />
+            <NavItem icon={ListTodo} label="Tasks" onClick={() => { router.push('/tasks'); onClose?.(); }} tourId="tasks-nav" />
           </div>
           <NavItem icon={UsersRound} label="Collaboration"  comingSoon />
           <NavItem icon={Newspaper}  label="News"           comingSoon />
@@ -404,7 +408,7 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
       {/* Footer */}
       <div className="px-2 py-2 border-t border-sidebar-border/50 space-y-0.5">
         <NotificationsBell />
-        <NavItem icon={Settings} label="Settings" onClick={() => router.push('/settings')} />
+        <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} />
         <button
           onClick={() => setTheme(nextTheme)}
           title={themeLabel}

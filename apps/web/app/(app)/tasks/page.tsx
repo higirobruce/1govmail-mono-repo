@@ -6,12 +6,13 @@ import { useConfirmStore } from '@/stores/confirm.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
+import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
 import {
   Plus, Loader2, ListTodo, Pencil, Trash2, Check,
-  Calendar, User, Link, List, Columns, ChevronDown, X,
+  Calendar, User, Link, List, Columns, ChevronDown, X, Menu,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import TaskModal, {
@@ -261,6 +262,7 @@ export default function TasksPage() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [hydrated, setHydrated] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -466,6 +468,14 @@ export default function TasksPage() {
         onFolderSelect={() => router.push('/mail')}
         onCompose={() => router.push('/mail')}
       />
+      <MobileSidebarSheet
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        folders={[]}
+        activeFolderId=""
+        onFolderSelect={() => router.push('/mail')}
+        onCompose={() => router.push('/mail')}
+      />
 
       <div
         className="flex-1 min-w-0 flex flex-col h-full relative"
@@ -491,7 +501,14 @@ export default function TasksPage() {
           </div>
         )}
         {/* Top bar */}
-        <div className="px-6 py-4 border-b border-border/40 flex items-center gap-3 shrink-0">
+        <div className="px-4 lg:px-6 py-3 lg:py-4 border-b border-border/40 flex items-center gap-2 lg:gap-3 shrink-0">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="lg:hidden p-1.5 -ml-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+            aria-label="Open navigation"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
           <h1 className="text-sm font-semibold text-foreground">Tasks</h1>
           <div className="flex-1" />
           {/* View toggle */}
@@ -529,7 +546,7 @@ export default function TasksPage() {
 
         {/* Filter tabs (list view only) */}
         {viewMode === 'list' && (
-          <div className="px-6 pt-3 pb-0 border-b border-border/30 flex gap-1 shrink-0">
+          <div className="px-4 lg:px-6 pt-3 pb-0 border-b border-border/30 flex gap-1 shrink-0 overflow-x-auto">
             {FILTER_TABS.map((tab) => (
               <button
                 key={tab.key}

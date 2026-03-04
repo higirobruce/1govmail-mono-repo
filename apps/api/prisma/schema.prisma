@@ -189,9 +189,7 @@ model Task {
   completedAt     DateTime?
   linkedMessageId String?
   linkedSubject   String?
-  assignedToEmail String?
-  assignedToName  String?
-  assignedAt        DateTime?
+  assignees         Json?    @default("[]") // [{ email: string, name?: string }]
   attachments       Json?
   recurrence        String?
   recurrenceEndDate DateTime?

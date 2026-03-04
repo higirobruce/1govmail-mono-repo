@@ -15,7 +15,7 @@ interface AttachmentEntry {
 }
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
-import { CreateTaskDto, TaskStatus } from './dto/create-task.dto';
+import { CreateTaskDto, TaskStatus, AssigneeDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateSubtaskDto } from './dto/create-subtask.dto';
 import { UpdateSubtaskDto } from './dto/update-subtask.dto';
@@ -67,9 +67,6 @@ export class TasksService {
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
         linkedMessageId: dto.linkedMessageId,
         linkedSubject: dto.linkedSubject,
-        assignedToEmail: dto.assignedToEmail,
-        assignedToName: dto.assignedToName,
-        assignedAt: dto.assignedToEmail ? new Date() : null,
         recurrence: dto.recurrence ?? null,
         recurrenceEndDate: dto.recurrenceEndDate ? new Date(dto.recurrenceEndDate) : null,
         reminderAt: dto.reminderAt ? new Date(dto.reminderAt) : null,
@@ -97,8 +94,6 @@ export class TasksService {
         ...(dto.dueDate !== undefined ? { dueDate: dto.dueDate ? new Date(dto.dueDate) : null } : {}),
         ...(dto.linkedMessageId !== undefined ? { linkedMessageId: dto.linkedMessageId } : {}),
         ...(dto.linkedSubject !== undefined ? { linkedSubject: dto.linkedSubject } : {}),
-        ...(dto.assignedToEmail !== undefined ? { assignedToEmail: dto.assignedToEmail } : {}),
-        ...(dto.assignedToName !== undefined ? { assignedToName: dto.assignedToName } : {}),
         ...(dto.recurrence !== undefined ? { recurrence: dto.recurrence || null } : {}),
         ...(dto.recurrenceEndDate !== undefined
           ? { recurrenceEndDate: dto.recurrenceEndDate ? new Date(dto.recurrenceEndDate) : null }
@@ -134,6 +129,7 @@ export class TasksService {
             dueDate: nextDue,
             linkedMessageId: task.linkedMessageId,
             linkedSubject: task.linkedSubject,
+            assignees: (task as any).assignees ?? [],
             recurrence: task.recurrence,
             recurrenceEndDate: task.recurrenceEndDate,
             reminderAt: nextReminderAt,
@@ -306,8 +302,7 @@ export class TasksService {
   async assign(
     userId: string,
     id: string,
-    assigneeEmail: string,
-    assigneeName?: string,
+    assignees: AssigneeDto[],
   ) {
     const user = await this.getUser(userId);
     if (!user.authToken) {
@@ -318,17 +313,19 @@ export class TasksService {
     if (!task) throw new NotFoundException('Task not found');
     if (task.userId !== userId) throw new ForbiddenException();
 
-    // Update assignment fields
+    // Determine newly added assignees (not already on the task)
+    const existing: AssigneeDto[] = ((task as any).assignees as AssigneeDto[] | null) ?? [];
+    const existingEmails = new Set(existing.map((a) => a.email));
+    const newAssignees = assignees.filter((a) => !existingEmails.has(a.email));
+
     const updated = await this.prisma.task.update({
       where: { id },
-      data: {
-        assignedToEmail: assigneeEmail,
-        assignedToName: assigneeName ?? null,
-        assignedAt: new Date(),
-      },
+      data: { assignees: assignees as any },
     });
 
-    // Send notification email via Zimbra
+    // Send notification email to newly added assignees only
+    if (!newAssignees.length) return updated;
+
     const assignorName = user.displayName ?? user.email;
     const dueDateStr = task.dueDate
       ? new Date(task.dueDate).toLocaleDateString('en-US', {
@@ -346,9 +343,11 @@ export class TasksService {
       URGENT: 'Urgent',
     };
 
-    const body = `
+    await Promise.all(
+      newAssignees.map(({ email, name }) => {
+        const body = `
 <html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:0 auto;">
-  <p>Hi${assigneeName ? ` ${assigneeName}` : ''},</p>
+  <p>Hi${name ? ` ${name}` : ''},</p>
   <p>You have been assigned a task by <strong>${assignorName}</strong>.</p>
   <table style="border-collapse:collapse;width:100%;margin:16px 0;">
     <tr>
@@ -377,15 +376,17 @@ export class TasksService {
   <p style="color:#888;font-size:12px;">Sent from 1Gov Mail.</p>
 </body></html>`;
 
-    await this.zimbra.sendMessage(
-      user.zimbraHost,
-      user.authToken,
-      {
-        to: [assigneeEmail],
-        subject: `Task assigned to you: ${task.title}`,
-        body,
-      },
-      user.csrfToken ?? undefined,
+        return this.zimbra.sendMessage(
+          user.zimbraHost,
+          user.authToken!,
+          {
+            to: [email],
+            subject: `Task assigned to you: ${task.title}`,
+            body,
+          },
+          user.csrfToken ?? undefined,
+        );
+      }),
     );
 
     return updated;

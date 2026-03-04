@@ -525,8 +525,7 @@ export const api = {
       dueDate?: string;
       linkedMessageId?: string;
       linkedSubject?: string;
-      assignedToEmail?: string;
-      assignedToName?: string;
+      assignees?: { email: string; name?: string }[];
       recurrence?: string;
       recurrenceEndDate?: string;
       reminderAt?: string;
@@ -542,8 +541,7 @@ export const api = {
       dueDate: string;
       linkedMessageId: string;
       linkedSubject: string;
-      assignedToEmail: string;
-      assignedToName: string;
+      assignees: { email: string; name?: string }[];
       recurrence: string;
       recurrenceEndDate: string;
       reminderAt: string;
@@ -555,11 +553,11 @@ export const api = {
       if (USE_MOCK) return delay({ success: true });
       return request<{ success: boolean }>(`/tasks/${id}`, { method: 'DELETE' });
     },
-    assign: (id: string, assigneeEmail: string, assigneeName?: string) => {
-      if (USE_MOCK) return delay({ id, assignedToEmail: assigneeEmail, assignedToName: assigneeName });
+    assign: (id: string, assignees: { email: string; name?: string }[]) => {
+      if (USE_MOCK) return delay({ id, assignees });
       return request<any>(`/tasks/${id}/assign`, {
         method: 'POST',
-        body: JSON.stringify({ assigneeEmail, assigneeName }),
+        body: JSON.stringify({ assignees }),
       });
     },
     createSubtask: (taskId: string, title: string) => {

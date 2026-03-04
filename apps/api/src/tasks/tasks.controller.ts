@@ -77,14 +77,9 @@ export class TasksController {
   assign(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
-    @Body() body: { assigneeEmail: string; assigneeName?: string },
+    @Body() body: { assignees: { email: string; name?: string }[] },
   ) {
-    return this.tasksService.assign(
-      req.user.sub,
-      id,
-      body.assigneeEmail,
-      body.assigneeName,
-    );
+    return this.tasksService.assign(req.user.sub, id, body.assignees);
   }
 
   // ─── Subtasks ───────────────────────────────────────────────────────────────

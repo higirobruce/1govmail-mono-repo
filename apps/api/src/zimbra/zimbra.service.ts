@@ -1205,6 +1205,7 @@ export class ZimbraService {
       organizerEmail: string;
       organizerName?: string;
       attendees?: string[];
+      seq?: number;
     },
     csrfToken?: string,
   ): Promise<void> {
@@ -1247,6 +1248,7 @@ export class ZimbraService {
                 comp: [
                   {
                     name: payload.title,
+                    seq: payload.seq ?? 0,
                     loc: payload.location ?? '',
                     allDay: payload.allDay ? 1 : 0,
                     fb: 'B',

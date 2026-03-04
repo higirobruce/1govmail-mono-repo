@@ -11,7 +11,7 @@ import {
   ChevronDown, LogOut, Settings, Plus, X,
   Calendar, Users, FolderOpen,
   ListTodo, UsersRound, Newspaper, Sparkles,
-  Sun, Moon, Monitor, BookOpen,
+  Sun, Moon, Monitor, BookOpen, ShieldAlert,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -45,11 +45,12 @@ const BUILTIN_PATHS = new Set([
 ]);
 
 const SYSTEM_FOLDERS = [
-  { id: 'inbox',   name: 'Inbox',   icon: Inbox,    path: '/Inbox',   iconBg: 'bg-blue-500' },
-  { id: 'sent',    name: 'Sent',    icon: Send,     path: '/Sent',    iconBg: 'bg-emerald-500' },
-  { id: 'drafts',  name: 'Drafts',  icon: FileText, path: '/Drafts',  iconBg: 'bg-orange-400' },
-  { id: 'archive', name: 'Archive', icon: Archive,  path: '/Archive', iconBg: 'bg-slate-400' },
-  { id: 'trash',   name: 'Trash',   icon: Trash2,   path: '/Trash',   iconBg: 'bg-rose-500' },
+  { id: 'inbox',   name: 'Inbox',   icon: Inbox,         path: '/Inbox',   iconBg: 'bg-blue-500' },
+  { id: 'sent',    name: 'Sent',    icon: Send,          path: '/Sent',    iconBg: 'bg-emerald-500' },
+  { id: 'drafts',  name: 'Drafts',  icon: FileText,      path: '/Drafts',  iconBg: 'bg-orange-400' },
+  { id: 'archive', name: 'Archive', icon: Archive,       path: '/Archive', iconBg: 'bg-slate-400' },
+  { id: 'junk',    name: 'Spam',    icon: ShieldAlert,   path: '/Junk',    iconBg: 'bg-yellow-500' },
+  { id: 'trash',   name: 'Trash',   icon: Trash2,        path: '/Trash',   iconBg: 'bg-rose-500' },
 ];
 
 const LABEL_COLORS = [

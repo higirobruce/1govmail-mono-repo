@@ -222,6 +222,18 @@ export class CalendarService {
     const startAt = new Date(data.startAt);
     const endAt   = new Date(data.endAt);
 
+    // Fetch the current Zimbra appointment to get the latest sequence number.
+    // ModifyAppointmentRequest requires seq to match what's on the server;
+    // sending an outdated seq (e.g. 0 after a previous edit) results in the
+    // "The specified Invite is out of date" 502 error.
+    const appt = await this.zimbra.getAppointment(
+      user.zimbraHost,
+      user.authToken!,
+      event.zimbraId,
+      user.csrfToken ?? undefined,
+    );
+    const currentSeq: number = appt?.inv?.[0]?.comp?.[0]?.seq ?? 0;
+
     await this.zimbra.modifyCalendarEvent(
       user.zimbraHost,
       user.authToken!,
@@ -236,6 +248,7 @@ export class CalendarService {
         organizerEmail: user.email,
         organizerName:  user.displayName ?? undefined,
         attendees:      data.attendees ?? [],
+        seq:            currentSeq,
       },
       user.csrfToken ?? undefined,
     );

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, Logger, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class MailService {
@@ -9,6 +10,7 @@ export class MailService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly zimbra: ZimbraService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private async getUser(userId: string) {
@@ -987,6 +989,13 @@ export class MailService {
           }
         }
         await this.prisma.snoozedMessage.delete({ where: { id: snooze.id } });
+        await this.notifications.createNotification(
+          snooze.userId,
+          'MAIL_SNOOZE_EXPIRED',
+          `Snoozed message returned: ${msg?.subject ?? '(no subject)'}`,
+          'Your snoozed message is back in your inbox.',
+          '/mail',
+        ).catch(() => {});
       } catch (err: any) {
         this.logger.warn(`Failed to unsnooze message ${snooze.messageId}: ${err?.message}`);
       }
@@ -1049,6 +1058,12 @@ export class MailService {
           user.csrfToken ?? undefined,
         );
         await this.prisma.scheduledMessage.update({ where: { id: msg.id }, data: { status: 'SENT' } });
+        await this.notifications.createNotification(
+          msg.userId,
+          'SCHEDULED_SENT',
+          `Scheduled message sent: ${msg.subject ?? '(no subject)'}`,
+          `To: ${(msg.to as string[]).join(', ')}`,
+        ).catch(() => {});
       } catch (err: any) {
         this.logger.warn(`Scheduled message ${msg.id} failed: ${err?.message}`);
         await this.prisma.scheduledMessage.update({

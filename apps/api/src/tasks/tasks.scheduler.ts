@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class TasksScheduler {
@@ -10,6 +11,7 @@ export class TasksScheduler {
   constructor(
     private readonly prisma: PrismaService,
     private readonly zimbra: ZimbraService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -77,6 +79,15 @@ export class TasksScheduler {
           where: { id: task.id },
           data: { reminderSentAt: new Date() },
         });
+        await this.notifications.createNotification(
+          task.userId,
+          'TASK_DUE',
+          `Task reminder: ${task.title}`,
+          task.dueDate
+            ? `Due ${new Date(task.dueDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`
+            : undefined,
+          '/tasks',
+        ).catch(() => {});
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.warn(

@@ -1,4 +1,5 @@
-import { IsString, IsOptional, IsEnum, IsDateString, IsIn } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsDateString, IsIn, IsArray, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export enum TaskStatus {
   TODO = 'TODO',
@@ -12,6 +13,15 @@ export enum TaskPriority {
   MEDIUM = 'MEDIUM',
   HIGH = 'HIGH',
   URGENT = 'URGENT',
+}
+
+export class AssigneeDto {
+  @IsString()
+  email: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
 }
 
 export class CreateTaskDto {
@@ -43,12 +53,10 @@ export class CreateTaskDto {
   linkedSubject?: string;
 
   @IsOptional()
-  @IsString()
-  assignedToEmail?: string;
-
-  @IsOptional()
-  @IsString()
-  assignedToName?: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AssigneeDto)
+  assignees?: AssigneeDto[];
 
   @IsOptional()
   @IsIn(['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'])

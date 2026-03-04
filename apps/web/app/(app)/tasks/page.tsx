@@ -205,10 +205,14 @@ function TaskCard({
             </span>
           )}
 
-          {task.assignedToEmail && (
+          {task.assignees && task.assignees.length > 0 && (
             <span className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 max-w-[140px]">
               <User className="w-2.5 h-2.5 shrink-0" />
-              <span className="truncate">{task.assignedToName ?? task.assignedToEmail}</span>
+              <span className="truncate">
+                {task.assignees.length === 1
+                  ? (task.assignees[0].name ?? task.assignees[0].email)
+                  : `${task.assignees.length} assignees`}
+              </span>
             </span>
           )}
 

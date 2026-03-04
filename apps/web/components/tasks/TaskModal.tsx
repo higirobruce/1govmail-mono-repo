@@ -70,9 +70,7 @@ export interface Task {
   completedAt: string | null;
   linkedMessageId: string | null;
   linkedSubject: string | null;
-  assignedToEmail: string | null;
-  assignedToName: string | null;
-  assignedAt: string | null;
+  assignees: { email: string; name?: string }[] | null;
   attachments: TaskAttachment[] | null;
   recurrence: string | null;
   recurrenceEndDate: string | null;
@@ -90,8 +88,6 @@ export interface TaskForm {
   dueDate: string;
   linkedMessageId: string;
   linkedSubject: string;
-  assignedToEmail: string;
-  assignedToName: string;
   recurrence: string;
   recurrenceEndDate: string;
   reminderOffset: string; // '' | '15' | '30' | '60' | '1440' (minutes before due)
@@ -105,8 +101,6 @@ export const EMPTY_FORM: TaskForm = {
   dueDate: '',
   linkedMessageId: '',
   linkedSubject: '',
-  assignedToEmail: '',
-  assignedToName: '',
   recurrence: '',
   recurrenceEndDate: '',
   reminderOffset: '',
@@ -176,8 +170,6 @@ export default function TaskModal({
         dueDate: task.dueDate ? task.dueDate.slice(0, 10) : '',
         linkedMessageId: task.linkedMessageId ?? '',
         linkedSubject: task.linkedSubject ?? '',
-        assignedToEmail: task.assignedToEmail ?? '',
-        assignedToName: task.assignedToName ?? '',
         recurrence: task.recurrence ?? '',
         recurrenceEndDate: task.recurrenceEndDate ? task.recurrenceEndDate.slice(0, 10) : '',
         reminderOffset,
@@ -191,6 +183,12 @@ export default function TaskModal({
   });
   const [saving, setSaving] = useState(false);
   const [assigning, setAssigning] = useState(false);
+
+  // ── Multi-assignee state ──────────────────────────────────────────────────────
+  const [assignees, setAssignees] = useState<{ email: string; name?: string }[]>(
+    () => task?.assignees ?? [],
+  );
+  const [assigneeInput, setAssigneeInput] = useState('');
   const [autocomplete, setAutocomplete] = useState<Array<{ email: string; display: string }>>([]);
   const [showAc, setShowAc] = useState(false);
   const acTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -215,8 +213,8 @@ export default function TaskModal({
   const set = <K extends keyof TaskForm>(k: K) => (v: TaskForm[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }));
 
-  const handleAssigneeChange = (v: string) => {
-    set('assignedToEmail')(v);
+  const handleAssigneeInputChange = (v: string) => {
+    setAssigneeInput(v);
     if (acTimer.current) clearTimeout(acTimer.current);
     if (v.length < 2) { setAutocomplete([]); setShowAc(false); return; }
     acTimer.current = setTimeout(async () => {
@@ -226,6 +224,19 @@ export default function TaskModal({
         setShowAc(results.length > 0);
       } catch { /* ignore */ }
     }, 250);
+  };
+
+  const addAssignee = (email: string, name?: string) => {
+    const clean = email.trim().toLowerCase();
+    if (!clean || assignees.some((a) => a.email.toLowerCase() === clean)) return;
+    setAssignees((prev) => [...prev, { email: clean, name: name || undefined }]);
+    setAssigneeInput('');
+    setAutocomplete([]);
+    setShowAc(false);
+  };
+
+  const removeAssignee = (email: string) => {
+    setAssignees((prev) => prev.filter((a) => a.email !== email));
   };
 
   // ── Subtask actions ─────────────────────────────────────────────────────────
@@ -389,32 +400,36 @@ export default function TaskModal({
         dueDate: form.dueDate || undefined,
         linkedMessageId: form.linkedMessageId || undefined,
         linkedSubject: form.linkedSubject || undefined,
-        assignedToEmail: form.assignedToEmail || undefined,
-        assignedToName: form.assignedToName || undefined,
         recurrence: form.recurrence || undefined,
         recurrenceEndDate: form.recurrenceEndDate || undefined,
         ...(reminderAt !== undefined ? { reminderAt } : {}),
       };
 
+      // Compute newly added assignees for email notification
+      const oldAssignees = task?.assignees ?? [];
+      const oldEmails = new Set(oldAssignees.map((a) => a.email.toLowerCase()));
+      const newlyAdded = assignees.filter((a) => !oldEmails.has(a.email.toLowerCase()));
+
       let saved: Task;
       if (task) {
-        saved = (await api.tasks.update(task.id, payload)) as Task;
-        const assigneeChanged = form.assignedToEmail && form.assignedToEmail !== task.assignedToEmail;
-        if (assigneeChanged) {
+        // assign() is called BEFORE update so it can diff against the old DB state
+        const assigneesChanged =
+          assignees.length !== oldAssignees.length ||
+          newlyAdded.length > 0 ||
+          oldAssignees.some((a) => !assignees.find((b) => b.email === a.email));
+        if (assigneesChanged) {
           setAssigning(true);
           try {
-            saved = (await api.tasks.assign(saved.id, form.assignedToEmail, form.assignedToName || undefined)) as Task;
-            toast.success('Task updated and assignee notified');
+            await api.tasks.assign(task.id, assignees);
           } catch (err: any) {
-            toast.warning('Task saved, but notification email failed', { description: err?.message });
+            toast.warning('Task saved, but notification emails failed', { description: err?.message });
           } finally {
             setAssigning(false);
           }
-        } else {
-          toast.success('Task updated');
         }
-        // Attach current subtasks/comments so parent state is up to date
-        saved = { ...saved, subtasks, comments };
+        saved = (await api.tasks.update(task.id, payload)) as Task;
+        toast.success(newlyAdded.length > 0 ? 'Task updated and assignees notified' : 'Task updated');
+        saved = { ...saved, subtasks, comments, assignees };
       } else {
         saved = (await api.tasks.create(payload)) as Task;
         // Create buffered subtasks
@@ -425,16 +440,16 @@ export default function TaskModal({
             createdSubtasks.push(s);
           } catch { /* non-fatal */ }
         }
-        saved = { ...saved, subtasks: createdSubtasks, comments: [] };
+        saved = { ...saved, subtasks: createdSubtasks, comments: [], assignees };
 
-        if (form.assignedToEmail) {
+        if (assignees.length > 0) {
           setAssigning(true);
           try {
-            const withAssign = (await api.tasks.assign(saved.id, form.assignedToEmail, form.assignedToName || undefined)) as Task;
-            saved = { ...saved, ...withAssign, subtasks: createdSubtasks, comments: [] };
-            toast.success('Task created and assignee notified');
+            const withAssign = (await api.tasks.assign(saved.id, assignees)) as Task;
+            saved = { ...saved, ...withAssign, subtasks: createdSubtasks, comments: [], assignees };
+            toast.success('Task created and assignees notified');
           } catch (err: any) {
-            toast.warning('Task created, but notification email failed', { description: err?.message });
+            toast.warning('Task created, but notification emails failed', { description: err?.message });
           } finally {
             setAssigning(false);
           }
@@ -667,52 +682,71 @@ export default function TaskModal({
             {/* Assignee section */}
             <div className="pt-1 border-t border-border/30 space-y-3">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
-                Assign to colleague
+                Assignees
               </p>
-              <Field label="Email">
-                <div className="relative">
-                  <Input
-                    value={form.assignedToEmail}
-                    onChange={(e) => handleAssigneeChange(e.target.value)}
-                    onBlur={() => setTimeout(() => setShowAc(false), 150)}
-                    placeholder="colleague@company.com"
-                    type="email"
-                    className="h-9 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
-                  />
-                  {showAc && (
-                    <div className="absolute top-full left-0 right-0 z-10 mt-1 bg-popover border border-border/50 rounded-lg shadow-lg overflow-hidden">
-                      {autocomplete.map((c) => (
-                        <button
-                          key={c.email}
-                          type="button"
-                          onMouseDown={() => {
-                            set('assignedToEmail')(c.email);
-                            set('assignedToName')(c.display);
-                            setShowAc(false);
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
-                        >
-                          <User className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
-                          <span className="text-sm text-foreground truncate">{c.display}</span>
-                          <span className="text-xs text-muted-foreground/50 truncate ml-auto">{c.email}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+
+              {/* Existing assignee chips */}
+              {assignees.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {assignees.map((a) => (
+                    <span
+                      key={a.email}
+                      className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-primary/10 border border-primary/20 text-xs text-foreground/80"
+                    >
+                      <User className="w-3 h-3 text-primary/60 shrink-0" />
+                      <span className="truncate max-w-[140px]" title={a.email}>
+                        {a.name ?? a.email}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeAssignee(a.email)}
+                        className="ml-0.5 text-muted-foreground/50 hover:text-destructive transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
                 </div>
-              </Field>
-              <Field label="Name (optional)">
+              )}
+
+              {/* Add assignee input */}
+              <div className="relative">
                 <Input
-                  value={form.assignedToName}
-                  onChange={(e) => set('assignedToName')(e.target.value)}
-                  placeholder="Colleague name"
+                  value={assigneeInput}
+                  onChange={(e) => handleAssigneeInputChange(e.target.value)}
+                  onBlur={() => setTimeout(() => setShowAc(false), 150)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addAssignee(assigneeInput);
+                    }
+                  }}
+                  placeholder="Add colleague email…"
+                  type="email"
                   className="h-9 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
                 />
-              </Field>
-              {form.assignedToEmail && (
+                {showAc && (
+                  <div className="absolute top-full left-0 right-0 z-10 mt-1 bg-popover border border-border/50 rounded-lg shadow-lg overflow-hidden">
+                    {autocomplete.map((c) => (
+                      <button
+                        key={c.email}
+                        type="button"
+                        onMouseDown={() => addAssignee(c.email, c.display)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+                      >
+                        <User className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
+                        <span className="text-sm text-foreground truncate">{c.display}</span>
+                        <span className="text-xs text-muted-foreground/50 truncate ml-auto">{c.email}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {assignees.length > 0 && (
                 <p className="text-[11px] text-muted-foreground/55 flex items-center gap-1.5">
                   <Mail className="w-3 h-3" />
-                  A notification email will be sent to {form.assignedToEmail}
+                  Notification emails will be sent to new assignees
                 </p>
               )}
             </div>

@@ -4,9 +4,10 @@ import { MailController } from './mail.controller';
 import { MailScheduler } from './mail.scheduler';
 import { ZimbraModule } from '../zimbra/zimbra.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [ZimbraModule, PrismaModule],
+  imports: [ZimbraModule, PrismaModule, NotificationsModule],
   providers: [MailService, MailScheduler],
   controllers: [MailController],
 })

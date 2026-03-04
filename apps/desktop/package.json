@@ -13,10 +13,12 @@
     "prebuild:linux": "node scripts/generate-icons.mjs && TARGET_PLATFORM=linux TARGET_ARCH=x64 node scripts/prepare-api.mjs",
     "build": "tsc && electron-builder",
     "build:mac": "tsc && electron-builder --mac",
+    "build:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false tsc && electron-builder --mac",
     "build:win": "tsc && electron-builder --win",
     "build:linux": "tsc && electron-builder --linux"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^20",
     "concurrently": "^9.1.2",

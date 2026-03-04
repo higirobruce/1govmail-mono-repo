@@ -128,7 +128,7 @@ export default function LoginPage() {
                   />
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Open Google Authenticator and enter the 6-digit code for{' '}
+                  Open your Authenticator app and enter the 6-digit code for{' '}
                   <span className="text-foreground font-medium">{form.email}</span>.
                 </p>
               </div>

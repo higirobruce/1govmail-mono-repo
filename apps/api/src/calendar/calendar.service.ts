@@ -50,7 +50,8 @@ export class CalendarService {
     if (!inst) return null;
 
     const startMs: number = inst.s ?? 0;
-    const dur: number = inst.dur ?? 3_600_000;
+    // inst.dur is not always present in SearchResponse — fall back to appt-level dur
+    const dur: number = inst.dur ?? appt.dur ?? 3_600_000;
     const allDay = !!(inst.allDay || appt.allDay);
 
     return {
@@ -224,31 +225,46 @@ export class CalendarService {
 
     // Fetch the current Zimbra appointment to get the latest sequence number.
     // ModifyAppointmentRequest requires seq to match what's on the server;
-    // sending an outdated seq (e.g. 0 after a previous edit) results in the
-    // "The specified Invite is out of date" 502 error.
+    // sending an outdated seq results in the "The specified Invite is out of date" 502 error.
     const appt = await this.zimbra.getAppointment(
       user.zimbraHost,
       user.authToken!,
       event.zimbraId,
       user.csrfToken ?? undefined,
     );
-    const currentSeq: number = appt?.inv?.[0]?.comp?.[0]?.seq ?? 0;
+
+    // Zimbra's JSON bridge may return single-item arrays as plain objects at any level
+    const firstOf = <T>(x: T | T[] | undefined): T | undefined =>
+      Array.isArray(x) ? x[0] : x;
+    const inv = firstOf(appt?.inv);
+
+    // ModifyAppointmentRequest.id must be "{calItemId}-{invMsgId}", not just the calItemId.
+    // The invite message ID lives in inv[0].id (or inv.id when the bridge returns an object).
+    const invMsgId = inv?.id != null ? String(inv.id) : null;
+    const modifyId = invMsgId
+      ? `${event.zimbraId}-${invMsgId}`
+      : (event.zimbraInviteId ?? event.zimbraId);
+
+    // modifiedSequence and rev are sent at the request level for Zimbra conflict detection
+    const modifiedSequence = appt?.ms  != null ? Number(appt.ms)  : undefined;
+    const rev              = appt?.rev != null ? Number(appt.rev) : undefined;
 
     await this.zimbra.modifyCalendarEvent(
       user.zimbraHost,
       user.authToken!,
-      event.zimbraId,
+      modifyId,
       {
-        title:          data.title,
-        location:       data.location,
+        title:             data.title,
+        location:          data.location,
         startAt,
         endAt,
-        allDay:         data.allDay ?? false,
-        description:    data.description,
-        organizerEmail: user.email,
-        organizerName:  user.displayName ?? undefined,
-        attendees:      data.attendees ?? [],
-        seq:            currentSeq,
+        allDay:            data.allDay ?? false,
+        description:       data.description,
+        organizerEmail:    user.email,
+        organizerName:     user.displayName ?? undefined,
+        attendees:         data.attendees ?? [],
+        modifiedSequence,
+        rev,
       },
       user.csrfToken ?? undefined,
     );

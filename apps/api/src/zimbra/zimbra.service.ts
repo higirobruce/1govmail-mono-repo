@@ -1100,7 +1100,9 @@ export class ZimbraService {
         },
         Header: this.soapHeader(csrfToken),
       });
-      return response.data?.Body?.GetAppointmentResponse?.appt?.[0] ?? null;
+      // Zimbra's JSON bridge sometimes returns a single-item array as a plain object
+      const apptData = response.data?.Body?.GetAppointmentResponse?.appt;
+      return (Array.isArray(apptData) ? apptData[0] : apptData) ?? null;
     } catch (err: any) {
       this.handleZimbraError(err, `getAppointment(${zimbraId})`);
     }
@@ -1157,7 +1159,11 @@ export class ZimbraService {
             _jsns: 'urn:zimbraMail',
             m: {
               su: payload.title,
-              e: [{ t: 'f', ...or }],
+              // 'f' = from (organizer); 't' = to (each attendee gets an invite email)
+              e: [
+                { t: 'f', ...or },
+                ...(payload.attendees ?? []).map((a) => ({ t: 't', a })),
+              ],
               inv: {
                 comp: [
                   {
@@ -1205,7 +1211,8 @@ export class ZimbraService {
       organizerEmail: string;
       organizerName?: string;
       attendees?: string[];
-      seq?: number;
+      modifiedSequence?: number;
+      rev?: number;
     },
     csrfToken?: string,
   ): Promise<void> {
@@ -1240,15 +1247,24 @@ export class ZimbraService {
         Body: {
           ModifyAppointmentRequest: {
             _jsns: 'urn:zimbraMail',
+            // id must be "{calItemId}-{invMsgId}" — the full invite ID, not just calItemId
             id: zimbraId,
+            comp: '0',
+            // modifiedSequence and rev are required for Zimbra's conflict detection
+            ...(payload.modifiedSequence !== undefined ? { modifiedSequence: payload.modifiedSequence } : {}),
+            ...(payload.rev !== undefined ? { rev: payload.rev } : {}),
             m: {
               su: payload.title,
-              e: [{ t: 'f', ...or }],
+              // 'f' = from (organizer); 't' = to (attendees receive update email)
+              e: [
+                { t: 'f', ...or },
+                ...(payload.attendees ?? []).map((a) => ({ t: 't', a })),
+              ],
               inv: {
                 comp: [
                   {
                     name: payload.title,
-                    seq: payload.seq ?? 0,
+                    // No seq in comp — Zimbra manages it internally
                     loc: payload.location ?? '',
                     allDay: payload.allDay ? 1 : 0,
                     fb: 'B',

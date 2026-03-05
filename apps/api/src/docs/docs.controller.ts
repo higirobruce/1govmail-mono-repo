@@ -63,6 +63,13 @@ export class DocsController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Patch(':id/favorite')
+  @HttpCode(HttpStatus.OK)
+  toggleFavorite(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.docsService.toggleFavorite(req.user.sub, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
   findOne(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.docsService.findOne(req.user.sub, id);

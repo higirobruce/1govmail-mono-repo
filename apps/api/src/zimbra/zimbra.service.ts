@@ -647,6 +647,51 @@ export class ZimbraService {
     }
   }
 
+  async emptyFolder(
+    host: string,
+    authToken: string,
+    zimbraFolderId: string,
+    csrfToken?: string,
+  ): Promise<void> {
+    const client = this.buildClient(host, authToken, csrfToken);
+    try {
+      await client.post('/service/soap', {
+        Body: {
+          FolderActionRequest: {
+            _jsns: 'urn:zimbraMail',
+            action: { id: zimbraFolderId, op: 'empty', recursive: 1 },
+          },
+        },
+        Header: this.soapHeader(csrfToken),
+      });
+    } catch (err: any) {
+      this.handleZimbraError(err, `emptyFolder(${zimbraFolderId})`);
+    }
+  }
+
+  async renameFolder(
+    host: string,
+    authToken: string,
+    zimbraFolderId: string,
+    newName: string,
+    csrfToken?: string,
+  ): Promise<void> {
+    const client = this.buildClient(host, authToken, csrfToken);
+    try {
+      await client.post('/service/soap', {
+        Body: {
+          FolderActionRequest: {
+            _jsns: 'urn:zimbraMail',
+            action: { id: zimbraFolderId, op: 'rename', name: newName },
+          },
+        },
+        Header: this.soapHeader(csrfToken),
+      });
+    } catch (err: any) {
+      this.handleZimbraError(err, `renameFolder(${zimbraFolderId})`);
+    }
+  }
+
   async deleteMessage(
     host: string,
     authToken: string,

@@ -675,6 +675,41 @@ export default function MailPage() {
     }
   }, [folders, activeFolderId]);
 
+  const handleEmptyFolder = useCallback(async (folderId: string) => {
+    try {
+      await api.mail.emptyFolder(folderId);
+      // Clear messages if this is the currently viewed folder
+      if (activeFolderId === folderId) {
+        queryClient.setQueryData(['messages', folderId], (old: any) =>
+          old ? { ...old, pages: old.pages.map((p: any) => ({ ...p, messages: [], hasMore: false })) } : old,
+        );
+        setActiveMessageId(undefined);
+        setActiveMessage(null);
+      }
+      // Reset folder counts
+      setFolders((prev) =>
+        prev.map((f) => f.id === folderId ? { ...f, unreadCount: 0, totalCount: 0 } : f),
+      );
+      toast.success('Folder emptied');
+    } catch (err: any) {
+      toast.error('Failed to empty folder', { description: err?.message });
+      throw err;
+    }
+  }, [activeFolderId, queryClient]);
+
+  const handleRenameFolder = useCallback(async (folderId: string, name: string) => {
+    const prev = folders.find((f) => f.id === folderId);
+    setFolders((old) => old.map((f) => f.id === folderId ? { ...f, name } : f));
+    try {
+      await api.mail.renameFolder(folderId, name);
+      toast.success('Folder renamed');
+    } catch (err: any) {
+      if (prev) setFolders((old) => old.map((f) => f.id === folderId ? prev : f));
+      toast.error('Failed to rename folder', { description: err?.message });
+      throw err;
+    }
+  }, [folders]);
+
   // Show a minimal full-screen loader while waiting for persisted auth to hydrate
   if (!hydrated) {
     return (
@@ -698,6 +733,8 @@ export default function MailPage() {
         onCompose={() => { setComposeOpen(true); setComposeMode('new'); }}
         onCreateFolder={handleCreateFolder}
         onDeleteFolder={handleDeleteFolder}
+        onEmptyFolder={handleEmptyFolder}
+        onRenameFolder={handleRenameFolder}
       />
       <MobileSidebarSheet
         open={sidebarOpen}
@@ -708,6 +745,8 @@ export default function MailPage() {
         onCompose={() => { setComposeOpen(true); setComposeMode('new'); }}
         onCreateFolder={handleCreateFolder}
         onDeleteFolder={handleDeleteFolder}
+        onEmptyFolder={handleEmptyFolder}
+        onRenameFolder={handleRenameFolder}
       />
 
       {/* Mail list pane — full width on mobile, fixed 300px on desktop */}

@@ -12,6 +12,8 @@ interface MobileSidebarSheetProps {
   onCompose?: () => void;
   onCreateFolder?: (name: string) => Promise<void>;
   onDeleteFolder?: (folderId: string) => Promise<void>;
+  onEmptyFolder?: (folderId: string) => Promise<void>;
+  onRenameFolder?: (folderId: string, name: string) => Promise<void>;
 }
 
 export function MobileSidebarSheet({

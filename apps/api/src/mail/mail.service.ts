@@ -865,6 +865,53 @@ export class MailService {
     return { success: true };
   }
 
+  async emptyFolder(userId: string, folderId: string) {
+    const user = await this.getUser(userId);
+
+    const folder = await this.prisma.folder.findFirst({
+      where: { userId, id: folderId },
+    });
+    if (!folder) throw new NotFoundException('Folder not found');
+
+    await this.zimbra.emptyFolder(
+      user.zimbraHost,
+      user.authToken!,
+      folder.zimbraId,
+      user.csrfToken ?? undefined,
+    );
+
+    // Clear locally-cached messages so the list refreshes on next load
+    await this.prisma.message.deleteMany({ where: { folderId } });
+    await this.prisma.folder.update({
+      where: { id: folderId },
+      data: { unreadCount: 0, totalCount: 0 },
+    });
+
+    return { success: true };
+  }
+
+  async renameFolder(userId: string, folderId: string, name: string) {
+    const user = await this.getUser(userId);
+
+    const folder = await this.prisma.folder.findFirst({
+      where: { userId, id: folderId },
+    });
+    if (!folder) throw new NotFoundException('Folder not found');
+
+    await this.zimbra.renameFolder(
+      user.zimbraHost,
+      user.authToken!,
+      folder.zimbraId,
+      name,
+      user.csrfToken ?? undefined,
+    );
+
+    return this.prisma.folder.update({
+      where: { id: folderId },
+      data: { name, path: `/${name}` },
+    });
+  }
+
   async createFolder(userId: string, name: string) {
     const user = await this.getUser(userId);
 

@@ -19,7 +19,13 @@ export class DocsService {
         id: true,
         title: true,
         emoji: true,
+        parentId: true,
         position: true,
+        isFavorite: true,
+        tags: true,
+        coverColor: true,
+        shareToken: true,
+        isShared: true,
         createdAt: true,
         updatedAt: true,
         // content deliberately excluded for list performance
@@ -37,8 +43,9 @@ export class DocsService {
   }
 
   async create(userId: string, dto: CreateDocDto) {
+    const parentId = dto.parentId ?? null;
     const last = await this.prisma.document.findFirst({
-      where: { userId },
+      where: { userId, parentId },
       orderBy: { position: 'desc' },
       select: { position: true },
     });
@@ -49,6 +56,9 @@ export class DocsService {
         userId,
         title: dto.title ?? 'Untitled',
         emoji: dto.emoji ?? null,
+        parentId,
+        content: dto.content ?? null,
+        tags: dto.tags ?? [],
         position: nextPosition,
       },
     });
@@ -63,7 +73,20 @@ export class DocsService {
         ...(dto.content !== undefined ? { content: dto.content } : {}),
         ...(dto.emoji !== undefined ? { emoji: dto.emoji } : {}),
         ...(dto.position !== undefined ? { position: dto.position } : {}),
+        ...(dto.parentId !== undefined ? { parentId: dto.parentId } : {}),
+        ...(dto.isFavorite !== undefined ? { isFavorite: dto.isFavorite } : {}),
+        ...(dto.tags !== undefined ? { tags: dto.tags } : {}),
+        ...(dto.coverColor !== undefined ? { coverColor: dto.coverColor } : {}),
       },
+    });
+  }
+
+  async toggleFavorite(userId: string, id: string) {
+    const doc = await this.verifyOwnership(userId, id);
+    return this.prisma.document.update({
+      where: { id },
+      data: { isFavorite: !doc.isFavorite },
+      select: { id: true, isFavorite: true },
     });
   }
 

@@ -11,6 +11,14 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverAnchor } from '@/components/ui/popover';
 import { toast } from 'sonner';
 import {
   Search, Plus, User, Mail, Phone, Building2, Briefcase,
@@ -153,6 +161,9 @@ export default function ContactsPage() {
   const [groupDesc, setGroupDesc] = useState('');
   const [groupMembers, setGroupMembers] = useState<Array<{ email: string; name?: string }>>([]);
   const [memberInput, setMemberInput] = useState('');
+  const [memberSuggestions, setMemberSuggestions] = useState<Array<{ email: string; display: string }>>([]);
+  const [memberPopoverOpen, setMemberPopoverOpen] = useState(false);
+  const memberDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [groupSaving, setGroupSaving] = useState(false);
   const [groupDeleting, setGroupDeleting] = useState(false);
 
@@ -305,6 +316,8 @@ export default function ContactsPage() {
     setGroupDesc('');
     setGroupMembers([]);
     setMemberInput('');
+    setMemberSuggestions([]);
+    setMemberPopoverOpen(false);
     setSelectedGroup(null);
     setGroupMode('create');
   };
@@ -314,19 +327,42 @@ export default function ContactsPage() {
     setGroupDesc(g.description ?? '');
     setGroupMembers([...g.members]);
     setMemberInput('');
+    setMemberSuggestions([]);
+    setMemberPopoverOpen(false);
     setSelectedGroup(g);
     setGroupMode('edit');
   };
 
-  const addMember = () => {
-    const email = memberInput.trim().toLowerCase();
+  const addMember = (emailOverride?: string, nameOverride?: string) => {
+    const email = (emailOverride ?? memberInput).trim().toLowerCase();
     if (!email || !email.includes('@')) return;
     if (groupMembers.some(m => m.email === email)) {
       toast.error('Already in group');
       return;
     }
-    setGroupMembers(prev => [...prev, { email }]);
+    setGroupMembers(prev => [...prev, { email, ...(nameOverride ? { name: nameOverride } : {}) }]);
     setMemberInput('');
+    setMemberSuggestions([]);
+    setMemberPopoverOpen(false);
+  };
+
+  const handleMemberInputChange = (value: string) => {
+    setMemberInput(value);
+    if (memberDebounce.current) clearTimeout(memberDebounce.current);
+    if (!value.trim() || value.length < 2) {
+      setMemberSuggestions([]);
+      setMemberPopoverOpen(false);
+      return;
+    }
+    memberDebounce.current = setTimeout(async () => {
+      try {
+        const results = await api.contacts.autocomplete(value.trim());
+        setMemberSuggestions(results);
+        setMemberPopoverOpen(results.length > 0);
+      } catch {
+        setMemberSuggestions([]);
+      }
+    }, 250);
   };
 
   const removeMember = (email: string) => {
@@ -801,26 +837,66 @@ export default function ContactsPage() {
                   <div className="pt-1 border-t border-border/30">
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Members</p>
 
-                    {/* Add member input */}
-                    <div className="flex gap-2 mb-3">
-                      <Input
-                        value={memberInput}
-                        onChange={(e) => setMemberInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addMember(); } }}
-                        placeholder="email@example.com"
-                        type="email"
-                        className="flex-1 h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={addMember}
-                        className="h-8 px-3 shrink-0"
-                        title="Add member (Enter)"
+                    {/* Add member input with autocomplete */}
+                    <Popover open={memberPopoverOpen} onOpenChange={setMemberPopoverOpen}>
+                      <div className="flex gap-2 mb-3">
+                        <PopoverAnchor asChild>
+                          <Input
+                            value={memberInput}
+                            onChange={(e) => handleMemberInputChange(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.preventDefault(); addMember(); }
+                              if (e.key === 'Escape') { setMemberPopoverOpen(false); }
+                            }}
+                            onFocus={() => { if (memberSuggestions.length > 0) setMemberPopoverOpen(true); }}
+                            placeholder="Name or email@example.com"
+                            className="flex-1 h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
+                          />
+                        </PopoverAnchor>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => addMember()}
+                          className="h-8 px-3 shrink-0"
+                          title="Add member (Enter)"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                      <PopoverContent
+                        className="p-0 w-72"
+                        align="start"
+                        onOpenAutoFocus={(e) => e.preventDefault()}
+                        onInteractOutside={() => setMemberPopoverOpen(false)}
                       >
-                        <Plus className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
+                        <Command>
+                          <CommandList>
+                            <CommandEmpty>No contacts found</CommandEmpty>
+                            <CommandGroup>
+                              {memberSuggestions.map((s) => (
+                                <CommandItem
+                                  key={s.email}
+                                  value={s.email}
+                                  onSelect={() => addMember(s.email, s.display !== s.email ? s.display : undefined)}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div className="w-6 h-6 rounded-full bg-muted/60 flex items-center justify-center shrink-0">
+                                      <User className="w-3 h-3 text-muted-foreground/50" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      {s.display !== s.email && (
+                                        <p className="text-[13px] font-medium truncate">{s.display}</p>
+                                      )}
+                                      <p className="text-[12px] text-muted-foreground/65 truncate">{s.email}</p>
+                                    </div>
+                                  </div>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
 
                     {/* Member chips */}
                     {groupMembers.length === 0 ? (

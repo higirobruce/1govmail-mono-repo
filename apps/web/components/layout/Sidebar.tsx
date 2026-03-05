@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth.store';
@@ -12,12 +13,109 @@ import {
   Calendar, Users, FolderOpen,
   ListTodo, UsersRound, Newspaper, Sparkles,
   Sun, Moon, Monitor, BookOpen, ShieldAlert,
+  MoreHorizontal, Pencil,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
 import { AppTour } from '@/components/tour/AppTour';
 import { useThemeStore, type Theme } from '@/stores/theme.store';
 import { NotificationsBell } from '@/components/layout/NotificationsBell';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+
+interface FolderMenuState {
+  x: number;
+  y: number;
+  folder: { id: string; name: string; isSystem?: boolean };
+}
+
+function FolderContextMenu({
+  state,
+  onClose,
+  onRename,
+  onEmpty,
+  onDelete,
+}: {
+  state: FolderMenuState;
+  onClose: () => void;
+  onRename?: (id: string, name: string) => void;
+  onEmpty?: (id: string, name: string) => void;
+  onDelete?: (id: string, name: string) => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('keydown', handleKey);
+    document.addEventListener('mousedown', handleClick);
+    return () => {
+      document.removeEventListener('keydown', handleKey);
+      document.removeEventListener('mousedown', handleClick);
+    };
+  }, [onClose]);
+
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    top: Math.min(state.y, window.innerHeight - 160),
+    left: Math.min(state.x, window.innerWidth - 180),
+    zIndex: 9999,
+  };
+
+  const { folder } = state;
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      style={style}
+      className="bg-card border border-border/50 rounded-xl shadow-lg p-1.5 min-w-[160px]"
+    >
+      {!folder.isSystem && onRename && (
+        <button
+          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[13px] text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors text-left"
+          onMouseDown={(e) => { e.preventDefault(); onClose(); onRename(folder.id, folder.name); }}
+        >
+          <Pencil className="w-3.5 h-3.5 shrink-0" />
+          Rename
+        </button>
+      )}
+      {onEmpty && (
+        <button
+          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[13px] text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors text-left"
+          onMouseDown={(e) => { e.preventDefault(); onClose(); onEmpty(folder.id, folder.name); }}
+        >
+          <Trash2 className="w-3.5 h-3.5 shrink-0" />
+          Empty folder
+        </button>
+      )}
+      {!folder.isSystem && onDelete && (
+        <>
+          {(onRename || onEmpty) && (
+            <div className="my-1 h-px bg-border/50 mx-1" />
+          )}
+          <button
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[13px] text-destructive hover:bg-destructive/10 transition-colors text-left"
+            onMouseDown={(e) => { e.preventDefault(); onClose(); onDelete(folder.id, folder.name); }}
+          >
+            <X className="w-3.5 h-3.5 shrink-0" />
+            Delete folder
+          </button>
+        </>
+      )}
+    </div>,
+    document.body,
+  );
+}
 
 interface Folder {
   id: string;
@@ -35,6 +133,8 @@ interface SidebarProps {
   onCompose?: () => void;
   onCreateFolder?: (name: string) => Promise<void>;
   onDeleteFolder?: (folderId: string) => Promise<void>;
+  onEmptyFolder?: (folderId: string) => Promise<void>;
+  onRenameFolder?: (folderId: string, name: string) => Promise<void>;
   /** Called after a nav action on mobile so the parent can close the drawer */
   onClose?: () => void;
   /** Extra classes for the root div — used to override hidden-on-mobile inside Sheet */
@@ -56,6 +156,9 @@ const SYSTEM_FOLDERS = [
   { id: 'junk',    name: 'Spam',    icon: ShieldAlert,   path: '/Junk',    iconBg: 'bg-yellow-500' },
   { id: 'trash',   name: 'Trash',   icon: Trash2,        path: '/Trash',   iconBg: 'bg-rose-500' },
 ];
+
+// System folders that can be emptied
+const EMPTYABLE_PATHS = new Set(['/Trash', '/Junk']);
 
 const LABEL_COLORS = [
   'bg-violet-500', 'bg-blue-500', 'bg-emerald-500', 'bg-amber-500',
@@ -137,7 +240,18 @@ function NavItem({
   );
 }
 
-export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, onCompose, onCreateFolder, onDeleteFolder, onClose, className }: SidebarProps) {
+export default function Sidebar({
+  folders = [],
+  activeFolderId,
+  onFolderSelect,
+  onCompose,
+  onCreateFolder,
+  onDeleteFolder,
+  onEmptyFolder,
+  onRenameFolder,
+  onClose,
+  className,
+}: SidebarProps) {
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -146,11 +260,18 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [savingFolder, setSavingFolder] = useState(false);
-  const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const [renameFolderName, setRenameFolderName] = useState('');
+  const [savingRename, setSavingRename] = useState(false);
+  const [emptyConfirmFolder, setEmptyConfirmFolder] = useState<{ id: string; name: string } | null>(null);
+  const [emptyConfirmInput, setEmptyConfirmInput] = useState('');
+  const [emptyingFolder, setEmptyingFolder] = useState(false);
+  const [folderMenu, setFolderMenu] = useState<FolderMenuState | null>(null);
   const [tourActive, setTourActive] = useState(false);
   const [calDragOver, setCalDragOver] = useState(false);
   const [tasksDragOver, setTasksDragOver] = useState(false);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const confirm = useConfirmStore((s) => s.confirm);
 
   // When no folders are supplied by the parent page (i.e. non-mail pages),
@@ -190,11 +311,49 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
       description: 'Messages inside will not be deleted.',
       confirmLabel: 'Delete',
       destructive: true,
-      onConfirm: async () => {
-        setDeletingFolderId(folderId);
-        try { await onDeleteFolder!(folderId); } finally { setDeletingFolderId(null); }
-      },
+      onConfirm: () => onDeleteFolder!(folderId),
     });
+  };
+
+  const handleRenameFolder = async () => {
+    const name = renameFolderName.trim();
+    if (!name || !renamingFolderId || !onRenameFolder) return;
+    setSavingRename(true);
+    try {
+      await onRenameFolder(renamingFolderId, name);
+      setRenamingFolderId(null);
+      setRenameFolderName('');
+    } catch {
+      // parent shows toast
+    } finally {
+      setSavingRename(false);
+    }
+  };
+
+  const handleEmptyFolder = async () => {
+    if (!emptyConfirmFolder || !onEmptyFolder) return;
+    setEmptyingFolder(true);
+    try {
+      await onEmptyFolder(emptyConfirmFolder.id);
+      setEmptyConfirmFolder(null);
+      setEmptyConfirmInput('');
+    } catch {
+      // parent shows toast
+    } finally {
+      setEmptyingFolder(false);
+    }
+  };
+
+  const openEmptyConfirm = (id: string, name: string) => {
+    setEmptyConfirmFolder({ id, name });
+    setEmptyConfirmInput('');
+  };
+
+  const openRenameInline = (id: string, name: string) => {
+    setRenamingFolderId(id);
+    setRenameFolderName(name);
+    setLabelsOpen(true);
+    setTimeout(() => renameInputRef.current?.focus(), 50);
   };
 
   const handleLogout = async () => {
@@ -287,18 +446,51 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
         <div className="space-y-0.5 pb-4">
 
           {/* System folders */}
-          {systemFolders.map((folder) => (
-            <NavItem
-              key={folder.id}
-              icon={folder.icon}
-              label={folder.name}
-              unread={folder.unread}
-              active={activeFolderId === folder.id}
-              onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
-              iconBg={folder.iconBg}
-              tourId={folder.id === 'inbox' ? 'inbox' : undefined}
-            />
-          ))}
+          {systemFolders.map((folder) => {
+            const canEmpty = !!onEmptyFolder && EMPTYABLE_PATHS.has(folder.path);
+            if (!canEmpty) {
+              return (
+                <NavItem
+                  key={folder.id}
+                  icon={folder.icon}
+                  label={folder.name}
+                  unread={folder.unread}
+                  active={activeFolderId === folder.id}
+                  onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
+                  iconBg={folder.iconBg}
+                  tourId={folder.id === 'inbox' ? 'inbox' : undefined}
+                />
+              );
+            }
+            return (
+              <div
+                key={folder.id}
+                className="group/folder relative"
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setFolderMenu({ x: e.clientX, y: e.clientY, folder: { id: folder.id, name: folder.name, isSystem: true } });
+                }}
+              >
+                <NavItem
+                  icon={folder.icon}
+                  label={folder.name}
+                  unread={folder.unread}
+                  active={activeFolderId === folder.id}
+                  onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
+                  iconBg={folder.iconBg}
+                />
+                <button
+                  className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-all opacity-0 group-hover/folder:opacity-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFolderMenu({ x: e.clientX, y: e.clientY, folder: { id: folder.id, name: folder.name, isSystem: true } });
+                  }}
+                >
+                  <MoreHorizontal className="w-3 h-3" />
+                </button>
+              </div>
+            );
+          })}
 
           {/* Custom / label folders */}
           {(customFolders.length > 0 || onCreateFolder) && (
@@ -328,24 +520,57 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
               {labelsOpen && (
                 <div className="space-y-0.5">
                   {customFolders.map((folder) => (
-                    <div key={folder.id} className="group relative">
-                      <NavItem
-                        icon={FolderOpen}
-                        label={folder.name}
-                        unread={folder.unreadCount}
-                        active={activeFolderId === folder.id}
-                        onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
-                        iconBg={getLabelColor(folder.name)}
-                      />
-                      {onDeleteFolder && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDeleteFolder(folder.id, folder.name); }}
-                          disabled={deletingFolderId === folder.id}
-                          title="Delete folder"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center justify-center w-5 h-5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
+                    <div
+                      key={folder.id}
+                      className="group/folder relative"
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (renamingFolderId !== folder.id) {
+                          setFolderMenu({ x: e.clientX, y: e.clientY, folder: { id: folder.id, name: folder.name } });
+                        }
+                      }}
+                    >
+                      {renamingFolderId === folder.id ? (
+                        <div className="flex items-center gap-1.5 px-3 py-1">
+                          <div className={cn('w-[18px] h-[18px] rounded-[4px] flex items-center justify-center shrink-0', getLabelColor(renameFolderName || folder.name))}>
+                            <FolderOpen className="w-2.5 h-2.5 text-white" />
+                          </div>
+                          <input
+                            ref={renameInputRef}
+                            value={renameFolderName}
+                            onChange={(e) => setRenameFolderName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleRenameFolder();
+                              if (e.key === 'Escape') { setRenamingFolderId(null); setRenameFolderName(''); }
+                            }}
+                            onBlur={() => { if (!savingRename) { setRenamingFolderId(null); setRenameFolderName(''); } }}
+                            disabled={savingRename}
+                            placeholder="Folder name…"
+                            className="flex-1 text-[13px] bg-transparent border-b border-border/60 focus:border-primary outline-none py-0.5 text-foreground placeholder:text-muted-foreground/40"
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <NavItem
+                            icon={FolderOpen}
+                            label={folder.name}
+                            unread={folder.unreadCount}
+                            active={activeFolderId === folder.id}
+                            onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
+                            iconBg={getLabelColor(folder.name)}
+                          />
+                          {(onDeleteFolder || onEmptyFolder || onRenameFolder) && (
+                            <button
+                              className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-all opacity-0 group-hover/folder:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setFolderMenu({ x: e.clientX, y: e.clientY, folder: { id: folder.id, name: folder.name } });
+                              }}
+                            >
+                              <MoreHorizontal className="w-3 h-3" />
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   ))}
@@ -433,6 +658,71 @@ export default function Sidebar({ folders = [], activeFolderId, onFolderSelect, 
 
       <GlobalConfirmDialog />
       <AppTour active={tourActive} onClose={() => setTourActive(false)} />
+
+      {/* GitHub-style empty folder confirmation dialog */}
+      <Dialog
+        open={!!emptyConfirmFolder}
+        onOpenChange={(open) => {
+          if (!open) { setEmptyConfirmFolder(null); setEmptyConfirmInput(''); }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Empty &ldquo;{emptyConfirmFolder?.name}&rdquo;?</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground pt-1">
+                <p>
+                  This action <strong className="text-foreground">cannot be undone</strong>. All messages
+                  in <strong className="text-foreground">{emptyConfirmFolder?.name}</strong> will be
+                  permanently deleted.
+                </p>
+                <p>
+                  Please type{' '}
+                  <strong className="text-foreground font-mono">{emptyConfirmFolder?.name}</strong>{' '}
+                  to confirm.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={emptyConfirmInput}
+            onChange={(e) => setEmptyConfirmInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && emptyConfirmInput === emptyConfirmFolder?.name) {
+                handleEmptyFolder();
+              }
+            }}
+            placeholder={emptyConfirmFolder?.name}
+            className="mt-1"
+          />
+          <DialogFooter className="mt-2">
+            <Button
+              variant="outline"
+              onClick={() => { setEmptyConfirmFolder(null); setEmptyConfirmInput(''); }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={emptyConfirmInput !== emptyConfirmFolder?.name || emptyingFolder}
+              onClick={handleEmptyFolder}
+            >
+              {emptyingFolder ? 'Emptying…' : 'Empty folder'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Folder context menu — position:fixed, same pattern as MailList */}
+      {folderMenu && (
+        <FolderContextMenu
+          state={folderMenu}
+          onClose={() => setFolderMenu(null)}
+          onRename={onRenameFolder ? openRenameInline : undefined}
+          onEmpty={onEmptyFolder ? openEmptyConfirm : undefined}
+          onDelete={onDeleteFolder ? (id, name) => { handleDeleteFolder(id, name); } : undefined}
+        />
+      )}
     </div>
   );
 }

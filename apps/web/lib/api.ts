@@ -330,6 +330,17 @@ export const api = {
       if (USE_MOCK) return delay({ success: true });
       return request<any>(`/mail/folders/${folderId}`, { method: 'DELETE' });
     },
+    emptyFolder: (folderId: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<any>(`/mail/folders/${folderId}/empty`, { method: 'POST' });
+    },
+    renameFolder: (folderId: string, name: string) => {
+      if (USE_MOCK) return delay({ id: folderId, name });
+      return request<any>(`/mail/folders/${folderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      });
+    },
     /**
      * Download an attachment and return a blob object-URL.
      * The caller must call URL.revokeObjectURL(url) when the download is done.
@@ -651,20 +662,24 @@ export const api = {
       return request<Doc[]>('/docs');
     },
     getOne: (id: string) => {
-      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, parentId: null, position: 0, isFavorite: false, tags: [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>(`/docs/${id}`);
     },
-    create: (data?: { title?: string; emoji?: string }) => {
-      if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: data?.title ?? 'Untitled', emoji: data?.emoji ?? null, position: 0, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    create: (data?: { title?: string; emoji?: string; parentId?: string; content?: string; tags?: string[] }) => {
+      if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: data?.title ?? 'Untitled', emoji: data?.emoji ?? null, parentId: data?.parentId ?? null, position: 0, isFavorite: false, tags: data?.tags ?? [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>('/docs', { method: 'POST', body: JSON.stringify(data ?? {}) });
     },
-    update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number }>) => {
-      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number; parentId: string | null; isFavorite: boolean; tags: string[]; coverColor: string | null }>) => {
+      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, parentId: null, position: 0, isFavorite: false, tags: [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>(`/docs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
     },
     delete: (id: string) => {
       if (USE_MOCK) return delay({ success: true });
       return request<{ success: boolean }>(`/docs/${id}`, { method: 'DELETE' });
+    },
+    toggleFavorite: (id: string) => {
+      if (USE_MOCK) return delay({ id, isFavorite: true });
+      return request<{ id: string; isFavorite: boolean }>(`/docs/${id}/favorite`, { method: 'PATCH' });
     },
     share: {
       enable:  (id: string) => request<{ shareToken: string; isShared: boolean }>(`/docs/${id}/share`, { method: 'POST' }),
@@ -684,7 +699,11 @@ export interface Doc {
   title: string;
   emoji: string | null;
   content?: string;
+  parentId: string | null;
   position: number;
+  isFavorite: boolean;
+  tags: string[];
+  coverColor: string | null;
   shareToken: string | null;
   isShared: boolean;
   createdAt: string;

@@ -369,17 +369,21 @@ model Document {
   title      String   @default("Untitled")
   content    String?  // TipTap JSON stringified
   emoji      String?  // Page icon
-  parentId   String?  // Reserved for Phase 2 nesting
+  parentId   String?  // Nested pages
   position   Int      @default(0)
   shareToken String?  @unique   // UUID; set when sharing is enabled
   isShared   Boolean  @default(false)
   yjsState   Bytes?               // Yjs encoded binary state for real-time collaboration
+  isFavorite Boolean  @default(false)
+  tags       String[] @default([])
+  coverColor String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([userId, isFavorite])
   @@map("documents")
 }
 

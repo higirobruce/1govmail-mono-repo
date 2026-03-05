@@ -160,6 +160,25 @@ export class MailController {
     return this.mailService.deleteFolder(req.user.sub, folderId);
   }
 
+  @Post('folders/:folderId/empty')
+  @HttpCode(HttpStatus.OK)
+  emptyFolder(
+    @Req() req: AuthenticatedRequest,
+    @Param('folderId') folderId: string,
+  ) {
+    return this.mailService.emptyFolder(req.user.sub, folderId);
+  }
+
+  @Patch('folders/:folderId')
+  @HttpCode(HttpStatus.OK)
+  renameFolder(
+    @Req() req: AuthenticatedRequest,
+    @Param('folderId') folderId: string,
+    @Body('name') name: string,
+  ) {
+    return this.mailService.renameFolder(req.user.sub, folderId, name);
+  }
+
   /**
    * Stream an attachment from Zimbra back to the client.
    * :part is the Zimbra MIME part number (e.g. "2" or "2.1").

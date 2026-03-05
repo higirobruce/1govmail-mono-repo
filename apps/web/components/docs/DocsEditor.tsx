@@ -40,6 +40,7 @@ interface DocsEditorProps {
   collaborationUser?: { name: string; color: string };
   coverColor?: string | null;
   tags?: string[];
+  editable?: boolean;
 }
 
 type SaveState = 'saved' | 'saving' | 'unsaved';
@@ -64,6 +65,7 @@ export function DocsEditor({
   onTitleSave,
   collaborationToken,
   coverColor,
+  editable = true,
 }: DocsEditorProps) {
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [synced, setSynced] = useState(false);
@@ -139,6 +141,7 @@ export function DocsEditor({
   // ── Editor ─────────────────────────────────────────────────────────────────
   const editor = useEditor({
     immediatelyRender: false,
+    editable,
     extensions: [
       StarterKit.configure({ codeBlock: false }),
       Collaboration.configure({ document: ydoc }),
@@ -159,7 +162,6 @@ export function DocsEditor({
       }),
     ],
     onUpdate({ editor: ed, transaction }) {
-      if (!syncedRef.current) return;
       if (isChangeOrigin(transaction)) return;
       setSaveState('unsaved');
       setWordCount(getWordCount(ed));
@@ -315,6 +317,13 @@ export function DocsEditor({
 
   return (
     <div className="flex flex-col h-full docs-print-area">
+      {/* Read-only banner */}
+      {!editable && (
+        <div className="shrink-0 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-400 print:hidden">
+          You have <strong>view-only</strong> access to this document.
+        </div>
+      )}
+
       {/* Cover band */}
       {coverColor && (
         <div className={cn('h-24 shrink-0 print:hidden', getCoverClass(coverColor))} />
@@ -330,10 +339,11 @@ export function DocsEditor({
                 <input
                   ref={titleRef}
                   defaultValue={title}
-                  onBlur={handleTitleBlur}
-                  onKeyDown={handleTitleKeyDown}
+                  readOnly={!editable}
+                  onBlur={editable ? handleTitleBlur : undefined}
+                  onKeyDown={editable ? handleTitleKeyDown : undefined}
                   placeholder="Untitled"
-                  className="flex-1 text-3xl font-bold outline-none bg-transparent placeholder:text-muted-foreground/40"
+                  className="flex-1 text-3xl font-bold outline-none bg-transparent placeholder:text-muted-foreground/40 read-only:cursor-default"
                 />
                 <div className="flex items-center gap-2 pt-2 shrink-0">
                   {/* TOC toggle */}

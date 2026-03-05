@@ -681,9 +681,22 @@ export const api = {
       if (USE_MOCK) return delay({ id, isFavorite: true });
       return request<{ id: string; isFavorite: boolean }>(`/docs/${id}/favorite`, { method: 'PATCH' });
     },
+    getSharedWithMe: () => {
+      if (USE_MOCK) return delay<InvitedDoc[]>([]);
+      return request<InvitedDoc[]>('/docs/shared-with-me');
+    },
     share: {
       enable:  (id: string) => request<{ shareToken: string; isShared: boolean }>(`/docs/${id}/share`, { method: 'POST' }),
       disable: (id: string) => request<{ shareToken: null; isShared: false }>(`/docs/${id}/share`, { method: 'DELETE' }),
+    },
+    invites: {
+      list: (docId: string) => request<DocInvite[]>(`/docs/${docId}/invites`),
+      add:  (docId: string, data: { email: string; role: 'VIEWER' | 'EDITOR' }) =>
+        request<DocInvite>(`/docs/${docId}/invites`, { method: 'POST', body: JSON.stringify(data) }),
+      updateRole: (docId: string, inviteId: string, role: 'VIEWER' | 'EDITOR') =>
+        request<DocInvite>(`/docs/${docId}/invites/${inviteId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+      remove: (docId: string, inviteId: string) =>
+        request<{ success: boolean }>(`/docs/${docId}/invites/${inviteId}`, { method: 'DELETE' }),
     },
   },
 
@@ -708,4 +721,32 @@ export interface Doc {
   isShared: boolean;
   createdAt: string;
   updatedAt: string;
+  /** Present when the requesting user is an invitee (not the owner) */
+  _invite?: { role: 'VIEWER' | 'EDITOR' };
+}
+
+export interface DocInvite {
+  id: string;
+  invitedEmail: string;
+  role: 'VIEWER' | 'EDITOR';
+  createdAt: string;
+  inviter?: { displayName: string | null; email: string };
+}
+
+export interface InvitedDoc {
+  id: string;
+  title: string;
+  emoji: string | null;
+  coverColor: string | null;
+  tags: string[];
+  isShared: boolean;
+  shareToken: string | null;
+  createdAt: string;
+  updatedAt: string;
+  _invite: {
+    id: string;
+    role: 'VIEWER' | 'EDITOR';
+    invitedByName: string;
+    invitedByEmail: string;
+  };
 }

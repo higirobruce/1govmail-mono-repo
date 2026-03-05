@@ -40,8 +40,23 @@ export function createCollabServer() {
           where: { id: documentName },
           select: { userId: true },
         });
-        if (!doc || doc.userId !== payload.sub) throw new Error('Forbidden');
-        return { userId: payload.sub };
+        if (!doc) throw new Error('Forbidden');
+
+        // Owner — full access
+        if (doc.userId === payload.sub) return { userId: payload.sub };
+
+        // Check invite — invitees (any role) may connect for real-time updates
+        const user = await prisma.user.findUnique({
+          where: { id: payload.sub },
+          select: { email: true },
+        });
+        if (!user) throw new Error('Forbidden');
+        const invite = await prisma.documentInvite.findUnique({
+          where: { documentId_invitedEmail: { documentId: documentName, invitedEmail: user.email } },
+          select: { role: true },
+        });
+        if (!invite) throw new Error('Forbidden');
+        return { userId: payload.sub, role: invite.role };
       }
 
       if (type === 'share') {

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
-import { api, type Doc } from '@/lib/api';
+import { api, type Doc, type InvitedDoc } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { DocsEditor } from '@/components/docs/DocsEditor';
@@ -54,6 +54,7 @@ export default function DocsPage() {
   );
 
   const [docs, setDocs]               = useState<Doc[]>([]);
+  const [sharedWithMe, setSharedWithMe] = useState<InvitedDoc[]>([]);
   const [selectedId, setSelectedId]   = useState<string | null>(null);
   const [activeDocs, setActiveDocs]   = useState<Doc | null>(null);
   const [loadingList, setLoadingList] = useState(true);
@@ -82,8 +83,12 @@ export default function DocsPage() {
   const loadDocs = useCallback(async () => {
     setLoadingList(true);
     try {
-      const data = await api.docs.getAll();
-      setDocs(data);
+      const [owned, shared] = await Promise.all([
+        api.docs.getAll(),
+        api.docs.getSharedWithMe(),
+      ]);
+      setDocs(owned);
+      setSharedWithMe(shared);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to load documents');
     } finally {
@@ -389,6 +394,39 @@ export default function DocsPage() {
                     />
                   </div>
                 )}
+
+                {/* Shared with me section */}
+                {sharedWithMe.length > 0 && !searchQuery && !activeTagFilter && (
+                  <div className="py-1">
+                    <div className="mx-2 mb-1.5 border-t border-border" />
+                    <div className="flex items-center gap-1 px-3 py-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Shared with me</span>
+                    </div>
+                    {sharedWithMe.map((doc) => (
+                      <div
+                        key={doc.id}
+                        className={cn(
+                          'flex items-center gap-2 px-3 py-1 mx-1 cursor-pointer hover:bg-muted/60 text-xs rounded-sm',
+                          selectedId === doc.id ? 'bg-muted text-foreground font-medium' : 'text-muted-foreground',
+                        )}
+                        onClick={() => void selectDoc(doc.id)}
+                      >
+                        <span className="shrink-0 w-4 text-center">
+                          {doc.emoji ?? '📄'}
+                        </span>
+                        <span className="flex-1 truncate">{doc.title || 'Untitled'}</span>
+                        <span className={cn(
+                          'text-[9px] px-1 py-0.5 rounded border shrink-0',
+                          doc._invite.role === 'VIEWER'
+                            ? 'bg-muted/60 border-border/60 text-muted-foreground'
+                            : 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400',
+                        )}>
+                          {doc._invite.role === 'VIEWER' ? 'Viewer' : 'Editor'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -547,6 +585,7 @@ export default function DocsPage() {
                 collaborationUser={collabUser}
                 coverColor={activeDocs.coverColor}
                 tags={activeDocs.tags}
+                editable={activeDocs._invite?.role !== 'VIEWER'}
               />
 
               <ShareDocDialog
@@ -558,6 +597,7 @@ export default function DocsPage() {
                 onShareChange={({ isShared, shareToken }) => {
                   setActiveDocs((prev) => prev ? { ...prev, isShared, shareToken } : prev);
                 }}
+                isOwner={!activeDocs._invite}
               />
             </>
           ) : (

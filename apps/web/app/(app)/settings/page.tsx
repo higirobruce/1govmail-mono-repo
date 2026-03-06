@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
-import { useThemeStore } from '@/stores/theme.store';
+import { useThemeStore, type FontSize } from '@/stores/theme.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
@@ -181,6 +181,38 @@ function ThemeSelector() {
           )}
         >
           {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Font size selector ─────────────────────────────────────────────────────────
+
+function FontSizeSelector() {
+  const { fontSize, setFontSize } = useThemeStore();
+  const options: { value: FontSize; label: string; hint: string }[] = [
+    { value: 'sm',      label: 'Small',    hint: 'A' },
+    { value: 'default', label: 'Default',  hint: 'A' },
+    { value: 'lg',      label: 'Large',    hint: 'A' },
+    { value: 'xl',      label: 'X-Large',  hint: 'A' },
+  ];
+  const hintSizes = ['text-[11px]', 'text-[13px]', 'text-[15px]', 'text-[17px]'];
+  return (
+    <div className="flex gap-2">
+      {options.map((opt, i) => (
+        <button
+          key={opt.value}
+          onClick={() => setFontSize(opt.value)}
+          className={cn(
+            'flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg border transition-all',
+            (fontSize ?? 'default') === opt.value
+              ? 'bg-primary/10 border-primary/40 text-primary'
+              : 'border-border/50 text-muted-foreground hover:border-border hover:text-foreground',
+          )}
+        >
+          <span className={cn('font-semibold leading-none', hintSizes[i])}>{opt.hint}</span>
+          <span className="text-[10px] mt-0.5">{opt.label}</span>
         </button>
       ))}
     </div>
@@ -1003,6 +1035,9 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
       <div className="divide-y divide-border/30 mb-6">
         <SettingRow label="Theme" description="Choose light, dark, or follow your system preference.">
           <ThemeSelector />
+        </SettingRow>
+        <SettingRow label="Font size" description="Adjust the text size across the entire app.">
+          <FontSizeSelector />
         </SettingRow>
       </div>
 

@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsEmail,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -33,4 +34,8 @@ export class SendMessageDto {
   @IsOptional()
   @IsString()
   replyToId?: string;
+
+  @IsOptional()
+  @IsIn(['r', 'w'])
+  replyType?: 'r' | 'w';
 }

@@ -524,6 +524,7 @@ export class MailService {
       subject: string;
       body: string;
       replyToId?: string;
+      replyType?: 'r' | 'w';
     },
     files: Express.Multer.File[] = [],
   ) {
@@ -555,22 +556,53 @@ export class MailService {
       cid: string;              // generated Content-ID (without angle brackets)
     }
 
+    this.logger.log(`[sendMessage] payload.body length: ${payload.body.length}`);
+
     const pendingImages: InlineImageInfo[] = [];
     // Strip data-zimbra-src while collecting — that attribute was only needed
     // for the round-trip save path and is meaningless in outgoing mail.
+    // Handle both double-quoted and single-quoted src attributes.
     let cleanBody = payload.body
-      .replace(/\s*data-zimbra-src="[^"]*"/gi, '')
+      .replace(/\s*data-zimbra-src=["'][^"']*["']/gi, '')
       .replace(
-        /src="(data:(image\/[^;]+);base64,([^"]{1,5000000}))"/gi,
-        (_m: string, dataUri: string, contentType: string, base64Data: string) => {
+        /src=(["'])(data:(image\/[^;]+);base64,([^"']{1,5000000}))\1/gi,
+        (_m: string, _q: string, dataUri: string, contentType: string, base64Data: string) => {
           const cid = `img${pendingImages.length}-${Date.now()}@govmail`;
           pendingImages.push({ dataUri, contentType, base64Data, cid });
           return `src="cid:${cid}"`;
         },
       );
 
-    // Step 2 — strip any remaining large data URIs (non-image or upload-failed).
-    cleanBody = cleanBody.replace(/src=["']data:[^"']{50000,}["']/gi, 'src=""');
+    this.logger.log(`[sendMessage] after step1: cleanBody.length=${cleanBody.length} pendingImages=${pendingImages.length} hasDataUri=${cleanBody.includes('data:')}`);
+
+    // Step 2 — strip ALL remaining data URIs unconditionally.
+    // Any data: URI that survived step 1 (wrong type, too large, or from
+    // quoted original content) must not be forwarded to Zimbra as-is.
+    cleanBody = cleanBody.replace(/src=["']data:[^"']*["']/gi, 'src=""');
+
+    this.logger.log(`[sendMessage] after step2: cleanBody.length=${cleanBody.length} hasDataUri=${cleanBody.includes('data:')}`);
+
+    // Step 2.5 — trim thread quote if body still exceeds Zimbra's SOAP request limit.
+    // Fallback for edge cases where the frontend didn't strip nested blockquotes
+    // (e.g., very large direct-parent email, plain-text fallback, etc.).
+    // Zimbra's zimbraSoapRequestMaxSize is 15,360,000 bytes; 12MB gives safe headroom.
+    const BODY_SAFE_LIMIT = 12 * 1024 * 1024;
+    if (cleanBody.length > BODY_SAFE_LIMIT) {
+      const sepMatch = /<br\/?>\s*<br\/?>\s*<div[^>]*color:\s*#999/i.exec(cleanBody);
+      if (sepMatch) {
+        cleanBody =
+          cleanBody.slice(0, sepMatch.index) +
+          '<p style="color:#999;font-size:11px;font-style:italic;">[Previous messages omitted — thread too large to quote]</p>';
+      } else {
+        const bqIdx = cleanBody.lastIndexOf('<blockquote');
+        if (bqIdx !== -1) {
+          cleanBody =
+            cleanBody.slice(0, bqIdx) +
+            '<p style="color:#999;font-size:11px;font-style:italic;">[Previous messages omitted — thread too large to quote]</p>';
+        }
+      }
+      this.logger.warn(`[sendMessage] Thread quote trimmed (backend fallback): body was ${cleanBody.length} chars after trim`);
+    }
 
     // Step 3 — upload each collected image to Zimbra and get an attachment ID.
     const inlineImageAids: Array<{ aid: string; cid: string; ct: string }> = [];

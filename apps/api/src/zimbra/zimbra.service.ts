@@ -159,8 +159,10 @@ export class ZimbraService {
     // Always re-throw our own NestJS exceptions as-is
     if (err instanceof HttpException) throw err;
 
-    // Parse a Zimbra SOAP fault from the axios error response body
-    const fault = err?.response?.data?.Body?.Fault;
+    // Parse a Zimbra SOAP fault from the axios error response body.
+    // Zimbra returns HTTP 500 for SOAP faults; the body is usually JSON with Body.Fault.
+    const responseData = err?.response?.data;
+    const fault = responseData?.Body?.Fault;
     if (fault) {
       const code: string = fault?.Detail?.Error?.Code ?? '';
       const text: string =
@@ -178,10 +180,20 @@ export class ZimbraService {
       throw new BadGatewayException(text);
     }
 
-    // Network error, timeout, TLS failure, etc.
-    this.logger.error(`[${context}] ${err.message}`);
+    // Log the raw response body so we can diagnose unparseable errors
+    if (responseData) {
+      const raw = typeof responseData === 'string'
+        ? responseData.slice(0, 800)
+        : JSON.stringify(responseData).slice(0, 800);
+      this.logger.error(`[${context}] HTTP ${err.response?.status} — response body: ${raw}`);
+    } else {
+      this.logger.error(`[${context}] ${err.message}`);
+    }
+
     throw new BadGatewayException(
-      `Could not reach the Zimbra server: ${err.message}`,
+      err.response?.status
+        ? `Zimbra server error (HTTP ${err.response.status})`
+        : `Could not reach the Zimbra server: ${err.message}`,
     );
   }
 
@@ -559,6 +571,8 @@ export class ZimbraService {
       subject: string;
       body: string;
       replyToId?: string;
+      /** 'r' = reply, 'w' = forward — marks the original message accordingly */
+      replyType?: 'r' | 'w';
     },
     csrfToken?: string,
     attachmentAids: string[] = [],
@@ -569,52 +583,58 @@ export class ZimbraService {
     const ccAddrs  = (payload.cc  ?? []).map((a) => ({ t: 'c', a }));
     const bccAddrs = (payload.bcc ?? []).map((a) => ({ t: 'b', a }));
 
-    // Build the top-level MIME part.
-    // When there are inline images (signature logos etc.) we use multipart/related
-    // so that recipients see the images embedded in the message body.
-    // The HTML part references each image by CID (src="cid:…") and each image
-    // is attached as a separate inline MIME part identified by that CID.
-    // Note: ci must NOT include angle brackets — Zimbra adds them when building
-    // the MIME Content-ID header.  The HTML src="cid:xxx" also has no brackets.
+    // HTML part — body:true tells Zimbra this is the display body.
+    // content must be a plain string (NOT { _content: "…" }) for Zimbra JSON SOAP.
     const htmlPart = {
       ct: 'text/html',
-      content: { _content: payload.body },
+      body: true,
+      content: payload.body,
     };
 
-    const topMp = inlineImageAids.length > 0
+    // If there are inline images (signature logos, pasted images) wrap in
+    // multipart/related so recipients see them embedded.  Each image is an
+    // already-uploaded attachment referenced by its CID.
+    // ci must NOT include angle brackets — Zimbra adds <…> itself.
+    const innerPart = inlineImageAids.length > 0
       ? {
           ct: 'multipart/related',
           mp: [
             htmlPart,
             ...inlineImageAids.map(({ aid, cid, ct }) => ({
-              ct,           // use the real image content type (image/gif, image/png, …)
+              ct,
               attach: { aid },
-              ci: cid,      // no angle brackets — Zimbra wraps in <…> itself
+              ci: cid,
               cd: 'inline',
             })),
           ],
         }
       : htmlPart;
 
-    try {
-      const res = await client.post('/service/soap', {
-        Body: {
-          SendMsgRequest: {
-            _jsns: 'urn:zimbraMail',
-            m: {
-              ...(payload.replyToId ? { origid: payload.replyToId } : {}),
-              e: [...toAddrs, ...ccAddrs, ...bccAddrs],
-              su: { _content: payload.subject },
-              mp: topMp,
-              // Attach pre-uploaded files by their Zimbra attachment IDs
-              ...(attachmentAids.length > 0
-                ? { attach: { aid: attachmentAids.join(',') } }
-                : {}),
-            },
+    const requestBody = {
+      Body: {
+        SendMsgRequest: {
+          _jsns: 'urn:zimbraMail',
+          m: {
+            ...(payload.replyToId  ? { origid: payload.replyToId }  : {}),
+            ...(payload.replyType  ? { rt: payload.replyType }      : {}),
+            e: [...toAddrs, ...ccAddrs, ...bccAddrs],
+            su: payload.subject,
+            mp: [innerPart],
+            ...(attachmentAids.length > 0
+              ? { attach: { aid: attachmentAids.join(',') } }
+              : {}),
           },
         },
-        Header: this.soapHeader(csrfToken),
-      });
+      },
+      Header: this.soapHeader(csrfToken),
+    };
+
+    this.logger.log(
+      `[sendMessage] outgoing SOAP: ${JSON.stringify(requestBody).slice(0, 2000)}`,
+    );
+
+    try {
+      const res = await client.post('/service/soap', requestBody);
       const sent = res.data?.Body?.SendMsgResponse?.m?.[0];
       return {
         zimbraId:       sent?.id  != null ? String(sent.id)  : '',
@@ -1075,7 +1095,7 @@ export class ZimbraService {
       ...(payload.id ? { id: payload.id } : {}),
       su: payload.subject ?? '',
       ...(e.length > 0 ? { e } : {}),
-      mp: [{ ct: 'text/html', content: { _content: payload.body ?? '' } }],
+      mp: [{ ct: 'text/html', body: true, content: payload.body ?? '' }],
     };
 
     try {

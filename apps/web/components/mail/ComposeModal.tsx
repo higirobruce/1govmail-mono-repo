@@ -251,9 +251,20 @@ function buildHtmlBody(userHtml: string, mode: ComposeMode, original?: ComposeMe
   // Strip document-level wrapper tags from the original body so that nesting
   // it inside a <blockquote> produces valid HTML and does not confuse the
   // greedy extractBodyContent() regex when the reply is later rendered.
-  const quoteContent = original.bodyHtml
+  // Strip data: URI images from the quoted content before sending.
+  // The original message's inline images (signatures, etc.) are already stored
+  // in Zimbra — embedding them as base64 in the reply body would create a
+  // massive payload and they don't need to be re-uploaded.
+  const rawQuote = original.bodyHtml
     ? stripHtmlDocWrapper(original.bodyHtml)
     : (original.bodyText ? `<pre style="font-family:inherit;white-space:pre-wrap;margin:0">${original.bodyText}</pre>` : '');
+  // Strip nested blockquotes (previous thread history) — only preserve the direct
+  // parent's new content. Nested <blockquote> elements are the older parts of the
+  // thread chain; including them causes exponential HTML growth across many replies.
+  // This matches how Gmail/Outlook handle multi-level reply threads.
+  const nestedBqStart = rawQuote.search(/<blockquote/i);
+  const directParentContent = nestedBqStart !== -1 ? rawQuote.slice(0, nestedBqStart) : rawQuote;
+  const quoteContent = directParentContent.replace(/src=["']data:[^"']*["']/gi, 'src=""');
   const quote = `<blockquote style="margin:4px 0 0 .8ex;border-left:2px solid #555;padding-left:1ex;color:#aaa;">${quoteContent}</blockquote>`;
   return `${userHtml}${header}${quote}`;
 }
@@ -583,7 +594,8 @@ export default function ComposeModal({
       ...(bcc.length > 0 ? { bcc } : {}),
       subject,
       body: finalBody,
-      ...(mode === 'reply' || mode === 'replyAll' ? { replyToId: originalMessage?.id } : {}),
+      ...(mode === 'reply' || mode === 'replyAll' ? { replyToId: originalMessage?.id, replyType: 'r' } : {}),
+      ...(mode === 'forward' ? { replyToId: originalMessage?.id, replyType: 'w' } : {}),
     };
 
     undoCancelledRef.current = false;

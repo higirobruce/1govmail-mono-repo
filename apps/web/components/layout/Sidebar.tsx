@@ -465,7 +465,7 @@ export default function Sidebar({
             return (
               <div
                 key={folder.id}
-                className="group/folder relative"
+                className="relative group/folderrow"
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setFolderMenu({ x: e.clientX, y: e.clientY, folder: { id: folder.id, name: folder.name, isSystem: true } });
@@ -480,7 +480,7 @@ export default function Sidebar({
                   iconBg={folder.iconBg}
                 />
                 <button
-                  className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-all opacity-0 group-hover/folder:opacity-100"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 pointer-events-none group-hover/folderrow:opacity-100 group-hover/folderrow:pointer-events-auto"
                   onClick={(e) => {
                     e.stopPropagation();
                     setFolderMenu({ x: e.clientX, y: e.clientY, folder: { id: folder.id, name: folder.name, isSystem: true } });
@@ -522,7 +522,7 @@ export default function Sidebar({
                   {customFolders.map((folder) => (
                     <div
                       key={folder.id}
-                      className="group/folder relative"
+                      className="relative group/folderrow"
                       onContextMenu={(e) => {
                         e.preventDefault();
                         if (renamingFolderId !== folder.id) {
@@ -561,7 +561,7 @@ export default function Sidebar({
                           />
                           {(onDeleteFolder || onEmptyFolder || onRenameFolder) && (
                             <button
-                              className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-all opacity-0 group-hover/folder:opacity-100"
+                              className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 pointer-events-none group-hover/folderrow:opacity-100 group-hover/folderrow:pointer-events-auto"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setFolderMenu({ x: e.clientX, y: e.clientY, folder: { id: folder.id, name: folder.name } });
@@ -713,7 +713,6 @@ export default function Sidebar({
         </DialogContent>
       </Dialog>
 
-      {/* Folder context menu — position:fixed, same pattern as MailList */}
       {folderMenu && (
         <FolderContextMenu
           state={folderMenu}

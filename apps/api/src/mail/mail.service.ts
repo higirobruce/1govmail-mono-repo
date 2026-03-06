@@ -325,6 +325,83 @@ export class MailService {
       return { conversationId: null, messages: [] };
     }
 
+    // Back-fill conversation messages not yet in the local DB by querying Zimbra.
+    // This ensures the full thread history is visible when a user was CC'd mid-thread
+    // or when older messages haven't been reached by the incremental folder sync yet.
+    try {
+      const user = await this.getUser(userId);
+
+      // Find zimbraIds already in the DB for this conversation to avoid re-fetching
+      const existing = await this.prisma.message.findMany({
+        where: { userId, conversationId: msg.conversationId },
+        select: { zimbraId: true },
+      });
+      const existingZimbraIds = new Set(existing.map((m) => m.zimbraId));
+
+      const { messages: zimbraMsgs } = await this.zimbra.searchMessages(
+        user.zimbraHost,
+        user.authToken!,
+        `conv:${msg.conversationId}`,
+        200,
+        0,
+        user.csrfToken ?? undefined,
+      );
+
+      // Build a folder zimbraId → DB folder map so we avoid per-message DB lookups
+      const folders = await this.prisma.folder.findMany({
+        where: { userId },
+        select: { id: true, zimbraId: true },
+      });
+      const folderByZimbraId = new Map(folders.map((f) => [f.zimbraId, f.id]));
+
+      for (const m of zimbraMsgs) {
+        const zimbraId = String(m.id);
+        if (existingZimbraIds.has(zimbraId)) continue; // already synced
+
+        try {
+          const fromAddr    = m.e?.find((e) => e.t === 'f');
+          const toAddrs     = (m.e ?? []).filter((e) => e.t === 't').map((e) => ({ email: e.a, name: e.d ?? null }));
+          const ccAddrs     = (m.e ?? []).filter((e) => e.t === 'c').map((e) => ({ email: e.a, name: e.d ?? null }));
+          const flags       = m.f ?? '';
+          const folderId    = folderByZimbraId.get(String(m.l));
+
+          if (!folderId) continue; // folder not yet synced — skip
+
+          await this.prisma.message.upsert({
+            where:  { userId_zimbraId: { userId, zimbraId } },
+            create: {
+              userId,
+              folderId,
+              zimbraId,
+              conversationId: msg.conversationId,
+              subject:        m.su  ?? null,
+              snippet:        m.fr  ?? null,
+              fromEmail:      fromAddr?.a ?? '',
+              fromName:       fromAddr?.d ?? null,
+              toRecipients:   toAddrs,
+              ccRecipients:   ccAddrs,
+              isRead:         !flags.includes('u'),
+              isStarred:       flags.includes('f'),
+              isDraft:         flags.includes('d'),
+              hasAttachments:  flags.includes('a'),
+              receivedAt:      new Date(m.d),
+            },
+            update: {
+              isRead:    !flags.includes('u'),
+              isStarred:  flags.includes('f'),
+              isDraft:    flags.includes('d'),
+              syncedAt:   new Date(),
+            },
+          });
+        } catch (err: any) {
+          this.logger.warn(`[getConversation] failed to upsert zimbraId=${m.id}: ${err?.message}`);
+        }
+      }
+    } catch (err: any) {
+      // Back-fill is best-effort — a Zimbra outage must not break the thread view
+      this.logger.warn(`[getConversation] Zimbra back-fill failed: ${err?.message}`);
+    }
+
     const messages = await this.prisma.message.findMany({
       where: { userId, conversationId: msg.conversationId },
       orderBy: { receivedAt: 'asc' },

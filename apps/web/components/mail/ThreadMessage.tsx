@@ -67,7 +67,7 @@ function extractBodyContent(html: string): string {
     .trim();
 }
 
-function EmailBodyFrame({ html, text }: { html: string | null; text: string | null }) {
+function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | null; text: string | null; stripQuotes?: boolean }) {
   const normalizeStyles =
     typeof window !== 'undefined'
       ? localStorage.getItem('1gov_normalize_email_styles') !== 'false'
@@ -88,10 +88,11 @@ function EmailBodyFrame({ html, text }: { html: string | null; text: string | nu
     if (!doc) return;
 
     // ── Strip quoted thread history ─────────────────────────────────────────
-    // In thread view the full history is shown as individual rows, so we remove
-    // embedded quoted content from each message body. We use DOM removal (not
-    // CSS display:none) because Zimbra and many clients use plain <div> blocks
-    // with inline styles that CSS selectors can't reliably target.
+    // When the thread has multiple messages, the full history is shown as
+    // individual rows so we remove embedded quoted content from each body.
+    // When there is only one message (e.g. user was CC'd mid-thread), the
+    // quoted content IS the history and must be preserved.
+    if (!stripQuotes) { resizeFrame(); return; }
 
     // Pass 1 — remove elements with known quote class/id
     [
@@ -336,6 +337,8 @@ interface Props {
   onToggleStar: () => void;
   /** Called when the user clicks a draft row to continue editing it */
   onOpenDraft?: (message: ThreadMessageMeta) => void;
+  /** When true, quoted history in the body is preserved (single-message threads) */
+  isOnlyMessage?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -350,6 +353,7 @@ export default function ThreadMessage({
   onDelete,
   onToggleStar,
   onOpenDraft,
+  isOnlyMessage = false,
 }: Props) {
   const [fullMessage, setFullMessage] = useState<any>(null);
   const [loadingBody, setLoadingBody] = useState(false);
@@ -534,7 +538,7 @@ export default function ThreadMessage({
             </div>
           ) : fullMessage ? (
             <div className="border-t border-border/10">
-              <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} />
+              <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} stripQuotes={!isOnlyMessage} />
             </div>
           ) : (
             <div className="px-4 py-4 text-[13px] text-muted-foreground/50">

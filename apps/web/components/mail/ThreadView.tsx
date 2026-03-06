@@ -679,6 +679,7 @@ export default function ThreadView({
                 key={msg.id}
                 message={msg}
                 isExpanded={!msg.isDraft && (expandAll || expandedId === msg.id)}
+                isOnlyMessage={threadMessages.length === 1}
                 onToggle={() => { if (!msg.isDraft) toggleMessage(msg.id); }}
                 onReply={(detail) => onComposeWith('reply', detail ?? msg)}
                 onReplyAll={(detail) => onComposeWith('replyAll', detail ?? msg)}

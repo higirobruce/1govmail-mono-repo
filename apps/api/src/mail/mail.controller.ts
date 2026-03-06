@@ -86,7 +86,7 @@ export class MailController {
    *  The JSON payload fields are carried as a single `payload` form field. */
   @Post('send-with-attachments')
   @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FilesInterceptor('attachments', 10))
+  @UseInterceptors(FilesInterceptor('attachments', 10, { limits: { fieldSize: 50 * 1024 * 1024 } }))
   sendMessageWithAttachments(
     @Req() req: AuthenticatedRequest,
     @Body('payload') payloadJson: string,

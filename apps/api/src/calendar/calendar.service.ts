@@ -14,6 +14,8 @@ export interface CalendarEventData {
   endAt: string;    // ISO string
   allDay?: boolean;
   attendees?: string[];
+  linkedMessageId?: string;
+  linkedSubject?: string;
 }
 
 @Injectable()
@@ -196,17 +198,19 @@ export class CalendarService {
     return this.prisma.calendarEvent.create({
       data: {
         userId,
-        zimbraId:    zimbraId || `local-${Date.now()}`,
-        title:       data.title,
-        description: data.description ?? null,
-        location:    data.location    ?? null,
+        zimbraId:        zimbraId || `local-${Date.now()}`,
+        title:           data.title,
+        description:     data.description ?? null,
+        location:        data.location    ?? null,
         startAt,
         endAt,
-        allDay:      data.allDay ?? false,
-        isRecurring: false,
-        organizer:   user.email,
-        attendees:   (data.attendees ?? []).map((a) => ({ email: a })) as any,
-        syncedAt:    new Date(),
+        allDay:          data.allDay ?? false,
+        isRecurring:     false,
+        organizer:       user.email,
+        attendees:       (data.attendees ?? []).map((a) => ({ email: a })) as any,
+        linkedMessageId: data.linkedMessageId ?? null,
+        linkedSubject:   data.linkedSubject   ?? null,
+        syncedAt:        new Date(),
       },
     });
   }
@@ -272,13 +276,15 @@ export class CalendarService {
     return this.prisma.calendarEvent.update({
       where: { id: eventId },
       data: {
-        title:       data.title,
-        description: data.description ?? null,
-        location:    data.location    ?? null,
+        title:           data.title,
+        description:     data.description ?? null,
+        location:        data.location    ?? null,
         startAt,
         endAt,
-        allDay:      data.allDay ?? false,
-        attendees:   (data.attendees ?? []).map((a) => ({ email: a })) as any,
+        allDay:          data.allDay ?? false,
+        attendees:       (data.attendees ?? []).map((a) => ({ email: a })) as any,
+        ...(data.linkedMessageId !== undefined && { linkedMessageId: data.linkedMessageId }),
+        ...(data.linkedSubject   !== undefined && { linkedSubject:   data.linkedSubject }),
         syncedAt:    new Date(),
       },
     });

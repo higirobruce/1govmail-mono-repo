@@ -218,10 +218,22 @@ function TaskCard({
           )}
 
           {task.linkedSubject && (
-            <span className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 max-w-[160px]">
-              <Link className="w-2.5 h-2.5 shrink-0" />
-              <span className="truncate">{task.linkedSubject}</span>
-            </span>
+            task.linkedMessageId ? (
+              <a
+                href={`/mail?open=${encodeURIComponent(task.linkedMessageId)}`}
+                title="Open linked email"
+                onClick={(e) => e.stopPropagation()}
+                className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 max-w-[160px] hover:bg-amber-200 dark:hover:bg-amber-800/50 transition-colors"
+              >
+                <Link className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">{task.linkedSubject}</span>
+              </a>
+            ) : (
+              <span className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 max-w-[160px]">
+                <Link className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">{task.linkedSubject}</span>
+              </span>
+            )
           )}
 
           {subtasksTotal > 0 && (

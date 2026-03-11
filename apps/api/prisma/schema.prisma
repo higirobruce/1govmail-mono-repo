@@ -429,6 +429,8 @@ model CalendarEvent {
   attendees       Json     @default("[]")
   calendarName    String?
   color           String?
+  linkedMessageId String?
+  linkedSubject   String?
   syncedAt        DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

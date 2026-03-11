@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { formatDistanceToNowStrict, parseISO, startOfDay, subDays } from 'date-fns';
-import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X } from 'lucide-react';
+import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Message {
@@ -26,7 +26,7 @@ interface FolderItem {
 }
 
 export interface ContextAction {
-  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'snooze' | 'mute' | 'print';
+  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'createEvent' | 'snooze' | 'mute' | 'print';
   messageId: string;
   targetFolderId?: string;
 }
@@ -207,7 +207,8 @@ function ContextMenu({
         : item(Star,       'Star',           'star')}
       {item(AlarmClock, 'Snooze',         'snooze')}
       {item(BellOff,    isMuted ? 'Unmute conversation' : 'Mute conversation', 'mute')}
-      {item(ListTodo,   'Create Task',    'createTask')}
+      {item(ListTodo,     'Create Task',    'createTask')}
+      {item(CalendarPlus, 'Create Event',   'createEvent')}
       {labelFolders.length > 0 && (
         <>
           <div className="my-1 h-px bg-border/40" />

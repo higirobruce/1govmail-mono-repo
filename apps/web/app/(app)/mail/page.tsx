@@ -111,6 +111,17 @@ export default function MailPage() {
   // ── Create-task-from-email state ───────────────────────────────────────────
   const [createTaskPrefill, setCreateTaskPrefill] = useState<{ linkedMessageId: string; linkedSubject: string } | null>(null);
 
+  // ── Deep-link: open specific message via ?open=<messageId> ────────────────
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated || !activeFolderId) return;
+    const params = new URLSearchParams(window.location.search);
+    const openId = params.get('open');
+    if (!openId) return;
+    // Clean up the URL without navigating
+    window.history.replaceState({}, '', window.location.pathname);
+    openMessage(openId);
+  }, [hydrated, isAuthenticated, activeFolderId]); // eslint-disable-line
+
   // ── Compose state ──────────────────────────────────────────────────────────
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeMode, setComposeMode] = useState<ComposeMode>('new');
@@ -442,6 +453,15 @@ export default function MailPage() {
 
     if (type === 'createTask') {
       setCreateTaskPrefill({ linkedMessageId: messageId, linkedSubject: msg.subject ?? '' });
+      return;
+    }
+
+    if (type === 'createEvent') {
+      const params = new URLSearchParams({
+        createFromEmail: messageId,
+        subject: msg.subject ?? '',
+      });
+      router.push(`/calendar?${params.toString()}`);
       return;
     }
 

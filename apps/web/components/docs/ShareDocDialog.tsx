@@ -38,9 +38,9 @@ export function ShareDocDialog({
   const [tab, setTab]       = useState<Tab>('invite');
   const [loading, setLoading] = useState(false);
 
-  const shareUrl = shareToken
-    ? `${typeof window !== 'undefined' ? window.location.origin : ''}/docs/share/${shareToken}`
-    : '';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '') ||
+    (typeof window !== 'undefined' ? window.location.origin : '');
+  const shareUrl = shareToken ? `${baseUrl}/docs/share/${shareToken}` : '';
 
   const handleToggle = async () => {
     setLoading(true);

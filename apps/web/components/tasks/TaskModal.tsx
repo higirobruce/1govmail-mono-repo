@@ -26,7 +26,7 @@ import {
 import { toast } from 'sonner';
 import {
   Loader2, Check, X, User, Mail,
-  Plus, Trash2, Square, CheckSquare, MessageSquare,
+  Plus, Trash2, Square, CheckSquare, MessageSquare, ExternalLink,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -670,13 +670,24 @@ export default function TaskModal({
               )}
             </div>
 
-            <Field label="Linked email subject">
-              <Input
-                value={form.linkedSubject}
-                onChange={(e) => set('linkedSubject')(e.target.value)}
-                placeholder="Paste or type the email subject…"
-                className="h-9 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
-              />
+            <Field label="Linked email">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={form.linkedSubject}
+                  onChange={(e) => set('linkedSubject')(e.target.value)}
+                  placeholder="Paste or type the email subject…"
+                  className="h-9 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20 flex-1 min-w-0"
+                />
+                {form.linkedMessageId && (
+                  <a
+                    href={`/mail?open=${encodeURIComponent(form.linkedMessageId)}`}
+                    title="Open linked email"
+                    className="shrink-0 h-9 w-9 flex items-center justify-center rounded-md border border-border/50 bg-muted/30 text-muted-foreground/60 hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-colors"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+              </div>
             </Field>
 
             {/* Assignee section */}

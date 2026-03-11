@@ -18,7 +18,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
   Clock, MapPin, Calendar as CalendarIcon, Trash2, Users,
   Video, Repeat, ExternalLink, Pencil, CheckCircle2,
-  HelpCircle, XCircle, Menu,
+  HelpCircle, XCircle, Menu, Mail,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth,
@@ -52,6 +52,8 @@ interface CalEvent {
   isRecurring: boolean;
   organizer: string | null;
   attendees: Array<{ email: string; name?: string; ptst?: string }>;
+  linkedMessageId?: string | null;
+  linkedSubject?: string | null;
 }
 
 type CalView = 'day' | 'workweek' | 'week' | 'month' | 'year' | 'agenda';
@@ -313,7 +315,7 @@ function CreateEventModal({
 }: {
   initialDate?: Date;
   initialData?: CalEvent;
-  prefillData?: { title?: string; description?: string };
+  prefillData?: { title?: string; description?: string; linkedMessageId?: string; linkedSubject?: string };
   isEdit?: boolean;
   onClose: () => void;
   onCreated: (event: CalEvent) => void;
@@ -338,6 +340,10 @@ function CreateEventModal({
   );
   const [saving, setSaving]     = useState(false);
 
+  // Linked email (from email context action or existing event)
+  const linkedMessageId = prefillData?.linkedMessageId ?? initialData?.linkedMessageId ?? null;
+  const linkedSubject   = prefillData?.linkedSubject   ?? initialData?.linkedSubject   ?? null;
+
   const handleSave = async () => {
     if (!title.trim()) { toast.error('Title is required'); return; }
     setSaving(true);
@@ -357,6 +363,8 @@ function CreateEventModal({
         endAt: endIso,
         allDay,
         attendees: attendees.length > 0 ? attendees : undefined,
+        linkedMessageId: linkedMessageId ?? undefined,
+        linkedSubject:   linkedSubject   ?? undefined,
       };
 
       if (isEdit && initialData) {
@@ -431,6 +439,19 @@ function CreateEventModal({
                 placeholder="Add description" className="h-8 text-sm bg-muted/30 border-border/50" />
             </div>
             <AttendeePicker attendees={attendees} onChange={setAttendees} />
+            {linkedMessageId && linkedSubject && (
+              <div>
+                <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Linked email</Label>
+                <a
+                  href={`/mail?open=${encodeURIComponent(linkedMessageId)}`}
+                  className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs hover:bg-amber-100 dark:hover:bg-amber-800/30 transition-colors"
+                >
+                  <Mail className="w-3.5 h-3.5 shrink-0" />
+                  <span className="flex-1 truncate">{linkedSubject}</span>
+                  <ExternalLink className="w-3 h-3 shrink-0 opacity-60" />
+                </a>
+              </div>
+            )}
           </div>
         </ScrollArea>
         <div className="flex justify-end gap-2 px-5 py-3 border-t border-border/40 shrink-0">
@@ -1506,6 +1527,21 @@ function EventDetailPanel({
             </div>
           )}
 
+          {/* Linked source email */}
+          {event.linkedMessageId && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Source email</p>
+              <a
+                href={`/mail?open=${encodeURIComponent(event.linkedMessageId)}`}
+                className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs hover:bg-amber-100 dark:hover:bg-amber-800/30 transition-colors"
+              >
+                <Mail className="w-3.5 h-3.5 shrink-0" />
+                <span className="flex-1 truncate">{event.linkedSubject ?? 'View email'}</span>
+                <ExternalLink className="w-3 h-3 shrink-0 opacity-60" />
+              </a>
+            </div>
+          )}
+
           {/* Organizer */}
           {event.organizer && (
             <div>
@@ -1608,7 +1644,7 @@ export default function CalendarPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createForDay, setCreateForDay]  = useState<Date | undefined>();
   const [editingEvent, setEditingEvent]  = useState<CalEvent | null>(null);
-  const [dragPrefill, setDragPrefill] = useState<{ title?: string; description?: string } | null>(null);
+  const [dragPrefill, setDragPrefill] = useState<{ title?: string; description?: string; linkedMessageId?: string; linkedSubject?: string } | null>(null);
   const [deleting, setDeleting]     = useState(false);
 
   // Availability
@@ -1662,6 +1698,18 @@ export default function CalendarPage() {
     if (!hydrated || !isAuthenticated) return;
     loadEvents(rangeStart, rangeEnd);
   }, [hydrated, isAuthenticated, rangeStart.toISOString(), rangeEnd.toISOString()]); // eslint-disable-line
+
+  // Open create modal when navigating from mail with ?createFromEmail=<id>&subject=<subject>
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated) return;
+    const params = new URLSearchParams(window.location.search);
+    const createFromEmail = params.get('createFromEmail');
+    if (!createFromEmail) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    const subject = params.get('subject') ?? '';
+    setDragPrefill({ title: subject, linkedMessageId: createFromEmail, linkedSubject: subject });
+    setShowCreate(true);
+  }, [hydrated, isAuthenticated]); // eslint-disable-line
 
   // When an event is selected, fetch full details from Zimbra (complete attendee list)
   useEffect(() => {

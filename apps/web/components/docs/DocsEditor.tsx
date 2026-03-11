@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
+import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
@@ -17,7 +18,11 @@ import { Toggle } from './extensions/Toggle';
 import { DatabaseView } from './extensions/DatabaseView';
 import { CodeBlockLowlight } from './extensions/CodeBlockLowlight';
 import { TableOfContents } from './TableOfContents';
-import { Check, Loader2, PanelRight, X } from 'lucide-react';
+import {
+  Check, Loader2, PanelRight, X,
+  ArrowDownToLine, ArrowUpToLine, ArrowRightToLine, ArrowLeftToLine,
+  Trash2, Columns2, Rows3,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import {
@@ -431,6 +436,84 @@ export function DocsEditor({
           </div>
         )}
       </div>
+
+      {/* Table bubble menu */}
+      {editable && (
+        <BubbleMenu
+          editor={editor}
+          shouldShow={({ editor: ed }) => ed.isActive('table') || ed.isActive('tableCell') || ed.isActive('tableHeader')}
+          options={{ placement: 'top', offset: 8 }}
+          className="flex items-center gap-0.5 rounded-lg border border-border bg-popover shadow-lg p-1"
+        >
+          {/* Row actions */}
+          <span className="text-[10px] text-muted-foreground/50 px-1 font-medium select-none">Row</span>
+          <button
+            type="button"
+            title="Add row above"
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().addRowBefore().run(); }}
+            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowUpToLine className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            title="Add row below"
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().addRowAfter().run(); }}
+            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowDownToLine className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            title="Delete row"
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().deleteRow().run(); }}
+            className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-muted-foreground hover:text-red-500 transition-colors"
+          >
+            <Rows3 className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="w-px h-5 bg-border mx-0.5" />
+
+          {/* Column actions */}
+          <span className="text-[10px] text-muted-foreground/50 px-1 font-medium select-none">Col</span>
+          <button
+            type="button"
+            title="Add column before"
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().addColumnBefore().run(); }}
+            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeftToLine className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            title="Add column after"
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().addColumnAfter().run(); }}
+            className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowRightToLine className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            title="Delete column"
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().deleteColumn().run(); }}
+            className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-muted-foreground hover:text-red-500 transition-colors"
+          >
+            <Columns2 className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="w-px h-5 bg-border mx-0.5" />
+
+          {/* Delete table */}
+          <button
+            type="button"
+            title="Delete table"
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().deleteTable().run(); }}
+            className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-muted-foreground hover:text-red-500 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </BubbleMenu>
+      )}
 
       {/* Slash command floating menu */}
       {slashMenu && (

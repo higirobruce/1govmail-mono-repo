@@ -65,6 +65,7 @@ export interface ComposeMessage {
   bodyHtml: string | null;
   bodyText: string | null;
   receivedAt: string;
+  attachments?: Array<{ id: string; filename: string; mimeType: string; size: number }>;
 }
 
 interface ComposeModalProps {
@@ -389,6 +390,9 @@ export default function ComposeModal({
 
   // ── Attachments ────────────────────────────────────────────────────────────
   const [attachments, setAttachments] = useState<File[]>([]);
+  // Attachments from the original message carried forward (forward mode only).
+  // Stored as { id (part), filename, mimeType, size } referencing the original msg.
+  const [forwardedAttachments, setForwardedAttachments] = useState<Array<{ id: string; filename: string; mimeType: string; size: number }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
 
@@ -472,6 +476,7 @@ export default function ComposeModal({
     setError(null);
     setSending(false);
     setAttachments([]);
+    setForwardedAttachments([]);
     setSavedDraftId(initialDraftZimbraId ?? null);
     setDraftStatus('idle');
     setMinimised(false);
@@ -509,9 +514,11 @@ export default function ComposeModal({
       setShowCcBcc(ccList.length > 0);
       setSubject(origSubject.match(/^Re:/i) ? origSubject : `Re: ${origSubject}`);
     } else if (mode === 'forward') {
-      setTo([]); setCc([]); setBcc([]);
+      const ccList = originalMessage.ccRecipients.map((r) => r.email).filter((e) => e !== selfEmail);
+      setTo([]); setCc(ccList); setBcc([]);
       setSubject(origSubject.match(/^Fwd:/i) ? origSubject : `Fwd: ${origSubject}`);
-      setShowCcBcc(false);
+      setShowCcBcc(ccList.length > 0);
+      setForwardedAttachments(originalMessage.attachments ?? []);
     }
 
     editor?.commands.setContent('<p></p>');
@@ -596,6 +603,9 @@ export default function ComposeModal({
       body: finalBody,
       ...(mode === 'reply' || mode === 'replyAll' ? { replyToId: originalMessage?.id, replyType: 'r' } : {}),
       ...(mode === 'forward' ? { replyToId: originalMessage?.id, replyType: 'w' } : {}),
+      ...(mode === 'forward' && forwardedAttachments.length > 0
+        ? { forwardedAttachments: forwardedAttachments.map((a) => ({ mid: originalMessage!.id, part: a.id })) }
+        : {}),
     };
 
     undoCancelledRef.current = false;
@@ -742,10 +752,23 @@ export default function ComposeModal({
           </div>
 
           {/* ── Attachment pills ── */}
-          {attachments.length > 0 && (
+          {(attachments.length > 0 || forwardedAttachments.length > 0) && (
             <div className="flex flex-wrap gap-1.5 px-5 py-2 border-b border-border/30 bg-muted/10">
+              {/* Forwarded attachments from original message */}
+              {forwardedAttachments.map((att, i) => (
+                <span key={`fwd-${i}`} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 border border-primary/30 text-xs rounded-full max-w-[200px]">
+                  <Paperclip className="w-3 h-3 text-primary/60 shrink-0" />
+                  <span className="truncate">{att.filename}</span>
+                  {att.size > 0 && <span className="text-muted-foreground/40 shrink-0">({formatFileSize(att.size)})</span>}
+                  <button type="button" onClick={() => setForwardedAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    className="text-muted-foreground/60 hover:text-destructive leading-none shrink-0">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+              {/* Newly added attachments */}
               {attachments.map((file, i) => (
-                <span key={i} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-muted/50 border border-border/50 text-xs rounded-full max-w-[200px]">
+                <span key={`new-${i}`} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-muted/50 border border-border/50 text-xs rounded-full max-w-[200px]">
                   <Paperclip className="w-3 h-3 text-muted-foreground/60 shrink-0" />
                   <span className="truncate">{file.name}</span>
                   <span className="text-muted-foreground/40 shrink-0">({formatFileSize(file.size)})</span>

@@ -577,6 +577,7 @@ export class ZimbraService {
     csrfToken?: string,
     attachmentAids: string[] = [],
     inlineImageAids: Array<{ aid: string; cid: string; ct: string }> = [],
+    forwardedAttachments: Array<{ mid: string; part: string }> = [],
   ): Promise<{ zimbraId: string; conversationId: string | null }> {
     const client = this.buildClient(host, authToken, csrfToken);
     const toAddrs  = payload.to.map((a) => ({ t: 't', a }));
@@ -620,8 +621,15 @@ export class ZimbraService {
             e: [...toAddrs, ...ccAddrs, ...bccAddrs],
             su: payload.subject,
             mp: [innerPart],
-            ...(attachmentAids.length > 0
-              ? { attach: { aid: attachmentAids.join(',') } }
+            ...((attachmentAids.length > 0 || forwardedAttachments.length > 0)
+              ? {
+                  attach: {
+                    ...(attachmentAids.length > 0 ? { aid: attachmentAids.join(',') } : {}),
+                    ...(forwardedAttachments.length > 0
+                      ? { mp: forwardedAttachments.map((a) => ({ mid: a.mid, part: a.part })) }
+                      : {}),
+                  },
+                }
               : {}),
           },
         },

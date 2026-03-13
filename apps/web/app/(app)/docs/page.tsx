@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
@@ -11,14 +11,25 @@ import { DocsEditor } from '@/components/docs/DocsEditor';
 import { DocTree } from '@/components/docs/DocTree';
 import { TemplatePickerDialog } from '@/components/docs/TemplatePickerDialog';
 import { ShareDocDialog } from '@/components/docs/ShareDocDialog';
-import { DocCoverPicker } from '@/components/docs/DocCoverPicker';
+import { COVER_OPTIONS } from '@/components/docs/DocCoverPicker';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import {
   Plus, BookOpen, Share2, Menu, ChevronLeft,
-  Search, Star, Tag, Download, X, Check,
+  Search, Star, Tag, Download, X, Check, MoreHorizontal, Palette,
 } from 'lucide-react';
 import { cn, getUserColor } from '@/lib/utils';
+import { exportAsPdf, exportAsMarkdown, exportAsDocx } from '@/lib/docExport';
 
 const GOV_TAGS = [
   { label: 'Unclassified',     cls: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800' },
@@ -27,10 +38,6 @@ const GOV_TAGS = [
   { label: 'Confidential',     cls: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800' },
 ] as const;
 
-function getTagStyle(tag: string) {
-  return GOV_TAGS.find((t) => t.label === tag)?.cls
-    ?? 'bg-muted text-muted-foreground border-border';
-}
 
 export default function DocsPage() {
   const router = useRouter();
@@ -205,10 +212,27 @@ export default function DocsPage() {
     }
   }, [activeDocs]);
 
-  // Export to PDF
-  const handleExport = useCallback(() => {
-    window.print();
-  }, []);
+  // Tracks the latest editor content without triggering re-renders
+  const liveContentRef = useRef<string | null | undefined>(null);
+  useEffect(() => { liveContentRef.current = activeDocs?.content; }, [activeDocs]);
+
+  const [exporting, setExporting] = useState<string | null>(null);
+
+  const handleExport = useCallback(async (format: 'pdf' | 'md' | 'docx') => {
+    if (!activeDocs || exporting) return;
+    setExporting(format);
+    try {
+      const title = activeDocs.title || 'Untitled';
+      const content = liveContentRef.current;
+      if (format === 'pdf')  await exportAsPdf(title, content);
+      if (format === 'md')   await exportAsMarkdown(title, content);
+      if (format === 'docx') await exportAsDocx(title, content);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(null);
+    }
+  }, [activeDocs, exporting]);
 
   // Filtered docs for the sidebar list (search + tag filter)
   const filteredDocs = useMemo(() => {
@@ -242,15 +266,6 @@ export default function DocsPage() {
 
   return (
     <>
-      {/* Print styles */}
-      <style>{`
-        @media print {
-          body > * { display: none !important; }
-          .docs-print-area { display: block !important; }
-          .docs-print-area * { display: revert; }
-        }
-      `}</style>
-
       <div className="flex h-screen overflow-hidden bg-background">
         <Sidebar
           folders={[]}
@@ -471,7 +486,7 @@ export default function DocsPage() {
               <div className="flex items-center gap-1 px-4 py-1.5 border-b border-border shrink-0">
                 {/* Breadcrumb */}
                 {breadcrumb && breadcrumb.length > 0 && (
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground mr-2 hidden md:flex">
+                  <div className="hidden md:flex items-center gap-1 text-xs text-muted-foreground mr-2">
                     {breadcrumb.map((b, i) => (
                       <span key={b.id} className="flex items-center gap-1">
                         {i > 0 && <span>/</span>}
@@ -490,89 +505,105 @@ export default function DocsPage() {
 
                 <div className="flex-1" />
 
-                {/* Tag chips */}
-                {(activeDocs.tags ?? []).length > 0 && (
-                  <div className="flex gap-1 items-center mr-1">
-                    {activeDocs.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className={cn(
-                          'text-[10px] px-1.5 py-0.5 rounded border font-medium',
-                          getTagStyle(tag),
-                        )}
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Tag picker */}
-                <div className="relative group">
-                  <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground h-7 px-2">
-                    <Tag className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Tags</span>
-                  </Button>
-                  <div className="absolute right-0 top-8 z-50 hidden group-focus-within:block hover:block w-52 rounded-md border border-border bg-popover shadow-md p-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Classification</p>
-                    {GOV_TAGS.map((t) => {
-                      const active = activeDocs.tags?.includes(t.label);
-                      return (
-                        <button
-                          key={t.label}
-                          type="button"
-                          onClick={() => void handleTagToggle(t.label)}
-                          className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-xs hover:bg-muted text-left"
-                        >
-                          <span className={cn('w-3.5 h-3.5 flex items-center justify-center rounded border text-[9px]', active ? t.cls : 'border-border')}>
-                            {active && <Check className="w-2.5 h-2.5" />}
-                          </span>
-                          {t.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Cover picker */}
-                <DocCoverPicker
-                  value={activeDocs.coverColor}
-                  onChange={(color) => void handleCoverChange(color)}
-                />
-
-                {/* Favorite */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={cn('h-7 w-7 p-0', activeDocs.isFavorite ? 'text-amber-400' : 'text-muted-foreground')}
-                  title={activeDocs.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                  onClick={() => void handleFavorite(activeDocs.id)}
-                >
-                  <Star className={cn('w-3.5 h-3.5', activeDocs.isFavorite && 'fill-amber-400')} />
-                </Button>
-
-                {/* Export */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="gap-1.5 text-muted-foreground h-7 px-2"
-                  title="Export as PDF"
-                  onClick={handleExport}
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Export</span>
-                </Button>
-
                 {/* Share */}
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-1.5 h-7"
+                  className="gap-1.5 h-7 text-xs"
                   onClick={() => setShareDialogOpen(true)}
                 >
                   <Share2 className="w-3.5 h-3.5" />
                   Share
                 </Button>
+
+                {/* More options */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground">
+                      <MoreHorizontal className="w-4 h-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-52">
+                    <DropdownMenuItem onClick={() => void handleFavorite(activeDocs.id)}>
+                      <Star className={cn('w-3.5 h-3.5 mr-2 shrink-0', activeDocs.isFavorite && 'fill-amber-400 text-amber-400')} />
+                      {activeDocs.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    </DropdownMenuItem>
+
+                    <DropdownMenuSeparator />
+
+                    {/* Tags sub-menu */}
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <Tag className="w-3.5 h-3.5 mr-2 shrink-0" />
+                        Tags
+                        {(activeDocs.tags ?? []).length > 0 && (
+                          <span className="ml-auto text-[10px] text-muted-foreground">{activeDocs.tags.length}</span>
+                        )}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {GOV_TAGS.map((t) => {
+                          const active = activeDocs.tags?.includes(t.label);
+                          return (
+                            <DropdownMenuItem key={t.label} onClick={() => void handleTagToggle(t.label)}>
+                              <span className={cn('w-3 h-3 mr-2 shrink-0 rounded-sm border flex items-center justify-center', active ? t.cls : 'border-border')}>
+                                {active && <Check className="w-2 h-2" />}
+                              </span>
+                              {t.label}
+                            </DropdownMenuItem>
+                          );
+                        })}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+
+                    {/* Cover sub-menu */}
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <Palette className="w-3.5 h-3.5 mr-2 shrink-0" />
+                        Cover
+                        {activeDocs.coverColor && (
+                          <span className={cn('ml-auto w-3 h-3 rounded-sm', `bg-${activeDocs.coverColor}-600`)} />
+                        )}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        <div className="grid grid-cols-4 gap-1 p-1">
+                          {COVER_OPTIONS.map((c) => (
+                            <button
+                              key={c.id}
+                              type="button"
+                              title={c.label}
+                              onClick={() => void handleCoverChange(c.value)}
+                              className={cn(
+                                'w-8 h-8 rounded border-2 transition-all',
+                                c.cls,
+                                activeDocs.coverColor === c.value ? 'border-foreground scale-110' : 'border-transparent hover:scale-105',
+                              )}
+                            />
+                          ))}
+                        </div>
+                        {activeDocs.coverColor && (
+                          <DropdownMenuItem onClick={() => void handleCoverChange(null)}>
+                            <X className="w-3.5 h-3.5 mr-2" /> Remove cover
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+
+                    <DropdownMenuSeparator />
+
+                    <DropdownMenuItem disabled={!!exporting} onClick={() => void handleExport('pdf')}>
+                      <Download className="w-3.5 h-3.5 mr-2 shrink-0" />
+                      {exporting === 'pdf' ? 'Exporting…' : 'Export as PDF'}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!!exporting} onClick={() => void handleExport('md')}>
+                      <Download className="w-3.5 h-3.5 mr-2 shrink-0" />
+                      {exporting === 'md' ? 'Exporting…' : 'Export as Markdown'}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!!exporting} onClick={() => void handleExport('docx')}>
+                      <Download className="w-3.5 h-3.5 mr-2 shrink-0" />
+                      {exporting === 'docx' ? 'Exporting…' : 'Export as Word'}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
 
               <DocsEditor
@@ -581,6 +612,7 @@ export default function DocsPage() {
                 initialContent={activeDocs.content}
                 title={activeDocs.title}
                 onTitleChange={handleTitleChange}
+                onContentChange={(c) => { liveContentRef.current = c; }}
                 collaborationToken={collabToken}
                 collaborationUser={collabUser}
                 coverColor={activeDocs.coverColor}

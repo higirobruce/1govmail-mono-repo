@@ -41,6 +41,7 @@ interface DocsEditorProps {
   title: string;
   onTitleChange: (title: string) => void;
   onTitleSave?: (title: string) => Promise<void>;
+  onContentChange?: (content: string) => void;
   collaborationToken: string;
   collaborationUser?: { name: string; color: string };
   coverColor?: string | null;
@@ -68,6 +69,7 @@ export function DocsEditor({
   title,
   onTitleChange,
   onTitleSave,
+  onContentChange,
   collaborationToken,
   coverColor,
   editable = true,
@@ -170,9 +172,11 @@ export function DocsEditor({
       if (isChangeOrigin(transaction)) return;
       setSaveState('unsaved');
       setWordCount(getWordCount(ed));
+      const json = JSON.stringify(ed.getJSON());
+      onContentChange?.(json);
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
-        void persistContent(JSON.stringify(ed.getJSON()));
+        void persistContent(json);
       }, 500);
     },
   });

@@ -1,4 +1,10 @@
-import { randomUUID } from 'crypto';
+import { randomBytes } from 'crypto';
+
+function shortToken(): string {
+  const CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const bytes = randomBytes(6);
+  return Array.from(bytes, (b) => CHARS[b % CHARS.length]).join('');
+}
 import {
   ConflictException,
   ForbiddenException,
@@ -156,7 +162,7 @@ export class DocsService {
 
   async enableSharing(userId: string, id: string) {
     await this.verifyOwnership(userId, id);
-    const shareToken = randomUUID();
+    const shareToken = shortToken();
     return this.prisma.document.update({
       where: { id },
       data: { shareToken, isShared: true },

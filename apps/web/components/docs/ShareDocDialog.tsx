@@ -40,7 +40,7 @@ export function ShareDocDialog({
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '') ||
     (typeof window !== 'undefined' ? window.location.origin : '');
-  const shareUrl = shareToken ? `${baseUrl}/docs/share/${shareToken}` : '';
+  const shareUrl = shareToken ? `${baseUrl}/d/${shareToken}` : '';
 
   const handleToggle = async () => {
     setLoading(true);

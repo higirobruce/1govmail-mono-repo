@@ -525,6 +525,7 @@ export class MailService {
       body: string;
       replyToId?: string;
       replyType?: 'r' | 'w';
+      forwardedAttachments?: Array<{ mid: string; part: string }>;
     },
     files: Express.Multer.File[] = [],
   ) {
@@ -647,6 +648,25 @@ export class MailService {
       );
     }
 
+    // Resolve forwarded attachment references: translate our internal Prisma
+    // message IDs to Zimbra numeric IDs so the SOAP request can use <mp mid=…>.
+    let resolvedForwardedAttachments: Array<{ mid: string; part: string }> = [];
+    if (payload.forwardedAttachments?.length) {
+      const midSet = new Set(payload.forwardedAttachments.map((a) => a.mid));
+      const idToZimbraId = new Map<string, string>();
+      await Promise.all(
+        Array.from(midSet).map(async (prismaId) => {
+          const msg = await this.prisma.message.findFirst({
+            where: { userId, id: prismaId },
+            select: { zimbraId: true },
+          });
+          if (msg?.zimbraId) idToZimbraId.set(prismaId, msg.zimbraId);
+        }),
+      );
+      resolvedForwardedAttachments = payload.forwardedAttachments
+        .map((a) => ({ mid: idToZimbraId.get(a.mid) ?? a.mid, part: a.part }));
+    }
+
     const { zimbraId: sentZimbraId, conversationId: sentCid } =
       await this.zimbra.sendMessage(
         user.zimbraHost,
@@ -655,6 +675,7 @@ export class MailService {
         user.csrfToken ?? undefined,
         attachmentAids,
         inlineImageAids,
+        resolvedForwardedAttachments,
       );
 
     // Persist the sent message to the local DB so it appears in thread view.

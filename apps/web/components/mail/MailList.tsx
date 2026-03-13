@@ -392,14 +392,10 @@ export default function MailList({
   useEffect(() => {
     const el   = sentinelRef.current;
     const root = scrollRef.current;
+    // Refs are null during the skeleton render (early-return path).  Once the
+    // initial load finishes, `loading` flips to false, this effect re-runs, and
+    // by then both refs are attached to the real DOM nodes.
     if (!el || !root) return;
-    // Create the observer ONCE.  IntersectionObserver fires naturally whenever
-    // the sentinel enters the viewport (initial observation + user scroll + tab
-    // switch that makes the list shorter).  We deliberately do NOT depend on
-    // messages.length because that caused a cascade on filtered tabs (unread /
-    // starred): the short filtered list kept the sentinel in view, so every
-    // page load recreated the observer which immediately fired again, triggering
-    // the next page load in a tight loop and making the UI unstable.
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && !loadingRef.current && hasMoreRef.current) {
@@ -410,7 +406,7 @@ export default function MailList({
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleContextMenu = useCallback((e: React.MouseEvent, message: Message) => {
     if (!onContextAction) return;

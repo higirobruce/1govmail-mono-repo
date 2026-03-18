@@ -91,7 +91,7 @@ export async function exportAsPdf(title: string, content: string | null | undefi
   // inability to parse modern CSS color functions (oklch/lab) from the
   // browser UA stylesheet.
   const html = contentToHtml(content, title);
-  const res = await fetch('/api/docs/export/pdf', {
+  const res = await fetch('/export/docs/pdf', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ html, title }),
@@ -193,9 +193,9 @@ export async function exportAsMarkdown(title: string, content: string | null | u
 
 export async function exportAsDocx(title: string, content: string | null | undefined) {
   // html-to-docx uses Node.js built-ins, so generation happens in a Next.js
-  // Route Handler (/api/docs/export/docx) which runs server-side only.
+  // Route Handler (/export/docs/docx) which runs server-side only.
   const html = contentToHtml(content, title);
-  const res = await fetch('/api/docs/export/docx', {
+  const res = await fetch('/export/docs/docx', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ html, title }),

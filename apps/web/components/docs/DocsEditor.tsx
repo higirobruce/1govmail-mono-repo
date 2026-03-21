@@ -36,6 +36,10 @@ import { CommentMark } from './CommentMark';
 import { CommentPanel } from './CommentPanel';
 import { ActivityFeedPanel } from './ActivityFeedPanel';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
+import { EmbedNode, getEmbedInfo } from './extensions/EmbedNode';
+import { MathBlock } from './extensions/MathBlock';
+import { MermaidBlock } from './extensions/MermaidBlock';
+import Image from '@tiptap/extension-image';
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_WS_URL ?? 'ws://localhost:1234';
 
@@ -179,11 +183,82 @@ export function DocsEditor({
       Callout,
       Toggle,
       DatabaseView,
+      Image.configure({ inline: false, allowBase64: true }),
+      EmbedNode,
+      MathBlock,
+      MermaidBlock,
       Placeholder.configure({
         placeholder: "Start writing, or type '/' for commands…",
       }),
       CommentMark,
     ],
+    editorProps: {
+      handleDrop(view, event) {
+        const files = Array.from(event.dataTransfer?.files ?? []).filter((f) =>
+          f.type.startsWith('image/'),
+        );
+        if (!files.length) return false;
+        event.preventDefault();
+        const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        files.forEach(async (file) => {
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch('/api/upload/image', { method: 'POST', body: formData });
+            const { url } = await res.json() as { url: string };
+            const node = view.state.schema.nodes.image?.create({ src: url, alt: file.name });
+            if (!node) return;
+            const pos = coords?.pos ?? view.state.doc.content.size;
+            view.dispatch(view.state.tr.insert(pos, node));
+          } catch { /* ignore */ }
+        });
+        return true;
+      },
+      handlePaste(view, event) {
+        // Image files from clipboard
+        const imageFiles = Array.from(event.clipboardData?.items ?? [])
+          .filter((i) => i.type.startsWith('image/'))
+          .map((i) => i.getAsFile())
+          .filter(Boolean) as File[];
+        if (imageFiles.length) {
+          event.preventDefault();
+          imageFiles.forEach(async (file) => {
+            try {
+              const formData = new FormData();
+              formData.append('file', file);
+              const res = await fetch('/api/upload/image', { method: 'POST', body: formData });
+              const { url } = await res.json() as { url: string };
+              const node = view.state.schema.nodes.image?.create({ src: url, alt: file.name });
+              if (!node) return;
+              view.dispatch(view.state.tr.replaceSelectionWith(node));
+            } catch { /* ignore */ }
+          });
+          return true;
+        }
+        // Embed URL detection — only on empty paragraph
+        const text = event.clipboardData?.getData('text/plain')?.trim() ?? '';
+        if (text && /^https?:\/\/\S+$/.test(text)) {
+          const { $from } = view.state.selection;
+          if ($from.parent.type.name === 'paragraph' && $from.parent.textContent === '') {
+            const info = getEmbedInfo(text);
+            if (info) {
+              event.preventDefault();
+              const node = view.state.schema.nodes.embed?.create({
+                url: text,
+                embedUrl: info.embedUrl,
+                embedType: info.embedType,
+                label: info.label,
+              });
+              if (node) {
+                view.dispatch(view.state.tr.replaceSelectionWith(node));
+                return true;
+              }
+            }
+          }
+        }
+        return false;
+      },
+    },
     onUpdate({ editor: ed, transaction }) {
       if (isChangeOrigin(transaction)) return;
       setSaveState('unsaved');

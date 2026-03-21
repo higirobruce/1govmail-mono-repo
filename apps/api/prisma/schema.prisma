@@ -37,9 +37,12 @@ model User {
   mutedConversations MutedConversation[]
   contactGroups      ContactGroup[]
   notifications      Notification[]
-  documents          Document[]
-  sentInvites        DocumentInvite[]
-  docComments        DocComment[]
+  documents              Document[]
+  sentInvites            DocumentInvite[]
+  docComments            DocComment[]
+  docCommentReactions    DocCommentReaction[]
+  docVersionsCreated     DocVersion[]
+  docActivity            DocActivity[]
 
   @@map("users")
 }
@@ -382,9 +385,11 @@ model Document {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  invites  DocumentInvite[]
-  comments DocComment[]
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invites   DocumentInvite[]
+  comments  DocComment[]
+  versions  DocVersion[]
+  activity  DocActivity[]
 
   @@index([userId])
   @@index([userId, isFavorite])
@@ -424,14 +429,63 @@ model DocComment {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  document Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  author   User?       @relation(fields: [authorId], references: [id], onDelete: SetNull)
-  parent   DocComment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies  DocComment[] @relation("CommentReplies")
+  document  Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author    User?                @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  parent    DocComment?          @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   DocComment[]         @relation("CommentReplies")
+  reactions DocCommentReaction[]
 
   @@index([documentId])
   @@index([anchorId])
   @@map("doc_comments")
+}
+
+model DocCommentReaction {
+  id        String   @id @default(cuid())
+  commentId String
+  userId    String
+  userName  String?
+  emoji     String
+  createdAt DateTime @default(now())
+
+  comment DocComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, emoji])
+  @@index([commentId])
+  @@map("doc_comment_reactions")
+}
+
+model DocVersion {
+  id          String   @id @default(cuid())
+  documentId  String
+  title       String
+  content     String
+  authorId    String?
+  authorName  String?
+  createdAt   DateTime @default(now())
+
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@map("doc_versions")
+}
+
+model DocActivity {
+  id         String   @id @default(cuid())
+  documentId String
+  userId     String?
+  actorName  String?
+  type       String   // VIEWED | EDITED | COMMENTED | RESOLVED | MENTIONED
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@map("doc_activity")
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────

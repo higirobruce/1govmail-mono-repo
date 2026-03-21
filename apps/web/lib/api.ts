@@ -698,6 +698,9 @@ export const api = {
       remove: (docId: string, inviteId: string) =>
         request<{ success: boolean }>(`/docs/${docId}/invites/${inviteId}`, { method: 'DELETE' }),
     },
+    members: {
+      list: (docId: string) => request<{ id: string; displayName: string | null; email: string }[]>(`/docs/${docId}/members`),
+    },
     comments: {
       list: (docId: string) => request<any[]>(`/docs/${docId}/comments`),
       create: (docId: string, data: { anchorId: string; content: string; parentId?: string }) =>
@@ -706,6 +709,17 @@ export const api = {
         request<any>(`/docs/${docId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify(data) }),
       delete: (docId: string, commentId: string) =>
         request<{ success: boolean }>(`/docs/${docId}/comments/${commentId}`, { method: 'DELETE' }),
+      toggleReaction: (docId: string, commentId: string, emoji: string) =>
+        request<any[]>(`/docs/${docId}/comments/${commentId}/reactions`, { method: 'POST', body: JSON.stringify({ emoji }) }),
+    },
+    versions: {
+      list: (docId: string) => request<any[]>(`/docs/${docId}/versions`),
+      get: (docId: string, versionId: string) => request<any>(`/docs/${docId}/versions/${versionId}`),
+      restore: (docId: string, versionId: string) =>
+        request<{ success: boolean }>(`/docs/${docId}/versions/${versionId}/restore`, { method: 'POST' }),
+    },
+    activity: {
+      list: (docId: string) => request<any[]>(`/docs/${docId}/activity`),
     },
   },
 

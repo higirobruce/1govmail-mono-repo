@@ -12,7 +12,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InviteRole } from '@prisma/client';
+import { InviteRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { CreateDocDto } from './dto/create-doc.dto';
@@ -21,6 +21,7 @@ import { CreateInviteDto } from './dto/create-invite.dto';
 import { UpdateInviteDto } from './dto/update-invite.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
+import { ReactCommentDto } from './dto/react-comment.dto';
 
 @Injectable()
 export class DocsService {
@@ -98,11 +99,16 @@ export class DocsService {
   async findOne(userId: string, id: string) {
     const doc = await this.prisma.document.findUnique({ where: { id } });
     if (!doc) throw new NotFoundException('Document not found');
-    if (doc.userId === userId) return doc;
+
+    if (doc.userId === userId) {
+      this.logActivity(id, userId, 'VIEWED').catch(() => {});
+      return doc;
+    }
 
     // Check invite access
     const invite = await this.getInviteForUser(userId, id);
     if (!invite) throw new ForbiddenException();
+    this.logActivity(id, userId, 'VIEWED').catch(() => {});
     return { ...doc, _invite: { role: invite.role } };
   }
 
@@ -129,8 +135,8 @@ export class DocsService {
   }
 
   async update(userId: string, id: string, dto: UpdateDocDto) {
-    await this.verifyWriteAccess(userId, id);
-    return this.prisma.document.update({
+    const existing = await this.verifyWriteAccess(userId, id);
+    const updated = await this.prisma.document.update({
       where: { id },
       data: {
         ...(dto.title      !== undefined ? { title:      dto.title      } : {}),
@@ -143,6 +149,11 @@ export class DocsService {
         ...(dto.coverColor !== undefined ? { coverColor: dto.coverColor } : {}),
       },
     });
+    if (dto.content !== undefined) {
+      this.snapshotVersion(userId, existing).catch(() => {});
+      this.logActivity(id, userId, 'EDITED').catch(() => {});
+    }
+    return updated;
   }
 
   async toggleFavorite(userId: string, id: string) {
@@ -280,19 +291,49 @@ export class DocsService {
 
   // ── Comments ──────────────────────────────────────────────────────────────
 
+  // ── Members (for @mention autocomplete) ──────────────────────────────────
+
+  async listMembers(userId: string, docId: string) {
+    const doc = await this.verifyReadAccess(userId, docId);
+    const owner = await this.prisma.user.findUnique({
+      where: { id: doc.userId },
+      select: { id: true, displayName: true, email: true },
+    });
+    const invites = await this.prisma.documentInvite.findMany({
+      where: { documentId: docId },
+      select: { invitedEmail: true },
+    });
+    // Resolve invited users who have accounts
+    const invitedUsers = await this.prisma.user.findMany({
+      where: { email: { in: invites.map((i) => i.invitedEmail) } },
+      select: { id: true, displayName: true, email: true },
+    });
+    const members = [owner, ...invitedUsers].filter(Boolean);
+    // Deduplicate
+    const seen = new Set<string>();
+    return members.filter((m) => m && !seen.has(m.id) && seen.add(m.id));
+  }
+
+  // ── Comments ──────────────────────────────────────────────────────────────
+
   async listComments(userId: string, docId: string) {
     await this.verifyReadAccess(userId, docId);
-    return this.prisma.docComment.findMany({
+    const comments = await this.prisma.docComment.findMany({
       where: { documentId: docId, parentId: null },
       include: {
         author: { select: { id: true, displayName: true, email: true } },
+        reactions: { select: { emoji: true, userId: true, userName: true } },
         replies: {
-          include: { author: { select: { id: true, displayName: true, email: true } } },
+          include: {
+            author: { select: { id: true, displayName: true, email: true } },
+            reactions: { select: { emoji: true, userId: true, userName: true } },
+          },
           orderBy: { createdAt: 'asc' },
         },
       },
       orderBy: { createdAt: 'asc' },
     });
+    return comments.map((c) => this.shapeComment(c, userId));
   }
 
   async createComment(userId: string, docId: string, dto: CreateCommentDto) {
@@ -301,7 +342,7 @@ export class DocsService {
       where: { id: userId },
       select: { displayName: true, email: true },
     });
-    return this.prisma.docComment.create({
+    const comment = await this.prisma.docComment.create({
       data: {
         documentId: docId,
         anchorId: dto.anchorId,
@@ -312,35 +353,60 @@ export class DocsService {
       },
       include: {
         author: { select: { id: true, displayName: true, email: true } },
-        replies: { include: { author: { select: { id: true, displayName: true, email: true } } } },
+        reactions: { select: { emoji: true, userId: true, userName: true } },
+        replies: {
+          include: {
+            author: { select: { id: true, displayName: true, email: true } },
+            reactions: { select: { emoji: true, userId: true, userName: true } },
+          },
+        },
       },
     });
+    this.logActivity(docId, userId, 'COMMENTED', { commentId: comment.id }).catch(() => {});
+    this.processMentions(docId, userId, dto.content, comment.id).catch(() => {});
+    return this.shapeComment(comment, userId);
   }
 
   async updateComment(userId: string, docId: string, commentId: string, dto: UpdateCommentDto) {
     const comment = await this.prisma.docComment.findFirst({ where: { id: commentId, documentId: docId } });
     if (!comment) throw new NotFoundException('Comment not found');
 
-    // Only the author may edit content; any collaborator can resolve
     if (dto.content !== undefined && comment.authorId !== userId) {
       throw new ForbiddenException('Only the comment author may edit its content');
     }
 
-    return this.prisma.docComment.update({
+    const wasResolved = !!comment.resolvedAt;
+    const nowResolved = dto.resolved === true;
+
+    const updated = await this.prisma.docComment.update({
       where: { id: commentId },
       data: {
         ...(dto.content !== undefined ? { content: dto.content } : {}),
         ...(dto.resolved !== undefined ? { resolvedAt: dto.resolved ? new Date() : null } : {}),
       },
-      include: { author: { select: { id: true, displayName: true, email: true } } },
+      include: {
+        author: { select: { id: true, displayName: true, email: true } },
+        reactions: { select: { emoji: true, userId: true, userName: true } },
+        replies: {
+          include: {
+            author: { select: { id: true, displayName: true, email: true } },
+            reactions: { select: { emoji: true, userId: true, userName: true } },
+          },
+        },
+      },
     });
+
+    if (!wasResolved && nowResolved) {
+      this.logActivity(docId, userId, 'RESOLVED', { commentId }).catch(() => {});
+    }
+
+    return this.shapeComment(updated, userId);
   }
 
   async deleteComment(userId: string, docId: string, commentId: string) {
     const comment = await this.prisma.docComment.findFirst({ where: { id: commentId, documentId: docId } });
     if (!comment) throw new NotFoundException('Comment not found');
 
-    // Author or doc owner can delete
     const doc = await this.prisma.document.findUnique({ where: { id: docId }, select: { userId: true } });
     if (comment.authorId !== userId && doc?.userId !== userId) {
       throw new ForbiddenException('Cannot delete this comment');
@@ -348,6 +414,212 @@ export class DocsService {
 
     await this.prisma.docComment.delete({ where: { id: commentId } });
     return { success: true };
+  }
+
+  // ── Reactions ─────────────────────────────────────────────────────────────
+
+  async toggleReaction(userId: string, docId: string, commentId: string, dto: ReactCommentDto) {
+    await this.verifyReadAccess(userId, docId);
+    const comment = await this.prisma.docComment.findFirst({ where: { id: commentId, documentId: docId } });
+    if (!comment) throw new NotFoundException('Comment not found');
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true, email: true },
+    });
+    const userName = user?.displayName ?? user?.email ?? 'Unknown';
+
+    const existing = await this.prisma.docCommentReaction.findUnique({
+      where: { commentId_userId_emoji: { commentId, userId, emoji: dto.emoji } },
+    });
+
+    if (existing) {
+      await this.prisma.docCommentReaction.delete({ where: { id: existing.id } });
+    } else {
+      await this.prisma.docCommentReaction.create({
+        data: { commentId, userId, userName, emoji: dto.emoji },
+      });
+    }
+
+    const reactions = await this.prisma.docCommentReaction.findMany({
+      where: { commentId },
+      select: { emoji: true, userId: true, userName: true },
+    });
+    return this.groupReactions(reactions, userId);
+  }
+
+  // ── Version history ───────────────────────────────────────────────────────
+
+  async listVersions(userId: string, docId: string) {
+    await this.verifyReadAccess(userId, docId);
+    return this.prisma.docVersion.findMany({
+      where: { documentId: docId },
+      select: { id: true, title: true, authorName: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+  }
+
+  async getVersion(userId: string, docId: string, versionId: string) {
+    await this.verifyReadAccess(userId, docId);
+    const version = await this.prisma.docVersion.findFirst({ where: { id: versionId, documentId: docId } });
+    if (!version) throw new NotFoundException('Version not found');
+    return version;
+  }
+
+  async restoreVersion(userId: string, docId: string, versionId: string) {
+    const doc = await this.verifyWriteAccess(userId, docId);
+    const version = await this.prisma.docVersion.findFirst({ where: { id: versionId, documentId: docId } });
+    if (!version) throw new NotFoundException('Version not found');
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true, email: true },
+    });
+    const authorName = user?.displayName ?? user?.email ?? 'Unknown';
+
+    // Snapshot current state before overwriting
+    if (doc.content) {
+      await this.prisma.docVersion.create({
+        data: { documentId: docId, title: doc.title, content: doc.content, authorId: userId, authorName },
+      });
+    }
+
+    await this.prisma.document.update({
+      where: { id: docId },
+      data: { content: version.content, title: version.title, yjsState: null },
+    });
+
+    this.logActivity(docId, userId, 'EDITED', { restoredVersionId: versionId }).catch(() => {});
+    return { success: true };
+  }
+
+  // ── Activity feed ─────────────────────────────────────────────────────────
+
+  async listActivity(userId: string, docId: string) {
+    await this.verifyReadAccess(userId, docId);
+    return this.prisma.docActivity.findMany({
+      where: { documentId: docId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: { id: true, actorName: true, type: true, meta: true, createdAt: true, userId: true },
+    });
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private shapeComment(
+    comment: any,
+    currentUserId: string,
+  ) {
+    return {
+      ...comment,
+      reactions: this.groupReactions(comment.reactions ?? [], currentUserId),
+      replies: (comment.replies ?? []).map((r: any) => ({
+        ...r,
+        reactions: this.groupReactions(r.reactions ?? [], currentUserId),
+      })),
+    };
+  }
+
+  private groupReactions(
+    raw: { emoji: string; userId: string; userName: string | null }[],
+    currentUserId: string,
+  ) {
+    const map = new Map<string, { count: number; users: string[]; selfReacted: boolean }>();
+    for (const r of raw) {
+      const entry = map.get(r.emoji) ?? { count: 0, users: [], selfReacted: false };
+      entry.count++;
+      entry.users.push(r.userName ?? r.userId);
+      if (r.userId === currentUserId) entry.selfReacted = true;
+      map.set(r.emoji, entry);
+    }
+    return Array.from(map.entries()).map(([emoji, data]) => ({ emoji, ...data }));
+  }
+
+  private async logActivity(
+    documentId: string,
+    userId: string | null,
+    type: string,
+    meta?: Record<string, unknown>,
+  ) {
+    const actorName = userId
+      ? await this.prisma.user
+          .findUnique({ where: { id: userId }, select: { displayName: true, email: true } })
+          .then((u) => u?.displayName ?? u?.email ?? 'Unknown')
+      : null;
+
+    // Deduplicate VIEWED: skip if same user viewed within last 5 minutes
+    if (type === 'VIEWED' && userId) {
+      const recent = await this.prisma.docActivity.findFirst({
+        where: {
+          documentId,
+          userId,
+          type: 'VIEWED',
+          createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
+        },
+      });
+      if (recent) return;
+    }
+
+    await this.prisma.docActivity.create({
+      data: { documentId, userId, actorName, type, meta: meta ? (meta as Prisma.InputJsonValue) : Prisma.JsonNull },
+    });
+  }
+
+  private async processMentions(
+    docId: string,
+    byUserId: string,
+    content: string,
+    commentId: string,
+  ) {
+    const matches = [...content.matchAll(/@([\w][\w\s]{0,30}?)(?=\s|$|[^a-zA-Z\s])/g)];
+    if (!matches.length) return;
+
+    const names = [...new Set(matches.map((m) => m[1].trim()))];
+    const users = await this.prisma.user.findMany({
+      where: { displayName: { in: names } },
+      select: { id: true },
+    });
+
+    for (const u of users) {
+      if (u.id === byUserId) continue;
+      await this.logActivity(docId, u.id, 'MENTIONED', { byUserId, commentId });
+    }
+  }
+
+  private async snapshotVersion(userId: string, doc: { id: string; title: string; content: string | null }) {
+    if (!doc.content) return;
+    const recent = await this.prisma.docVersion.findFirst({
+      where: { documentId: doc.id, createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (recent) return;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true, email: true },
+    });
+    await this.prisma.docVersion.create({
+      data: {
+        documentId: doc.id,
+        title: doc.title,
+        content: doc.content,
+        authorId: userId,
+        authorName: user?.displayName ?? user?.email ?? 'Unknown',
+      },
+    });
+
+    // Prune: keep newest 50 versions only
+    const old = await this.prisma.docVersion.findMany({
+      where: { documentId: doc.id },
+      orderBy: { createdAt: 'desc' },
+      skip: 50,
+      select: { id: true },
+    });
+    if (old.length) {
+      await this.prisma.docVersion.deleteMany({ where: { id: { in: old.map((v) => v.id) } } });
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

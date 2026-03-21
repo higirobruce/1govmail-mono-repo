@@ -57,7 +57,7 @@ function DocTreeItem({ node, depth, selectedId, onSelect, onDelete, onFavorite, 
           {node.emoji ? node.emoji : <FileText className="w-3.5 h-3.5 inline" />}
         </span>
 
-        <span className="flex-1 truncate text-xs">{node.title || 'Untitled'}</span>
+        <span className="flex-1 truncate text-sm">{node.title || 'Untitled'}</span>
 
         {node.isFavorite && (
           <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400 shrink-0" />

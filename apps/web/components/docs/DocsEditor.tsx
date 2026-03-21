@@ -21,7 +21,7 @@ import { TableOfContents } from './TableOfContents';
 import {
   Check, Loader2, PanelRight, X, MessageSquare, MessageSquarePlus,
   ArrowDownToLine, ArrowUpToLine, ArrowRightToLine, ArrowLeftToLine,
-  Trash2, Columns2, Rows3,
+  Trash2, Columns2, Rows3, History, Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -34,6 +34,8 @@ import {
 import { getCoverClass } from './DocCoverPicker';
 import { CommentMark } from './CommentMark';
 import { CommentPanel } from './CommentPanel';
+import { ActivityFeedPanel } from './ActivityFeedPanel';
+import { VersionHistoryPanel } from './VersionHistoryPanel';
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_WS_URL ?? 'ws://localhost:1234';
 
@@ -52,6 +54,7 @@ interface DocsEditorProps {
 }
 
 type SaveState = 'saved' | 'saving' | 'unsaved';
+type PanelId = 'comments' | 'activity' | 'versions' | 'toc';
 
 interface SlashMenuState {
   items: SlashCommandItem[];
@@ -78,10 +81,12 @@ export function DocsEditor({
 }: DocsEditorProps) {
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [synced, setSynced] = useState(false);
-  const [showToc, setShowToc] = useState(false);
-  const [showComments, setShowComments] = useState(false);
+  const [activePanel, setActivePanel] = useState<PanelId | null>(null);
   const [pendingAnchorId, setPendingAnchorId] = useState<string | null>(null);
+  const [focusAnchorId, setFocusAnchorId] = useState<string | null>(null);
   const [commentBtnPos, setCommentBtnPos] = useState<{ x: number; y: number } | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; anchorId: string } | null>(null);
+  const commentSummariesRef = useRef<Record<string, { authorName: string; content: string }>>({});
   const [wordCount, setWordCount] = useState({ words: 0, chars: 0 });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const destroyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,6 +94,10 @@ export function DocsEditor({
   const editorRef = useRef<Editor | null>(null);
   const editorWrapRef = useRef<HTMLDivElement>(null);
   const syncedRef = useRef(false);
+
+  const togglePanel = useCallback((id: PanelId) => {
+    setActivePanel((prev) => (prev === id ? null : id));
+  }, []);
 
   // ── Slash menu ──────────────────────────────────────────────────────────────
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
@@ -333,6 +342,58 @@ export function DocsEditor({
     };
   }, [editor, editable]);
 
+  // ── Load comment summaries for hover tooltips ──────────────────────────────
+  useEffect(() => {
+    api.docs.comments.list(docId).then((comments: any[]) => {
+      const index: Record<string, { authorName: string; content: string }> = {};
+      for (const c of comments) {
+        index[c.anchorId] = { authorName: c.authorName ?? 'Unknown', content: c.content };
+      }
+      commentSummariesRef.current = index;
+    }).catch(() => {});
+  }, [docId]);
+
+  // ── Click / hover handlers on comment marks ────────────────────────────────
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+
+    const handleClick = (e: MouseEvent) => {
+      const target = (e.target as Element).closest('[data-cid]') as HTMLElement | null;
+      if (!target) return;
+      const anchorId = target.dataset.cid;
+      if (!anchorId) return;
+      e.stopPropagation();
+      setFocusAnchorId(anchorId);
+      setActivePanel('comments');
+      setTooltip(null);
+    };
+
+    const handleMouseOver = (e: MouseEvent) => {
+      const target = (e.target as Element).closest('[data-cid]') as HTMLElement | null;
+      if (!target) return;
+      const anchorId = target.dataset.cid;
+      if (!anchorId) return;
+      const rect = target.getBoundingClientRect();
+      setTooltip({ x: rect.left, y: rect.top, anchorId });
+    };
+
+    const handleMouseOut = (e: MouseEvent) => {
+      const related = e.relatedTarget as Element | null;
+      if (related && (e.target as Element).closest('[data-cid]')?.contains(related)) return;
+      setTooltip(null);
+    };
+
+    dom.addEventListener('click', handleClick);
+    dom.addEventListener('mouseover', handleMouseOver);
+    dom.addEventListener('mouseout', handleMouseOut);
+    return () => {
+      dom.removeEventListener('click', handleClick);
+      dom.removeEventListener('mouseover', handleMouseOver);
+      dom.removeEventListener('mouseout', handleMouseOut);
+    };
+  }, [editor]);
+
   // ── Cleanup ────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
@@ -406,35 +467,27 @@ export function DocsEditor({
                   className="flex-1 text-3xl font-bold outline-none bg-transparent placeholder:text-muted-foreground/40 read-only:cursor-default"
                 />
                 <div className="flex items-center gap-2 pt-2 shrink-0">
-                  {/* Comments toggle */}
-                  <button
-                    type="button"
-                    title={showComments ? 'Hide comments' : 'Show comments'}
-                    onClick={() => setShowComments((v) => !v)}
-                    className={cn(
-                      'p-1.5 rounded-md transition-colors',
-                      showComments
-                        ? 'bg-muted text-foreground'
-                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                    )}
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                  </button>
-
-                  {/* TOC toggle */}
-                  <button
-                    type="button"
-                    title={showToc ? 'Hide table of contents' : 'Show table of contents'}
-                    onClick={() => setShowToc((v) => !v)}
-                    className={cn(
-                      'p-1.5 rounded-md transition-colors',
-                      showToc
-                        ? 'bg-muted text-foreground'
-                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                    )}
-                  >
-                    <PanelRight className="w-4 h-4" />
-                  </button>
+                  {([
+                    { id: 'comments' as PanelId, Icon: MessageSquare, title: 'Comments' },
+                    { id: 'activity' as PanelId, Icon: Activity,      title: 'Activity' },
+                    { id: 'versions' as PanelId, Icon: History,        title: 'Version history' },
+                    { id: 'toc'      as PanelId, Icon: PanelRight,     title: 'Table of contents' },
+                  ] as const).map(({ id, Icon, title }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      title={activePanel === id ? `Hide ${title.toLowerCase()}` : title}
+                      onClick={() => togglePanel(id)}
+                      className={cn(
+                        'p-1.5 rounded-md transition-colors',
+                        activePanel === id
+                          ? 'bg-muted text-foreground'
+                          : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                      )}
+                    >
+                      <Icon className="w-4 h-4" />
+                    </button>
+                  ))}
 
                   {/* Save state */}
                   <div className="flex items-center gap-1 text-xs text-muted-foreground select-none">
@@ -488,24 +541,43 @@ export function DocsEditor({
         </div>
 
         {/* Comments panel */}
-        {showComments && (
+        {activePanel === 'comments' && (
           <CommentPanel
             docId={docId}
             editor={editor}
-            onClose={() => { setShowComments(false); setPendingAnchorId(null); }}
+            onClose={() => { setActivePanel(null); setPendingAnchorId(null); setFocusAnchorId(null); }}
             pendingAnchorId={pendingAnchorId}
             onPendingResolved={() => setPendingAnchorId(null)}
+            focusAnchorId={focusAnchorId}
+            onFocusConsumed={() => setFocusAnchorId(null)}
+          />
+        )}
+
+        {/* Activity feed panel */}
+        {activePanel === 'activity' && (
+          <ActivityFeedPanel
+            docId={docId}
+            onClose={() => setActivePanel(null)}
+          />
+        )}
+
+        {/* Version history panel */}
+        {activePanel === 'versions' && (
+          <VersionHistoryPanel
+            docId={docId}
+            onClose={() => setActivePanel(null)}
+            onRestored={() => window.location.reload()}
           />
         )}
 
         {/* Table of Contents panel */}
-        {showToc && (
+        {activePanel === 'toc' && (
           <div className="w-56 border-l border-border shrink-0 flex flex-col print:hidden">
             <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
               <span className="text-xs font-semibold">Contents</span>
               <button
                 type="button"
-                onClick={() => setShowToc(false)}
+                onClick={() => setActivePanel(null)}
                 className="p-0.5 rounded hover:bg-muted text-muted-foreground"
               >
                 <X className="w-3.5 h-3.5" />
@@ -542,7 +614,7 @@ export function DocsEditor({
               const anchorId = crypto.randomUUID();
               editor.chain().focus().setComment(anchorId).run();
               setPendingAnchorId(anchorId);
-              setShowComments(true);
+              setActivePanel('comments');
             }}
             className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
@@ -647,13 +719,34 @@ export function DocsEditor({
             // Collapse selection back so highlight doesn't look odd
             editor.commands.setTextSelection(from);
             setPendingAnchorId(anchorId);
-            setShowComments(true);
+            setActivePanel('comments');
           }}
           className="w-6 h-6 flex items-center justify-center text-muted-foreground/50 hover:text-foreground transition-colors"
         >
           <MessageSquarePlus className="w-3.5 h-3.5" />
         </button>
       )}
+
+      {/* Comment hover tooltip */}
+      {tooltip && (() => {
+        const summary = commentSummariesRef.current[tooltip.anchorId];
+        return (
+          <div
+            style={{ position: 'fixed', left: tooltip.x, top: tooltip.y - 8, transform: 'translateY(-100%)', zIndex: 50 }}
+            className="max-w-56 rounded-lg border border-border bg-popover shadow-lg px-2.5 py-2 pointer-events-none"
+          >
+            {summary ? (
+              <>
+                <p className="text-[10px] font-semibold text-primary mb-0.5">{summary.authorName}</p>
+                <p className="text-xs text-foreground line-clamp-3">{summary.content}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Click to open comments</p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">Click to open comments</p>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Slash command floating menu */}
       {slashMenu && (

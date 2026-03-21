@@ -20,6 +20,7 @@ import { CreateInviteDto } from './dto/create-invite.dto';
 import { UpdateInviteDto } from './dto/update-invite.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
+import { ReactCommentDto } from './dto/react-comment.dto';
 
 @Controller('docs')
 export class DocsController {
@@ -121,6 +122,14 @@ export class DocsController {
     return this.docsService.removeInvite(req.user.sub, id, inviteId);
   }
 
+  // ── Members (for @mention autocomplete) ──────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/members')
+  listMembers(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.docsService.listMembers(req.user.sub, id);
+  }
+
   // ── Comments — before /:id so ':id/comments' doesn't shadow ':id' ─────────
 
   @UseGuards(JwtAuthGuard)
@@ -160,6 +169,57 @@ export class DocsController {
     @Param('commentId') commentId: string,
   ) {
     return this.docsService.deleteComment(req.user.sub, id, commentId);
+  }
+
+  // ── Reactions ─────────────────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/comments/:commentId/reactions')
+  @HttpCode(HttpStatus.OK)
+  toggleReaction(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+    @Body() dto: ReactCommentDto,
+  ) {
+    return this.docsService.toggleReaction(req.user.sub, id, commentId, dto);
+  }
+
+  // ── Version history ───────────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/versions')
+  listVersions(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.docsService.listVersions(req.user.sub, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/versions/:versionId')
+  getVersion(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('versionId') versionId: string,
+  ) {
+    return this.docsService.getVersion(req.user.sub, id, versionId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/versions/:versionId/restore')
+  @HttpCode(HttpStatus.OK)
+  restoreVersion(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('versionId') versionId: string,
+  ) {
+    return this.docsService.restoreVersion(req.user.sub, id, versionId);
+  }
+
+  // ── Activity feed ─────────────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/activity')
+  listActivity(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.docsService.listActivity(req.user.sub, id);
   }
 
   // ── Doc CRUD ──────────────────────────────────────────────────────────────

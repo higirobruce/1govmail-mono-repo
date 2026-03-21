@@ -202,6 +202,22 @@ html[data-electron='true'] body {
   overscroll-behavior: none;
 }
 
+/* ── Document comments ───────────────────────────────────────────────────── */
+.doc-comment-mark {
+  background-color: rgb(253 224 71 / 0.35); /* yellow-300/35 */
+  border-bottom: 2px solid rgb(234 179 8 / 0.6); /* yellow-500/60 */
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.doc-comment-mark:hover {
+  background-color: rgb(253 224 71 / 0.6);
+}
+.dark .doc-comment-mark {
+  background-color: rgb(161 120 0 / 0.25);
+  border-bottom-color: rgb(202 153 0 / 0.5);
+}
+
 /* ── TipTap / ProseMirror editor ─────────────────────────────────────────── */
 .ProseMirror {
   outline: none;

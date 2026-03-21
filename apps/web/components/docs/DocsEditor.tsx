@@ -19,7 +19,7 @@ import { DatabaseView } from './extensions/DatabaseView';
 import { CodeBlockLowlight } from './extensions/CodeBlockLowlight';
 import { TableOfContents } from './TableOfContents';
 import {
-  Check, Loader2, PanelRight, X,
+  Check, Loader2, PanelRight, X, MessageSquare, MessageSquarePlus,
   ArrowDownToLine, ArrowUpToLine, ArrowRightToLine, ArrowLeftToLine,
   Trash2, Columns2, Rows3,
 } from 'lucide-react';
@@ -32,6 +32,8 @@ import {
   type SlashCommandMenuHandle,
 } from './SlashCommandMenu';
 import { getCoverClass } from './DocCoverPicker';
+import { CommentMark } from './CommentMark';
+import { CommentPanel } from './CommentPanel';
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_WS_URL ?? 'ws://localhost:1234';
 
@@ -77,11 +79,15 @@ export function DocsEditor({
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [synced, setSynced] = useState(false);
   const [showToc, setShowToc] = useState(false);
+  const [showComments, setShowComments] = useState(false);
+  const [pendingAnchorId, setPendingAnchorId] = useState<string | null>(null);
+  const [commentBtnPos, setCommentBtnPos] = useState<{ x: number; y: number } | null>(null);
   const [wordCount, setWordCount] = useState({ words: 0, chars: 0 });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const destroyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<Editor | null>(null);
+  const editorWrapRef = useRef<HTMLDivElement>(null);
   const syncedRef = useRef(false);
 
   // ── Slash menu ──────────────────────────────────────────────────────────────
@@ -167,6 +173,7 @@ export function DocsEditor({
       Placeholder.configure({
         placeholder: "Start writing, or type '/' for commands…",
       }),
+      CommentMark,
     ],
     onUpdate({ editor: ed, transaction }) {
       if (isChangeOrigin(transaction)) return;
@@ -282,6 +289,50 @@ export function DocsEditor({
     return () => editor.view.dom.removeEventListener('keydown', handleKeyDown, true);
   }, [editor, slashMenu]);
 
+  // ── Margin comment button — tracks which block the cursor is in ────────────
+  useEffect(() => {
+    if (!editor || !editable) return;
+
+    const updateBtn = () => {
+      if (!editorWrapRef.current) return;
+      const { $from } = editor.state.selection;
+      const depth = Math.min($from.depth, 1); // top-level block is depth 1
+      const blockStart = $from.start(depth > 0 ? 1 : 0);
+      let domNode: Node | null = null;
+      try {
+        domNode = editor.view.domAtPos(blockStart).node;
+      } catch {
+        setCommentBtnPos(null);
+        return;
+      }
+      if (!domNode) { setCommentBtnPos(null); return; }
+      // Walk up to first block-level HTMLElement
+      let el: HTMLElement | null =
+        domNode.nodeType === Node.TEXT_NODE
+          ? (domNode as Text).parentElement
+          : (domNode as HTMLElement);
+      while (el && el.parentElement && !['P','H1','H2','H3','H4','H5','H6','LI','BLOCKQUOTE','PRE','DIV'].includes(el.tagName)) {
+        el = el.parentElement;
+      }
+      if (!el) { setCommentBtnPos(null); return; }
+      const wrapRect = editorWrapRef.current.getBoundingClientRect();
+      const nodeRect = el.getBoundingClientRect();
+      setCommentBtnPos({
+        x: wrapRect.right + 4,
+        y: nodeRect.top + nodeRect.height / 2 - 12,
+      });
+    };
+
+    editor.on('selectionUpdate', updateBtn);
+    editor.on('focus', updateBtn);
+    editor.on('blur', () => setCommentBtnPos(null));
+    return () => {
+      editor.off('selectionUpdate', updateBtn);
+      editor.off('focus', updateBtn);
+      editor.off('blur', () => setCommentBtnPos(null));
+    };
+  }, [editor, editable]);
+
   // ── Cleanup ────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
@@ -342,7 +393,7 @@ export function DocsEditor({
         {/* Main editor area */}
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto">
-            <div className="max-w-3xl mx-auto px-8 py-10">
+            <div ref={editorWrapRef} className="relative max-w-3xl mx-auto px-8 py-10">
               {/* Title row */}
               <div className="flex items-start justify-between gap-4 mb-6">
                 <input
@@ -355,6 +406,21 @@ export function DocsEditor({
                   className="flex-1 text-3xl font-bold outline-none bg-transparent placeholder:text-muted-foreground/40 read-only:cursor-default"
                 />
                 <div className="flex items-center gap-2 pt-2 shrink-0">
+                  {/* Comments toggle */}
+                  <button
+                    type="button"
+                    title={showComments ? 'Hide comments' : 'Show comments'}
+                    onClick={() => setShowComments((v) => !v)}
+                    className={cn(
+                      'p-1.5 rounded-md transition-colors',
+                      showComments
+                        ? 'bg-muted text-foreground'
+                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                    )}
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                  </button>
+
                   {/* TOC toggle */}
                   <button
                     type="button"
@@ -421,6 +487,17 @@ export function DocsEditor({
           </div>
         </div>
 
+        {/* Comments panel */}
+        {showComments && (
+          <CommentPanel
+            docId={docId}
+            editor={editor}
+            onClose={() => { setShowComments(false); setPendingAnchorId(null); }}
+            pendingAnchorId={pendingAnchorId}
+            onPendingResolved={() => setPendingAnchorId(null)}
+          />
+        )}
+
         {/* Table of Contents panel */}
         {showToc && (
           <div className="w-56 border-l border-border shrink-0 flex flex-col print:hidden">
@@ -440,6 +517,40 @@ export function DocsEditor({
           </div>
         )}
       </div>
+
+      {/* Text selection bubble menu — Add comment */}
+      {editable && (
+        <BubbleMenu
+          editor={editor}
+          shouldShow={({ editor: ed, state }) => {
+            const { from, to } = state.selection;
+            return (
+              from !== to &&
+              !ed.isActive('table') &&
+              !ed.isActive('tableCell') &&
+              !ed.isActive('tableHeader')
+            );
+          }}
+          options={{ placement: 'top', offset: 8 }}
+          className="flex items-center gap-0.5 rounded-lg border border-border bg-popover shadow-lg p-1"
+        >
+          <button
+            type="button"
+            title="Add comment"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const anchorId = crypto.randomUUID();
+              editor.chain().focus().setComment(anchorId).run();
+              setPendingAnchorId(anchorId);
+              setShowComments(true);
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            Comment
+          </button>
+        </BubbleMenu>
+      )}
 
       {/* Table bubble menu */}
       {editable && (
@@ -517,6 +628,31 @@ export function DocsEditor({
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </BubbleMenu>
+      )}
+
+      {/* Margin comment button — appears next to the cursor's current block */}
+      {editable && commentBtnPos && !pendingAnchorId && (
+        <button
+          type="button"
+          title="Comment on this section"
+          style={{ position: 'fixed', left: commentBtnPos.x, top: commentBtnPos.y, zIndex: 40 }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const { $from } = editor.state.selection;
+            const depth = $from.depth > 0 ? 1 : 0;
+            const from = $from.start(depth);
+            const to = $from.end(depth);
+            const anchorId = crypto.randomUUID();
+            editor.chain().focus().setTextSelection({ from, to }).setComment(anchorId).run();
+            // Collapse selection back so highlight doesn't look odd
+            editor.commands.setTextSelection(from);
+            setPendingAnchorId(anchorId);
+            setShowComments(true);
+          }}
+          className="w-6 h-6 flex items-center justify-center text-muted-foreground/50 hover:text-foreground transition-colors"
+        >
+          <MessageSquarePlus className="w-3.5 h-3.5" />
+        </button>
       )}
 
       {/* Slash command floating menu */}

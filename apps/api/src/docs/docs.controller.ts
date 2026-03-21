@@ -18,6 +18,8 @@ import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { UpdateInviteDto } from './dto/update-invite.dto';
+import { CreateCommentDto } from './dto/create-comment.dto';
+import { UpdateCommentDto } from './dto/update-comment.dto';
 
 @Controller('docs')
 export class DocsController {
@@ -117,6 +119,47 @@ export class DocsController {
     @Param('inviteId') inviteId: string,
   ) {
     return this.docsService.removeInvite(req.user.sub, id, inviteId);
+  }
+
+  // ── Comments — before /:id so ':id/comments' doesn't shadow ':id' ─────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/comments')
+  listComments(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.docsService.listComments(req.user.sub, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/comments')
+  createComment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CreateCommentDto,
+  ) {
+    return this.docsService.createComment(req.user.sub, id, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch(':id/comments/:commentId')
+  @HttpCode(HttpStatus.OK)
+  updateComment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+    @Body() dto: UpdateCommentDto,
+  ) {
+    return this.docsService.updateComment(req.user.sub, id, commentId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete(':id/comments/:commentId')
+  @HttpCode(HttpStatus.OK)
+  deleteComment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+  ) {
+    return this.docsService.deleteComment(req.user.sub, id, commentId);
   }
 
   // ── Doc CRUD ──────────────────────────────────────────────────────────────

@@ -19,6 +19,8 @@ import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { UpdateInviteDto } from './dto/update-invite.dto';
+import { CreateCommentDto } from './dto/create-comment.dto';
+import { UpdateCommentDto } from './dto/update-comment.dto';
 
 @Injectable()
 export class DocsService {
@@ -276,7 +278,88 @@ export class DocsService {
     return { success: true };
   }
 
+  // ── Comments ──────────────────────────────────────────────────────────────
+
+  async listComments(userId: string, docId: string) {
+    await this.verifyReadAccess(userId, docId);
+    return this.prisma.docComment.findMany({
+      where: { documentId: docId, parentId: null },
+      include: {
+        author: { select: { id: true, displayName: true, email: true } },
+        replies: {
+          include: { author: { select: { id: true, displayName: true, email: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async createComment(userId: string, docId: string, dto: CreateCommentDto) {
+    await this.verifyReadAccess(userId, docId);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true, email: true },
+    });
+    return this.prisma.docComment.create({
+      data: {
+        documentId: docId,
+        anchorId: dto.anchorId,
+        content: dto.content,
+        authorId: userId,
+        authorName: user?.displayName ?? user?.email ?? 'Unknown',
+        parentId: dto.parentId ?? null,
+      },
+      include: {
+        author: { select: { id: true, displayName: true, email: true } },
+        replies: { include: { author: { select: { id: true, displayName: true, email: true } } } },
+      },
+    });
+  }
+
+  async updateComment(userId: string, docId: string, commentId: string, dto: UpdateCommentDto) {
+    const comment = await this.prisma.docComment.findFirst({ where: { id: commentId, documentId: docId } });
+    if (!comment) throw new NotFoundException('Comment not found');
+
+    // Only the author may edit content; any collaborator can resolve
+    if (dto.content !== undefined && comment.authorId !== userId) {
+      throw new ForbiddenException('Only the comment author may edit its content');
+    }
+
+    return this.prisma.docComment.update({
+      where: { id: commentId },
+      data: {
+        ...(dto.content !== undefined ? { content: dto.content } : {}),
+        ...(dto.resolved !== undefined ? { resolvedAt: dto.resolved ? new Date() : null } : {}),
+      },
+      include: { author: { select: { id: true, displayName: true, email: true } } },
+    });
+  }
+
+  async deleteComment(userId: string, docId: string, commentId: string) {
+    const comment = await this.prisma.docComment.findFirst({ where: { id: commentId, documentId: docId } });
+    if (!comment) throw new NotFoundException('Comment not found');
+
+    // Author or doc owner can delete
+    const doc = await this.prisma.document.findUnique({ where: { id: docId }, select: { userId: true } });
+    if (comment.authorId !== userId && doc?.userId !== userId) {
+      throw new ForbiddenException('Cannot delete this comment');
+    }
+
+    await this.prisma.docComment.delete({ where: { id: commentId } });
+    return { success: true };
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private async verifyReadAccess(userId: string, id: string) {
+    const doc = await this.prisma.document.findUnique({ where: { id } });
+    if (!doc) throw new NotFoundException('Document not found');
+    if (doc.userId === userId) return doc;
+    const invite = await this.getInviteForUser(userId, id);
+    if (!invite) throw new ForbiddenException();
+    return doc;
+  }
 
   private async verifyOwnership(userId: string, id: string) {
     const doc = await this.prisma.document.findUnique({ where: { id } });

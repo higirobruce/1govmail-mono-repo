@@ -39,6 +39,7 @@ model User {
   notifications      Notification[]
   documents          Document[]
   sentInvites        DocumentInvite[]
+  docComments        DocComment[]
 
   @@map("users")
 }
@@ -381,8 +382,9 @@ model Document {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  invites DocumentInvite[]
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invites  DocumentInvite[]
+  comments DocComment[]
 
   @@index([userId])
   @@index([userId, isFavorite])
@@ -408,6 +410,28 @@ model DocumentInvite {
   @@unique([documentId, invitedEmail])
   @@index([invitedEmail])
   @@map("document_invites")
+}
+
+model DocComment {
+  id         String    @id @default(cuid())
+  documentId String
+  anchorId   String    // UUID matching TipTap mark's data-cid attribute
+  content    String
+  authorId   String?
+  authorName String?
+  resolvedAt DateTime?
+  parentId   String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  document Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author   User?       @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  parent   DocComment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  DocComment[] @relation("CommentReplies")
+
+  @@index([documentId])
+  @@index([anchorId])
+  @@map("doc_comments")
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────

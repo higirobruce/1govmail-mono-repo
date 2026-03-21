@@ -698,6 +698,15 @@ export const api = {
       remove: (docId: string, inviteId: string) =>
         request<{ success: boolean }>(`/docs/${docId}/invites/${inviteId}`, { method: 'DELETE' }),
     },
+    comments: {
+      list: (docId: string) => request<any[]>(`/docs/${docId}/comments`),
+      create: (docId: string, data: { anchorId: string; content: string; parentId?: string }) =>
+        request<any>(`/docs/${docId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
+      update: (docId: string, commentId: string, data: { content?: string; resolved?: boolean }) =>
+        request<any>(`/docs/${docId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      delete: (docId: string, commentId: string) =>
+        request<{ success: boolean }>(`/docs/${docId}/comments/${commentId}`, { method: 'DELETE' }),
+    },
   },
 
   shared: {

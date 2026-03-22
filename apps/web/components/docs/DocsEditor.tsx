@@ -21,7 +21,7 @@ import { TableOfContents } from './TableOfContents';
 import {
   Check, Loader2, PanelRight, X, MessageSquare, MessageSquarePlus,
   ArrowDownToLine, ArrowUpToLine, ArrowRightToLine, ArrowLeftToLine,
-  Trash2, Columns2, Rows3, History, Activity,
+  Trash2, Columns2, Rows3, History, Activity, Play,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -40,6 +40,7 @@ import { EmbedNode, getEmbedInfo } from './extensions/EmbedNode';
 import { MathBlock } from './extensions/MathBlock';
 import { MermaidBlock } from './extensions/MermaidBlock';
 import Image from '@tiptap/extension-image';
+import { PresentationMode } from './PresentationMode';
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_WS_URL ?? 'ws://localhost:1234';
 
@@ -86,6 +87,7 @@ export function DocsEditor({
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [synced, setSynced] = useState(false);
   const [activePanel, setActivePanel] = useState<PanelId | null>(null);
+  const [showPresentation, setShowPresentation] = useState(false);
   const [pendingAnchorId, setPendingAnchorId] = useState<string | null>(null);
   const [focusAnchorId, setFocusAnchorId] = useState<string | null>(null);
   const [commentBtnPos, setCommentBtnPos] = useState<{ x: number; y: number } | null>(null);
@@ -564,6 +566,16 @@ export function DocsEditor({
                     </button>
                   ))}
 
+                  {/* Present button */}
+                  <button
+                    type="button"
+                    title="Present"
+                    onClick={() => setShowPresentation(true)}
+                    className="p-1.5 rounded-md transition-colors text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                  >
+                    <Play className="w-4 h-4" />
+                  </button>
+
                   {/* Save state */}
                   <div className="flex items-center gap-1 text-xs text-muted-foreground select-none">
                     {!synced ? (
@@ -838,6 +850,15 @@ export function DocsEditor({
             }}
           />
         </div>
+      )}
+
+      {/* Presentation mode overlay */}
+      {showPresentation && (
+        <PresentationMode
+          editor={editor}
+          title={title}
+          onClose={() => setShowPresentation(false)}
+        />
       )}
     </div>
   );

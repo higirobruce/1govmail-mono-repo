@@ -21,8 +21,15 @@ import { TableOfContents } from './TableOfContents';
 import {
   Check, Loader2, PanelRight, X, MessageSquare, MessageSquarePlus,
   ArrowDownToLine, ArrowUpToLine, ArrowRightToLine, ArrowLeftToLine,
-  Trash2, Columns2, Rows3, History, Activity, Play,
+  Trash2, Columns2, Rows3, History, Activity, Play, MoreHorizontal,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import {
@@ -543,37 +550,61 @@ export function DocsEditor({
                   placeholder="Untitled"
                   className="flex-1 text-3xl font-bold outline-none bg-transparent placeholder:text-muted-foreground/40 read-only:cursor-default"
                 />
-                <div className="flex items-center gap-2 pt-2 shrink-0">
-                  {([
-                    { id: 'comments' as PanelId, Icon: MessageSquare, title: 'Comments' },
-                    { id: 'activity' as PanelId, Icon: Activity,      title: 'Activity' },
-                    { id: 'versions' as PanelId, Icon: History,        title: 'Version history' },
-                    { id: 'toc'      as PanelId, Icon: PanelRight,     title: 'Table of contents' },
-                  ] as const).map(({ id, Icon, title }) => (
-                    <button
-                      key={id}
-                      type="button"
-                      title={activePanel === id ? `Hide ${title.toLowerCase()}` : title}
-                      onClick={() => togglePanel(id)}
-                      className={cn(
-                        'p-1.5 rounded-md transition-colors',
-                        activePanel === id
-                          ? 'bg-muted text-foreground'
-                          : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                      )}
-                    >
-                      <Icon className="w-4 h-4" />
-                    </button>
-                  ))}
+                <div className="flex items-center gap-1.5 pt-2 shrink-0">
+                  {/* Actions menu — Comments, Activity, Version History */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        title="More actions"
+                        className="p-1.5 rounded-md transition-colors text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                      >
+                        <MoreHorizontal className="w-4 h-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                      <DropdownMenuItem
+                        onClick={() => togglePanel('comments')}
+                        className={cn(activePanel === 'comments' && 'bg-muted')}
+                      >
+                        <MessageSquare className="w-4 h-4 mr-2" />
+                        Comments
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => togglePanel('activity')}
+                        className={cn(activePanel === 'activity' && 'bg-muted')}
+                      >
+                        <Activity className="w-4 h-4 mr-2" />
+                        Activity
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => togglePanel('versions')}
+                        className={cn(activePanel === 'versions' && 'bg-muted')}
+                      >
+                        <History className="w-4 h-4 mr-2" />
+                        Version history
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => setShowPresentation(true)}>
+                        <Play className="w-4 h-4 mr-2" />
+                        Present
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
 
-                  {/* Present button */}
+                  {/* Table of contents */}
                   <button
                     type="button"
-                    title="Present"
-                    onClick={() => setShowPresentation(true)}
-                    className="p-1.5 rounded-md transition-colors text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                    title={activePanel === 'toc' ? 'Hide table of contents' : 'Table of contents'}
+                    onClick={() => togglePanel('toc')}
+                    className={cn(
+                      'p-1.5 rounded-md transition-colors',
+                      activePanel === 'toc'
+                        ? 'bg-muted text-foreground'
+                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                    )}
                   >
-                    <Play className="w-4 h-4" />
+                    <PanelRight className="w-4 h-4" />
                   </button>
 
                   {/* Save state */}

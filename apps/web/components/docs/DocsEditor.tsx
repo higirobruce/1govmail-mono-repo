@@ -112,6 +112,14 @@ export function DocsEditor({
     setActivePanel((prev) => (prev === id ? null : id));
   }, []);
 
+  // Strip orphaned pending mark when comments panel is dismissed without saving
+  useEffect(() => {
+    if (activePanel !== 'comments' && pendingAnchorId && editor) {
+      editor.chain().unsetComment(pendingAnchorId).run();
+      setPendingAnchorId(null);
+    }
+  }, [activePanel]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Slash menu ──────────────────────────────────────────────────────────────
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
   const menuRef = useRef<SlashCommandMenuHandle>(null);
@@ -663,7 +671,7 @@ export function DocsEditor({
           <CommentPanel
             docId={docId}
             editor={editor}
-            onClose={() => { setActivePanel(null); setPendingAnchorId(null); setFocusAnchorId(null); }}
+            onClose={() => { setActivePanel(null); setFocusAnchorId(null); }}
             pendingAnchorId={pendingAnchorId}
             onPendingResolved={() => setPendingAnchorId(null)}
             focusAnchorId={focusAnchorId}

@@ -105,6 +105,7 @@ export function DocsEditor({
   const destroyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<Editor | null>(null);
+  const pendingInitRef = useRef<object | null>(null);
   const editorWrapRef = useRef<HTMLDivElement>(null);
   const syncedRef = useRef(false);
 
@@ -138,10 +139,15 @@ export function DocsEditor({
         onSynced() {
           const fragment = ydoc.getXmlFragment('default');
           if (fragment.length === 0 && initialContent) {
-            editorRef.current?.commands.setContent(
-              JSON.parse(initialContent),
-              { emitUpdate: false },
-            );
+            try {
+              const parsed = JSON.parse(initialContent);
+              if (editorRef.current) {
+                editorRef.current.commands.setContent(parsed);
+              } else {
+                // Editor not mounted yet — apply once it becomes available
+                pendingInitRef.current = parsed;
+              }
+            } catch { /* invalid JSON — leave editor empty */ }
           }
           syncedRef.current = true;
           setSynced(true);
@@ -291,7 +297,14 @@ export function DocsEditor({
 
   useEffect(() => {
     editorRef.current = editor;
-    if (editor) setWordCount(getWordCount(editor));
+    if (editor) {
+      setWordCount(getWordCount(editor));
+      // Flush any content that onSynced tried to set before the editor was ready
+      if (pendingInitRef.current) {
+        editor.commands.setContent(pendingInitRef.current);
+        pendingInitRef.current = null;
+      }
+    }
   }, [editor]);
 
   // ── Real-time title sync via Yjs ───────────────────────────────────────────

@@ -486,7 +486,12 @@ function MonthView({
     end:   endOfWeek(endOfMonth(currentDate),    { weekStartsOn: 1 }),
   });
   const eventsForDay = (day: Date) =>
-    events.filter((e) => { try { return isSameDay(parseISO(e.startAt), day); } catch { return false; } });
+    events.filter((e) => {
+      try {
+        const d = startOfDay(day);
+        return d >= startOfDay(parseISO(e.startAt)) && d <= startOfDay(parseISO(e.endAt));
+      } catch { return false; }
+    });
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -550,10 +555,13 @@ function YearView({
 }) {
   const year = currentDate.getFullYear();
   const months = Array.from({ length: 12 }, (_, i) => new Date(year, i, 1));
-  const eventDays = new Set(events.map((e) => {
-    try { return format(parseISO(e.startAt), 'yyyy-MM-dd'); }
-    catch { return ''; }
-  }));
+  const eventDays = new Set<string>();
+  events.forEach((e) => {
+    try {
+      eachDayOfInterval({ start: parseISO(e.startAt), end: parseISO(e.endAt) })
+        .forEach((d) => eventDays.add(format(d, 'yyyy-MM-dd')));
+    } catch {}
+  });
 
   return (
     <ScrollArea className="flex-1 min-h-0">
@@ -631,14 +639,19 @@ function TimelineView({
   const allDayFor = (day: Date) =>
     events.filter((e) => {
       if (!e.allDay) return false;
-      try { return isSameDay(parseISO(e.startAt), day); } catch { return false; }
+      try {
+        const d = startOfDay(day);
+        return d >= startOfDay(parseISO(e.startAt)) && d <= startOfDay(parseISO(e.endAt));
+      } catch { return false; }
     });
 
   /** Timed events for a specific day */
   const timedFor = (day: Date) =>
     events.filter((e) => {
       if (e.allDay) return false;
-      try { return isSameDay(parseISO(e.startAt), day); } catch { return false; }
+      try {
+        return parseISO(e.startAt) < endOfDay(day) && parseISO(e.endAt) > startOfDay(day);
+      } catch { return false; }
     });
 
   /** Free/busy blocks for a specific day */
@@ -648,18 +661,6 @@ function TimelineView({
     return arr.filter((b) => isSameDay(new Date(b.s), day));
   };
 
-  const eventTop = (isoStart: string) => {
-    try {
-      const d = parseISO(isoStart);
-      return (getHours(d) + getMinutes(d) / 60) * SLOT_H;
-    } catch { return 0; }
-  };
-  const eventHeight = (isoStart: string, isoEnd: string) => {
-    try {
-      const mins = differenceInMinutes(parseISO(isoEnd), parseISO(isoStart));
-      return Math.max(20, (mins / 60) * SLOT_H);
-    } catch { return SLOT_H; }
-  };
 
   const nowTop = (() => {
     const now = new Date();
@@ -774,8 +775,13 @@ function TimelineView({
                 const dayEvents = timedFor(day);
                 const layout    = layoutOverlapping(dayEvents);
                 return dayEvents.map((ev) => {
-                  const top = eventTop(ev.startAt);
-                  const h   = eventHeight(ev.startAt, ev.endAt);
+                  const evStart   = parseISO(ev.startAt);
+                  const evEnd     = parseISO(ev.endAt);
+                  // Use the original start/end time on every spanned day
+                  const startHour = getHours(evStart) + getMinutes(evStart) / 60;
+                  const endHour   = getHours(evEnd)   + getMinutes(evEnd)   / 60;
+                  const top = startHour * SLOT_H;
+                  const h   = Math.max(20, (endHour - startHour) * SLOT_H);
                   const { col, totalCols } = layout.get(ev.id) ?? { col: 0, totalCols: 1 };
                   const widthPct = 100 / totalCols;
                   const leftPct  = col * widthPct;

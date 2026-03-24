@@ -472,13 +472,14 @@ export class ZimbraService {
       const body = response.data?.Body?.SearchResponse;
       const messages: ZimbraMessage[] = body?.m ?? [];
       // Zimbra returns a `more` boolean (reliable) and an optional `total` estimate.
-      // Prefer `more` for hasMore; total is used for display only.
-      const more: boolean = !!body?.more;
+      // Prefer `more` for hasMore; fall back to a full-page heuristic when Zimbra
+      // omits the field (some versions only include `more` when it is true).
       const total: number = body?.total ?? messages.length;
+      const more: boolean = !!body?.more || messages.length >= limit;
       return { messages, total, more };
     } catch (err: any) {
       this.handleZimbraError(err, `searchMessages("${query}")`);
-      return { messages: [], total: 0 }; // unreachable but satisfies TS
+      return { messages: [], total: 0, more: false }; // unreachable but satisfies TS
     }
   }
 

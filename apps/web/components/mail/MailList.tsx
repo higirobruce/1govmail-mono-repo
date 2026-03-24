@@ -395,6 +395,10 @@ export default function MailList({
     // Refs are null during the skeleton render (early-return path).  Once the
     // initial load finishes, `loading` flips to false, this effect re-runs, and
     // by then both refs are attached to the real DOM nodes.
+    // Also re-run when hasMore changes: IntersectionObserver only fires on state
+    // *changes*, so if the sentinel was already visible when loading went false
+    // (and hasMore was still false at that moment), we need a fresh observer
+    // once hasMore becomes true so the initial-entry notification fires again.
     if (!el || !root) return;
     const observer = new IntersectionObserver(
       (entries) => {
@@ -406,7 +410,7 @@ export default function MailList({
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loading, hasMore]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleContextMenu = useCallback((e: React.MouseEvent, message: Message) => {
     if (!onContextAction) return;

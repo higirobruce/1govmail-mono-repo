@@ -584,6 +584,7 @@ export default function MailPage() {
     if (!query.trim()) return;
     if (reset) {
       searchOffsetRef.current = 0;
+      setSearchResults([]);
       setLoadingSearch(true);
     } else {
       setLoadingMoreSearch(true);

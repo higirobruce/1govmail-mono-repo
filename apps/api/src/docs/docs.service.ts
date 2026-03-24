@@ -669,7 +669,7 @@ export class DocsService {
     if (!inviter.authToken) return;
     const inviterName = inviter.displayName ?? inviter.email;
     const roleLabel = role === InviteRole.EDITOR ? 'Editor (can edit)' : 'Viewer (read-only)';
-    const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
+    const appUrl = process.env.FRONTEND_URL ?? process.env.APP_URL ?? 'http://localhost:3000';
     const subject = `${inviterName} invited you to collaborate on "${docTitle}"`;
     const body = `
       <html><body style="font-family:system-ui,sans-serif;color:#1a1a1a;max-width:600px;margin:0 auto;padding:24px">

@@ -430,7 +430,7 @@ export class MailService {
   async searchMessages(userId: string, query: string, limit = 50, offset = 0) {
     const user = await this.getUser(userId);
 
-    const { messages, total } = await this.zimbra.searchMessages(
+    const { messages, total, more } = await this.zimbra.searchMessages(
       user.zimbraHost,
       user.authToken!,
       query,
@@ -497,7 +497,7 @@ export class MailService {
       }
     }
 
-    return { messages: saved, total, offset, limit, hasMore: offset + messages.length < total };
+    return { messages: saved, total, offset, limit, hasMore: more };
   }
 
   async downloadAttachment(userId: string, messageId: string, partId: string) {

@@ -852,6 +852,7 @@ export default function MailPage() {
 
         {isSearchMode ? (
           <MailList
+            key="search"
             messages={searchResults}
             activeMessageId={activeMessageId}
             loading={loadingSearch && searchResults.length === 0}
@@ -866,6 +867,7 @@ export default function MailPage() {
           />
         ) : (
           <MailList
+            key="regular"
             messages={messages}
             activeMessageId={activeMessageId}
             loading={loadingMessages && messages.length === 0}

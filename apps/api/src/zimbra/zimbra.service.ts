@@ -449,7 +449,7 @@ export class ZimbraService {
     limit = 50,
     offset = 0,
     csrfToken?: string,
-  ): Promise<{ messages: ZimbraMessage[]; total: number }> {
+  ): Promise<{ messages: ZimbraMessage[]; total: number; more: boolean }> {
     const client = this.buildClient(host, authToken, csrfToken);
     try {
       // NOTE: do NOT include `fetch` — fetching message bodies for every result
@@ -471,9 +471,11 @@ export class ZimbraService {
 
       const body = response.data?.Body?.SearchResponse;
       const messages: ZimbraMessage[] = body?.m ?? [];
-      // Zimbra returns `more` flag and `total` estimate
+      // Zimbra returns a `more` boolean (reliable) and an optional `total` estimate.
+      // Prefer `more` for hasMore; total is used for display only.
+      const more: boolean = !!body?.more;
       const total: number = body?.total ?? messages.length;
-      return { messages, total };
+      return { messages, total, more };
     } catch (err: any) {
       this.handleZimbraError(err, `searchMessages("${query}")`);
       return { messages: [], total: 0 }; // unreachable but satisfies TS

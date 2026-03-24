@@ -166,17 +166,17 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
       node = node.parentElement;
     }
     let sib: Element | null = sep;
-    while (sib) { const nx = sib.nextElementSibling; quotedNodes.push(sib); sib.remove(); sib = nx; }
+    while (sib) { const nx: Element | null = sib.nextElementSibling; quotedNodes.push(sib); sib.remove(); sib = nx; }
     for (const anc of ancestors) {
       let sib2: Element | null = anc.nextElementSibling;
-      while (sib2) { const nx = sib2.nextElementSibling; quotedNodes.push(sib2); sib2.remove(); sib2 = nx; }
+      while (sib2) { const nx: Element | null = sib2.nextElementSibling; quotedNodes.push(sib2); sib2.remove(); sib2 = nx; }
     }
   } else {
     // Fallback: split at the first blockquote
     const firstBq = tmp.querySelector('blockquote');
     if (firstBq) {
       let sib: ChildNode | null = firstBq;
-      while (sib) { const nx = sib.nextSibling; quotedNodes.push(sib); tmp.removeChild(sib); sib = nx; }
+      while (sib) { const nx: ChildNode | null = sib.nextSibling; quotedNodes.push(sib); tmp.removeChild(sib); sib = nx; }
     }
   }
 

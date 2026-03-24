@@ -387,6 +387,7 @@ export class MailService {
               receivedAt:      new Date(m.d),
             },
             update: {
+              conversationId: msg.conversationId,
               isRead:    !flags.includes('u'),
               isStarred:  flags.includes('f'),
               isDraft:    flags.includes('d'),

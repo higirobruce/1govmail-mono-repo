@@ -5,6 +5,7 @@ import { Loader2, UserPlus, X, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, type DocInvite } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { EmailChipInput } from '@/components/mail/EmailChipInput';
 
 interface DocInviteDialogProps {
   docId: string;
@@ -77,7 +78,7 @@ function getInitials(email: string) {
 export function DocInvitePanel({ docId, isOwner }: DocInviteDialogProps) {
   const [invites, setInvites]     = useState<DocInvite[]>([]);
   const [loading, setLoading]     = useState(true);
-  const [email, setEmail]         = useState('');
+  const [emails, setEmails]       = useState<string[]>([]);
   const [role, setRole]           = useState<Role>('EDITOR');
   const [submitting, setSubmitting] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -92,18 +93,28 @@ export function DocInvitePanel({ docId, isOwner }: DocInviteDialogProps) {
   }, [docId, isOwner]);
 
   const handleAdd = async () => {
-    if (!email.trim()) return;
+    if (emails.length === 0) return;
     setSubmitting(true);
-    try {
-      const invite = await api.docs.invites.add(docId, { email: email.trim(), role });
-      setInvites((prev) => [...prev, invite]);
-      setEmail('');
-      toast.success(`Invited ${email.trim()} — a notification email has been sent`);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to send invite');
-    } finally {
-      setSubmitting(false);
+    const toInvite = [...emails];
+    setEmails([]);
+    let successCount = 0;
+    for (const e of toInvite) {
+      try {
+        const invite = await api.docs.invites.add(docId, { email: e, role });
+        setInvites((prev) => [...prev, invite]);
+        successCount++;
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : `Failed to invite ${e}`);
+      }
     }
+    if (successCount > 0) {
+      toast.success(
+        successCount === 1
+          ? `Invited ${toInvite[0]} — a notification email has been sent`
+          : `Invited ${successCount} people — notification emails have been sent`,
+      );
+    }
+    setSubmitting(false);
   };
 
   const handleRoleChange = async (inviteId: string, newRole: Role) => {
@@ -142,25 +153,24 @@ export function DocInvitePanel({ docId, isOwner }: DocInviteDialogProps) {
   return (
     <div className="flex flex-col gap-4">
       {/* Invite input */}
-      <div className="flex gap-2">
-        <input
-          type="email"
+      <div className="flex flex-col gap-2">
+        <EmailChipInput
+          value={emails}
+          onChange={setEmails}
           placeholder="colleague@gov.za"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') void handleAdd(); }}
-          className="flex-1 min-w-0 text-sm px-3 py-1.5 rounded-md border border-border bg-background outline-none focus:border-primary/50 placeholder:text-muted-foreground/50"
         />
-        <RoleSelect value={role} onChange={setRole} />
-        <button
-          type="button"
-          disabled={submitting || !email.trim()}
-          onClick={() => void handleAdd()}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-        >
-          {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
-          Invite
-        </button>
+        <div className="flex gap-2 justify-end">
+          <RoleSelect value={role} onChange={setRole} />
+          <button
+            type="button"
+            disabled={submitting || emails.length === 0}
+            onClick={() => void handleAdd()}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+            Invite
+          </button>
+        </div>
       </div>
 
       <p className="text-[11px] text-muted-foreground -mt-2">

@@ -40,7 +40,8 @@ export function ShareDocDialog({
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '') ||
     (typeof window !== 'undefined' ? window.location.origin : '');
-  const shareUrl = shareToken ? `${baseUrl}/d/${shareToken}` : '';
+  const viewUrl = shareToken ? `${baseUrl}/d/${shareToken}` : '';
+  const editUrl = shareToken ? `${baseUrl}/d/${shareToken}?edit=1` : '';
 
   const handleToggle = async () => {
     setLoading(true);
@@ -59,9 +60,9 @@ export function ShareDocDialog({
     }
   };
 
-  const handleCopy = async () => {
+  const handleCopy = async (url: string) => {
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      await navigator.clipboard.writeText(url);
       toast.success('Link copied to clipboard');
     } catch {
       toast.error('Failed to copy link');
@@ -108,9 +109,9 @@ export function ShareDocDialog({
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between gap-4">
               <div className="flex flex-col gap-0.5">
-                <span className="text-sm font-medium">Public link</span>
+                <span className="text-sm font-medium">Public link sharing</span>
                 <span className="text-xs text-muted-foreground">
-                  Anyone with the link can view and edit this document
+                  Generate shareable links for view-only or editing access
                 </span>
               </div>
 
@@ -139,30 +140,56 @@ export function ShareDocDialog({
             </div>
 
             {isShared && shareToken ? (
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 min-w-0 overflow-hidden">
-                  <Link className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  <input
-                    readOnly
-                    value={shareUrl}
-                    className="flex-1 min-w-0 bg-transparent text-xs text-muted-foreground outline-none cursor-text"
-                    onFocus={(e) => e.currentTarget.select()}
-                  />
+              <div className="flex flex-col gap-2">
+                {/* View-only link */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">View only</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 min-w-0 overflow-hidden">
+                      <Link className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <input
+                        readOnly
+                        value={viewUrl}
+                        className="flex-1 min-w-0 bg-transparent text-xs text-muted-foreground outline-none cursor-text"
+                        onFocus={(e) => e.currentTarget.select()}
+                      />
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => handleCopy(viewUrl)} className="gap-1.5 shrink-0">
+                      <Copy className="w-3.5 h-3.5" />
+                      Copy
+                    </Button>
+                  </div>
                 </div>
-                <Button size="sm" variant="outline" onClick={handleCopy} className="gap-1.5 shrink-0">
-                  <Copy className="w-3.5 h-3.5" />
-                  Copy
-                </Button>
+
+                {/* Edit link */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Can edit</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 min-w-0 overflow-hidden">
+                      <Link className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <input
+                        readOnly
+                        value={editUrl}
+                        className="flex-1 min-w-0 bg-transparent text-xs text-muted-foreground outline-none cursor-text"
+                        onFocus={(e) => e.currentTarget.select()}
+                      />
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => handleCopy(editUrl)} className="gap-1.5 shrink-0">
+                      <Copy className="w-3.5 h-3.5" />
+                      Copy
+                    </Button>
+                  </div>
+                </div>
               </div>
             ) : !isShared ? (
               <p className="text-xs text-muted-foreground/60">
-                Enable the toggle above to generate a shareable link.
+                Enable the toggle above to generate shareable links.
               </p>
             ) : null}
 
             {isShared && (
               <p className="text-[11px] text-muted-foreground/60">
-                Disabling the link will revoke access for everyone using it.
+                Disabling sharing will revoke access for everyone using these links.
               </p>
             )}
           </div>

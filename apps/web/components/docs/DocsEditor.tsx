@@ -22,6 +22,8 @@ import {
   Check, Loader2, PanelRight, X, MessageSquare, MessageSquarePlus,
   ArrowDownToLine, ArrowUpToLine, ArrowRightToLine, ArrowLeftToLine,
   Trash2, Columns2, Rows3, History, Activity, Play, MoreHorizontal,
+  Bold, Italic, Underline as UnderlineIcon, Strikethrough, Code,
+  Link2, Type, Heading1, Heading2, Heading3, ChevronDown, RemoveFormatting,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -101,6 +103,8 @@ export function DocsEditor({
   const [tooltip, setTooltip] = useState<{ x: number; y: number; anchorId: string } | null>(null);
   const commentSummariesRef = useRef<Record<string, { authorName: string; content: string }>>({});
   const [wordCount, setWordCount] = useState({ words: 0, chars: 0 });
+  const [headingMenuOpen, setHeadingMenuOpen] = useState(false);
+  const [selBubble, setSelBubble] = useState<{ top: number; left: number } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const destroyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -306,6 +310,55 @@ export function DocsEditor({
       }
     }
   }, [editor]);
+
+  // Close the heading dropdown when selection collapses or editor loses focus
+  useEffect(() => {
+    if (!editor) return;
+    const close = () => {
+      const { from, to } = editor.state.selection;
+      if (from === to) setHeadingMenuOpen(false);
+    };
+    const onBlur = () => setHeadingMenuOpen(false);
+    editor.on('selectionUpdate', close);
+    editor.on('blur', onBlur);
+    return () => { editor.off('selectionUpdate', close); editor.off('blur', onBlur); };
+  }, [editor]);
+
+  // Track selection position for the custom bubble menu
+  useEffect(() => {
+    if (!editor || !editable) return;
+    const update = () => {
+      const { from, to } = editor.state.selection;
+      if (
+        from === to ||
+        editor.isActive('table') ||
+        editor.isActive('tableCell') ||
+        editor.isActive('tableHeader')
+      ) {
+        setSelBubble(null);
+        return;
+      }
+      try {
+        const startCoords = editor.view.coordsAtPos(from);
+        const endCoords = editor.view.coordsAtPos(to);
+        const centerX = (startCoords.left + endCoords.left) / 2;
+        const top = Math.min(startCoords.top, endCoords.top);
+        setSelBubble({
+          top,
+          left: Math.max(140, Math.min(centerX, window.innerWidth - 140)),
+        });
+      } catch {
+        setSelBubble(null);
+      }
+    };
+    const hide = () => { setSelBubble(null); setHeadingMenuOpen(false); };
+    editor.on('selectionUpdate', update);
+    editor.on('blur', hide);
+    return () => {
+      editor.off('selectionUpdate', update);
+      editor.off('blur', hide);
+    };
+  }, [editor, editable]);
 
   // ── Real-time title sync via Yjs ───────────────────────────────────────────
   useEffect(() => {
@@ -729,38 +782,164 @@ export function DocsEditor({
         )}
       </div>
 
-      {/* Text selection bubble menu — Add comment */}
-      {editable && (
-        <BubbleMenu
-          editor={editor}
-          shouldShow={({ editor: ed, state }) => {
-            const { from, to } = state.selection;
-            return (
-              from !== to &&
-              !ed.isActive('table') &&
-              !ed.isActive('tableCell') &&
-              !ed.isActive('tableHeader')
-            );
+      {/* Text selection bubble menu */}
+      {editable && selBubble && (
+        <div
+          style={{
+            position: 'fixed',
+            top: selBubble.top - 8,
+            left: selBubble.left,
+            transform: 'translate(-50%, -100%)',
+            zIndex: 9999,
           }}
-          options={{ placement: 'top', offset: 8 }}
-          className="flex items-center gap-0.5 rounded-lg border border-border bg-popover shadow-lg p-1"
+          onMouseDown={(e) => e.preventDefault()}
+          className="flex flex-col rounded-xl border border-border bg-popover shadow-xl w-[260px]"
         >
-          <button
-            type="button"
-            title="Add comment"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              const anchorId = crypto.randomUUID();
-              editor.chain().focus().setComment(anchorId).run();
-              setPendingAnchorId(anchorId);
-              setActivePanel('comments');
-            }}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            Comment
-          </button>
-        </BubbleMenu>
+          {/* ── Row 1: inline marks ─────────────────────────────────────────── */}
+          <div className="flex items-center gap-0.5 p-1.5">
+            {/* Clear formatting */}
+            <button
+              type="button"
+              title="Clear formatting"
+              onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().clearNodes().unsetAllMarks().run(); }}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              <RemoveFormatting className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-border mx-0.5 shrink-0" />
+
+            {/* Bold */}
+            <button
+              type="button"
+              title="Bold"
+              onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().toggleBold().run(); }}
+              className={cn('p-1.5 rounded-md transition-colors', editor.isActive('bold') ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}
+            >
+              <Bold className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Italic */}
+            <button
+              type="button"
+              title="Italic"
+              onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().toggleItalic().run(); }}
+              className={cn('p-1.5 rounded-md transition-colors', editor.isActive('italic') ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}
+            >
+              <Italic className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Underline */}
+            <button
+              type="button"
+              title="Underline"
+              onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().toggleUnderline().run(); }}
+              className={cn('p-1.5 rounded-md transition-colors', editor.isActive('underline') ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}
+            >
+              <UnderlineIcon className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Strikethrough */}
+            <button
+              type="button"
+              title="Strikethrough"
+              onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().toggleStrike().run(); }}
+              className={cn('p-1.5 rounded-md transition-colors', editor.isActive('strike') ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}
+            >
+              <Strikethrough className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Inline code */}
+            <button
+              type="button"
+              title="Inline code"
+              onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().toggleCode().run(); }}
+              className={cn('p-1.5 rounded-md transition-colors', editor.isActive('code') ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}
+            >
+              <Code className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Link */}
+            <button
+              type="button"
+              title={editor.isActive('link') ? 'Remove link' : 'Add link'}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                if (editor.isActive('link')) {
+                  editor.chain().focus().unsetLink().run();
+                } else {
+                  const url = window.prompt('URL');
+                  if (url) editor.chain().focus().setLink({ href: url }).run();
+                }
+              }}
+              className={cn('p-1.5 rounded-md transition-colors', editor.isActive('link') ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}
+            >
+              <Link2 className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-border mx-0.5 shrink-0" />
+
+            {/* Heading dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                title="Heading"
+                onMouseDown={(e) => { e.preventDefault(); setHeadingMenuOpen((v) => !v); }}
+                className={cn('flex items-center gap-0.5 p-1.5 rounded-md transition-colors', (editor.isActive('heading')) ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}
+              >
+                <Type className="w-3.5 h-3.5" />
+                <ChevronDown className="w-2.5 h-2.5" />
+              </button>
+              {headingMenuOpen && (
+                <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[120px]">
+                  {[
+                    { label: 'Heading 1', icon: Heading1, level: 1 },
+                    { label: 'Heading 2', icon: Heading2, level: 2 },
+                    { label: 'Heading 3', icon: Heading3, level: 3 },
+                    { label: 'Normal text', icon: Type, level: null },
+                  ].map(({ label, icon: Icon, level }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        if (level) editor.chain().focus().toggleHeading({ level: level as 1|2|3 }).run();
+                        else editor.chain().focus().setParagraph().run();
+                        setHeadingMenuOpen(false);
+                      }}
+                      className={cn(
+                        'w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted transition-colors text-left',
+                        level && editor.isActive('heading', { level }) ? 'text-primary font-medium' : 'text-foreground',
+                      )}
+                    >
+                      <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Row 2: Comment ──────────────────────────────────────────────── */}
+          <div className="border-t border-border/60 p-1">
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setHeadingMenuOpen(false);
+                const anchorId = crypto.randomUUID();
+                editor.chain().focus().setComment(anchorId).run();
+                setPendingAnchorId(anchorId);
+                setActivePanel('comments');
+              }}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              Comment
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Table bubble menu */}

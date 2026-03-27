@@ -165,8 +165,13 @@
 }
 
 /* ── Selection ──────────────────────────────────────────────────────────────── */
+/* var() is unreliable inside ::selection in some browsers — use explicit values */
 ::selection {
-  background: oklch(0.22 0 0 / 0.12);
+  background: oklch(0.22 0 0 / 0.15);
+  color: inherit;
+}
+.dark ::selection {
+  background: oklch(0.80 0.08 240 / 0.35);
   color: inherit;
 }
 

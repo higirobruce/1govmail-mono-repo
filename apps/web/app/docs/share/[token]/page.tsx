@@ -1,15 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { Loader2, Globe } from 'lucide-react';
+import { useParams, useSearchParams } from 'next/navigation';
+import { Loader2, Globe, Eye } from 'lucide-react';
 import { api, type Doc } from '@/lib/api';
 import { DocsEditor } from '@/components/docs/DocsEditor';
 import { getUserColor } from '@/lib/utils';
 
 export default function SharedDocPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const token = params?.token as string;
+  const canEdit = searchParams.get('edit') === '1';
 
   const [doc, setDoc] = useState<Doc | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,9 +72,15 @@ export default function SharedDocPage() {
     <div className="flex flex-col h-screen bg-background">
       {/* Shared banner */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-muted/30 shrink-0">
-        <Globe className="w-3.5 h-3.5 text-muted-foreground" />
+        {canEdit ? (
+          <Globe className="w-3.5 h-3.5 text-muted-foreground" />
+        ) : (
+          <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+        )}
         <span className="text-xs text-muted-foreground">
-          Shared document — anyone with this link can edit
+          {canEdit
+            ? 'Shared document — anyone with this link can edit'
+            : 'Shared document — view only'}
         </span>
       </div>
 
@@ -84,9 +92,10 @@ export default function SharedDocPage() {
           initialContent={doc.content}
           title={localTitle}
           onTitleChange={setLocalTitle}
-          onTitleSave={onTitleSave}
+          onTitleSave={canEdit ? onTitleSave : undefined}
           collaborationToken={collabToken}
           collaborationUser={collabUser}
+          editable={canEdit}
         />
       </div>
     </div>

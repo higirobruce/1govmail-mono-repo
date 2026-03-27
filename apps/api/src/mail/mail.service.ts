@@ -668,8 +668,9 @@ export class MailService {
         .map((a) => ({ mid: idToZimbraId.get(a.mid) ?? a.mid, part: a.part }));
     }
 
-    const { zimbraId: sentZimbraId, conversationId: sentCid } =
-      await this.zimbra.sendMessage(
+    let sendResult: { zimbraId: string | null; conversationId: string | null };
+    try {
+      sendResult = await this.zimbra.sendMessage(
         user.zimbraHost,
         user.authToken!,
         { ...payload, body: cleanBody, replyToId: zimbraReplyToId },
@@ -678,6 +679,16 @@ export class MailService {
         inlineImageAids,
         resolvedForwardedAttachments,
       );
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { authToken: null, tokenExpiry: null },
+        });
+      }
+      throw err;
+    }
+    const { zimbraId: sentZimbraId, conversationId: sentCid } = sendResult;
 
     // Persist the sent message to the local DB so it appears in thread view.
     // Best-effort: a failure here must NOT prevent the 200 response reaching

@@ -996,12 +996,22 @@ function findFreeSlots(
   maxSlots = 5,
 ): SuggestedSlot[] {
   const slots: SuggestedSlot[] = [];
-  const days = eachDayOfInterval({ start: startOfDay(fromDate), end: addDays(fromDate, 29) });
+  const now = new Date();
+  // Never suggest slots in the past — start from whichever is later
+  const effectiveFrom = fromDate > now ? fromDate : now;
+  const days = eachDayOfInterval({ start: startOfDay(effectiveFrom), end: addDays(effectiveFrom, 29) });
 
   for (const day of days) {
     if (slots.length >= maxSlots) break;
-    const wStart = new Date(day); wStart.setHours(8, 0, 0, 0);
-    const wEnd   = new Date(day); wEnd.setHours(18, 0, 0, 0);
+    // Skip weekends
+    const dow = day.getDay();
+    if (dow === 0 || dow === 6) continue;
+
+    const wStart = new Date(day); wStart.setHours(9, 0, 0, 0);
+    const wEnd   = new Date(day); wEnd.setHours(17, 0, 0, 0);
+    // For today: don't look at hours already past
+    if (wEnd <= effectiveFrom) continue;
+    if (wStart < effectiveFrom) wStart.setTime(effectiveFrom.getTime());
 
     // Combine all busy + tentative from all attendees
     const allBusy: Array<{ s: number; e: number }> = results.flatMap((r) => [

@@ -231,7 +231,7 @@ export function DocsEditor({
           try {
             const formData = new FormData();
             formData.append('file', file);
-            const res = await fetch('/api/upload/image', { method: 'POST', body: formData });
+            const res = await fetch('/upload/image', { method: 'POST', body: formData });
             const { url } = await res.json() as { url: string };
             const node = view.state.schema.nodes.image?.create({ src: url, alt: file.name });
             if (!node) return;
@@ -253,7 +253,7 @@ export function DocsEditor({
             try {
               const formData = new FormData();
               formData.append('file', file);
-              const res = await fetch('/api/upload/image', { method: 'POST', body: formData });
+              const res = await fetch('/upload/image', { method: 'POST', body: formData });
               const { url } = await res.json() as { url: string };
               const node = view.state.schema.nodes.image?.create({ src: url, alt: file.name });
               if (!node) return;

@@ -222,6 +222,12 @@ export class DocsController {
     return this.docsService.listActivity(req.user.sub, id);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/duplicate')
+  duplicate(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.docsService.duplicate(req.user.sub, id);
+  }
+
   // ── Doc CRUD ──────────────────────────────────────────────────────────────
 
   @UseGuards(JwtAuthGuard)

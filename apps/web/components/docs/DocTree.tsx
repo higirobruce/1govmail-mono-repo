@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight, FileText, Plus, MoreHorizontal, Star, Trash2 } from 'lucide-react';
+import { ChevronRight, FileText, Plus, MoreHorizontal, Star, Trash2, Copy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Doc } from '@/lib/api';
 
@@ -24,9 +24,10 @@ interface DocTreeItemProps {
   onDelete: (id: string) => void;
   onFavorite: (id: string) => void;
   onNewSubpage: (parentId: string) => void;
+  onDuplicate: (id: string) => void;
 }
 
-function DocTreeItem({ node, depth, selectedId, onSelect, onDelete, onFavorite, onNewSubpage }: DocTreeItemProps) {
+function DocTreeItem({ node, depth, selectedId, onSelect, onDelete, onFavorite, onNewSubpage, onDuplicate }: DocTreeItemProps) {
   const [expanded, setExpanded] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const hasChildren = node.children.length > 0;
@@ -103,6 +104,14 @@ function DocTreeItem({ node, depth, selectedId, onSelect, onDelete, onFavorite, 
               <Plus className="w-3.5 h-3.5" />
               New subpage
             </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted"
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDuplicate(node.id); }}
+            >
+              <Copy className="w-3.5 h-3.5" />
+              Duplicate
+            </button>
             <hr className="my-1 border-border" />
             <button
               type="button"
@@ -128,6 +137,7 @@ function DocTreeItem({ node, depth, selectedId, onSelect, onDelete, onFavorite, 
               onDelete={onDelete}
               onFavorite={onFavorite}
               onNewSubpage={onNewSubpage}
+              onDuplicate={onDuplicate}
             />
           ))}
         </div>
@@ -143,9 +153,10 @@ interface DocTreeProps {
   onDelete: (id: string) => void;
   onFavorite: (id: string) => void;
   onNewSubpage: (parentId: string) => void;
+  onDuplicate: (id: string) => void;
 }
 
-export function DocTree({ docs, selectedId, onSelect, onDelete, onFavorite, onNewSubpage }: DocTreeProps) {
+export function DocTree({ docs, selectedId, onSelect, onDelete, onFavorite, onNewSubpage, onDuplicate }: DocTreeProps) {
   const tree = buildTree(docs);
 
   if (tree.length === 0) {
@@ -166,6 +177,7 @@ export function DocTree({ docs, selectedId, onSelect, onDelete, onFavorite, onNe
           onDelete={onDelete}
           onFavorite={onFavorite}
           onNewSubpage={onNewSubpage}
+          onDuplicate={onDuplicate}
         />
       ))}
     </div>

@@ -171,6 +171,27 @@ export class DocsService {
     return { success: true };
   }
 
+  async duplicate(userId: string, id: string) {
+    const source = await this.findOne(userId, id);
+    const last = await this.prisma.document.findFirst({
+      where: { userId, parentId: source.parentId ?? null },
+      orderBy: { position: 'desc' },
+      select: { position: true },
+    });
+    return this.prisma.document.create({
+      data: {
+        userId,
+        title:      `${source.title || 'Untitled'} (copy)`,
+        emoji:      source.emoji      ?? null,
+        parentId:   source.parentId   ?? null,
+        content:    source.content    ?? null,
+        tags:       source.tags       ?? [],
+        coverColor: source.coverColor ?? null,
+        position:   (last?.position ?? -1) + 1,
+      },
+    });
+  }
+
   // ── Share link ────────────────────────────────────────────────────────────
 
   async enableSharing(userId: string, id: string) {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
+import { Slice, DOMSerializer } from '@tiptap/pm/model';
 import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -242,6 +243,24 @@ export function DocsEditor({
         return true;
       },
       handlePaste(view, event) {
+        // TipTap JSON slice — restores custom nodes/marks that HTML may lose
+        const html = event.clipboardData?.getData('text/html') ?? '';
+        const keyMatch = html.match(/data-tt-clip-key="([^"]+)"/);
+        if (keyMatch) {
+          const storedKey = sessionStorage.getItem('__tt_clip_key');
+          if (storedKey === keyMatch[1]) {
+            const json = sessionStorage.getItem(storedKey);
+            if (json) {
+              event.preventDefault();
+              try {
+                const pmSlice = Slice.fromJSON(view.state.schema, JSON.parse(json));
+                view.dispatch(view.state.tr.replaceSelection(pmSlice));
+                return true;
+              } catch { /* fall through to default HTML paste */ }
+            }
+          }
+        }
+
         // Image files from clipboard
         const imageFiles = Array.from(event.clipboardData?.items ?? [])
           .filter((i) => i.type.startsWith('image/'))
@@ -322,6 +341,42 @@ export function DocsEditor({
     editor.on('selectionUpdate', close);
     editor.on('blur', onBlur);
     return () => { editor.off('selectionUpdate', close); editor.off('blur', onBlur); };
+  }, [editor]);
+
+  // Preserve full TipTap JSON on copy/cut so paste into another DocsEditor
+  // restores all custom nodes and marks that HTML alone might lose.
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const onCopyOrCut = (e: ClipboardEvent) => {
+      const { from, to } = editor.state.selection;
+      if (from === to || !e.clipboardData) return;
+      const slice = editor.state.doc.slice(from, to);
+      const key = `tt-${Date.now()}`;
+      try {
+        sessionStorage.setItem('__tt_clip_key', key);
+        sessionStorage.setItem(key, JSON.stringify(slice.toJSON()));
+      } catch { /* storage quota */ }
+      // Serialize the selection to HTML via ProseMirror's DOM serializer
+      const serializer = DOMSerializer.fromSchema(editor.state.schema);
+      const container = document.createElement('div');
+      container.appendChild(serializer.serializeFragment(slice.content));
+      // Inject a hidden marker so handlePaste can detect TipTap-origin content
+      const marker = document.createElement('span');
+      marker.dataset.ttClipKey = key;
+      marker.style.display = 'none';
+      container.appendChild(marker);
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', slice.content.textBetween(0, slice.content.size, '\n'));
+      e.clipboardData.setData('text/html', container.innerHTML);
+      // For cut: delete the selection after writing to clipboard
+      if (e.type === 'cut') {
+        editor.view.dispatch(editor.state.tr.deleteSelection());
+      }
+    };
+    dom.addEventListener('copy', onCopyOrCut);
+    dom.addEventListener('cut',  onCopyOrCut);
+    return () => { dom.removeEventListener('copy', onCopyOrCut); dom.removeEventListener('cut', onCopyOrCut); };
   }, [editor]);
 
   // Track selection position for the custom bubble menu

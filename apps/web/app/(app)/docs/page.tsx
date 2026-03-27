@@ -169,6 +169,18 @@ export default function DocsPage() {
     });
   }, [confirm, selectedId]);
 
+  // Duplicate a doc
+  const handleDuplicate = useCallback(async (id: string) => {
+    try {
+      const newDoc = await api.docs.duplicate(id);
+      setDocs((prev) => [...prev, newDoc]);
+      void selectDoc(newDoc.id);
+      toast.success('Document duplicated');
+    } catch {
+      toast.error('Failed to duplicate document');
+    }
+  }, [selectDoc]);
+
   // Toggle favorite
   const handleFavorite = useCallback(async (id: string) => {
     try {
@@ -406,6 +418,7 @@ export default function DocsPage() {
                       onDelete={handleDelete}
                       onFavorite={(id) => void handleFavorite(id)}
                       onNewSubpage={(parentId) => openTemplatePicker(parentId)}
+                      onDuplicate={(id) => void handleDuplicate(id)}
                     />
                   </div>
                 )}

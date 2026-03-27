@@ -677,6 +677,10 @@ export const api = {
       if (USE_MOCK) return delay({ success: true });
       return request<{ success: boolean }>(`/docs/${id}`, { method: 'DELETE' });
     },
+    duplicate: (id: string) => {
+      if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: 'Untitled (copy)', emoji: null, parentId: null, position: 0, isFavorite: false, tags: [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      return request<Doc>(`/docs/${id}/duplicate`, { method: 'POST' });
+    },
     toggleFavorite: (id: string) => {
       if (USE_MOCK) return delay({ id, isFavorite: true });
       return request<{ id: string; isFavorite: boolean }>(`/docs/${id}/favorite`, { method: 'PATCH' });

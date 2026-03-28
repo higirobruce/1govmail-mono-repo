@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { ChevronRight, FileText, Plus, MoreHorizontal, Star, Trash2, Copy } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { ChevronRight, FileText, Plus, MoreHorizontal, Star, Trash2, Copy, FileStack } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Doc } from '@/lib/api';
 
@@ -25,23 +25,61 @@ interface DocTreeItemProps {
   onFavorite: (id: string) => void;
   onNewSubpage: (parentId: string) => void;
   onDuplicate: (id: string) => void;
+  onSaveAsTemplate: (id: string) => void;
+  onMoveToParent: (docId: string, newParentId: string) => void;
+  dragIdRef: React.MutableRefObject<string | null>;
+  dragOverId: string | null;
+  setDragOverId: (id: string | null) => void;
 }
 
-function DocTreeItem({ node, depth, selectedId, onSelect, onDelete, onFavorite, onNewSubpage, onDuplicate }: DocTreeItemProps) {
+function DocTreeItem({
+  node, depth, selectedId, onSelect, onDelete, onFavorite, onNewSubpage,
+  onDuplicate, onSaveAsTemplate, onMoveToParent, dragIdRef, dragOverId, setDragOverId,
+}: DocTreeItemProps) {
   const [expanded, setExpanded] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const hasChildren = node.children.length > 0;
 
+  const isDragOver = dragOverId === node.id;
+
   return (
     <div>
       <div
+        draggable
         className={cn(
           'group relative flex items-center gap-1 py-1 cursor-pointer hover:bg-muted/60 text-sm rounded-sm mx-1',
           selectedId === node.id && 'bg-muted text-foreground font-medium',
           selectedId !== node.id && 'text-muted-foreground',
+          isDragOver && 'outline-2 outline-primary bg-primary/5',
         )}
         style={{ paddingLeft: `${12 + depth * 14}px`, paddingRight: '4px' }}
         onClick={() => void onSelect(node.id)}
+        onDragStart={() => {
+          dragIdRef.current = node.id;
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (dragIdRef.current && dragIdRef.current !== node.id) {
+            setDragOverId(node.id);
+          }
+        }}
+        onDragLeave={() => {
+          if (dragOverId === node.id) {
+            setDragOverId(null);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (dragIdRef.current && dragIdRef.current !== node.id) {
+            onMoveToParent(dragIdRef.current, node.id);
+          }
+          dragIdRef.current = null;
+          setDragOverId(null);
+        }}
+        onDragEnd={() => {
+          dragIdRef.current = null;
+          setDragOverId(null);
+        }}
       >
         <button
           type="button"
@@ -112,6 +150,14 @@ function DocTreeItem({ node, depth, selectedId, onSelect, onDelete, onFavorite, 
               <Copy className="w-3.5 h-3.5" />
               Duplicate
             </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted"
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onSaveAsTemplate(node.id); }}
+            >
+              <FileStack className="w-3.5 h-3.5" />
+              Save as template
+            </button>
             <hr className="my-1 border-border" />
             <button
               type="button"
@@ -138,6 +184,11 @@ function DocTreeItem({ node, depth, selectedId, onSelect, onDelete, onFavorite, 
               onFavorite={onFavorite}
               onNewSubpage={onNewSubpage}
               onDuplicate={onDuplicate}
+              onSaveAsTemplate={onSaveAsTemplate}
+              onMoveToParent={onMoveToParent}
+              dragIdRef={dragIdRef}
+              dragOverId={dragOverId}
+              setDragOverId={setDragOverId}
             />
           ))}
         </div>
@@ -154,10 +205,17 @@ interface DocTreeProps {
   onFavorite: (id: string) => void;
   onNewSubpage: (parentId: string) => void;
   onDuplicate: (id: string) => void;
+  onSaveAsTemplate: (id: string) => void;
+  onMoveToParent: (docId: string, newParentId: string) => void;
 }
 
-export function DocTree({ docs, selectedId, onSelect, onDelete, onFavorite, onNewSubpage, onDuplicate }: DocTreeProps) {
+export function DocTree({
+  docs, selectedId, onSelect, onDelete, onFavorite, onNewSubpage,
+  onDuplicate, onSaveAsTemplate, onMoveToParent,
+}: DocTreeProps) {
   const tree = buildTree(docs);
+  const dragIdRef = useRef<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   if (tree.length === 0) {
     return (
@@ -178,6 +236,11 @@ export function DocTree({ docs, selectedId, onSelect, onDelete, onFavorite, onNe
           onFavorite={onFavorite}
           onNewSubpage={onNewSubpage}
           onDuplicate={onDuplicate}
+          onSaveAsTemplate={onSaveAsTemplate}
+          onMoveToParent={onMoveToParent}
+          dragIdRef={dragIdRef}
+          dragOverId={dragOverId}
+          setDragOverId={setDragOverId}
         />
       ))}
     </div>

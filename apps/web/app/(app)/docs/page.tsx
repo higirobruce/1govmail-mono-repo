@@ -10,6 +10,7 @@ import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { DocsEditor } from '@/components/docs/DocsEditor';
 import { DocTree } from '@/components/docs/DocTree';
 import { TemplatePickerDialog } from '@/components/docs/TemplatePickerDialog';
+import { SaveAsTemplateDialog } from '@/components/docs/SaveAsTemplateDialog';
 import { ShareDocDialog } from '@/components/docs/ShareDocDialog';
 import { COVER_OPTIONS } from '@/components/docs/DocCoverPicker';
 import { Button } from '@/components/ui/button';
@@ -69,6 +70,7 @@ export default function DocsPage() {
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [templateOpen, setTemplateOpen]       = useState(false);
   const [pendingParentId, setPendingParentId] = useState<string | null>(null);
+  const [saveAsTemplateDocId, setSaveAsTemplateDocId] = useState<string | null>(null);
 
   // Search & filter
   const [searchQuery, setSearchQuery]     = useState('');
@@ -180,6 +182,21 @@ export default function DocsPage() {
       toast.error('Failed to duplicate document');
     }
   }, [selectDoc]);
+
+  // Move a doc to a new parent via drag & drop
+  const handleMoveToParent = useCallback(async (docId: string, newParentId: string) => {
+    try {
+      await api.docs.update(docId, { parentId: newParentId });
+      setDocs((prev) => prev.map((d) => d.id === docId ? { ...d, parentId: newParentId } : d));
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to move document');
+    }
+  }, []);
+
+  // Open save-as-template dialog for a doc
+  const handleSaveAsTemplate = useCallback((id: string) => {
+    setSaveAsTemplateDocId(id);
+  }, []);
 
   // Toggle favorite
   const handleFavorite = useCallback(async (id: string) => {
@@ -419,6 +436,8 @@ export default function DocsPage() {
                       onFavorite={(id) => void handleFavorite(id)}
                       onNewSubpage={(parentId) => openTemplatePicker(parentId)}
                       onDuplicate={(id) => void handleDuplicate(id)}
+                      onSaveAsTemplate={handleSaveAsTemplate}
+                      onMoveToParent={(docId, newParentId) => void handleMoveToParent(docId, newParentId)}
                     />
                   </div>
                 )}
@@ -664,6 +683,24 @@ export default function DocsPage() {
         onOpenChange={setTemplateOpen}
         onSelect={(t) => void handleCreateFromTemplate(t)}
       />
+
+      {/* Save as template */}
+      {(() => {
+        const doc = saveAsTemplateDocId ? docs.find((d) => d.id === saveAsTemplateDocId) : null;
+        return (
+          <SaveAsTemplateDialog
+            open={!!saveAsTemplateDocId}
+            onOpenChange={(open) => { if (!open) setSaveAsTemplateDocId(null); }}
+            docId={saveAsTemplateDocId}
+            docTitle={doc?.title ?? 'Untitled'}
+            docEmoji={doc?.emoji ?? null}
+            onSaved={() => {
+              toast.success('Template saved');
+              setSaveAsTemplateDocId(null);
+            }}
+          />
+        );
+      })()}
     </>
   );
 }

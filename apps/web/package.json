@@ -39,6 +39,7 @@
     "date-fns": "^4.1.0",
     "html-to-docx": "^1.8.0",
     "html2pdf.js": "^0.14.0",
+    "isomorphic-dompurify": "^3.9.0",
     "katex": "^0.16.40",
     "lowlight": "^3.3.0",
     "lucide-react": "^0.575.0",

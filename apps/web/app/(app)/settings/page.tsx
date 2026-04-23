@@ -29,6 +29,7 @@ import { Color } from '@tiptap/extension-color';
 import TiptapImage from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import { cn } from '@/lib/utils';
+import { sanitizeSignatureHtml } from '@/lib/sanitize';
 
 // Extend TipTap's Image extension to preserve the data-zimbra-src attribute
 // that the backend embeds alongside each base64 data URI. Without this, TipTap
@@ -682,7 +683,7 @@ function SignaturesSection({ data, onUpdate }: { data: SettingsData; onUpdate: (
                   <p className="text-sm font-medium text-foreground">{sig.name}</p>
                   <div
                     className="text-xs text-muted-foreground/50 mt-1 line-clamp-2 [&_*]:max-w-full"
-                    dangerouslySetInnerHTML={{ __html: sig.contentHtml }}
+                    dangerouslySetInnerHTML={{ __html: sanitizeSignatureHtml(sig.contentHtml) }}
                   />
                 </div>
                 <div className="flex gap-1 shrink-0">
@@ -981,6 +982,19 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
     localStorage.setItem('1gov_normalize_email_styles', String(v));
   };
 
+  const [celebrateInboxZero, setCelebrateInboxZero] = useState(() =>
+    typeof window !== 'undefined'
+      ? localStorage.getItem('1gov_inbox_zero_enabled') !== 'false'
+      : true,
+  );
+  const handleInboxZeroToggle = (v: boolean) => {
+    setCelebrateInboxZero(v);
+    localStorage.setItem('1gov_inbox_zero_enabled', String(v));
+    // Clear the "already celebrated today" marker when re-enabling, so the user
+    // can see the celebration on their next transition without waiting until tomorrow.
+    if (v) localStorage.removeItem('1gov_inbox_zero_last_celebration');
+  };
+
   // Composing
   const [composeFormat, setComposeFormat] = useState(p.zimbraPrefComposeFormat ?? 'html');
   const [defaultSigId,  setDefaultSigId]  = useState(
@@ -1056,6 +1070,13 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
           description="Override sender fonts and colours so every message uses the app's clean typography. Takes effect on the next message you open."
         >
           <Switch checked={normalizeEmailStyles} onChange={handleNormalizeToggle} />
+        </SettingRow>
+
+        <SettingRow
+          label="Celebrate Inbox Zero"
+          description="Show a brief animation when you clear the last unread message from your inbox. At most once per day."
+        >
+          <Switch checked={celebrateInboxZero} onChange={handleInboxZeroToggle} />
         </SettingRow>
 
         <SettingRow

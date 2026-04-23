@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import MailList, { type ContextAction, type BulkAction } from '@/components/mail/MailList';
+import { InboxZero } from '@/components/mail/InboxZero';
 import SnoozeModal from '@/components/mail/SnoozeModal';
 import MailDetail from '@/components/mail/MailDetail';
 import ThreadView from '@/components/mail/ThreadView';
@@ -256,6 +257,44 @@ export default function MailPage() {
       setActiveMessage(null);
     }
   }, [activeFolderId]);
+
+  // ── Inbox Zero celebration ────────────────────────────────────────────────
+  // Fires a one-shot confetti + empty-state message when the inbox unread
+  // count transitions from >0 to 0, gated to once per local day.
+  //
+  // Baseline: the first folder snapshot after mount is recorded but does NOT
+  // trigger — we only celebrate a *transition* the user caused in this session,
+  // not the initial state of an already-empty inbox.
+  const prevInboxUnreadRef = useRef<number | null>(null);
+  const [pendingInboxZero, setPendingInboxZero] = useState(false);
+  useEffect(() => {
+    const inbox = folders.find((f) => f.path === '/Inbox');
+    if (!inbox) return;
+    const current: number = inbox.unreadCount ?? 0;
+    const prev = prevInboxUnreadRef.current;
+    prevInboxUnreadRef.current = current;
+    if (prev === null) return; // baseline snapshot — no celebration
+    if (prev > 0 && current === 0) {
+      if (typeof window === 'undefined') return;
+      const enabled = localStorage.getItem('1gov_inbox_zero_enabled') !== 'false';
+      if (!enabled) return;
+      const today = new Date().toISOString().slice(0, 10);
+      if (localStorage.getItem('1gov_inbox_zero_last_celebration') === today) return;
+      setPendingInboxZero(true);
+    }
+  }, [folders]);
+
+  const handleInboxZeroCelebrated = useCallback(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    try { localStorage.setItem('1gov_inbox_zero_last_celebration', today); } catch { /* ignore quota/private-mode */ }
+    setPendingInboxZero(false);
+  }, []);
+
+  const activeFolder = folders.find((f) => f.id === activeFolderId);
+  const isInboxActive = activeFolder?.path === '/Inbox';
+  // Only surface the Inbox Zero empty-state when the inbox is genuinely at
+  // zero unread — otherwise "0 starred" on the starred tab would trigger it.
+  const showInboxZeroEmptyState = isInboxActive && (activeFolder?.unreadCount ?? 0) === 0;
 
   // Load full message
   const openMessage = useCallback(async (messageId: string) => {
@@ -880,6 +919,9 @@ export default function MailPage() {
             onBulkAction={handleBulkAction}
             folders={folders}
             mutedConversationIds={mutedConversationIds}
+            emptyState={showInboxZeroEmptyState ? (
+              <InboxZero celebrate={pendingInboxZero} onCelebrated={handleInboxZeroCelebrated} />
+            ) : undefined}
           />
         )}
       </div>

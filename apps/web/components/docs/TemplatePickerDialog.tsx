@@ -826,7 +826,7 @@ export function TemplatePickerDialog({ open, onOpenChange, onSelect }: TemplateP
                     <button
                       type="button"
                       title="Delete template"
-                      className="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded text-muted-foreground/50 hover:text-destructive hover:bg-muted opacity-0 group-hover/card:opacity-100 transition-opacity text-xs leading-none"
+                      className="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover/card:opacity-100 transition-opacity text-xs leading-none"
                       onClick={() => deleteUserTemplate(template.id)}
                     >
                       ×

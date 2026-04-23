@@ -49,6 +49,8 @@ interface MailListProps {
   onBulkAction?: (action: BulkAction) => void;
   folders?: FolderItem[];
   mutedConversationIds?: string[];
+  /** Override for the empty-state render. Defaults to the generic "No messages" block. */
+  emptyState?: React.ReactNode;
 }
 
 type Tab = 'all' | 'unread' | 'starred';
@@ -63,14 +65,18 @@ function formatDate(dateStr: string): string {
 
 interface Group { label: string; messages: Message[] }
 
-function groupMessages(messages: Message[], tab: Tab): Group[] {
+function groupMessages(messages: Message[], tab: Tab, stickyIds: Set<string>): Group[] {
   let pool: Message[];
   let pinned: Message[] = [];
 
+  // `stickyIds` keeps just-opened messages visible even after they stop matching
+  // the current filter (e.g. a message opened in the Unread tab gets marked read
+  // and would otherwise vanish mid-read — confusing because its detail is still
+  // shown in the right pane). The sticky set clears on tab switch.
   if (tab === 'unread') {
-    pool = messages.filter((m) => !m.isRead);
+    pool = messages.filter((m) => !m.isRead || stickyIds.has(m.id));
   } else if (tab === 'starred') {
-    pool = messages.filter((m) => m.isStarred);
+    pool = messages.filter((m) => m.isStarred || stickyIds.has(m.id));
   } else {
     pinned = messages.filter((m) => m.isStarred);
     pool   = messages.filter((m) => !m.isStarred);
@@ -362,10 +368,29 @@ export default function MailList({
   onBulkAction,
   folders = [],
   mutedConversationIds = [],
+  emptyState,
 }: MailListProps) {
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Messages opened on a filtered tab that should remain visible even after they
+  // stop matching the filter — see `groupMessages` for the rationale.
+  const [stickyIds, setStickyIds] = useState<Set<string>>(new Set());
+
+  // Reset sticky pins whenever the tab changes — each tab gets a fresh view.
+  useEffect(() => { setStickyIds(new Set()); }, [activeTab]);
+
+  // Pin the currently-selected message on filtered tabs so marking it read /
+  // toggling its star doesn't make the row vanish while the user is reading it.
+  useEffect(() => {
+    if (!activeMessageId || activeTab === 'all') return;
+    setStickyIds((prev) => {
+      if (prev.has(activeMessageId)) return prev;
+      const next = new Set(prev);
+      next.add(activeMessageId);
+      return next;
+    });
+  }, [activeMessageId, activeTab]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -454,7 +479,7 @@ export default function MailList({
     return () => observer.disconnect();
   }, [loadingMore, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const groups = useMemo(() => groupMessages(messages, activeTab), [messages, activeTab]);
+  const groups = useMemo(() => groupMessages(messages, activeTab, stickyIds), [messages, activeTab, stickyIds]);
   const totalFiltered = groups.reduce((s, g) => s + g.messages.length, 0);
 
   // Loading skeleton
@@ -510,12 +535,14 @@ export default function MailList({
         <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
           {/* Empty state */}
           {totalFiltered === 0 && !loading && (
-            <div className="flex flex-col items-center justify-center py-16 px-8 text-center">
-              <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-3">
-                <Mail className="w-5 h-5 text-muted-foreground/30" />
+            emptyState ?? (
+              <div className="flex flex-col items-center justify-center py-16 px-8 text-center">
+                <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-3">
+                  <Mail className="w-5 h-5 text-muted-foreground/30" />
+                </div>
+                <p className="text-sm text-muted-foreground/60">No messages</p>
               </div>
-              <p className="text-sm text-muted-foreground/60">No messages</p>
-            </div>
+            )
           )}
 
           {/* Grouped messages */}

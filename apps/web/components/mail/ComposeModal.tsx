@@ -897,7 +897,7 @@ export default function ComposeModal({
             </div>
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={handleDiscard}
-                className="text-muted-foreground/60 hover:text-destructive/70 h-8">Discard</Button>
+                className="text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 h-8">Discard</Button>
               <Button
                 variant="ghost"
                 size="sm"

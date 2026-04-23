@@ -161,7 +161,7 @@ function DocTreeItem({
             <hr className="my-1 border-border" />
             <button
               type="button"
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted text-destructive"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10"
               onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(node.id); }}
             >
               <Trash2 className="w-3.5 h-3.5" />

@@ -34,6 +34,20 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
+# Chromium is required by the /export/docs/pdf route (puppeteer-core → headless
+# Chrome). Alpine's package brings in the right fonts/libs for basic PDF render.
+# PUPPETEER_SKIP_DOWNLOAD prevents any future puppeteer install from pulling a
+# second copy; PUPPETEER_EXECUTABLE_PATH is picked up by findChromeBinary().
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
 # Next.js standalone server (mirrors the electron-builder resource layout)
 COPY --from=builder /repo/apps/web/.next/standalone ./
 COPY --from=builder /repo/apps/web/.next/static     ./apps/web/.next/static/

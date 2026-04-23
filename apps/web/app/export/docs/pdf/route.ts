@@ -4,6 +4,11 @@ import { existsSync, readdirSync } from 'fs';
 import path from 'path';
 
 function findChromeBinary(): string {
+  // Docker/CI override — set in the production image so we don't depend on a
+  // hardcoded path that can shift between Alpine chromium package versions.
+  const envPath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (envPath && existsSync(envPath)) return envPath;
+
   const candidates = [
     // Homebrew Chromium (macOS, properly signed)
     '/Applications/Chromium.app/Contents/MacOS/Chromium',

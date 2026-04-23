@@ -23,6 +23,7 @@ import {
   Clock, FileText, Calendar,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { sanitizeEmailHtml } from '@/lib/sanitize';
 import { EmailChipInput } from './EmailChipInput';
 import { useAuthStore } from '@/stores/auth.store';
 import { toast } from 'sonner';
@@ -63,6 +64,7 @@ export interface ComposeMessage {
   fromName: string | null;
   toRecipients: Array<{ email: string; name?: string }>;
   ccRecipients: Array<{ email: string; name?: string }>;
+  bccRecipients?: Array<{ email: string; name?: string }>;
   bodyHtml: string | null;
   bodyText: string | null;
   receivedAt: string;
@@ -288,7 +290,6 @@ export default function ComposeModal({
   // ── Draft auto-save state ─────────────────────────────────────────────────
   const [savedDraftId, setSavedDraftId] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Ref so handleSend can be called from the TipTap keydown handler without stale closure
@@ -387,23 +388,51 @@ export default function ComposeModal({
     }
 
     const origSubject = originalMessage.subject ?? '(no subject)';
-    const selfEmail = user?.email ?? '';
+    const norm = (e: string) => e.trim().toLowerCase();
+    const selfEmail = norm(user?.email ?? '');
+    const origTo = (originalMessage.toRecipients ?? []).map((r) => r.email).filter(Boolean);
+    const origCc = (originalMessage.ccRecipients ?? []).map((r) => r.email).filter(Boolean);
+    const origBcc = (originalMessage.bccRecipients ?? []).map((r) => r.email).filter(Boolean);
+    // The user is replying to their own sent message — treat original To as the reply target.
+    const isOwnMessage = !!selfEmail && norm(originalMessage.fromEmail) === selfEmail;
+
+    // Dedupe preserving first occurrence; everything compared case-insensitively.
+    const dedupe = (list: string[]) => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const e of list) {
+        const k = norm(e);
+        if (k && !seen.has(k)) { seen.add(k); out.push(e); }
+      }
+      return out;
+    };
+    const excludeSelf = (list: string[]) => list.filter((e) => norm(e) !== selfEmail);
 
     if (mode === 'reply') {
-      setTo([originalMessage.fromEmail]); setCc([]); setBcc([]);
+      const toList = isOwnMessage ? dedupe(excludeSelf(origTo)) : [originalMessage.fromEmail];
+      setTo(toList); setCc([]); setBcc([]);
       setSubject(origSubject.match(/^Re:/i) ? origSubject : `Re: ${origSubject}`);
       setShowCcBcc(false);
     } else if (mode === 'replyAll') {
-      const toList = [originalMessage.fromEmail, ...originalMessage.toRecipients.map((r) => r.email).filter((e) => e !== selfEmail)];
-      const ccList = originalMessage.ccRecipients.map((r) => r.email).filter((e) => e !== selfEmail);
-      setTo(toList); setCc(ccList); setBcc([]);
-      setShowCcBcc(ccList.length > 0);
+      const toSeed = isOwnMessage
+        ? excludeSelf(origTo)
+        : [originalMessage.fromEmail, ...excludeSelf(origTo)];
+      const toList = dedupe(toSeed);
+      const toSet = new Set(toList.map(norm));
+      const ccList = dedupe(excludeSelf(origCc)).filter((e) => !toSet.has(norm(e)));
+      // Include Bcc only when replying to our own sent message (where we have the Bcc list).
+      const bccList = isOwnMessage
+        ? dedupe(excludeSelf(origBcc)).filter((e) => !toSet.has(norm(e)) && !ccList.some((c) => norm(c) === norm(e)))
+        : [];
+      setTo(toList); setCc(ccList); setBcc(bccList);
+      setShowCcBcc(ccList.length > 0 || bccList.length > 0);
       setSubject(origSubject.match(/^Re:/i) ? origSubject : `Re: ${origSubject}`);
     } else if (mode === 'forward') {
-      const ccList = originalMessage.ccRecipients.map((r) => r.email).filter((e) => e !== selfEmail);
-      setTo([]); setCc(ccList); setBcc([]);
+      // Forward should not carry over any recipients — forwarding to someone new
+      // with the original Cc/Bcc would leak addresses from the prior thread.
+      setTo([]); setCc([]); setBcc([]);
+      setShowCcBcc(false);
       setSubject(origSubject.match(/^Fwd:/i) ? origSubject : `Fwd: ${origSubject}`);
-      setShowCcBcc(ccList.length > 0);
       setForwardedAttachments(originalMessage.attachments ?? []);
     }
 
@@ -441,35 +470,34 @@ export default function ComposeModal({
     }
   }, [editor, open, signatureHtml, initialDraftZimbraId]);
 
-  // ── Auto-save draft ────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!open || sending) return;
+  // ── Explicit save draft ───────────────────────────────────────────────────
+  // Autosave was removed by product decision: users save drafts explicitly via
+  // the "Save draft" button. Closing the modal does NOT persist a draft — this
+  // prevents clutter in the Drafts folder from stray composes.
+  const handleSaveDraft = async () => {
     const currentBody = editor?.getHTML() ?? '';
-    const hasContent = to.length > 0 || cc.length > 0 || subject.trim().length > 0 || (currentBody && currentBody !== '<p></p>');
-    if (!hasContent) return;
-
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(async () => {
-      setDraftStatus('saving');
-      try {
-        const result = await api.mail.saveDraft({
-          to, cc, bcc, subject,
-          body: editor?.getHTML() ?? '',
-          draftId: savedDraftId ?? undefined,
-        });
-        setSavedDraftId(result.zimbraId);
-        setDraftStatus('saved');
-        if (draftStatusTimerRef.current) clearTimeout(draftStatusTimerRef.current);
-        draftStatusTimerRef.current = setTimeout(() => setDraftStatus('idle'), 3000);
-      } catch { setDraftStatus('idle'); }
-    }, 3000);
-
-    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-  }, [to, cc, bcc, subject, body, open]); // eslint-disable-line
+    const hasContent = to.length > 0 || cc.length > 0 || bcc.length > 0 || subject.trim().length > 0 || (currentBody && currentBody !== '<p></p>');
+    if (!hasContent) { toast.info('Nothing to save'); return; }
+    setDraftStatus('saving');
+    try {
+      const result = await api.mail.saveDraft({
+        to, cc, bcc, subject,
+        body: currentBody,
+        draftId: savedDraftId ?? undefined,
+      });
+      setSavedDraftId(result.zimbraId);
+      setDraftStatus('saved');
+      if (draftStatusTimerRef.current) clearTimeout(draftStatusTimerRef.current);
+      draftStatusTimerRef.current = setTimeout(() => setDraftStatus('idle'), 3000);
+      toast.success('Draft saved');
+    } catch (err: any) {
+      setDraftStatus('idle');
+      toast.error('Failed to save draft', { description: err?.message });
+    }
+  };
 
   // ── Discard ────────────────────────────────────────────────────────────────
   const handleDiscard = async () => {
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     if (savedDraftId) api.mail.discardDraft(savedDraftId).catch(() => {});
     setSavedDraftId(null); setDraftStatus('idle');
     onClose();
@@ -597,7 +625,7 @@ export default function ComposeModal({
             {minimised ? <ChevronDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
           </Button>
           <Button variant="ghost" size="sm" onClick={onClose} disabled={sending}
-            className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title="Close — draft is kept">
+            className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title="Close">
             <X className="w-3.5 h-3.5" />
           </Button>
         </div>
@@ -829,7 +857,7 @@ export default function ComposeModal({
                   <Separator className="my-4 bg-border/40" />
                   <div
                     className="text-xs prose prose-sm prose-invert max-w-none prose-a:text-primary opacity-60 pointer-events-none select-none"
-                    dangerouslySetInnerHTML={{ __html: quoteHtml }}
+                    dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(quoteHtml) }}
                   />
                 </>
               )}
@@ -870,6 +898,16 @@ export default function ComposeModal({
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={handleDiscard}
                 className="text-muted-foreground/60 hover:text-destructive/70 h-8">Discard</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleSaveDraft}
+                disabled={draftStatus === 'saving'}
+                title="Save draft"
+                className="h-8 px-3 text-muted-foreground/70 hover:text-foreground"
+              >
+                {draftStatus === 'saving' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Save draft'}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"

@@ -202,6 +202,10 @@ export class MailService {
     const ccRecipients = (m.e ?? [])
       .filter((e) => e.t === 'c')
       .map((e) => ({ email: e.a, name: e.d ?? null }));
+    // Bcc is only visible on user's own sent/draft items — Zimbra returns it via e.t='b'.
+    const bccRecipients = (m.e ?? [])
+      .filter((e) => e.t === 'b')
+      .map((e) => ({ email: e.a, name: e.d ?? null }));
 
     // Embed inline images with a time budget.
     // - If Zimbra responds quickly (< 5 s): return fully embedded HTML immediately.
@@ -253,7 +257,7 @@ export class MailService {
     if (cached) {
       result = await this.prisma.message.update({
         where: { id: cached.id },
-        data: { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients },
+        data: { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients, bccRecipients },
       });
     } else {
       // Message is not in DB yet (e.g. opened from search results before the folder
@@ -278,6 +282,7 @@ export class MailService {
             fromName:       fromAddr?.d ?? null,
             toRecipients:   toAddrs,
             ccRecipients,
+            bccRecipients,
             isRead:         !flags.includes('u'),
             isStarred:      flags.includes('f'),
             isDraft:        flags.includes('d'),
@@ -295,11 +300,12 @@ export class MailService {
             inlineImages,
             hasAttachments: attachments.length > 0,
             ccRecipients,
+            bccRecipients,
           },
         });
       } else {
         // Folder not yet synced — return ephemeral object (no caching possible).
-        result = { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients };
+        result = { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients, bccRecipients };
       }
     }
 
@@ -726,6 +732,7 @@ export class MailService {
               fromName:       user.displayName ?? null,
               toRecipients:   payload.to.map((a) => ({ email: a, name: null })),
               ccRecipients:   (payload.cc ?? []).map((a) => ({ email: a, name: null })),
+              bccRecipients:  (payload.bcc ?? []).map((a) => ({ email: a, name: null })),
               isRead:         true,
               isDraft:        false,
               hasAttachments: files.length > 0,

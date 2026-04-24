@@ -7,13 +7,20 @@ import Link from '@tiptap/extension-link';
 import { TaskList } from '@tiptap/extension-task-list';
 import { TaskItem } from '@tiptap/extension-task-item';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
-import Placeholder from '@tiptap/extension-placeholder';
+import Image from '@tiptap/extension-image';
 import { Callout } from '@/components/docs/extensions/Callout';
 import { Toggle } from '@/components/docs/extensions/Toggle';
 import { DatabaseView } from '@/components/docs/extensions/DatabaseView';
 import { CodeBlockLowlight } from '@/components/docs/extensions/CodeBlockLowlight';
+import { EmbedNode } from '@/components/docs/extensions/EmbedNode';
+import { MathBlock } from '@/components/docs/extensions/MathBlock';
+import { MermaidBlock } from '@/components/docs/extensions/MermaidBlock';
+import { CommentMark } from '@/components/docs/CommentMark';
 
-// Extensions mirror DocsEditor — no collaboration/placeholder needed for rendering
+// Extensions must mirror every node/mark used in DocsEditor — generateHTML()
+// throws "Unknown node type" on the first unknown node, which silently fails
+// the whole export. Collaboration and Placeholder are intentionally omitted
+// (irrelevant for rendering).
 const RENDER_EXTENSIONS = [
   StarterKit.configure({ codeBlock: false }),
   Underline,
@@ -28,7 +35,11 @@ const RENDER_EXTENSIONS = [
   Callout,
   Toggle,
   DatabaseView,
-  Placeholder,
+  Image.configure({ inline: false, allowBase64: true }),
+  EmbedNode,
+  MathBlock,
+  MermaidBlock,
+  CommentMark,
 ];
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -36,8 +47,17 @@ function triggerDownload(blob: Blob, filename: string) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.style.display = 'none';
+  // Firefox requires the anchor to be in the document for click() to fire a
+  // download, and revoking the object URL synchronously after click() races
+  // with the browser kicking off the download — both silently produce "nothing
+  // happens." Attach first, then revoke on the next tick.
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 0);
 }
 
 function contentToHtml(content: string | null | undefined, title: string): string {
@@ -86,10 +106,13 @@ ${body}
 </html>`;
 }
 
-export async function exportAsPdf(title: string, content: string | null | undefined) {
-  // PDF generation is server-side (puppeteer-core) to avoid html2canvas's
-  // inability to parse modern CSS color functions (oklch/lab) from the
-  // browser UA stylesheet.
+// PDF generation is server-side (puppeteer-core) to avoid html2canvas's
+// inability to parse modern CSS color functions (oklch/lab) from the
+// browser UA stylesheet.
+export async function generateDocPdfBlob(
+  title: string,
+  content: string | null | undefined,
+): Promise<Blob> {
   const html = contentToHtml(content, title);
   const res = await fetch('/export/docs/pdf', {
     method: 'POST',
@@ -97,7 +120,11 @@ export async function exportAsPdf(title: string, content: string | null | undefi
     body: JSON.stringify({ html, title }),
   });
   if (!res.ok) throw new Error(await res.text().catch(() => 'PDF export failed'));
-  const blob = await res.blob();
+  return res.blob();
+}
+
+export async function exportAsPdf(title: string, content: string | null | undefined) {
+  const blob = await generateDocPdfBlob(title, content);
   triggerDownload(blob, `${title}.pdf`);
 }
 

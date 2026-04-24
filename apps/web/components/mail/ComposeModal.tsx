@@ -20,11 +20,13 @@ import { DateTimePicker } from '@/components/ui/date-time-picker';
 import {
   X, Send, Loader2, ChevronDown, ChevronUp, Minus,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Link2, Paperclip,
-  Clock, FileText, Calendar,
+  Clock, FileText, Calendar, Files,
 } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, type Doc } from '@/lib/api';
 import { sanitizeEmailHtml } from '@/lib/sanitize';
+import { generateDocPdfBlob } from '@/lib/docExport';
 import { EmailChipInput } from './EmailChipInput';
+import { DocPickerDialog, type DocAttachMode } from './DocPickerDialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -255,6 +257,9 @@ export default function ComposeModal({
   // ── Scheduled send ─────────────────────────────────────────────────────────
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState('');
+
+  // ── Doc attach ────────────────────────────────────────────────────────────
+  const [showDocPicker, setShowDocPicker] = useState(false);
 
   // ── Templates ─────────────────────────────────────────────────────────────
   const [showTemplates, setShowTemplates] = useState(false);
@@ -493,6 +498,41 @@ export default function ComposeModal({
     } catch (err: any) {
       setDraftStatus('idle');
       toast.error('Failed to save draft', { description: err?.message });
+    }
+  };
+
+  // ── Attach doc from Docs module ────────────────────────────────────────────
+  // Two modes: "pdf" generates a server-side PDF and adds it to attachments;
+  // "link" enables sharing on the doc (if needed) and inserts a share-link
+  // anchor at the current editor selection.
+  const handleDocAttach = async (doc: Doc, mode: DocAttachMode) => {
+    try {
+      if (mode === 'pdf') {
+        // List endpoint omits `content` for perf — fetch the full doc first.
+        const full = await api.docs.getOne(doc.id);
+        const blob = await generateDocPdfBlob(full.title || 'Untitled', full.content);
+        const safeTitle = (full.title || 'Untitled').replace(/[^a-z0-9 _-]/gi, '_');
+        const file = new File([blob], `${safeTitle}.pdf`, { type: 'application/pdf' });
+        setAttachments((prev) => [...prev, file]);
+        toast.success('Document attached as PDF');
+      } else {
+        let shareToken = doc.shareToken;
+        if (!shareToken) {
+          const res = await api.docs.share.enable(doc.id);
+          shareToken = res.shareToken;
+        }
+        const url = `${window.location.origin}/docs/share/${shareToken}`;
+        const label = `${doc.emoji ? doc.emoji + ' ' : ''}${doc.title || 'Untitled'}`;
+        editor?.chain().focus().insertContent({
+          type: 'paragraph',
+          content: [{ type: 'text', text: label, marks: [{ type: 'link', attrs: { href: url } }] }],
+        }).run();
+        toast.success('Share link inserted');
+      }
+    } catch (err: any) {
+      toast.error('Failed to attach document', { description: err?.message });
+    } finally {
+      setShowDocPicker(false);
     }
   };
 
@@ -806,6 +846,11 @@ export default function ComposeModal({
                   }}
                 />
 
+                {/* Attach doc from Docs module */}
+                <ToolbarBtn title="Attach document" onClick={() => setShowDocPicker(true)}>
+                  <Files className="w-3.5 h-3.5" />
+                </ToolbarBtn>
+
                 {/* Templates */}
                 {(templates as any[]).length > 0 && (
                   <div ref={templatesRef} className="relative">
@@ -897,7 +942,7 @@ export default function ComposeModal({
             </div>
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={handleDiscard}
-                className="text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 h-8">Discard</Button>
+                className="text-muted-foreground/60 hover:text-destructive/70 h-8">Discard</Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -925,6 +970,12 @@ export default function ComposeModal({
           </div>
         </div>
       )}
+
+      <DocPickerDialog
+        open={showDocPicker}
+        onClose={() => setShowDocPicker(false)}
+        onPick={handleDocAttach}
+      />
     </div>
   );
 }

@@ -18,7 +18,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
   Clock, MapPin, Calendar as CalendarIcon, Trash2, Users,
   Video, Repeat, ExternalLink, Pencil, CheckCircle2,
-  HelpCircle, XCircle, Menu, Mail,
+  HelpCircle, XCircle, Menu, Mail, Sparkles,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth,
@@ -340,6 +340,53 @@ function CreateEventModal({
   );
   const [saving, setSaving]     = useState(false);
 
+  // ── Find-a-time (scheduling assistant inline in the event modal) ────────
+  const [showFindTime, setShowFindTime] = useState(false);
+  const [fbLoading, setFbLoading]       = useState(false);
+  const [fbResults, setFbResults]       = useState<FreeBusyData[]>([]);
+
+  const handleFindTime = async () => {
+    if (attendees.length === 0) {
+      toast.error('Add at least one attendee first');
+      return;
+    }
+    setFbLoading(true);
+    try {
+      const from = new Date();
+      const until = addDays(from, 30);
+      const res = await api.calendar.getFreeBusyBatch(
+        attendees,
+        from.toISOString(),
+        until.toISOString(),
+      );
+      setFbResults(res as FreeBusyData[]);
+      setShowFindTime(true);
+    } catch (err: any) {
+      toast.error('Failed to check availability', { description: err?.message });
+    } finally {
+      setFbLoading(false);
+    }
+  };
+
+  // Preserve the current event duration when applying a suggested slot so the
+  // user's start/end stay in sync with the slot length they picked above.
+  const durationMs = (() => {
+    const s = new Date(startAt).getTime();
+    const e = new Date(endAt).getTime();
+    const d = e - s;
+    return Number.isFinite(d) && d > 0 ? d : 60 * 60_000;
+  })();
+
+  const suggestedSlots = showFindTime && fbResults.length > 0
+    ? findFreeSlots(fbResults, new Date(), durationMs, 6)
+    : [];
+
+  const applySlot = (slot: SuggestedSlot) => {
+    setStart(format(slot.start, "yyyy-MM-dd'T'HH:mm"));
+    setEnd(format(slot.end, "yyyy-MM-dd'T'HH:mm"));
+    setShowFindTime(false);
+  };
+
   // Linked email (from email context action or existing event)
   const linkedMessageId = prefillData?.linkedMessageId ?? initialData?.linkedMessageId ?? null;
   const linkedSubject   = prefillData?.linkedSubject   ?? initialData?.linkedSubject   ?? null;
@@ -428,6 +475,71 @@ function CreateEventModal({
                 />
               </div>
             </div>
+            {!allDay && (
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleFindTime}
+                  disabled={fbLoading || attendees.length === 0}
+                  className="h-7 px-2 text-[11px] gap-1.5 text-muted-foreground/70 hover:text-primary"
+                  title={attendees.length === 0 ? 'Add attendees below first' : 'Find a time that works for everyone'}
+                >
+                  {fbLoading
+                    ? <><Loader2 className="w-3 h-3 animate-spin" /> Checking…</>
+                    : <><Sparkles className="w-3 h-3" /> Find a time</>}
+                </Button>
+                {showFindTime && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFindTime(false)}
+                    className="text-[10px] text-muted-foreground/50 hover:text-foreground"
+                  >
+                    hide
+                  </button>
+                )}
+              </div>
+            )}
+            {showFindTime && !allDay && (
+              <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 space-y-1.5">
+                <p className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
+                  Suggested slots ({Math.round(durationMs / 60_000)} min, weekdays 9–5)
+                </p>
+                {suggestedSlots.length === 0 ? (
+                  <p className="text-xs text-muted-foreground/60 italic">
+                    No common free time in the next 30 weekdays.
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {suggestedSlots.map((slot, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-emerald-500/8 border border-emerald-500/20 hover:bg-emerald-500/12 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-medium text-foreground/80 truncate">
+                            {format(slot.start, 'EEE, MMM d')}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground/60">
+                            {format(slot.start, 'h:mm a')} – {format(slot.end, 'h:mm a')}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => applySlot(slot)}
+                          className="h-6 px-2 text-[10px] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1"
+                        >
+                          Use <ChevronRight className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <div>
               <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Location</Label>
               <Input value={location} onChange={(e) => setLocation(e.target.value)}

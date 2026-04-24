@@ -160,7 +160,7 @@ export const SLASH_COMMANDS: SlashCommandItem[] = [
         const formData = new FormData();
         formData.append('file', file);
         try {
-          const res = await fetch('/api/upload/image', { method: 'POST', body: formData });
+          const res = await fetch('/upload/image', { method: 'POST', body: formData });
           const { url } = await res.json();
           editor.chain().focus().setImage({ src: url, alt: file.name }).run();
         } catch { /* ignore */ }

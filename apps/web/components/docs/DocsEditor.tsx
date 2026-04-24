@@ -83,6 +83,39 @@ function getWordCount(ed: Editor): { words: number; chars: number } {
   return { words, chars: text.length };
 }
 
+// ── Debug helpers ─────────────────────────────────────────────────────────
+// Gated on `?debug=docs` in the URL. Used to diagnose "images render locally
+// but not in prod" — traces REST vs Yjs state, image uploads, and persistence
+// paths so we can see which step loses the image.
+
+function isDocsDebug(): boolean {
+  if (typeof window === 'undefined') return false;
+  return new URLSearchParams(window.location.search).get('debug') === 'docs';
+}
+
+function countImagesInJson(root: unknown): { count: number; bytes: number } {
+  let count = 0;
+  let bytes = 0;
+  const visit = (n: unknown) => {
+    if (!n || typeof n !== 'object') return;
+    const node = n as { type?: string; attrs?: { src?: string }; content?: unknown[] };
+    if (node.type === 'image') {
+      count++;
+      bytes += node.attrs?.src?.length ?? 0;
+    }
+    if (Array.isArray(node.content)) node.content.forEach(visit);
+  };
+  visit(root);
+  return { count, bytes };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function dlog(label: string, data?: any) {
+  if (!isDocsDebug()) return;
+  // eslint-disable-next-line no-console
+  console.log(`[docs-debug] ${label}`, data ?? '');
+}
+
 export function DocsEditor({
   docId,
   initialContent,
@@ -143,7 +176,9 @@ export function DocsEditor({
         token: collaborationToken,
         onSynced() {
           const fragment = ydoc.getXmlFragment('default');
-          if (fragment.length === 0 && initialContent) {
+          const fragLength = fragment.length;
+          let usedRestFallback = false;
+          if (fragLength === 0 && initialContent) {
             try {
               const parsed = JSON.parse(initialContent);
               if (editorRef.current) {
@@ -152,8 +187,15 @@ export function DocsEditor({
                 // Editor not mounted yet — apply once it becomes available
                 pendingInitRef.current = parsed;
               }
+              usedRestFallback = true;
             } catch { /* invalid JSON — leave editor empty */ }
           }
+          dlog('provider onSynced', {
+            yjsFragmentLength: fragLength,
+            yjsFragmentEmpty: fragLength === 0,
+            hadInitialContent: !!initialContent,
+            usedRestFallback,
+          });
           syncedRef.current = true;
           setSynced(true);
           setSaveState('saved');
@@ -161,6 +203,31 @@ export function DocsEditor({
       }),
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
+
+  // Diagnostic: log initial content stats + fetch backend debug snapshot
+  // when the editor mounts. Only runs when `?debug=docs` is in the URL.
+  useEffect(() => {
+    if (!isDocsDebug()) return;
+    const collabOrigin = (() => {
+      try { return new URL(COLLAB_URL).origin; } catch { return COLLAB_URL; }
+    })();
+    dlog('mount', {
+      docId,
+      initialContentBytes: initialContent?.length ?? 0,
+      collabWsUrl: COLLAB_URL,
+      collabOrigin,
+    });
+    if (initialContent) {
+      try {
+        const parsed = JSON.parse(initialContent);
+        const imgs = countImagesInJson(parsed);
+        dlog('initialContent images', imgs);
+      } catch (err) { dlog('initialContent parse ✗', err); }
+    }
+    void api.docs.debug(docId)
+      .then((info) => dlog('backend /debug', info))
+      .catch((err) => dlog('backend /debug ✗', err));
+  }, [docId, initialContent]);
 
   useEffect(() => {
     if (destroyTimer.current !== null) {
@@ -182,10 +249,19 @@ export function DocsEditor({
   const persistContent = useCallback(
     async (json: string) => {
       setSaveState('saving');
+      if (isDocsDebug()) {
+        try {
+          const parsed = JSON.parse(json);
+          const imgs = countImagesInJson(parsed);
+          dlog('REST save →', { bytes: json.length, imageCount: imgs.count, imageBytes: imgs.bytes });
+        } catch { /* ignore — not critical in debug path */ }
+      }
       try {
         await api.docs.update(docId, { content: json });
+        dlog('REST save ✓');
         setSaveState('saved');
-      } catch {
+      } catch (err) {
+        dlog('REST save ✗', err);
         setSaveState('unsaved');
       }
     },
@@ -229,16 +305,20 @@ export function DocsEditor({
         event.preventDefault();
         const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
         files.forEach(async (file) => {
+          dlog('image drop →', { name: file.name, type: file.type, bytes: file.size });
           try {
             const formData = new FormData();
             formData.append('file', file);
             const res = await fetch('/upload/image', { method: 'POST', body: formData });
+            dlog('image upload response', { status: res.status, ok: res.ok });
+            if (!res.ok) return;
             const { url } = await res.json() as { url: string };
+            dlog('image upload ✓', { urlBytes: url.length, urlPrefix: url.slice(0, 48) });
             const node = view.state.schema.nodes.image?.create({ src: url, alt: file.name });
-            if (!node) return;
+            if (!node) { dlog('image node missing from schema'); return; }
             const pos = coords?.pos ?? view.state.doc.content.size;
             view.dispatch(view.state.tr.insert(pos, node));
-          } catch { /* ignore */ }
+          } catch (err) { dlog('image upload ✗', err); }
         });
         return true;
       },
@@ -269,15 +349,19 @@ export function DocsEditor({
         if (imageFiles.length) {
           event.preventDefault();
           imageFiles.forEach(async (file) => {
+            dlog('image paste →', { name: file.name, type: file.type, bytes: file.size });
             try {
               const formData = new FormData();
               formData.append('file', file);
               const res = await fetch('/upload/image', { method: 'POST', body: formData });
+              dlog('image upload response', { status: res.status, ok: res.ok });
+              if (!res.ok) return;
               const { url } = await res.json() as { url: string };
+              dlog('image upload ✓', { urlBytes: url.length, urlPrefix: url.slice(0, 48) });
               const node = view.state.schema.nodes.image?.create({ src: url, alt: file.name });
-              if (!node) return;
+              if (!node) { dlog('image node missing from schema'); return; }
               view.dispatch(view.state.tr.replaceSelectionWith(node));
-            } catch { /* ignore */ }
+            } catch (err) { dlog('image upload ✗', err); }
           });
           return true;
         }

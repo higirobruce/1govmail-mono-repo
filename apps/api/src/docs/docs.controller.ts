@@ -11,6 +11,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { DocsService } from './docs.service';
@@ -27,12 +28,16 @@ export class DocsController {
   constructor(private readonly docsService: DocsService) {}
 
   // ── Public share routes — declared FIRST to avoid clashing with /:id ────────
+  // Public endpoints are rate-limited aggressively to deter token enumeration
+  // and scraping, since no Authorization header is required.
 
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Get('shared/:token')
   getByToken(@Param('token') token: string) {
     return this.docsService.findByShareToken(token);
   }
 
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Patch('shared/:token')
   updateByToken(@Param('token') token: string, @Body() dto: UpdateDocDto) {
     return this.docsService.updateByShareToken(token, dto);
@@ -226,6 +231,14 @@ export class DocsController {
   @Post(':id/duplicate')
   duplicate(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.docsService.duplicate(req.user.sub, id);
+  }
+
+  // ── Debug — must precede /:id to avoid being shadowed ─────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':id/debug')
+  getDebugInfo(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.docsService.getDebugInfo(req.user.sub, id);
   }
 
   // ── Doc CRUD ──────────────────────────────────────────────────────────────

@@ -1,8 +1,11 @@
 import { randomBytes } from 'crypto';
 
+// 128 bits of entropy — infeasible to brute-force even against a leaked
+// enumeration oracle. Encoded with a URL-safe charset so it can be put
+// directly in a share URL without escaping.
 function shortToken(): string {
   const CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const bytes = randomBytes(6);
+  const bytes = randomBytes(16);
   return Array.from(bytes, (b) => CHARS[b % CHARS.length]).join('');
 }
 import {
@@ -15,6 +18,7 @@ import {
 import { InviteRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { AuditService } from '../common/audit/audit.service';
 import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
@@ -30,6 +34,7 @@ export class DocsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly zimbra: ZimbraService,
+    private readonly audit: AuditService,
   ) {}
 
   // ── Owned docs ────────────────────────────────────────────────────────────
@@ -110,6 +115,83 @@ export class DocsService {
     if (!invite) throw new ForbiddenException();
     this.logActivity(id, userId, 'VIEWED').catch(() => {});
     return { ...doc, _invite: { role: invite.role } };
+  }
+
+  // ── Debug / diagnostics ───────────────────────────────────────────────────
+  // Exposes raw persistence stats for one document so we can diagnose drift
+  // between the REST `content` field and the Hocuspocus `yjsState` blob —
+  // in particular, images that appear locally but not in prod. Owner-only.
+  async getDebugInfo(userId: string, id: string) {
+    const doc = await this.prisma.document.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        userId: true,
+        title: true,
+        content: true,
+        yjsState: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+    if (doc.userId !== userId) throw new ForbiddenException();
+
+    const contentStr = doc.content ?? '';
+    const contentBytes = Buffer.byteLength(contentStr, 'utf8');
+    const yjsStateBytes = doc.yjsState ? doc.yjsState.byteLength : 0;
+
+    // Walk the TipTap JSON tree, counting image nodes and their src sizes.
+    type ImageStat = { srcBytes: number; srcPrefix: string; alt: string | null };
+    const images: ImageStat[] = [];
+    const visit = (node: unknown) => {
+      if (!node || typeof node !== 'object') return;
+      const n = node as { type?: string; attrs?: { src?: string; alt?: string }; content?: unknown[] };
+      if (n.type === 'image') {
+        const src = n.attrs?.src ?? '';
+        images.push({
+          srcBytes: src.length,
+          srcPrefix: src.slice(0, 48),
+          alt: n.attrs?.alt ?? null,
+        });
+      }
+      if (Array.isArray(n.content)) n.content.forEach(visit);
+    };
+    let parsedContent: unknown = null;
+    let isValidJson = true;
+    try {
+      parsedContent = contentStr ? JSON.parse(contentStr) : null;
+      visit(parsedContent);
+    } catch {
+      isValidJson = false;
+    }
+
+    const totalImageBytes = images.reduce((s, i) => s + i.srcBytes, 0);
+
+    return {
+      id: doc.id,
+      title: doc.title,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+      content: {
+        bytes: contentBytes,
+        isValidJson,
+        imageCount: images.length,
+        imageBytesTotal: totalImageBytes,
+        images: images.slice(0, 10),
+      },
+      yjsState: {
+        bytes: yjsStateBytes,
+        present: yjsStateBytes > 0,
+      },
+      drift: {
+        // If the REST content has images but the Yjs blob is tiny, Hocuspocus
+        // will hydrate the editor with stale Yjs state on reconnect and the
+        // REST fallback in DocsEditor.onSynced won't trigger (it only runs
+        // when the Yjs fragment is empty).
+        likelyStale: images.length > 0 && yjsStateBytes < Math.max(totalImageBytes / 4, 1024),
+      },
+    };
   }
 
   async create(userId: string, dto: CreateDocDto) {
@@ -197,20 +279,24 @@ export class DocsService {
   async enableSharing(userId: string, id: string) {
     await this.verifyOwnership(userId, id);
     const shareToken = shortToken();
-    return this.prisma.document.update({
+    const result = await this.prisma.document.update({
       where: { id },
       data: { shareToken, isShared: true },
       select: { shareToken: true, isShared: true },
     });
+    this.audit.record('DOC_SHARE_ENABLED', { userId, resource: 'document', resourceId: id }).catch(() => {});
+    return result;
   }
 
   async disableSharing(userId: string, id: string) {
     await this.verifyOwnership(userId, id);
-    return this.prisma.document.update({
+    const result = await this.prisma.document.update({
       where: { id },
       data: { shareToken: null, isShared: false },
       select: { shareToken: true, isShared: true },
     });
+    this.audit.record('DOC_SHARE_DISABLED', { userId, resource: 'document', resourceId: id }).catch(() => {});
+    return result;
   }
 
   async findByShareToken(token: string) {
@@ -281,6 +367,13 @@ export class DocsService {
       (err) => this.logger.warn(`Failed to send invite email to ${dto.email}: ${String(err)}`),
     );
 
+    this.audit.record('DOC_INVITE_ADDED', {
+      userId,
+      resource: 'document',
+      resourceId: docId,
+      metadata: { invitedEmail: dto.email, role: dto.role ?? InviteRole.EDITOR },
+    }).catch(() => {});
+
     return invite;
   }
 
@@ -307,6 +400,12 @@ export class DocsService {
     if (!isOwner && !isSelf) throw new ForbiddenException();
 
     await this.prisma.documentInvite.delete({ where: { id: inviteId } });
+    this.audit.record('DOC_INVITE_REMOVED', {
+      userId,
+      resource: 'document',
+      resourceId: docId,
+      metadata: { invitedEmail: invite.invitedEmail },
+    }).catch(() => {});
     return { success: true };
   }
 

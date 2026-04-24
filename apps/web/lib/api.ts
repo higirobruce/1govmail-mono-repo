@@ -725,6 +725,27 @@ export const api = {
     activity: {
       list: (docId: string) => request<any[]>(`/docs/${docId}/activity`),
     },
+    /**
+     * Diagnostic endpoint — returns REST `content` vs Yjs `yjsState` stats
+     * plus image-node counts for one doc. Used by the `?debug=docs` overlay
+     * to diagnose images-not-rendering-in-prod issues.
+     */
+    debug: (docId: string) =>
+      request<{
+        id: string;
+        title: string;
+        createdAt: string;
+        updatedAt: string;
+        content: {
+          bytes: number;
+          isValidJson: boolean;
+          imageCount: number;
+          imageBytesTotal: number;
+          images: Array<{ srcBytes: number; srcPrefix: string; alt: string | null }>;
+        };
+        yjsState: { bytes: number; present: boolean };
+        drift: { likelyStale: boolean };
+      }>(`/docs/${docId}/debug`),
   },
 
   shared: {

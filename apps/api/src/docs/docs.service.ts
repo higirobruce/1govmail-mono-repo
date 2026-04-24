@@ -18,7 +18,6 @@ import {
 import { InviteRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
-import { AuditService } from '../common/audit/audit.service';
 import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
@@ -34,7 +33,6 @@ export class DocsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly zimbra: ZimbraService,
-    private readonly audit: AuditService,
   ) {}
 
   // ── Owned docs ────────────────────────────────────────────────────────────
@@ -284,7 +282,6 @@ export class DocsService {
       data: { shareToken, isShared: true },
       select: { shareToken: true, isShared: true },
     });
-    this.audit.record('DOC_SHARE_ENABLED', { userId, resource: 'document', resourceId: id }).catch(() => {});
     return result;
   }
 
@@ -295,7 +292,6 @@ export class DocsService {
       data: { shareToken: null, isShared: false },
       select: { shareToken: true, isShared: true },
     });
-    this.audit.record('DOC_SHARE_DISABLED', { userId, resource: 'document', resourceId: id }).catch(() => {});
     return result;
   }
 
@@ -367,13 +363,6 @@ export class DocsService {
       (err) => this.logger.warn(`Failed to send invite email to ${dto.email}: ${String(err)}`),
     );
 
-    this.audit.record('DOC_INVITE_ADDED', {
-      userId,
-      resource: 'document',
-      resourceId: docId,
-      metadata: { invitedEmail: dto.email, role: dto.role ?? InviteRole.EDITOR },
-    }).catch(() => {});
-
     return invite;
   }
 
@@ -400,12 +389,6 @@ export class DocsService {
     if (!isOwner && !isSelf) throw new ForbiddenException();
 
     await this.prisma.documentInvite.delete({ where: { id: inviteId } });
-    this.audit.record('DOC_INVITE_REMOVED', {
-      userId,
-      resource: 'document',
-      resourceId: docId,
-      metadata: { invitedEmail: invite.invitedEmail },
-    }).catch(() => {});
     return { success: true };
   }
 

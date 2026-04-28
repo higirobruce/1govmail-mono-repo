@@ -245,7 +245,6 @@ export default function ComposeModal({
   const [cc, setCc] = useState<string[]>([]);
   const [bcc, setBcc] = useState<string[]>([]);
   const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
   const [showCcBcc, setShowCcBcc] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -332,9 +331,6 @@ export default function ComposeModal({
       Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { class: 'text-primary underline' } }),
     ],
     content: '',
-    onUpdate({ editor: ed }) {
-      setBody(ed.getHTML());
-    },
     editorProps: {
       attributes: {
         class: [
@@ -442,7 +438,6 @@ export default function ComposeModal({
     }
 
     editor?.commands.setContent('<p></p>');
-    setBody('');
     if (mode !== 'forward') {
       setTimeout(() => editor?.commands.focus(), 50);
     }
@@ -629,10 +624,14 @@ export default function ComposeModal({
   // Keep the ref current so TipTap's keydown handler can call it
   handleSendRef.current = handleSend;
 
-  const quoteHtml = (() => {
+  // Sanitize the quoted original body once per message — DOMPurify on a large
+  // threaded body can take hundreds of ms, so doing it on every keystroke
+  // (which used to happen via the unmemoised JSX call) froze the editor.
+  const sanitizedQuoteHtml = useMemo(() => {
     if (!originalMessage || mode === 'new') return null;
-    return originalMessage.bodyHtml ?? (originalMessage.bodyText ? `<pre style="font-family:inherit;white-space:pre-wrap;font-size:12px">${originalMessage.bodyText}</pre>` : null);
-  })();
+    const raw = originalMessage.bodyHtml ?? (originalMessage.bodyText ? `<pre style="font-family:inherit;white-space:pre-wrap;font-size:12px">${originalMessage.bodyText}</pre>` : null);
+    return raw ? sanitizeEmailHtml(raw) : null;
+  }, [originalMessage, mode]);
 
   const placeholder = mode === 'forward' ? 'Add a message…' : mode === 'new' ? 'Compose your message…' : 'Write your reply…';
 
@@ -897,12 +896,12 @@ export default function ComposeModal({
               </div>
 
               {/* Quoted original */}
-              {quoteHtml && (
+              {sanitizedQuoteHtml && (
                 <>
                   <Separator className="my-4 bg-border/40" />
                   <div
                     className="text-xs prose prose-sm prose-invert max-w-none prose-a:text-primary opacity-60 pointer-events-none select-none"
-                    dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(quoteHtml) }}
+                    dangerouslySetInnerHTML={{ __html: sanitizedQuoteHtml }}
                   />
                 </>
               )}

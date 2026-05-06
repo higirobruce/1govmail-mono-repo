@@ -12,6 +12,8 @@
  * All pages here are auth-gated anyway, so static prerendering provides
  * no real benefit — they always need server-side session data at request time.
  */
+import { OfflineProvider } from '@/lib/offline/provider';
+
 export const dynamic = 'force-dynamic';
 
 export default function AppLayout({
@@ -19,5 +21,5 @@ export default function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return <>{children}</>;
+  return <OfflineProvider>{children}</OfflineProvider>;
 }

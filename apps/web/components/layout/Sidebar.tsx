@@ -13,9 +13,10 @@ import {
   Calendar, Users, FolderOpen,
   ListTodo, UsersRound, Newspaper, Sparkles,
   Sun, Moon, Monitor, BookOpen, ShieldAlert,
-  MoreHorizontal, Pencil,
+  MoreHorizontal, Pencil, CloudOff, Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useOffline } from '@/lib/offline/provider';
 import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
 import { AppTour } from '@/components/tour/AppTour';
 import { useThemeStore, type Theme } from '@/stores/theme.store';
@@ -237,6 +238,39 @@ function NavItem({
         </span>
       ))}
     </button>
+  );
+}
+
+function OfflineStatusPill() {
+  const { status } = useOffline();
+  if (status.online && status.pending === 0 && status.failed === 0) return null;
+
+  const offline = !status.online;
+  const Icon = offline ? CloudOff : Loader2;
+  const label = offline
+    ? status.pending > 0
+      ? `Offline · ${status.pending} queued`
+      : 'Offline'
+    : `${status.pending} queued`;
+  const tone = offline
+    ? 'text-amber-600 dark:text-amber-400'
+    : 'text-muted-foreground';
+
+  return (
+    <div
+      title={
+        offline
+          ? 'You are offline. Pending actions will sync when you reconnect.'
+          : 'Pending actions are syncing in the background.'
+      }
+      className={cn(
+        'flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12px]',
+        tone,
+      )}
+    >
+      <Icon className={cn('w-3.5 h-3.5 shrink-0', !offline && 'animate-spin')} />
+      <span className="flex-1 text-left truncate">{label}</span>
+    </div>
   );
 }
 
@@ -632,6 +666,7 @@ export default function Sidebar({
 
       {/* Footer */}
       <div className="px-2 py-2 border-t border-sidebar-border/50 space-y-0.5">
+        <OfflineStatusPill />
         <NotificationsBell />
         <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} />
         <button

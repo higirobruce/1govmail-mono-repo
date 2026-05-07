@@ -224,6 +224,66 @@ export default function ThreadView({
     setSummaryOpen(false);
   }, [message?.id]);
 
+  // Hooks below must run on every render — keep above any conditional returns.
+  // Reads `threadMessages` from state inside the body so deps stay shallow.
+  const handleSummarize = useCallback(async () => {
+    const list = threadMessages;
+    if (list.length === 0) return;
+    summaryAbortRef.current?.abort();
+    const abort = new AbortController();
+    summaryAbortRef.current = abort;
+    setSummary('');
+    setSummaryError(null);
+    setSummarizing(true);
+    setSummaryOpen(true);
+
+    const activeBody =
+      message?.bodyHtml ?? message?.bodyText ?? message?.snippet ?? '';
+    const concatenated = list
+      .map((m) => {
+        const sender = m.fromName ? `${m.fromName} <${m.fromEmail}>` : m.fromEmail;
+        const isActive = m.id === message?.id;
+        const content = isActive && activeBody ? activeBody : (m.snippet ?? '');
+        const tag = isActive && activeBody ? '(opened)' : '(snippet)';
+        return `From: ${sender}\nDate: ${m.receivedAt} ${tag}\n\n${content}`;
+      })
+      .join('\n\n---\n\n');
+
+    try {
+      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+      const last = list[list.length - 1];
+      await summarizeMessage(
+        client,
+        concatenated,
+        {
+          model: aiModel,
+          subject: message?.subject ?? undefined,
+          from:
+            list.length > 1
+              ? `${list.length} messages in thread`
+              : (last?.fromName ?? last?.fromEmail ?? ''),
+          signal: abort.signal,
+        },
+        (delta) => setSummary((prev) => prev + delta),
+      );
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      const m = err instanceof Error ? err.message : String(err);
+      setSummaryError(m);
+    } finally {
+      setSummarizing(false);
+    }
+  }, [threadMessages, aiBaseUrl, aiApiKey, aiModel, message]);
+
+  const closeSummary = useCallback(() => {
+    summaryAbortRef.current?.abort();
+    summaryAbortRef.current = null;
+    setSummaryOpen(false);
+    setSummary('');
+    setSummaryError(null);
+    setSummarizing(false);
+  }, []);
+
   // Overview tab: linked tasks
   const [linkedTasks, setLinkedTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
@@ -410,64 +470,6 @@ export default function ThreadView({
   // Chronologically last message for header status
   const lastMessage = threadMessages[threadMessages.length - 1];
   const unreadCount = threadMessages.filter((m) => !m.isRead).length;
-
-  const handleSummarize = useCallback(async () => {
-    if (threadMessages.length === 0) return;
-    summaryAbortRef.current?.abort();
-    const abort = new AbortController();
-    summaryAbortRef.current = abort;
-    setSummary('');
-    setSummaryError(null);
-    setSummarizing(true);
-    setSummaryOpen(true);
-
-    // Thread metadata only carries snippets (bodies are fetched per-expansion).
-    // For the active message, use the full body the parent already loaded.
-    const activeBody =
-      message?.bodyHtml ?? message?.bodyText ?? message?.snippet ?? '';
-    const concatenated = threadMessages
-      .map((m) => {
-        const sender = m.fromName ? `${m.fromName} <${m.fromEmail}>` : m.fromEmail;
-        const isActive = m.id === message?.id;
-        const content = isActive && activeBody ? activeBody : (m.snippet ?? '');
-        const tag = isActive && activeBody ? '(opened)' : '(snippet)';
-        return `From: ${sender}\nDate: ${m.receivedAt} ${tag}\n\n${content}`;
-      })
-      .join('\n\n---\n\n');
-
-    try {
-      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
-      await summarizeMessage(
-        client,
-        concatenated,
-        {
-          model: aiModel,
-          subject: message?.subject ?? undefined,
-          from:
-            threadMessages.length > 1
-              ? `${threadMessages.length} messages in thread`
-              : (lastMessage?.fromName ?? lastMessage?.fromEmail ?? ''),
-          signal: abort.signal,
-        },
-        (delta) => setSummary((prev) => prev + delta),
-      );
-    } catch (err: unknown) {
-      if ((err as { name?: string })?.name === 'AbortError') return;
-      const msg = err instanceof Error ? err.message : String(err);
-      setSummaryError(msg);
-    } finally {
-      setSummarizing(false);
-    }
-  }, [threadMessages, aiBaseUrl, aiApiKey, aiModel, message?.subject, lastMessage]);
-
-  const closeSummary = useCallback(() => {
-    summaryAbortRef.current?.abort();
-    summaryAbortRef.current = null;
-    setSummaryOpen(false);
-    setSummary('');
-    setSummaryError(null);
-    setSummarizing(false);
-  }, []);
 
   // Display order: newest → oldest (reverse of API order)
   const displayMessages = [...threadMessages].reverse();

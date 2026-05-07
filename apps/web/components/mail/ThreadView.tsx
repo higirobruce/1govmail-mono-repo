@@ -489,7 +489,8 @@ export default function ThreadView({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
       {/* Thread header */}
       <ThreadHeader
         subject={message.subject}
@@ -506,41 +507,6 @@ export default function ThreadView({
         onSummarize={aiEnabled ? handleSummarize : undefined}
         summarizing={summarizing}
       />
-
-      {aiEnabled && summaryOpen && (
-        <div className="border-b border-border/30 bg-primary/5 shrink-0">
-          <div className="px-4 py-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="w-3.5 h-3.5 text-primary" />
-              <span className="text-[12px] font-medium text-foreground">
-                {threadMessages.length > 1 ? `Thread summary (${threadMessages.length} messages)` : 'Summary'}
-              </span>
-              {summarizing && (
-                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
-              )}
-              <button
-                onClick={closeSummary}
-                className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60"
-                aria-label="Close summary"
-              >
-                <XIconSmall className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            {summaryError ? (
-              <div className="text-[12px] text-destructive">
-                {summaryError}{' '}
-                <button onClick={handleSummarize} className="underline ml-1">
-                  Retry
-                </button>
-              </div>
-            ) : (
-              <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
-                {streamedSummary || (summarizing ? 'Thinking…' : '')}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Tab bar + Expand All */}
       <div className="flex items-center border-b border-border/30 px-4 shrink-0 bg-background">
@@ -996,6 +962,47 @@ export default function ThreadView({
           </div>
         )}
       </div>
+      </div>
+
+      {aiEnabled && summaryOpen && (
+        <aside className="hidden lg:flex w-[360px] xl:w-[400px] shrink-0 border-l border-border/30 bg-background flex-col">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
+            <Sparkles className="w-4 h-4 text-primary" />
+            <span className="text-[13px] font-semibold text-foreground">
+              {threadMessages.length > 1 ? 'Thread summary' : 'Summary'}
+            </span>
+            {summarizing && (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground/60" />
+            )}
+            <button
+              onClick={closeSummary}
+              className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
+              aria-label="Close summary"
+            >
+              <XIconSmall className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-3">
+            {threadMessages.length > 1 && (
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-2">
+                {threadMessages.length} messages
+              </p>
+            )}
+            {summaryError ? (
+              <div className="text-[13px] text-destructive">
+                {summaryError}{' '}
+                <button onClick={handleSummarize} className="underline ml-1">
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+                {streamedSummary || (summarizing ? 'Thinking…' : '')}
+              </p>
+            )}
+          </div>
+        </aside>
+      )}
     </div>
   );
 }

@@ -23,6 +23,18 @@ const COLLAB_ORIGIN = (() => {
   }
 })();
 
+// Optional remote AI endpoint. Local AI servers (Ollama/LM Studio/llama.cpp)
+// are allowed via the localhost-loopback patterns in connect-src below; ops
+// can additionally whitelist a single trusted remote AI origin per deploy.
+const AI_REMOTE = process.env.NEXT_PUBLIC_AI_URL ?? '';
+const AI_REMOTE_ORIGIN = (() => {
+  try {
+    return AI_REMOTE ? new URL(AI_REMOTE).origin : '';
+  } catch {
+    return '';
+  }
+})();
+
 // Script-src is kept permissive for dev (unsafe-inline for Next's hydration
 // runtime). In production we still allow unsafe-inline because Next injects
 // inline bootstrap scripts; tighten this once nonces are wired through.
@@ -32,7 +44,7 @@ const csp = [
   `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
   `img-src 'self' data: blob: https:`,
   `font-src 'self' data: https://fonts.gstatic.com`,
-  `connect-src 'self' ${API_ORIGIN} ${COLLAB_ORIGIN.replace(/^http/, 'ws')} ${COLLAB_ORIGIN}`,
+  `connect-src 'self' ${API_ORIGIN} ${COLLAB_ORIGIN.replace(/^http/, 'ws')} ${COLLAB_ORIGIN} http://localhost:* http://127.0.0.1:* http://[::1]:*${AI_REMOTE_ORIGIN ? ` ${AI_REMOTE_ORIGIN}` : ''}`,
   `frame-src 'self' blob:`,
   `frame-ancestors 'none'`,
   `base-uri 'self'`,

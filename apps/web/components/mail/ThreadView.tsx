@@ -30,7 +30,7 @@ import { cn } from '@/lib/utils';
 import ThreadHeader, { type ThreadParticipant } from './ThreadHeader';
 import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
-import { summarizeMessage } from '@/lib/ai/tasks';
+import { summarizeMessage, summarizeThread } from '@/lib/ai/tasks';
 import { Sparkles, X as XIconSmall } from 'lucide-react';
 import ThreadMessage, { type ThreadMessageMeta } from './ThreadMessage';
 import MailDetail from './MailDetail';
@@ -252,16 +252,17 @@ export default function ThreadView({
     try {
       const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
       const last = list[list.length - 1];
-      await summarizeMessage(
+      const isThread = list.length > 1;
+      const fn = isThread ? summarizeThread : summarizeMessage;
+      await fn(
         client,
         concatenated,
         {
           model: aiModel,
           subject: message?.subject ?? undefined,
-          from:
-            list.length > 1
-              ? `${list.length} messages in thread`
-              : (last?.fromName ?? last?.fromEmail ?? ''),
+          from: isThread
+            ? `Email thread with ${list.length} messages, oldest first`
+            : (last?.fromName ?? last?.fromEmail ?? ''),
           signal: abort.signal,
         },
         (delta) => setSummary((prev) => prev + delta),

@@ -4,6 +4,7 @@ import { formatDistanceToNow, parseISO } from 'date-fns';
 import { X, Reply, ReplyAll, Forward } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { MailAvatar } from './MailAvatar';
 
 export interface ThreadParticipant {
   email: string;
@@ -123,10 +124,15 @@ export default function ThreadHeader({
                 <Tooltip key={p.email}>
                   <TooltipTrigger asChild>
                     <div
-                      className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[9px] font-semibold flex items-center justify-center ring-1 ring-background cursor-default"
+                      className="cursor-default"
                       style={{ zIndex: visibleParticipants.length - i }}
                     >
-                      {getInitials(p.name, p.email)}
+                      <MailAvatar
+                        name={p.name}
+                        email={p.email}
+                        size="xs"
+                        className="ring-1 ring-background"
+                      />
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-xs">
@@ -135,7 +141,7 @@ export default function ThreadHeader({
                 </Tooltip>
               ))}
               {extraParticipantCount > 0 && (
-                <div className="w-5 h-5 rounded-full bg-muted text-muted-foreground text-[9px] flex items-center justify-center ring-1 ring-background">
+                <div className="w-6 h-6 rounded-full bg-muted text-muted-foreground text-[9px] font-medium flex items-center justify-center ring-1 ring-background">
                   +{extraParticipantCount}
                 </div>
               )}

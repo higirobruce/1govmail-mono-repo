@@ -167,6 +167,7 @@ interface Props {
   refreshKey?: number;
   onMute?: () => void;
   isMuted?: boolean;
+  onSnooze?: () => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -184,6 +185,7 @@ export default function ThreadView({
   refreshKey,
   onMute,
   isMuted,
+  onSnooze,
 }: Props) {
   const user = useAuthStore((s) => s.user);
 
@@ -313,6 +315,7 @@ export default function ThreadView({
       onMoveToFolder={onMoveToFolder}
       onMute={onMute}
       isMuted={isMuted}
+      onSnooze={onSnooze}
     />
   );
 

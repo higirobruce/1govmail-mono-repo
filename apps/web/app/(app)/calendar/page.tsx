@@ -1739,8 +1739,8 @@ function EventDetailPanel({
 
       {/* Footer */}
       <div className="px-4 py-3 border-t border-border/40 shrink-0">
-        <Button variant="ghost" size="sm" onClick={() => onDelete(event)} disabled={deleting}
-          className="w-full text-destructive/70 hover:text-destructive hover:bg-destructive/10 h-8 gap-1.5 text-xs">
+        <Button variant="destructive-ghost" size="sm" onClick={() => onDelete(event)} disabled={deleting}
+          className="w-full h-8 gap-1.5 text-xs">
           {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
           Delete event
         </Button>

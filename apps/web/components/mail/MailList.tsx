@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { formatDistanceToNowStrict, parseISO, startOfDay, subDays } from 'date-fns';
-import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus } from 'lucide-react';
+import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { MailAvatar } from './MailAvatar';
+import { ClassificationChip } from './ClassificationChip';
 
 interface Message {
   id: string;
@@ -51,6 +53,8 @@ interface MailListProps {
   mutedConversationIds?: string[];
   /** Override for the empty-state render. Defaults to the generic "No messages" block. */
   emptyState?: React.ReactNode;
+  /** When non-empty, only messages whose `tags` array intersects this set are shown. */
+  filterTagNames?: Set<string>;
 }
 
 type Tab = 'all' | 'unread' | 'starred';
@@ -108,11 +112,10 @@ function groupMessages(messages: Message[], tab: Tab, stickyIds: Set<string>): G
 
 function SectionHeader({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2 bg-muted/20">
-      <span className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider shrink-0">
+    <div className="px-4 pt-3 pb-1">
+      <span className="text-[10.5px] font-semibold text-muted-foreground/55 uppercase tracking-[0.06em]">
         {label}
       </span>
-      <div className="flex-1 h-px bg-border/40" />
     </div>
   );
 }
@@ -269,85 +272,126 @@ function MailRow({
   selected?: boolean;
   onSelect?: () => void;
 }) {
+  const classification = useMemo(() => pickClassificationFromTags(message.tags), [message.tags]);
+
   return (
-    <div
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData('application/x-govmail-msg', JSON.stringify({
-          id: message.id,
-          subject: message.subject,
-          snippet: message.snippet,
-          from: message.fromName ? `${message.fromName} <${message.fromEmail}>` : message.fromEmail,
-        }));
-        e.dataTransfer.effectAllowed = 'copy';
-      }}
-      className={cn(
-        'w-full text-left border-b border-border/25 transition-all group relative',
-        active
-          ? 'bg-primary/8 border-l-2 border-l-primary'
-          : selected
-          ? 'bg-primary/5 border-l-2 border-l-primary/50'
-          : 'hover:bg-muted/30 border-l-2 border-l-transparent',
-      )}
-    >
-      <div className="flex items-center">
-        {/* Checkbox — shown on hover or when already selected */}
-        <div
-          className={cn(
-            'pl-2 shrink-0 flex items-center justify-center w-7 self-stretch',
-            selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-          )}
-          onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
-        >
-          <div className={cn(
-            'w-4 h-4 rounded border-2 flex items-center justify-center transition-colors cursor-pointer',
-            selected ? 'bg-primary border-primary' : 'border-muted-foreground/30 hover:border-primary/50',
-          )}>
-            {selected && <div className="w-2 h-2 rounded-sm bg-primary-foreground" />}
-          </div>
-        </div>
-
-        <button
-          onClick={onClick}
-          onContextMenu={onContextMenu}
-          className="flex-1 min-w-0 px-3 py-3 text-left"
-        >
-          <div className="flex items-start gap-3">
-            {/* Unread dot */}
-            <div className="mt-[9px] shrink-0 w-1.5 h-1.5">
-              {!message.isRead && <div className="w-1.5 h-1.5 rounded-full bg-primary" />}
+    <div className="px-2 pt-1 first:pt-2 last:pb-2">
+      <div
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('application/x-govmail-msg', JSON.stringify({
+            id: message.id,
+            subject: message.subject,
+            snippet: message.snippet,
+            from: message.fromName ? `${message.fromName} <${message.fromEmail}>` : message.fromEmail,
+          }));
+          e.dataTransfer.effectAllowed = 'copy';
+        }}
+        className={cn(
+          'group relative rounded-2xl transition-all',
+          active
+            ? 'bg-card shadow-[0_2px_8px_rgba(15,76,129,0.08)] ring-1 ring-primary/15'
+            : selected
+            ? 'bg-primary/5 ring-1 ring-primary/20'
+            : !message.isRead
+            ? 'bg-card hover:bg-card ring-1 ring-border/40'
+            : 'hover:bg-muted/40',
+        )}
+      >
+        {!message.isRead && !active && (
+          <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r-full bg-primary" aria-hidden />
+        )}
+        <div className="flex items-start gap-2 px-2.5 py-2.5">
+          {/* Checkbox — always visible at low opacity, full on hover/select */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
+            className={cn(
+              'shrink-0 mt-[3px] transition-opacity',
+              selected || active ? 'opacity-100' : 'opacity-50 group-hover:opacity-100',
+            )}
+            aria-label={selected ? 'Deselect message' : 'Select message'}
+          >
+            <div className={cn(
+              'w-4 h-4 rounded-md border-2 flex items-center justify-center transition-colors',
+              selected ? 'bg-primary border-primary' : 'border-muted-foreground/30 hover:border-primary/50',
+            )}>
+              {selected && (
+                <svg className="w-2.5 h-2.5 text-primary-foreground" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M2 6l3 3 5-6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
             </div>
+          </button>
 
-            {/* Text */}
+          {/* Avatar */}
+          <button
+            onClick={onClick}
+            onContextMenu={onContextMenu}
+            className="flex-1 min-w-0 flex items-start gap-2.5 text-left"
+          >
+            <MailAvatar
+              name={message.fromName}
+              email={message.fromEmail}
+              size="sm"
+            />
+
             <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between mb-0.5">
+              <div className="flex items-baseline justify-between gap-2 mb-0.5">
                 <span className={cn(
-                  'text-[13px] truncate pr-2',
-                  message.isRead ? 'text-foreground/80 font-normal' : 'text-foreground font-semibold',
+                  'text-[13px] truncate',
+                  message.isRead ? 'text-foreground/85 font-normal' : 'text-primary font-semibold',
                 )}>
                   {message.fromName ?? message.fromEmail}
                 </span>
-                <span className="text-[11px] text-muted-foreground/65 shrink-0 tabular-nums">
+                <span className={cn(
+                  'shrink-0 inline-flex items-center gap-1 tabular-nums',
+                  message.isRead ? 'text-[11px] text-muted-foreground/60' : 'text-[11px] text-primary font-semibold',
+                )}>
+                  {!message.isRead && <span className="w-1.5 h-1.5 rounded-full bg-primary" aria-hidden />}
                   {formatDate(message.receivedAt)}
                 </span>
               </div>
 
               <p className={cn(
-                'text-[12px] truncate mb-0.5',
-                message.isRead ? 'text-muted-foreground/80' : 'text-foreground/80 font-medium',
+                'text-[12.5px] truncate mb-0.5',
+                message.isRead ? 'text-foreground/70' : 'text-foreground font-semibold',
               )}>
                 {message.subject ?? '(no subject)'}
               </p>
 
-              <p className="text-[11px] text-muted-foreground/65 truncate leading-relaxed">
+              <p className="text-[11.5px] text-muted-foreground/70 truncate leading-snug">
                 {message.snippet}
               </p>
+
+              {/* Chip strip — attachment + classification */}
+              {(message.hasAttachments || classification) && (
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  {message.hasAttachments && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/80 bg-muted/60 rounded-full px-1.5 py-0.5">
+                      <Paperclip className="w-2.5 h-2.5" />
+                      Attachment
+                    </span>
+                  )}
+                  {classification && <ClassificationChip value={classification} size="xs" />}
+                </div>
+              )}
             </div>
-          </div>
-        </button>
+          </button>
+        </div>
       </div>
     </div>
   );
+}
+
+/** Pick the highest-severity classification label out of a tags array.
+ *  Inlined here so MailRow doesn't import lib/classification — keeps the row
+ *  cheap to re-render and the import surface tight. */
+function pickClassificationFromTags(tags: string[] | null | undefined): string | null {
+  if (!tags || tags.length === 0) return null;
+  const order = ['Confidential', 'Restricted', 'Internal Use Only', 'Unclassified'];
+  for (const o of order) if (tags.includes(o)) return o;
+  return null;
 }
 
 const TABS: { id: Tab; label: string }[] = [
@@ -369,6 +413,7 @@ export default function MailList({
   folders = [],
   mutedConversationIds = [],
   emptyState,
+  filterTagNames,
 }: MailListProps) {
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
@@ -479,30 +524,38 @@ export default function MailList({
     return () => observer.disconnect();
   }, [loadingMore, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const groups = useMemo(() => groupMessages(messages, activeTab, stickyIds), [messages, activeTab, stickyIds]);
+  const filteredMessages = useMemo(() => {
+    if (!filterTagNames || filterTagNames.size === 0) return messages;
+    return messages.filter((m) => m.tags?.some((t) => filterTagNames.has(t)));
+  }, [messages, filterTagNames]);
+  const groups = useMemo(() => groupMessages(filteredMessages, activeTab, stickyIds), [filteredMessages, activeTab, stickyIds]);
   const totalFiltered = groups.reduce((s, g) => s + g.messages.length, 0);
 
   // Loading skeleton
   if (loading && messages.length === 0) {
     return (
       <div className="flex flex-col h-full">
-        <div className="flex gap-1 px-3 py-2.5 border-b border-border/25 shrink-0">
-          {TABS.map((t) => (
-            <div key={t.id} className="h-6 w-14 bg-muted/60 rounded-full animate-pulse" />
-          ))}
+        <div className="px-3 py-2.5 shrink-0">
+          <div className="inline-flex p-0.5 rounded-full bg-muted/60">
+            {TABS.map((t) => (
+              <div key={t.id} className="h-6 w-14 rounded-full animate-pulse" />
+            ))}
+          </div>
         </div>
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="px-4 py-3 border-b border-border/25 animate-pulse">
-            <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 mt-2 rounded-full shrink-0" />
-              <div className="w-8 h-8 rounded-[6px] bg-muted shrink-0" />
-              <div className="flex-1 space-y-1.5">
-                <div className="flex justify-between">
-                  <div className="h-3 w-24 bg-muted rounded" />
-                  <div className="h-3 w-10 bg-muted/50 rounded" />
+          <div key={i} className="px-2 pt-1">
+            <div className="rounded-2xl px-2.5 py-2.5 animate-pulse">
+              <div className="flex items-start gap-2.5">
+                <div className="w-4 h-4 mt-[3px] rounded-md bg-muted/60 shrink-0" />
+                <div className="w-8 h-8 rounded-full bg-muted shrink-0" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="flex justify-between">
+                    <div className="h-3 w-24 bg-muted rounded" />
+                    <div className="h-3 w-10 bg-muted/50 rounded" />
+                  </div>
+                  <div className="h-3 w-40 bg-muted/70 rounded" />
+                  <div className="h-2.5 w-32 bg-muted/40 rounded" />
                 </div>
-                <div className="h-3 w-40 bg-muted/70 rounded" />
-                <div className="h-2.5 w-32 bg-muted/40 rounded" />
               </div>
             </div>
           </div>
@@ -514,22 +567,24 @@ export default function MailList({
   return (
     <>
       <div className="flex flex-col h-full">
-        {/* Tab bar */}
-        <div className="flex gap-1 px-3 py-2.5 border-b border-border/25 shrink-0">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                'px-3 py-1 rounded-full text-[12px] font-medium transition-all',
-                activeTab === tab.id
-                  ? 'bg-primary/15 text-primary'
-                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
+        {/* Tab bar — segmented-control style */}
+        <div className="px-3 py-2.5 shrink-0">
+          <div className="inline-flex items-center gap-0.5 p-0.5 rounded-full bg-muted/60">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  'px-3.5 py-1 rounded-full text-[12px] font-medium transition-all',
+                  activeTab === tab.id
+                    ? 'bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
+                    : 'text-muted-foreground/80 hover:text-foreground',
+                )}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">

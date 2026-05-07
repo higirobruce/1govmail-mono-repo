@@ -7,14 +7,19 @@ import {
   Reply, ReplyAll, Forward, Trash2, Archive, Star, Inbox, Tag, FolderOpen,
   Paperclip, Download, Loader2, MoreHorizontal,
   ChevronLeft, ChevronRight, X, Mail, User, Calendar,
-  Eye, File, FileText, Image as ImageIcon, Printer, BellOff, Bell,
+  Eye, File, FileText, Image as ImageIcon, Printer, BellOff, Bell, AlarmClock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { api } from '@/lib/api';
+import { sanitizeEmailHtml } from '@/lib/sanitize';
 import { toast } from 'sonner';
 import { QuickReplyBar } from '@/components/mail/QuickReplyBar';
 import { AttachmentLightbox } from '@/components/mail/AttachmentLightbox';
+import { MailAvatar } from '@/components/mail/MailAvatar';
+import { ClassificationChip } from '@/components/mail/ClassificationChip';
+import { pickHighestClassification } from '@/lib/classification';
+import { AttachmentTile, fileTypeStyle } from '@/components/mail/AttachmentTile';
 
 interface MessageDetail {
   id: string;
@@ -31,6 +36,7 @@ interface MessageDetail {
   attachments: Array<{ id: string; filename: string; mimeType: string; size: number }>;
   inlineImages?: Array<{ cid: string; partId: string; mimeType: string }>;
   receivedAt: string;
+  tags?: string[] | null;
 }
 
 interface FolderItem {
@@ -60,6 +66,7 @@ interface MailDetailProps {
   onMoveToFolder?: (folderId: string) => void;
   onMute?: () => void;
   isMuted?: boolean;
+  onSnooze?: () => void;
 }
 
 type DetailTab = 'overview' | 'message' | 'attachments';
@@ -221,9 +228,11 @@ function EmailBody({
   // Also strip the non-standard `name=` parameter from data URIs — e.g.
   // `data:image/gif; name="foo.gif";base64,...` — whose unescaped inner quotes
   // break HTML attribute parsing and cause the image to render as broken.
-  const body = extractBodyContent(html)
-    .replace(/\bdfsrc=/gi, 'src=')
-    .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;');
+  const body = sanitizeEmailHtml(
+    extractBodyContent(html)
+      .replace(/\bdfsrc=/gi, 'src=')
+      .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;'),
+  );
   // upgrade-insecure-requests: silently upgrades http:// image/resource URLs to
   // https:// so external email images are not blocked by mixed-content policy on
   // HTTPS deployments.
@@ -281,7 +290,13 @@ export default function MailDetail({
   onMoveToFolder,
   onMute,
   isMuted = false,
+  onSnooze,
 }: MailDetailProps) {
+  const archiveFolder = folders.find((f) => f.path === '/Archive');
+  const handleArchive = useCallback(() => {
+    if (archiveFolder && onMoveToFolder) onMoveToFolder(archiveFolder.id);
+  }, [archiveFolder, onMoveToFolder]);
+  const classification = message ? pickHighestClassification(message.tags) : null;
   const [activeTab, setActiveTab] = useState<DetailTab>('message');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [folderDropdownOpen, setFolderDropdownOpen] = useState(false);
@@ -420,39 +435,48 @@ export default function MailDetail({
         {onClose && (
           <button
             onClick={onClose}
-            className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
+            aria-label="Back"
+            className="p-1.5 rounded-md text-muted-foreground/55 hover:text-foreground hover:bg-muted transition-colors"
           >
-            <X className="w-3.5 h-3.5" />
+            <ChevronLeft className="w-4 h-4" />
           </button>
         )}
-
-        <button disabled className="p-1.5 rounded-md text-muted-foreground/25 cursor-default">
-          <ChevronLeft className="w-3.5 h-3.5" />
-        </button>
-        <button disabled className="p-1.5 rounded-md text-muted-foreground/25 cursor-default">
-          <ChevronRight className="w-3.5 h-3.5" />
-        </button>
 
         {/* Subject as breadcrumb */}
         <h2 className="flex-1 min-w-0 px-1.5 text-[13px] font-semibold text-foreground truncate">
           {message.subject ?? '(no subject)'}
         </h2>
 
-        {/* Action buttons */}
+        {/* Primary action group — archive / delete / print / snooze */}
         <div className="flex items-center gap-0.5 shrink-0">
+          {archiveFolder && onMoveToFolder && (
+            <ActionBtn icon={Archive} label="Archive" onClick={handleArchive} />
+          )}
+          <ActionBtn icon={Trash2}    label="Delete" onClick={onDelete} danger />
+          <ActionBtn icon={Printer}   label="Print"  onClick={handlePrint} />
+          {onSnooze && (
+            <ActionBtn icon={AlarmClock} label="Snooze" onClick={onSnooze} />
+          )}
+
+          <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
+
+          {/* Reply group */}
+          <ActionBtn icon={Reply}     label="Reply"     onClick={onReply} />
+          <ActionBtn icon={ReplyAll}  label="Reply All" onClick={onReplyAll} />
+          <ActionBtn icon={Forward}   label="Forward"   onClick={onForward} />
+
+          <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
+
+          {/* Secondary group */}
           <ActionBtn
             icon={Star}
             label={message.isStarred ? 'Unstar' : 'Star'}
             onClick={onToggleStar}
             highlight={message.isStarred}
           />
-          <ActionBtn icon={Reply}          label="Reply"     onClick={onReply} />
-          <ActionBtn icon={ReplyAll}       label="Reply All" onClick={onReplyAll} />
-          <ActionBtn icon={Forward}        label="Forward"   onClick={onForward} />
           {onMoveToInbox && (
             <ActionBtn icon={Inbox} label="Move to Inbox" onClick={onMoveToInbox} />
           )}
-          {/* Move to label folder dropdown */}
           {labelFolders.length > 0 && onMoveToFolder && (
             <div ref={folderDropdownRef} className="relative">
               <Tooltip>
@@ -482,7 +506,6 @@ export default function MailDetail({
               )}
             </div>
           )}
-          <ActionBtn icon={Printer} label="Print" onClick={handlePrint} />
           {onMute && (
             <ActionBtn
               icon={isMuted ? Bell : BellOff}
@@ -490,8 +513,6 @@ export default function MailDetail({
               onClick={onMute}
             />
           )}
-          <ActionBtn icon={MoreHorizontal} label="More" />
-          <ActionBtn icon={Trash2}         label="Delete"    onClick={onDelete} danger />
         </div>
       </div>
 
@@ -525,26 +546,29 @@ export default function MailDetail({
               <h1 className="text-[20px] font-semibold text-foreground leading-snug mb-1.5">
                 {message.subject ?? '(no subject)'}
               </h1>
-              <p className="text-[13px] text-muted-foreground/55">
-                {message.fromName ?? message.fromEmail}
-              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-[13px] text-muted-foreground/65">
+                  {message.fromName ?? message.fromEmail}
+                </p>
+                {classification && <ClassificationChip value={classification.label} size="sm" withIcon />}
+              </div>
             </div>
 
             {/* Detail card */}
-            <div className="bg-card border border-border/40 rounded-xl overflow-hidden">
+            <div className="bg-card border border-border/40 rounded-2xl overflow-hidden">
 
               {/* Sender strip */}
               <div className="flex items-center gap-3 px-5 py-4 border-b border-border/25">
-                <Avatar className="w-8 h-8 shrink-0">
-                  <AvatarFallback className="text-[12px] font-semibold bg-primary/10 text-primary">
-                    {senderInitials}
-                  </AvatarFallback>
-                </Avatar>
+                <MailAvatar
+                  name={message.fromName}
+                  email={message.fromEmail}
+                  size="md"
+                />
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] font-semibold text-foreground leading-none mb-0.5">
                     {message.fromName ?? message.fromEmail}
                   </p>
-                  <p className="text-[11px] text-muted-foreground/45">{formattedDate}</p>
+                  <p className="text-[11px] text-muted-foreground/55">{formattedDate}</p>
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
                   <ActionBtn icon={MoreHorizontal} label="More" />
@@ -586,7 +610,7 @@ export default function MailDetail({
                       'inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium',
                       message.isRead
                         ? 'bg-muted text-muted-foreground'
-                        : 'bg-blue-500/10 text-blue-600',
+                        : 'bg-primary/10 text-primary',
                     )}>
                       {message.isRead ? 'Read' : 'Unread'}
                     </span>
@@ -600,6 +624,7 @@ export default function MailDetail({
                         <Paperclip className="w-2.5 h-2.5" /> Attachments
                       </span>
                     )}
+                    {classification && <ClassificationChip value={classification.label} size="xs" />}
                   </div>
                 </MetaRow>
               </div>
@@ -628,24 +653,21 @@ export default function MailDetail({
           <div className="flex flex-col h-full">
             {/* Sender strip */}
             <div className="flex items-center gap-3 px-6 pt-5 pb-4 border-b border-border/25 shrink-0">
-              <Avatar className="w-9 h-9 shrink-0">
-                <AvatarFallback className="text-sm font-semibold bg-primary/15 text-primary">
-                  {senderInitials}
-                </AvatarFallback>
-              </Avatar>
+              <MailAvatar name={message.fromName} email={message.fromEmail} size="md" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 flex-wrap">
                   <span className="text-[13px] font-semibold text-foreground">
                     {message.fromName ?? message.fromEmail}
                   </span>
                   {message.fromName && (
-                    <span className="text-[11px] text-muted-foreground/45">
+                    <span className="text-[11px] text-muted-foreground/55">
                       &lt;{message.fromEmail}&gt;
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-muted-foreground/45 mt-0.5">{formattedDate}</p>
+                <p className="text-[11px] text-muted-foreground/55 mt-0.5">{formattedDate}</p>
               </div>
+              {classification && <ClassificationChip value={classification.label} size="sm" withIcon />}
             </div>
 
             {/* Body — sandboxed in iframe to isolate email styles.
@@ -660,26 +682,39 @@ export default function MailDetail({
             {/* Inline attachments bar — shown below the email body so the user
                 can see which files are attached without switching tabs. */}
             {message.attachments.length > 0 && (
-              <div className="px-6 py-2.5 border-t border-border/20 bg-muted/20 shrink-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-muted-foreground/40 uppercase tracking-wider mr-1 shrink-0">
-                    <Paperclip className="w-3 h-3" />
-                    {message.attachments.length}
+              <div className="px-6 py-4 border-t border-border/20 shrink-0">
+                <div className="flex items-center gap-1.5 mb-3">
+                  <Paperclip className="w-3.5 h-3.5 text-muted-foreground/55" />
+                  <span className="text-[12px] font-semibold text-foreground/85">
+                    Attachments
                   </span>
+                  <span className="text-[11px] text-muted-foreground/55">
+                    ({message.attachments.length})
+                  </span>
+                </div>
+                <div className="flex items-start gap-3 flex-wrap">
                   {message.attachments.map((att) => {
-                    const FileIcon = att.mimeType.startsWith('image/') ? ImageIcon
-                      : (att.mimeType === 'application/pdf' || att.filename.toLowerCase().endsWith('.pdf')) ? FileText
-                      : File;
+                    const isPreviewable =
+                      att.mimeType.startsWith('image/') ||
+                      att.mimeType === 'application/pdf' ||
+                      att.mimeType.startsWith('text/') ||
+                      att.filename.toLowerCase().endsWith('.pdf');
                     return (
-                      <button
+                      <AttachmentTile
                         key={att.id}
-                        onClick={() => setActiveTab('attachments')}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-card border border-border/40 text-[11px] text-foreground/65 hover:bg-muted hover:text-foreground transition-colors max-w-[160px]"
-                        title={`${att.filename} — view in Attachments tab`}
-                      >
-                        <FileIcon className="w-3 h-3 shrink-0 text-muted-foreground/50" />
-                        <span className="truncate">{att.filename}</span>
-                      </button>
+                        attachment={att}
+                        onClick={() => {
+                          if (isPreviewable) {
+                            setLightboxSelectedId(att.id);
+                            setLightboxOpen(true);
+                          } else {
+                            handleDownload(att);
+                          }
+                        }}
+                        onPreview={isPreviewable ? () => { setLightboxSelectedId(att.id); setLightboxOpen(true); } : undefined}
+                        onDownload={() => handleDownload(att)}
+                        downloading={downloadingId === att.id}
+                      />
                     );
                   })}
                 </div>
@@ -708,20 +743,20 @@ export default function MailDetail({
                   att.mimeType === 'application/pdf' ||
                   att.mimeType.startsWith('text/') ||
                   att.filename.toLowerCase().endsWith('.pdf');
-                const FileIcon = att.mimeType.startsWith('image/') ? ImageIcon
-                  : (att.mimeType === 'application/pdf' || att.filename.toLowerCase().endsWith('.pdf')) ? FileText
-                  : File;
+                const style = fileTypeStyle(att);
                 return (
                   <div
                     key={att.id}
                     className="flex items-center gap-2.5 p-3 bg-card border border-border/45 rounded-xl group hover:bg-muted/30 transition-colors"
                   >
-                    <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                      <FileIcon className="w-4 h-4 text-primary/60" />
+                    <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center shrink-0', style.bgTint)}>
+                      <span className={cn('text-[10px] font-bold tracking-wide', style.color)}>
+                        {style.label}
+                      </span>
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-[12px] font-medium text-foreground truncate">{att.filename}</p>
-                      <p className="text-[11px] text-muted-foreground/45">{formatBytes(att.size)}</p>
+                      <p className="text-[11px] text-muted-foreground/55">{formatBytes(att.size)}</p>
                     </div>
                     <div className="flex items-center gap-0.5 shrink-0">
                       {isPreviewable && (

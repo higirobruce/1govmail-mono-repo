@@ -578,7 +578,7 @@ function CommentThread({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            className="ml-auto text-[10px] text-muted-foreground hover:text-destructive p-0.5 rounded hover:bg-destructive/10 transition-colors"
+            className="ml-auto text-[10px] text-muted-foreground hover:text-destructive p-0.5 rounded hover:bg-muted transition-colors"
           >
             <Trash2 className="w-3 h-3" />
           </button>
@@ -597,7 +597,7 @@ function CommentThread({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            className="ml-auto text-[10px] text-muted-foreground hover:text-destructive p-0.5 rounded hover:bg-destructive/10"
+            className="ml-auto text-[10px] text-muted-foreground hover:text-destructive p-0.5 rounded hover:bg-muted"
           >
             <Trash2 className="w-3 h-3" />
           </button>

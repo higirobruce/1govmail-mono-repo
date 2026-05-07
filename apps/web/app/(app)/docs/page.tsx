@@ -31,13 +31,7 @@ import {
 } from 'lucide-react';
 import { cn, getUserColor } from '@/lib/utils';
 import { exportAsPdf, exportAsMarkdown, exportAsDocx } from '@/lib/docExport';
-
-const GOV_TAGS = [
-  { label: 'Unclassified',     cls: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800' },
-  { label: 'Internal Use Only', cls: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800' },
-  { label: 'Restricted',       cls: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800' },
-  { label: 'Confidential',     cls: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800' },
-] as const;
+import { CLASSIFICATIONS as GOV_TAGS } from '@/lib/classification';
 
 
 export default function DocsPage() {

@@ -57,11 +57,14 @@
  */
 
 :root {
-  --radius: 0.375rem;
+  --radius: 0.625rem;
 
-  --background:           oklch(1 0 0);            /* pure white app canvas */
+  /* App canvas — slight warm off-white so white cards (active row, reader,
+   * popovers) stand out without harsh contrast. Matches the soft-card aesthetic
+   * of the reference mockup. */
+  --background:           oklch(0.975 0.003 250);
   --foreground:           oklch(0.18 0.03 258);    /* deep navy-black text     */
-  --card:                 oklch(1 0 0);
+  --card:                 oklch(1 0 0);            /* white cards on the canvas */
   --card-foreground:      oklch(0.18 0.03 258);
   --popover:              oklch(1 0 0);
   --popover-foreground:   oklch(0.18 0.03 258);
@@ -70,10 +73,10 @@
   --primary:              oklch(0.40 0.12 255);    /* #0F4C81 state blue       */
   --primary-foreground:   oklch(0.99 0 0);
 
-  --secondary:            oklch(0.97 0.004 240);
+  --secondary:            oklch(0.96 0.004 240);
   --secondary-foreground: oklch(0.25 0.04 258);
 
-  --muted:                oklch(0.98 0.003 240);
+  --muted:                oklch(0.955 0.004 245);  /* slightly tinted gray for chips/avatars */
   --muted-foreground:     oklch(0.48 0.012 250);
 
   --accent:               oklch(0.66 0.16 237);    /* #00A1DE Rwanda blue      */

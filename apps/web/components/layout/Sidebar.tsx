@@ -15,8 +15,8 @@ import {
   Sun, Moon, Monitor, BookOpen, ShieldAlert,
   MoreHorizontal, Pencil, CloudOff, Loader2,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { useOffline } from '@/lib/offline/provider';
+import { cn } from '@/lib/utils';
 import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
 import { AppTour } from '@/components/tour/AppTour';
 import { useThemeStore, type Theme } from '@/stores/theme.store';
@@ -140,6 +140,12 @@ interface SidebarProps {
   onClose?: () => void;
   /** Extra classes for the root div — used to override hidden-on-mobile inside Sheet */
   className?: string;
+  /** Multi-select label filter: names of label-folders the user has checkboxed
+   *  to filter the active list by (matches against `message.tags`). Optional —
+   *  when omitted, label rows render without checkboxes. */
+  selectedLabelNames?: Set<string>;
+  onToggleLabelFilter?: (name: string) => void;
+  onClearLabelFilter?: () => void;
 }
 
 // All built-in Zimbra folder paths — user-created folders have paths not in this set
@@ -149,21 +155,26 @@ const BUILTIN_PATHS = new Set([
   '/Chats', '/Emailed Contacts',
 ]);
 
+// iconBg maps to semantic palette tokens so the sidebar re-themes automatically
+// alongside the rest of the chrome (primary = state blue, accent = Rwanda flag
+// blue, success = Rwanda green, warning = gold, destructive = crimson).
 const SYSTEM_FOLDERS = [
-  { id: 'inbox',   name: 'Inbox',   icon: Inbox,         path: '/Inbox',   iconBg: 'bg-blue-500' },
-  { id: 'sent',    name: 'Sent',    icon: Send,          path: '/Sent',    iconBg: 'bg-emerald-500' },
-  { id: 'drafts',  name: 'Drafts',  icon: FileText,      path: '/Drafts',  iconBg: 'bg-orange-400' },
-  { id: 'archive', name: 'Archive', icon: Archive,       path: '/Archive', iconBg: 'bg-slate-400' },
-  { id: 'junk',    name: 'Spam',    icon: ShieldAlert,   path: '/Junk',    iconBg: 'bg-yellow-500' },
-  { id: 'trash',   name: 'Trash',   icon: Trash2,        path: '/Trash',   iconBg: 'bg-rose-500' },
+  { id: 'inbox',   name: 'Inbox',   icon: Inbox,       path: '/Inbox',   iconBg: 'bg-primary' },
+  { id: 'sent',    name: 'Sent',    icon: Send,        path: '/Sent',    iconBg: 'bg-success' },
+  { id: 'drafts',  name: 'Drafts',  icon: FileText,    path: '/Drafts',  iconBg: 'bg-accent' },
+  { id: 'archive', name: 'Archive', icon: Archive,     path: '/Archive', iconBg: 'bg-muted-foreground/70' },
+  { id: 'junk',    name: 'Spam',    icon: ShieldAlert, path: '/Junk',    iconBg: 'bg-warning' },
+  { id: 'trash',   name: 'Trash',   icon: Trash2,      path: '/Trash',   iconBg: 'bg-destructive' },
 ];
 
 // System folders that can be emptied
 const EMPTYABLE_PATHS = new Set(['/Trash', '/Junk']);
 
+// User-created label colors: hashed onto the semantic palette so custom folders
+// stay on-brand instead of drifting into arbitrary Tailwind shades.
 const LABEL_COLORS = [
-  'bg-violet-500', 'bg-blue-500', 'bg-emerald-500', 'bg-amber-500',
-  'bg-rose-500', 'bg-cyan-500', 'bg-indigo-500', 'bg-pink-500',
+  'bg-primary', 'bg-accent', 'bg-success', 'bg-warning',
+  'bg-destructive', 'bg-chart-3', 'bg-chart-4', 'bg-chart-5',
 ];
 
 function getLabelColor(name: string): string {
@@ -241,6 +252,93 @@ function NavItem({
   );
 }
 
+function LabelRow({
+  folder,
+  active,
+  color,
+  checked,
+  filterEnabled,
+  onSelect,
+  onToggleFilter,
+  onMore,
+}: {
+  folder: Folder;
+  active: boolean;
+  color: string;
+  checked: boolean;
+  filterEnabled: boolean;
+  onSelect: () => void;
+  onToggleFilter: () => void;
+  onMore?: (x: number, y: number) => void;
+}) {
+  return (
+    <div className={cn(
+      'w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-lg text-[13px] transition-all duration-100 group relative',
+      active ? 'bg-primary/10 text-primary font-medium' : 'text-foreground/65 hover:bg-muted/50 hover:text-foreground',
+    )}>
+      {active && (
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary rounded-r-full" />
+      )}
+
+      {/* Color square — also serves as the filter checkbox when filterEnabled */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (filterEnabled) onToggleFilter();
+          else onSelect();
+        }}
+        aria-label={filterEnabled ? (checked ? `Remove ${folder.name} filter` : `Filter by ${folder.name}`) : folder.name}
+        aria-pressed={filterEnabled ? checked : undefined}
+        className={cn(
+          'shrink-0 w-[18px] h-[18px] rounded-[5px] flex items-center justify-center transition-all',
+          color,
+          filterEnabled && !checked && 'opacity-30 hover:opacity-60',
+          checked && 'shadow-[0_0_0_1px_rgba(0,0,0,0.04)]',
+        )}
+      >
+        {checked ? (
+          <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.4">
+            <path d="M2 6l3 3 5-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : !filterEnabled ? (
+          <FolderOpen className="w-2.5 h-2.5 text-white" />
+        ) : null}
+      </button>
+
+      {/* Label name — navigates */}
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex-1 min-w-0 text-left truncate"
+      >
+        {folder.name}
+      </button>
+
+      {/* Unread count */}
+      {!!folder.unreadCount && folder.unreadCount > 0 && (
+        <span className={cn(
+          'text-[11px] font-medium px-1.5 py-0.5 rounded-md tabular-nums shrink-0',
+          active ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
+        )}>
+          {folder.unreadCount > 99 ? '99+' : folder.unreadCount}
+        </span>
+      )}
+
+      {/* Overflow menu */}
+      {onMore && (
+        <button
+          className="shrink-0 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 pointer-events-none group-hover/folderrow:opacity-100 group-hover/folderrow:pointer-events-auto"
+          onClick={(e) => { e.stopPropagation(); onMore(e.clientX, e.clientY); }}
+          aria-label="Folder options"
+        >
+          <MoreHorizontal className="w-3 h-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function OfflineStatusPill() {
   const { status } = useOffline();
   if (status.online && status.pending === 0 && status.failed === 0) return null;
@@ -285,7 +383,11 @@ export default function Sidebar({
   onRenameFolder,
   onClose,
   className,
+  selectedLabelNames,
+  onToggleLabelFilter,
+  onClearLabelFilter,
 }: SidebarProps) {
+  const filterEnabled = !!onToggleLabelFilter;
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -536,7 +638,22 @@ export default function Sidebar({
                 >
                   <ChevronDown className={cn('w-3 h-3 transition-transform', !labelsOpen && '-rotate-90')} />
                   Labels
+                  {filterEnabled && selectedLabelNames && selectedLabelNames.size > 0 && (
+                    <span className="ml-1 inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary normal-case tracking-normal">
+                      {selectedLabelNames.size} active
+                    </span>
+                  )}
                 </button>
+                {filterEnabled && selectedLabelNames && selectedLabelNames.size > 0 && onClearLabelFilter && (
+                  <button
+                    onClick={onClearLabelFilter}
+                    className="p-1 mb-1.5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-colors"
+                    title="Clear filter"
+                    aria-label="Clear label filter"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
                 {onCreateFolder && (
                   <button
                     onClick={() => {
@@ -584,27 +701,20 @@ export default function Sidebar({
                           />
                         </div>
                       ) : (
-                        <>
-                          <NavItem
-                            icon={FolderOpen}
-                            label={folder.name}
-                            unread={folder.unreadCount}
-                            active={activeFolderId === folder.id}
-                            onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
-                            iconBg={getLabelColor(folder.name)}
-                          />
-                          {(onDeleteFolder || onEmptyFolder || onRenameFolder) && (
-                            <button
-                              className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 pointer-events-none group-hover/folderrow:opacity-100 group-hover/folderrow:pointer-events-auto"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setFolderMenu({ x: e.clientX, y: e.clientY, folder: { id: folder.id, name: folder.name } });
-                              }}
-                            >
-                              <MoreHorizontal className="w-3 h-3" />
-                            </button>
-                          )}
-                        </>
+                        <LabelRow
+                          folder={folder}
+                          active={activeFolderId === folder.id}
+                          color={getLabelColor(folder.name)}
+                          checked={!!selectedLabelNames?.has(folder.name)}
+                          filterEnabled={filterEnabled}
+                          onSelect={() => { onFolderSelect(folder.id); onClose?.(); }}
+                          onToggleFilter={() => onToggleLabelFilter?.(folder.name)}
+                          onMore={
+                            (onDeleteFolder || onEmptyFolder || onRenameFolder)
+                              ? (x, y) => setFolderMenu({ x, y, folder: { id: folder.id, name: folder.name } })
+                              : undefined
+                          }
+                        />
                       )}
                     </div>
                   ))}

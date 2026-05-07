@@ -698,10 +698,10 @@ export default function ContactsPage() {
                   <Pencil className="w-3.5 h-3.5" /> Edit
                 </Button>
                 <Button
-                  variant="ghost" size="sm"
+                  variant="destructive-ghost" size="sm"
                   onClick={() => handleDelete(selectedContact)}
                   disabled={deleting}
-                  className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-destructive gap-1.5"
+                  className="h-8 px-3 text-xs gap-1.5"
                 >
                   {deleting
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -944,10 +944,10 @@ export default function ContactsPage() {
                   <Pencil className="w-3.5 h-3.5" /> Edit
                 </Button>
                 <Button
-                  variant="ghost" size="sm"
+                  variant="destructive-ghost" size="sm"
                   onClick={() => handleDeleteGroup(selectedGroup)}
                   disabled={groupDeleting}
-                  className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-destructive gap-1.5"
+                  className="h-8 px-3 text-xs gap-1.5"
                 >
                   {groupDeleting
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />

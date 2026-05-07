@@ -14,6 +14,9 @@ interface MobileSidebarSheetProps {
   onDeleteFolder?: (folderId: string) => Promise<void>;
   onEmptyFolder?: (folderId: string) => Promise<void>;
   onRenameFolder?: (folderId: string, name: string) => Promise<void>;
+  selectedLabelNames?: Set<string>;
+  onToggleLabelFilter?: (name: string) => void;
+  onClearLabelFilter?: () => void;
 }
 
 export function MobileSidebarSheet({

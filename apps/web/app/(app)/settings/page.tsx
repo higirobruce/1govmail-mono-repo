@@ -696,10 +696,10 @@ function SignaturesSection({ data, onUpdate }: { data: SettingsData; onUpdate: (
                     <Pen className="w-3.5 h-3.5" />
                   </Button>
                   <Button
-                    size="sm" variant="ghost"
+                    size="sm" variant="destructive-ghost"
                     onClick={() => handleDelete(sig.id)}
                     disabled={deletingId === sig.id}
-                    className="h-7 w-7 p-0 text-muted-foreground/50 hover:text-destructive"
+                    className="h-7 w-7 p-0"
                     title="Delete"
                   >
                     {deletingId === sig.id
@@ -982,19 +982,6 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
     localStorage.setItem('1gov_normalize_email_styles', String(v));
   };
 
-  const [celebrateInboxZero, setCelebrateInboxZero] = useState(() =>
-    typeof window !== 'undefined'
-      ? localStorage.getItem('1gov_inbox_zero_enabled') !== 'false'
-      : true,
-  );
-  const handleInboxZeroToggle = (v: boolean) => {
-    setCelebrateInboxZero(v);
-    localStorage.setItem('1gov_inbox_zero_enabled', String(v));
-    // Clear the "already celebrated today" marker when re-enabling, so the user
-    // can see the celebration on their next transition without waiting until tomorrow.
-    if (v) localStorage.removeItem('1gov_inbox_zero_last_celebration');
-  };
-
   // Composing
   const [composeFormat, setComposeFormat] = useState(p.zimbraPrefComposeFormat ?? 'html');
   const [defaultSigId,  setDefaultSigId]  = useState(
@@ -1070,13 +1057,6 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
           description="Override sender fonts and colours so every message uses the app's clean typography. Takes effect on the next message you open."
         >
           <Switch checked={normalizeEmailStyles} onChange={handleNormalizeToggle} />
-        </SettingRow>
-
-        <SettingRow
-          label="Celebrate Inbox Zero"
-          description="Show a brief animation when you clear the last unread message from your inbox. At most once per day."
-        >
-          <Switch checked={celebrateInboxZero} onChange={handleInboxZeroToggle} />
         </SettingRow>
 
         <SettingRow

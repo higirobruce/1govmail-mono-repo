@@ -125,6 +125,21 @@ export default function MailPage() {
   // ── Snooze state ───────────────────────────────────────────────────────────
   const [snoozeTarget, setSnoozeTarget] = useState<{ messageId: string; folderId: string } | null>(null);
 
+  // ── Label filter state ────────────────────────────────────────────────────
+  // Multi-select label filter applied to the active folder's message list.
+  // When non-empty, MailList shows only rows whose `tags` intersect this set.
+  const [selectedLabelNames, setSelectedLabelNames] = useState<Set<string>>(() => new Set());
+  const toggleLabelFilter = useCallback((name: string) => {
+    setSelectedLabelNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }, []);
+  const clearLabelFilter = useCallback(() => setSelectedLabelNames(new Set()), []);
+  // Reset filter when navigating to a different folder.
+  useEffect(() => { setSelectedLabelNames(new Set()); }, [activeFolderId]);
+
   // ── Mute state ─────────────────────────────────────────────────────────────
   const [mutedConversationIds, setMutedConversationIds] = useState<string[]>([]);
 
@@ -888,6 +903,9 @@ export default function MailPage() {
         onDeleteFolder={handleDeleteFolder}
         onEmptyFolder={handleEmptyFolder}
         onRenameFolder={handleRenameFolder}
+        selectedLabelNames={selectedLabelNames}
+        onToggleLabelFilter={toggleLabelFilter}
+        onClearLabelFilter={clearLabelFilter}
       />
       <MobileSidebarSheet
         open={sidebarOpen}
@@ -900,6 +918,9 @@ export default function MailPage() {
         onDeleteFolder={handleDeleteFolder}
         onEmptyFolder={handleEmptyFolder}
         onRenameFolder={handleRenameFolder}
+        selectedLabelNames={selectedLabelNames}
+        onToggleLabelFilter={toggleLabelFilter}
+        onClearLabelFilter={clearLabelFilter}
       />
 
       {/* Mail list pane — full width on mobile, fixed 300px on desktop */}
@@ -1004,6 +1025,7 @@ export default function MailPage() {
             onBulkAction={handleBulkAction}
             folders={folders}
             mutedConversationIds={mutedConversationIds}
+            filterTagNames={selectedLabelNames}
           />
         ) : (
           <MailList
@@ -1017,6 +1039,7 @@ export default function MailPage() {
             hasMore={!!hasNextPage}
             onContextAction={handleContextAction}
             onBulkAction={handleBulkAction}
+            filterTagNames={selectedLabelNames}
             folders={folders}
             mutedConversationIds={mutedConversationIds}
             emptyState={showInboxZeroEmptyState ? (
@@ -1073,6 +1096,7 @@ export default function MailPage() {
             }
           } : undefined}
           isMuted={activeMessage?.conversationId ? mutedConversationIds.includes(activeMessage.conversationId) : false}
+          onSnooze={activeMessageId ? () => setSnoozeTarget({ messageId: activeMessageId, folderId: activeFolderId }) : undefined}
         />
         </div>
       </div>

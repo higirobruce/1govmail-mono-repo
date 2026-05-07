@@ -208,7 +208,7 @@ export function DocInvitePanel({ docId, isOwner }: DocInviteDialogProps) {
                 type="button"
                 disabled={removingId === invite.id}
                 onClick={() => void handleRemove(invite.id, invite.invitedEmail)}
-                className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
                 title="Remove access"
               >
                 {removingId === invite.id

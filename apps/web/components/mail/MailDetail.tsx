@@ -314,7 +314,7 @@ export default function MailDetail({
   const aiBaseUrl = useAIStore((s) => s.baseUrl);
   const aiModel = useAIStore((s) => s.model);
   const aiApiKey = useAIStore((s) => s.apiKey);
-  const charStream = useCharStream();
+  const { text: streamedSummary, push: pushSummary, reset: resetSummary } = useCharStream();
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -324,18 +324,18 @@ export default function MailDetail({
   useEffect(() => {
     summaryAbortRef.current?.abort();
     summaryAbortRef.current = null;
-    charStream.reset();
+    resetSummary();
     setSummarizing(false);
     setSummaryError(null);
     setSummaryOpen(false);
-  }, [message?.id, charStream]);
+  }, [message?.id, resetSummary]);
 
   const handleSummarize = useCallback(async () => {
     if (!message) return;
     summaryAbortRef.current?.abort();
     const abort = new AbortController();
     summaryAbortRef.current = abort;
-    charStream.reset();
+    resetSummary();
     setSummaryError(null);
     setSummarizing(true);
     setSummaryOpen(true);
@@ -354,7 +354,7 @@ export default function MailDetail({
           from: fromLabel,
           signal: abort.signal,
         },
-        charStream.push,
+        pushSummary,
       );
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') return;
@@ -363,16 +363,16 @@ export default function MailDetail({
     } finally {
       setSummarizing(false);
     }
-  }, [message, aiBaseUrl, aiApiKey, aiModel, charStream]);
+  }, [message, aiBaseUrl, aiApiKey, aiModel, pushSummary, resetSummary]);
 
   const closeSummary = useCallback(() => {
     summaryAbortRef.current?.abort();
     summaryAbortRef.current = null;
     setSummaryOpen(false);
-    charStream.reset();
+    resetSummary();
     setSummaryError(null);
     setSummarizing(false);
-  }, [charStream]);
+  }, [resetSummary]);
 
   const labelFolders = folders.filter(
     (f) => !BUILTIN_PATHS_DETAIL.has(f.path) && (f.type === 'MAIL' || !f.type),
@@ -625,7 +625,7 @@ export default function MailDetail({
               </div>
             ) : (
               <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
-                {charStream.text || (summarizing ? 'Thinking…' : '')}
+                {streamedSummary || (summarizing ? 'Thinking…' : '')}
               </p>
             )}
           </div>

@@ -210,7 +210,7 @@ export default function ThreadView({
   const aiBaseUrl = useAIStore((s) => s.baseUrl);
   const aiModel = useAIStore((s) => s.model);
   const aiApiKey = useAIStore((s) => s.apiKey);
-  const charStream = useCharStream();
+  const { text: streamedSummary, push: pushSummary, reset: resetSummary } = useCharStream();
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -219,11 +219,11 @@ export default function ThreadView({
   useEffect(() => {
     summaryAbortRef.current?.abort();
     summaryAbortRef.current = null;
-    charStream.reset();
+    resetSummary();
     setSummarizing(false);
     setSummaryError(null);
     setSummaryOpen(false);
-  }, [message?.id, charStream]);
+  }, [message?.id, resetSummary]);
 
   // Hooks below must run on every render — keep above any conditional returns.
   // Reads `threadMessages` from state inside the body so deps stay shallow.
@@ -233,7 +233,7 @@ export default function ThreadView({
     summaryAbortRef.current?.abort();
     const abort = new AbortController();
     summaryAbortRef.current = abort;
-    charStream.reset();
+    resetSummary();
     setSummaryError(null);
     setSummarizing(true);
     setSummaryOpen(true);
@@ -266,7 +266,7 @@ export default function ThreadView({
             : (last?.fromName ?? last?.fromEmail ?? ''),
           signal: abort.signal,
         },
-        charStream.push,
+        pushSummary,
       );
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') return;
@@ -275,16 +275,16 @@ export default function ThreadView({
     } finally {
       setSummarizing(false);
     }
-  }, [threadMessages, aiBaseUrl, aiApiKey, aiModel, message, charStream]);
+  }, [threadMessages, aiBaseUrl, aiApiKey, aiModel, message, pushSummary, resetSummary]);
 
   const closeSummary = useCallback(() => {
     summaryAbortRef.current?.abort();
     summaryAbortRef.current = null;
     setSummaryOpen(false);
-    charStream.reset();
+    resetSummary();
     setSummaryError(null);
     setSummarizing(false);
-  }, [charStream]);
+  }, [resetSummary]);
 
   // Overview tab: linked tasks
   const [linkedTasks, setLinkedTasks] = useState<Task[]>([]);
@@ -535,7 +535,7 @@ export default function ThreadView({
               </div>
             ) : (
               <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
-                {charStream.text || (summarizing ? 'Thinking…' : '')}
+                {streamedSummary || (summarizing ? 'Thinking…' : '')}
               </p>
             )}
           </div>

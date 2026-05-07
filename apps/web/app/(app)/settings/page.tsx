@@ -6,7 +6,9 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useThemeStore, type FontSize } from '@/stores/theme.store';
+import { useAIStore } from '@/stores/ai.store';
 import { api } from '@/lib/api';
+import { AIClient } from '@/lib/ai/client';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -18,7 +20,7 @@ import { toast } from 'sonner';
 import {
   User, Pen, Shield, Mail, Loader2, Plus, Trash2,
   Check, ChevronRight, RotateCcw, FileSignature,
-  Palmtree, Settings2,
+  Palmtree, Settings2, Sparkles, AlertTriangle,
   Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -73,7 +75,7 @@ interface SettingsData {
   signatures: Signature[];
 }
 
-type Section = 'profile' | 'signatures' | 'vacation' | 'preferences' | 'security';
+type Section = 'profile' | 'signatures' | 'vacation' | 'preferences' | 'ai' | 'security';
 
 // ── Toggle Switch ──────────────────────────────────────────────────────────────
 
@@ -456,6 +458,7 @@ export default function SettingsPage() {
         <NavItem icon={FileSignature} label="Signatures"    active={section === 'signatures'}  onClick={() => setSection('signatures')} />
         <NavItem icon={Palmtree}      label="Vacation Reply" active={section === 'vacation'}   onClick={() => setSection('vacation')} />
         <NavItem icon={Settings2}     label="Preferences"   active={section === 'preferences'} onClick={() => setSection('preferences')} />
+        <NavItem icon={Sparkles}      label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
         <NavItem icon={Shield}        label="Security"      active={section === 'security'}    onClick={() => setSection('security')} />
       </div>
 
@@ -472,6 +475,7 @@ export default function SettingsPage() {
               {section === 'signatures'  && <SignaturesSection   data={data} onUpdate={loadSettings} />}
               {section === 'vacation'    && <VacationSection     data={data} onUpdate={loadSettings} />}
               {section === 'preferences' && <PreferencesSection  data={data} onUpdate={loadSettings} />}
+              {section === 'ai'          && <AISection />}
               {section === 'security'    && <SecuritySection     data={data} />}
             </>
           ) : null}
@@ -1139,6 +1143,151 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
         Save changes
       </Button>
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AI Assistant section
+// ══════════════════════════════════════════════════════════════════════════════
+
+function AISection() {
+  const enabled = useAIStore((s) => s.enabled);
+  const baseUrl = useAIStore((s) => s.baseUrl);
+  const model = useAIStore((s) => s.model);
+  const apiKey = useAIStore((s) => s.apiKey);
+  const setEnabled = useAIStore((s) => s.setEnabled);
+  const setBaseUrl = useAIStore((s) => s.setBaseUrl);
+  const setModel = useAIStore((s) => s.setModel);
+  const setApiKey = useAIStore((s) => s.setApiKey);
+
+  const [draftBaseUrl, setDraftBaseUrl] = useState(baseUrl);
+  const [draftModel, setDraftModel] = useState(model);
+  const [draftApiKey, setDraftApiKey] = useState(apiKey);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<null | { ok: boolean; detail: string }>(null);
+
+  const handleSave = () => {
+    setBaseUrl(draftBaseUrl.trim());
+    setModel(draftModel.trim());
+    setApiKey(draftApiKey.trim());
+    toast.success('AI settings saved');
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const client = new AIClient({ baseUrl: draftBaseUrl.trim(), apiKey: draftApiKey.trim() || undefined });
+      const reply = await client.chat({
+        model: draftModel.trim(),
+        messages: [
+          { role: 'system', content: 'Respond with the single word: OK.' },
+          { role: 'user', content: 'Test' },
+        ],
+        maxTokens: 5,
+      });
+      setTestResult({ ok: true, detail: `Reply: ${reply.slice(0, 80)}` });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setTestResult({ ok: false, detail: message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const sentToHost = (() => {
+    try {
+      return new URL(draftBaseUrl).host;
+    } catch {
+      return draftBaseUrl;
+    }
+  })();
+
+  return (
+    <>
+      <SectionHeader
+        title="AI Assistant"
+        description="Optional. When enabled, you can summarize, paraphrase, and analyze emails using a local or configured AI model."
+      />
+
+      <div className="space-y-1 mb-6">
+        <SettingRow
+          label="Enable AI features"
+          description="Adds Summarize and related actions inside open messages."
+        >
+          <Switch checked={enabled} onChange={setEnabled} />
+        </SettingRow>
+      </div>
+
+      <SectionHeader title="Provider" description="Most users run a local model server like Ollama or LM Studio. The OpenAI HTTP shape is required." />
+
+      <div className="space-y-3 mb-6">
+        <div>
+          <Label className="text-xs text-muted-foreground">Base URL</Label>
+          <Input
+            value={draftBaseUrl}
+            onChange={(e) => setDraftBaseUrl(e.target.value)}
+            placeholder="http://localhost:11434/v1"
+            className="mt-1"
+          />
+          <p className="text-[11px] text-muted-foreground/70 mt-1">
+            For Ollama: <code className="font-mono">http://localhost:11434/v1</code>. For LM Studio: <code className="font-mono">http://localhost:1234/v1</code>.
+          </p>
+        </div>
+
+        <div>
+          <Label className="text-xs text-muted-foreground">Model</Label>
+          <Input
+            value={draftModel}
+            onChange={(e) => setDraftModel(e.target.value)}
+            placeholder="llama3.1"
+            className="mt-1"
+          />
+        </div>
+
+        <div>
+          <Label className="text-xs text-muted-foreground">API key (optional)</Label>
+          <Input
+            value={draftApiKey}
+            onChange={(e) => setDraftApiKey(e.target.value)}
+            placeholder="Leave blank for local servers"
+            type="password"
+            className="mt-1"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          <Button size="sm" onClick={handleSave} className="h-8">
+            Save changes
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleTest} disabled={testing} className="h-8 gap-1.5">
+            {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Test connection
+          </Button>
+          {testResult && (
+            <span
+              className={cn(
+                'text-[12px]',
+                testResult.ok ? 'text-success' : 'text-destructive',
+              )}
+            >
+              {testResult.ok ? '✓ ' : '✕ '}
+              {testResult.detail}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex gap-2 text-[12px] text-amber-700 dark:text-amber-300">
+        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+        <div>
+          <p className="font-medium">Privacy notice</p>
+          <p className="mt-0.5 text-amber-700/80 dark:text-amber-300/80">
+            When you use AI features, the email content (subject, sender, and body) is sent over the network to <span className="font-mono">{sentToHost}</span>. Make sure this host is your local machine or an organisation-approved provider.
+          </p>
+        </div>
+      </div>
+    </>
   );
 }
 

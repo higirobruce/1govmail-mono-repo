@@ -8,6 +8,7 @@ import {
   Paperclip, Download, Loader2, MoreHorizontal,
   ChevronLeft, ChevronRight, X, Mail, User, Calendar,
   Eye, File, FileText, Image as ImageIcon, Printer, BellOff, Bell, AlarmClock,
+  Sparkles, X as XIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -20,6 +21,9 @@ import { MailAvatar } from '@/components/mail/MailAvatar';
 import { ClassificationChip } from '@/components/mail/ClassificationChip';
 import { pickHighestClassification } from '@/lib/classification';
 import { AttachmentTile, fileTypeStyle } from '@/components/mail/AttachmentTile';
+import { useAIStore } from '@/stores/ai.store';
+import { AIClient } from '@/lib/ai/client';
+import { summarizeMessage } from '@/lib/ai/tasks';
 
 interface MessageDetail {
   id: string;
@@ -304,6 +308,71 @@ export default function MailDetail({
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxSelectedId, setLightboxSelectedId] = useState<string | null>(null);
 
+  // ── AI summarize state ────────────────────────────────────────────────────
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiBaseUrl = useAIStore((s) => s.baseUrl);
+  const aiModel = useAIStore((s) => s.model);
+  const aiApiKey = useAIStore((s) => s.apiKey);
+  const [summary, setSummary] = useState<string>('');
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const summaryAbortRef = useRef<AbortController | null>(null);
+
+  // Reset summary panel when the active message changes.
+  useEffect(() => {
+    summaryAbortRef.current?.abort();
+    summaryAbortRef.current = null;
+    setSummary('');
+    setSummarizing(false);
+    setSummaryError(null);
+    setSummaryOpen(false);
+  }, [message?.id]);
+
+  const handleSummarize = useCallback(async () => {
+    if (!message) return;
+    summaryAbortRef.current?.abort();
+    const abort = new AbortController();
+    summaryAbortRef.current = abort;
+    setSummary('');
+    setSummaryError(null);
+    setSummarizing(true);
+    setSummaryOpen(true);
+    try {
+      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+      const body = message.bodyHtml ?? message.bodyText ?? '';
+      const fromLabel = message.fromName
+        ? `${message.fromName} <${message.fromEmail}>`
+        : message.fromEmail;
+      await summarizeMessage(
+        client,
+        body,
+        {
+          model: aiModel,
+          subject: message.subject ?? undefined,
+          from: fromLabel,
+          signal: abort.signal,
+        },
+        (delta) => setSummary((prev) => prev + delta),
+      );
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      const m = err instanceof Error ? err.message : String(err);
+      setSummaryError(m);
+    } finally {
+      setSummarizing(false);
+    }
+  }, [message, aiBaseUrl, aiApiKey, aiModel]);
+
+  const closeSummary = useCallback(() => {
+    summaryAbortRef.current?.abort();
+    summaryAbortRef.current = null;
+    setSummaryOpen(false);
+    setSummary('');
+    setSummaryError(null);
+    setSummarizing(false);
+  }, []);
+
   const labelFolders = folders.filter(
     (f) => !BUILTIN_PATHS_DETAIL.has(f.path) && (f.type === 'MAIL' || !f.type),
   );
@@ -465,6 +534,18 @@ export default function MailDetail({
           <ActionBtn icon={ReplyAll}  label="Reply All" onClick={onReplyAll} />
           <ActionBtn icon={Forward}   label="Forward"   onClick={onForward} />
 
+          {aiEnabled && (
+            <>
+              <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
+              <ActionBtn
+                icon={Sparkles}
+                label="Summarize"
+                onClick={handleSummarize}
+                highlight={summaryOpen}
+              />
+            </>
+          )}
+
           <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
 
           {/* Secondary group */}
@@ -515,6 +596,40 @@ export default function MailDetail({
           )}
         </div>
       </div>
+
+      {/* ── AI summary panel ─────────────────────────────────────────────── */}
+      {aiEnabled && summaryOpen && (
+        <div className="border-b border-border/25 bg-primary/5 shrink-0">
+          <div className="px-4 py-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="w-3.5 h-3.5 text-primary" />
+              <span className="text-[12px] font-medium text-foreground">Summary</span>
+              {summarizing && (
+                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
+              )}
+              <button
+                onClick={closeSummary}
+                className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60"
+                aria-label="Close summary"
+              >
+                <XIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {summaryError ? (
+              <div className="text-[12px] text-destructive">
+                {summaryError}{' '}
+                <button onClick={handleSummarize} className="underline ml-1">
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+                {summary || (summarizing ? 'Thinking…' : '')}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Tab bar ───────────────────────────────────────────────────────── */}
       <div className="flex items-end gap-0 px-4 border-b border-border/25 shrink-0 bg-background">

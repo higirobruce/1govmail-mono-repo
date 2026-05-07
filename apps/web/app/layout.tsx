@@ -5,6 +5,7 @@ import { Toaster } from "sonner";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { ElectronTitleBarLoader } from "@/components/layout/ElectronTitleBarLoader";
+import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import "./globals.css";
 
 // Inter with `latin-ext` so Kinyarwanda and French diacritics render correctly
@@ -38,6 +39,7 @@ export default function RootLayout({
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}
       >
         <ElectronTitleBarLoader />
+        <ServiceWorkerRegister />
         <QueryProvider>
         <ThemeProvider>
         <TooltipProvider delayDuration={300}>

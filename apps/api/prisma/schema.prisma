@@ -43,8 +43,35 @@ model User {
   docCommentReactions    DocCommentReaction[]
   docVersionsCreated     DocVersion[]
   docActivity            DocActivity[]
+  auditLogs              AuditLog[]
 
   @@map("users")
+}
+
+// ─── Audit log ───────────────────────────────────────────────────────────────
+// Tamper-resistant append-only record of security-relevant events. Writes
+// happen best-effort (never blocks the primary action) but reads are required
+// for compliance and incident response.
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  email      String?
+  action     String   // LOGIN_SUCCESS | LOGIN_FAILURE | LOGIN_2FA_REQUIRED | LOGOUT | DOC_SHARE_ENABLED | DOC_SHARE_DISABLED | DOC_INVITE_ADDED | DOC_INVITE_REMOVED | SIGNATURE_CHANGED | PASSWORD_CHANGED | PREFS_CHANGED
+  resource   String?  // e.g. "document", "signature"
+  resourceId String?
+  ip         String?
+  userAgent  String?
+  success    Boolean  @default(true)
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
 
 model Session {

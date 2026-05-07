@@ -1,7 +1,7 @@
 'use client';
 
 import { formatDistanceToNow, parseISO } from 'date-fns';
-import { X, Reply, ReplyAll, Forward } from 'lucide-react';
+import { X, Reply, ReplyAll, Forward, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MailAvatar } from './MailAvatar';
@@ -23,6 +23,8 @@ interface Props {
   onReply: () => void;
   onReplyAll: () => void;
   onForward: () => void;
+  onSummarize?: () => void;
+  summarizing?: boolean;
 }
 
 function getInitials(name: string | null, email: string): string {
@@ -70,6 +72,8 @@ export default function ThreadHeader({
   onReply,
   onReplyAll,
   onForward,
+  onSummarize,
+  summarizing,
 }: Props) {
   const status = deriveStatus(lastSenderEmail, currentUserEmail, unreadCount);
 
@@ -174,6 +178,26 @@ export default function ThreadHeader({
               <TooltipContent side="bottom" className="text-xs">{label}</TooltipContent>
             </Tooltip>
           ))}
+          {onSummarize && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={onSummarize}
+                  disabled={summarizing}
+                  className={cn(
+                    'p-1.5 rounded-md transition-colors',
+                    summarizing
+                      ? 'text-primary'
+                      : 'text-muted-foreground/50 hover:text-foreground hover:bg-muted',
+                  )}
+                  aria-label="Summarize"
+                >
+                  <Sparkles className={cn('w-4 h-4', summarizing && 'animate-pulse')} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">Summarize</TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
     </div>

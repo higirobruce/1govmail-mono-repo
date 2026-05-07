@@ -28,6 +28,10 @@ import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
 import ThreadHeader, { type ThreadParticipant } from './ThreadHeader';
+import { useAIStore } from '@/stores/ai.store';
+import { AIClient } from '@/lib/ai/client';
+import { summarizeMessage } from '@/lib/ai/tasks';
+import { Sparkles, X as XIconSmall } from 'lucide-react';
 import ThreadMessage, { type ThreadMessageMeta } from './ThreadMessage';
 import MailDetail from './MailDetail';
 import TaskModal, { type Task, PRIORITY_META } from '@/components/tasks/TaskModal';
@@ -199,6 +203,26 @@ export default function ThreadView({
 
   // Tab: 'overview' | 'messages' | 'attachments'
   const [activeTab, setActiveTab] = useState<'overview' | 'messages' | 'attachments'>('messages');
+
+  // ── AI summarize state ───────────────────────────────────────────────────
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiBaseUrl = useAIStore((s) => s.baseUrl);
+  const aiModel = useAIStore((s) => s.model);
+  const aiApiKey = useAIStore((s) => s.apiKey);
+  const [summary, setSummary] = useState('');
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const summaryAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    summaryAbortRef.current?.abort();
+    summaryAbortRef.current = null;
+    setSummary('');
+    setSummarizing(false);
+    setSummaryError(null);
+    setSummaryOpen(false);
+  }, [message?.id]);
 
   // Overview tab: linked tasks
   const [linkedTasks, setLinkedTasks] = useState<Task[]>([]);
@@ -387,6 +411,64 @@ export default function ThreadView({
   const lastMessage = threadMessages[threadMessages.length - 1];
   const unreadCount = threadMessages.filter((m) => !m.isRead).length;
 
+  const handleSummarize = useCallback(async () => {
+    if (threadMessages.length === 0) return;
+    summaryAbortRef.current?.abort();
+    const abort = new AbortController();
+    summaryAbortRef.current = abort;
+    setSummary('');
+    setSummaryError(null);
+    setSummarizing(true);
+    setSummaryOpen(true);
+
+    // Thread metadata only carries snippets (bodies are fetched per-expansion).
+    // For the active message, use the full body the parent already loaded.
+    const activeBody =
+      message?.bodyHtml ?? message?.bodyText ?? message?.snippet ?? '';
+    const concatenated = threadMessages
+      .map((m) => {
+        const sender = m.fromName ? `${m.fromName} <${m.fromEmail}>` : m.fromEmail;
+        const isActive = m.id === message?.id;
+        const content = isActive && activeBody ? activeBody : (m.snippet ?? '');
+        const tag = isActive && activeBody ? '(opened)' : '(snippet)';
+        return `From: ${sender}\nDate: ${m.receivedAt} ${tag}\n\n${content}`;
+      })
+      .join('\n\n---\n\n');
+
+    try {
+      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+      await summarizeMessage(
+        client,
+        concatenated,
+        {
+          model: aiModel,
+          subject: message?.subject ?? undefined,
+          from:
+            threadMessages.length > 1
+              ? `${threadMessages.length} messages in thread`
+              : (lastMessage?.fromName ?? lastMessage?.fromEmail ?? ''),
+          signal: abort.signal,
+        },
+        (delta) => setSummary((prev) => prev + delta),
+      );
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setSummaryError(msg);
+    } finally {
+      setSummarizing(false);
+    }
+  }, [threadMessages, aiBaseUrl, aiApiKey, aiModel, message?.subject, lastMessage]);
+
+  const closeSummary = useCallback(() => {
+    summaryAbortRef.current?.abort();
+    summaryAbortRef.current = null;
+    setSummaryOpen(false);
+    setSummary('');
+    setSummaryError(null);
+    setSummarizing(false);
+  }, []);
+
   // Display order: newest → oldest (reverse of API order)
   const displayMessages = [...threadMessages].reverse();
   const visibleMessages =
@@ -417,7 +499,44 @@ export default function ThreadView({
         onReply={() => onComposeWith('reply', lastMessage)}
         onReplyAll={() => onComposeWith('replyAll', lastMessage)}
         onForward={() => onComposeWith('forward', lastMessage)}
+        onSummarize={aiEnabled ? handleSummarize : undefined}
+        summarizing={summarizing}
       />
+
+      {aiEnabled && summaryOpen && (
+        <div className="border-b border-border/30 bg-primary/5 shrink-0">
+          <div className="px-4 py-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="w-3.5 h-3.5 text-primary" />
+              <span className="text-[12px] font-medium text-foreground">
+                {threadMessages.length > 1 ? `Thread summary (${threadMessages.length} messages)` : 'Summary'}
+              </span>
+              {summarizing && (
+                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
+              )}
+              <button
+                onClick={closeSummary}
+                className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60"
+                aria-label="Close summary"
+              >
+                <XIconSmall className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {summaryError ? (
+              <div className="text-[12px] text-destructive">
+                {summaryError}{' '}
+                <button onClick={handleSummarize} className="underline ml-1">
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+                {summary || (summarizing ? 'Thinking…' : '')}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Tab bar + Expand All */}
       <div className="flex items-center border-b border-border/30 px-4 shrink-0 bg-background">

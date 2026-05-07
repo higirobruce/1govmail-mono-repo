@@ -381,7 +381,7 @@ export default function ComposeModal({
         return;
       }
       setTo([]); setCc([]); setBcc([]);
-      setSubject(''); setBody('');
+      setSubject('');
       setShowCcBcc(false);
       editor?.commands.setContent('<p></p>');
       setTimeout(() => editor?.commands.focus(), 50);

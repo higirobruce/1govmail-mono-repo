@@ -113,8 +113,14 @@ const REWRITE_PROMPTS: Record<RewriteMode, string> = {
   grammar: `Fix grammar, spelling, and punctuation in the user's text. Do NOT change the meaning, tone, register, or wording beyond what is needed for correctness. If the text is already correct, output it unchanged. Output ONLY the corrected text — no preamble, no quotes, no explanation, no list of fixes.`,
 };
 
+const REWRITE_CONTEXT_RULE = `
+
+The user's message may include a <context> block describing an email the user is replying to or forwarding. Use the context ONLY to inform tone, register, and naming choices in your rewrite — match the formality of the other party. Do NOT echo any part of the context in your output. Rewrite ONLY the text inside the <text> block.`;
+
 export interface RewriteOptions {
   model: string;
+  /** Optional context (e.g. the message being replied to). Helps the model match tone. */
+  context?: string;
   signal?: AbortSignal;
 }
 
@@ -128,7 +134,12 @@ export async function rewriteText(
   const plain = htmlToPlainText(text).trim();
   if (!plain) return '';
 
-  const system = REWRITE_PROMPTS[mode];
+  const ctx = opts.context?.trim();
+  const system = ctx ? REWRITE_PROMPTS[mode] + REWRITE_CONTEXT_RULE : REWRITE_PROMPTS[mode];
+  const userPayload = ctx
+    ? `<context>\n${truncate(ctx, 1500)}\n</context>\n\n<text>\n${plain}\n</text>`
+    : plain;
+
   // Roughly proportional to input — local 7B models max out around 600 tokens.
   const approxTokens = Math.min(600, Math.max(96, Math.ceil(plain.length / 3)));
 
@@ -137,7 +148,7 @@ export async function rewriteText(
       model: opts.model,
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: plain },
+        { role: 'user', content: userPayload },
       ],
       temperature: mode === 'grammar' ? 0.1 : 0.4,
       maxTokens: approxTokens,

@@ -640,13 +640,31 @@ export default function ComposeModal({
       setRewriteOpen(true);
       setRewriting(true);
 
+      // For replies/forwards, hand the model the message we're responding to
+      // so it can match tone and register without a second LLM call.
+      const contextStr = (() => {
+        if (mode === 'paraphrase' || mode === 'formal' || mode === 'concise' || mode === 'friendly') {
+          if (!originalMessage) return undefined;
+          const fromLabel = originalMessage.fromName
+            ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
+            : originalMessage.fromEmail;
+          const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
+          const fromLine = `From: ${fromLabel}\n`;
+          const body = htmlToPlainText(originalMessage.bodyHtml ?? originalMessage.bodyText ?? '');
+          if (!body) return undefined;
+          return `${subj}${fromLine}\n${body}`;
+        }
+        // Grammar mode is purely local — context could mislead it.
+        return undefined;
+      })();
+
       try {
         const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
         await rewriteText(
           client,
           original,
           mode,
-          { model: aiModel, signal: abort.signal },
+          { model: aiModel, context: contextStr, signal: abort.signal },
           pushRewrite,
         );
       } catch (err: unknown) {
@@ -657,7 +675,7 @@ export default function ComposeModal({
         setRewriting(false);
       }
     },
-    [editor, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, signatureHtml],
+    [editor, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, signatureHtml, originalMessage],
   );
 
   const closeRewrite = useCallback(() => {

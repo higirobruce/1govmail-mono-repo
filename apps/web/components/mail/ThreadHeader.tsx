@@ -1,7 +1,7 @@
 'use client';
 
 import { formatDistanceToNow, parseISO } from 'date-fns';
-import { X, Reply, ReplyAll, Forward, Sparkles } from 'lucide-react';
+import { X, Reply, ReplyAll, Forward, Sparkles, MessageSquareReply } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MailAvatar } from './MailAvatar';
@@ -25,6 +25,7 @@ interface Props {
   onForward: () => void;
   onSummarize?: () => void;
   summarizing?: boolean;
+  onQuickReply?: () => void;
 }
 
 function getInitials(name: string | null, email: string): string {
@@ -74,6 +75,7 @@ export default function ThreadHeader({
   onForward,
   onSummarize,
   summarizing,
+  onQuickReply,
 }: Props) {
   const status = deriveStatus(lastSenderEmail, currentUserEmail, unreadCount);
 
@@ -196,6 +198,20 @@ export default function ThreadHeader({
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-xs">Summarize</TooltipContent>
+            </Tooltip>
+          )}
+          {onQuickReply && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={onQuickReply}
+                  className="p-1.5 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors"
+                  aria-label="Quick reply (AI)"
+                >
+                  <MessageSquareReply className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">Quick reply (AI)</TooltipContent>
             </Tooltip>
           )}
         </div>

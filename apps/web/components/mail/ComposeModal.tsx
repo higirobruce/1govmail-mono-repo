@@ -90,6 +90,9 @@ interface ComposeModalProps {
   initialBcc?: string[];
   initialSubject?: string;
   initialBody?: string;
+  /** When true and originalMessage is present, automatically run Suggest Reply
+   *  once the modal opens. Used by the thread toolbar's Quick Reply action. */
+  autoSuggestReply?: boolean;
 }
 
 // ── Email chip input ──────────────────────────────────────────────────────────
@@ -222,6 +225,7 @@ const TITLE: Record<ComposeMode, string> = { new: 'New Message', reply: 'Reply',
 export default function ComposeModal({
   open, mode, originalMessage, onClose, onSent,
   initialDraftZimbraId, initialTo, initialCc, initialBcc, initialSubject, initialBody,
+  autoSuggestReply,
 }: ComposeModalProps) {
   const user = useAuthStore((s) => s.user);
 
@@ -759,6 +763,23 @@ export default function ComposeModal({
       setRewriting(false);
     }
   }, [editor, originalMessage, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, user]);
+
+  // Auto-trigger Suggest Reply when the modal was opened via the thread
+  // toolbar's Quick Reply button. Fires once per open cycle.
+  const autoSuggestFiredRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      autoSuggestFiredRef.current = false;
+      return;
+    }
+    if (!autoSuggestReply || !originalMessage || !aiEnabled || !editor || autoSuggestFiredRef.current) return;
+    autoSuggestFiredRef.current = true;
+    // Small delay so signature injection and the editor focus settle first.
+    const t = setTimeout(() => {
+      void handleSuggestReply();
+    }, 200);
+    return () => clearTimeout(t);
+  }, [open, autoSuggestReply, originalMessage, aiEnabled, editor, handleSuggestReply]);
 
   // ── Send (with 5-second undo window) ──────────────────────────────────────
   const handleSend = async () => {

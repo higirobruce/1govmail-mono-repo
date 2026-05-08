@@ -163,6 +163,9 @@ interface Props {
   loading?: boolean;
   onClose: () => void;
   onComposeWith: (mode: 'reply' | 'replyAll' | 'forward' | 'new', target: any) => void;
+  /** Triggered by the thread toolbar's Quick Reply (AI) button. Should open
+   *  compose in 'reply' mode and auto-run the suggestReply task. */
+  onQuickReply?: (target: any) => void;
   onDelete: () => void;
   onToggleStar: () => void;
   onMoveToInbox?: () => void;
@@ -182,6 +185,7 @@ export default function ThreadView({
   loading,
   onClose,
   onComposeWith,
+  onQuickReply,
   onDelete,
   onToggleStar,
   onMoveToInbox,
@@ -505,6 +509,7 @@ export default function ThreadView({
         onForward={() => onComposeWith('forward', lastMessage)}
         onSummarize={aiEnabled ? handleSummarize : undefined}
         summarizing={summarizing}
+        onQuickReply={aiEnabled && onQuickReply ? () => onQuickReply(lastMessage) : undefined}
       />
 
       {/* Tab bar + Expand All */}

@@ -166,6 +166,7 @@ export default function MailPage() {
   // ── Compose state ──────────────────────────────────────────────────────────
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeMode, setComposeMode] = useState<ComposeMode>('new');
+  const [composeAutoSuggest, setComposeAutoSuggest] = useState(false);
   /** Populated when the user opens a draft — passed as initial values to ComposeModal */
   const [composeDraftProps, setComposeDraftProps] = useState<{
     zimbraId: string;
@@ -547,6 +548,7 @@ export default function MailPage() {
   const openCompose = useCallback((mode: ComposeMode) => {
     setComposeDraftProps(null); // clear any draft — this is a fresh reply/forward/new
     setComposeMode(mode);
+    setComposeAutoSuggest(false);
     setComposeOpen(true);
   }, []);
 
@@ -558,6 +560,20 @@ export default function MailPage() {
       setActiveMessage(target);
       setComposeDraftProps(null);
       setComposeMode(mode);
+      setComposeAutoSuggest(false);
+      setComposeOpen(true);
+    },
+    [],
+  );
+
+  /** Called from ThreadView's Quick Reply (AI) button. Opens compose in
+   *  reply mode and tells ComposeModal to auto-run the suggestReply task. */
+  const openQuickReply = useCallback(
+    (target: any) => {
+      setActiveMessage(target);
+      setComposeDraftProps(null);
+      setComposeMode('reply');
+      setComposeAutoSuggest(true);
       setComposeOpen(true);
     },
     [],
@@ -1067,6 +1083,7 @@ export default function MailPage() {
           loading={loadingMessage}
           onClose={() => { setActiveMessageId(undefined); setActiveMessage(null); }}
           onComposeWith={openComposeWith}
+          onQuickReply={openQuickReply}
           onDelete={deleteMessage}
           onToggleStar={toggleStar}
           onMoveToInbox={
@@ -1133,7 +1150,8 @@ export default function MailPage() {
         open={composeOpen}
         mode={composeMode}
         originalMessage={activeMessage}
-        onClose={() => { setComposeOpen(false); setComposeDraftProps(null); }}
+        autoSuggestReply={composeAutoSuggest}
+        onClose={() => { setComposeOpen(false); setComposeDraftProps(null); setComposeAutoSuggest(false); }}
         onSent={() => {
           setComposeOpen(false);
           setComposeDraftProps(null);

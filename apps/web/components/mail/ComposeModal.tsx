@@ -764,6 +764,76 @@ export default function ComposeModal({
     }
   }, [editor, originalMessage, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, user]);
 
+  // Re-run the current AI action with a fresh stream. For rewrite mode we
+  // replay using the snapshotted original text (so the new run sees the
+  // same input even if the editor selection has changed since the click).
+  // Non-zero temperature in the underlying tasks gives meaningfully
+  // different output on each call.
+  const regenerate = useCallback(() => {
+    if (aiAction === 'suggest') {
+      void handleSuggestReply();
+      return;
+    }
+    if (!rewriteOriginal) return;
+
+    rewriteAbortRef.current?.abort();
+    const abort = new AbortController();
+    rewriteAbortRef.current = abort;
+    resetRewrite();
+    setRewriteError(null);
+    setRewriting(true);
+
+    const contextStr = (() => {
+      if (
+        rewriteMode === 'paraphrase' ||
+        rewriteMode === 'formal' ||
+        rewriteMode === 'concise' ||
+        rewriteMode === 'friendly'
+      ) {
+        if (!originalMessage) return undefined;
+        const fromLabel = originalMessage.fromName
+          ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
+          : originalMessage.fromEmail;
+        const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
+        const fromLine = `From: ${fromLabel}\n`;
+        const body = htmlToPlainText(originalMessage.bodyHtml ?? originalMessage.bodyText ?? '');
+        if (!body) return undefined;
+        return `${subj}${fromLine}\n${body}`;
+      }
+      return undefined;
+    })();
+
+    void (async () => {
+      try {
+        const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+        await rewriteText(
+          client,
+          rewriteOriginal,
+          rewriteMode,
+          { model: aiModel, context: contextStr, signal: abort.signal },
+          pushRewrite,
+        );
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        const m = err instanceof Error ? err.message : String(err);
+        setRewriteError(m);
+      } finally {
+        setRewriting(false);
+      }
+    })();
+  }, [
+    aiAction,
+    rewriteOriginal,
+    rewriteMode,
+    originalMessage,
+    aiBaseUrl,
+    aiApiKey,
+    aiModel,
+    pushRewrite,
+    resetRewrite,
+    handleSuggestReply,
+  ]);
+
   // Auto-trigger Suggest Reply when the modal was opened via the thread
   // toolbar's Quick Reply button. Fires once per open cycle.
   const autoSuggestFiredRef = useRef(false);
@@ -1275,9 +1345,18 @@ export default function ComposeModal({
                       </button>
                       <button
                         type="button"
+                        onClick={regenerate}
+                        disabled={rewriting}
+                        className="ml-auto text-[12px] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        title="Generate a different version"
+                      >
+                        Try another
+                      </button>
+                      <button
+                        type="button"
                         onClick={applyRewrite}
                         disabled={rewriting || !rewriteText_.trim() || !!rewriteError}
-                        className="ml-auto text-[12px] px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="text-[12px] px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         {aiAction === 'suggest' ? 'Insert' : 'Replace'}
                       </button>

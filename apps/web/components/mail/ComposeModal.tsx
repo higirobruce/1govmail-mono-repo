@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import { TextStyle } from '@tiptap/extension-text-style';
@@ -30,7 +30,7 @@ import { DocPickerDialog, type DocAttachMode } from './DocPickerDialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
-import { rewriteText, type RewriteMode } from '@/lib/ai/tasks';
+import { rewriteText, type RewriteMode, htmlToPlainText } from '@/lib/ai/tasks';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -168,6 +168,38 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
+/**
+ * Find where the signature begins in the editor's document, if it does.
+ *
+ * The signature is inserted as `<div data-sig="1">…</div>` but TipTap's
+ * default schema strips the wrapper, so we can't query by attribute. We
+ * fall back to text-matching: look for the first ~60 chars of the
+ * signature's plain text inside the doc, and clip the rewrite range to
+ * the start of the block that contains it. Returns the doc position to
+ * use as the upper bound, or null if no signature is detectable.
+ */
+function findSignatureBoundary(editor: Editor, signatureHtml: string): number | null {
+  const sigPlain = htmlToPlainText(signatureHtml).trim();
+  if (!sigPlain) return null;
+  const firstLine = sigPlain.split(/\n+/).find((l) => l.trim().length >= 4);
+  if (!firstLine) return null;
+  const needle = firstLine.trim().slice(0, 60);
+
+  let foundPos: number | null = null;
+  editor.state.doc.descendants((node, pos) => {
+    if (foundPos != null) return false;
+    if (node.isText && node.text && node.text.includes(needle)) {
+      foundPos = pos + node.text.indexOf(needle);
+      return false;
+    }
+    return true;
+  });
+  if (foundPos == null) return null;
+
+  const $pos = editor.state.doc.resolve(foundPos);
+  return $pos.before($pos.depth);
 }
 
 // ── Font options ──────────────────────────────────────────────────────────────
@@ -578,12 +610,18 @@ export default function ComposeModal({
       setShowRewrite(false);
 
       // If the user has selected text, operate on the selection. Otherwise
-      // grab the entire body. We snapshot the range so Replace knows where
+      // grab the entire body — but exclude the signature so the rewrite
+      // doesn't clobber it. We snapshot the range so Replace knows where
       // to put the rewritten output, even if the user clicks elsewhere.
       const sel = editor.state.selection;
       const hasSelection = !sel.empty;
+      const sigBoundary = !hasSelection && signatureHtml
+        ? findSignatureBoundary(editor, signatureHtml)
+        : null;
       const from = hasSelection ? sel.from : 0;
-      const to = hasSelection ? sel.to : editor.state.doc.content.size;
+      const to = hasSelection
+        ? sel.to
+        : (sigBoundary ?? editor.state.doc.content.size);
       const original = editor.state.doc.textBetween(from, to, '\n').trim();
 
       if (!original) {
@@ -619,7 +657,7 @@ export default function ComposeModal({
         setRewriting(false);
       }
     },
-    [editor, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite],
+    [editor, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, signatureHtml],
   );
 
   const closeRewrite = useCallback(() => {

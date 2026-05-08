@@ -498,8 +498,7 @@ export default function MailDetail({
   ];
 
   return (
-    <div className="flex h-full bg-background overflow-hidden">
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+    <div className="flex flex-col h-full bg-background overflow-hidden relative">
 
       {/* ── Navigation header ─────────────────────────────────────────────── */}
       <div className="flex items-center gap-1 px-3 py-2 border-b border-border/35 shrink-0">
@@ -910,34 +909,45 @@ export default function MailDetail({
           onClose={() => { setLightboxOpen(false); setLightboxSelectedId(null); }}
         />
       )}
-      </div>
 
-      {aiEnabled && summaryOpen && (
-        <aside className="hidden lg:flex w-[360px] xl:w-[400px] shrink-0 border-l border-border/30 bg-background flex-col">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
-            <Sparkles className="w-4 h-4 text-primary" />
-            <span className="text-[13px] font-semibold text-foreground">Summary</span>
+      {aiEnabled && (
+        <aside
+          aria-hidden={!summaryOpen}
+          className={cn(
+            'absolute top-3 right-3 w-[340px] xl:w-[380px] max-h-[55vh] z-20',
+            'rounded-xl border border-border/40 bg-card shadow-xl',
+            'flex flex-col overflow-hidden',
+            'transition-all duration-200 ease-out',
+            'hidden lg:flex',
+            summaryOpen
+              ? 'translate-x-0 opacity-100 scale-100'
+              : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
+          )}
+        >
+          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
+            <Sparkles className="w-3.5 h-3.5 text-primary" />
+            <span className="text-[12px] font-semibold text-foreground">Summary</span>
             {summarizing && (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground/60" />
+              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
             )}
             <button
               onClick={closeSummary}
               className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
               aria-label="Close summary"
             >
-              <XIcon className="w-4 h-4" />
+              <XIcon className="w-3.5 h-3.5" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-3">
+          <div className="flex-1 overflow-y-auto px-3.5 py-3">
             {summaryError ? (
-              <div className="text-[13px] text-destructive">
+              <div className="text-[12px] text-destructive">
                 {summaryError}{' '}
                 <button onClick={handleSummarize} className="underline ml-1">
                   Retry
                 </button>
               </div>
             ) : (
-              <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+              <p className="text-[12.5px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
                 {streamedSummary || (summarizing ? 'Thinking…' : '')}
               </p>
             )}

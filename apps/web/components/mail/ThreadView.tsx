@@ -489,8 +489,7 @@ export default function ThreadView({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+    <div className="flex flex-col h-full overflow-hidden relative">
       {/* Thread header */}
       <ThreadHeader
         subject={message.subject}
@@ -962,41 +961,52 @@ export default function ThreadView({
           </div>
         )}
       </div>
-      </div>
 
-      {aiEnabled && summaryOpen && (
-        <aside className="hidden lg:flex w-[360px] xl:w-[400px] shrink-0 border-l border-border/30 bg-background flex-col">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
-            <Sparkles className="w-4 h-4 text-primary" />
-            <span className="text-[13px] font-semibold text-foreground">
+      {aiEnabled && (
+        <aside
+          aria-hidden={!summaryOpen}
+          className={cn(
+            'absolute top-3 right-3 w-[340px] xl:w-[380px] max-h-[55vh] z-20',
+            'rounded-xl border border-border/40 bg-card shadow-xl',
+            'flex flex-col overflow-hidden',
+            'transition-all duration-200 ease-out',
+            'hidden lg:flex',
+            summaryOpen
+              ? 'translate-x-0 opacity-100 scale-100'
+              : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
+          )}
+        >
+          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
+            <Sparkles className="w-3.5 h-3.5 text-primary" />
+            <span className="text-[12px] font-semibold text-foreground">
               {threadMessages.length > 1 ? 'Thread summary' : 'Summary'}
             </span>
             {summarizing && (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground/60" />
+              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
             )}
             <button
               onClick={closeSummary}
               className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
               aria-label="Close summary"
             >
-              <XIconSmall className="w-4 h-4" />
+              <XIconSmall className="w-3.5 h-3.5" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-3">
+          <div className="flex-1 overflow-y-auto px-3.5 py-3">
             {threadMessages.length > 1 && (
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-2">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1.5">
                 {threadMessages.length} messages
               </p>
             )}
             {summaryError ? (
-              <div className="text-[13px] text-destructive">
+              <div className="text-[12px] text-destructive">
                 {summaryError}{' '}
                 <button onClick={handleSummarize} className="underline ml-1">
                   Retry
                 </button>
               </div>
             ) : (
-              <p className="text-[13px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+              <p className="text-[12.5px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
                 {streamedSummary || (summarizing ? 'Thinking…' : '')}
               </p>
             )}

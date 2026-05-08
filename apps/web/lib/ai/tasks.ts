@@ -101,21 +101,40 @@ export async function summarizeThread(
 
 export type RewriteMode = 'paraphrase' | 'formal' | 'concise' | 'friendly' | 'grammar';
 
+// Hard constraints that apply to every rewrite mode. Stated up-front and
+// repeated by the user message so small models (≤3B) hold on to them.
+const REWRITE_BASE_RULES = `You rewrite the user's draft text. Strict rules:
+- Output ONLY the rewritten draft. No preamble, no quotes, no commentary.
+- NEVER invent content the user did not write — no new topics, names, dates, numbers, or details.
+- NEVER use placeholder brackets like [topic], [name], [date], or [recipient].
+- NEVER add greetings, sign-offs, or signatures unless they were in the original.
+- If the original is one sentence, output one sentence. If it is two words, output two words.`;
+
 const REWRITE_PROMPTS: Record<RewriteMode, string> = {
-  paraphrase: `Rewrite the user's text in different words while preserving the exact meaning. Match the original tone, register, and approximate length. Output ONLY the rewritten text — no preamble, no quotes, no explanation, no "Here is…" or "Sure!".`,
+  paraphrase: `${REWRITE_BASE_RULES}
 
-  formal: `Rewrite the user's text in a more formal, professional register suitable for government or business correspondence. Preserve the meaning. Keep approximately the same length. Output ONLY the rewritten text — no preamble, no quotes, no explanation.`,
+Style for this rewrite: paraphrase. Use different words but preserve the exact meaning, tone, register, and length (±20%).`,
 
-  concise: `Rewrite the user's text more concisely. Remove filler words, redundancies, and softeners. Preserve all factual content, names, dates, numbers, and requests. Aim for roughly 60–70% of the original length. Output ONLY the rewritten text — no preamble, no quotes, no explanation.`,
+  formal: `${REWRITE_BASE_RULES}
 
-  friendly: `Rewrite the user's text in a warmer, friendlier tone — natural, conversational, but still professional. Preserve the meaning and any factual content. Keep approximately the same length. Output ONLY the rewritten text — no preamble, no quotes, no explanation.`,
+Style for this rewrite: more formal and professional, suitable for government correspondence. Preserve meaning. Length within ±20% of original.`,
 
-  grammar: `Fix grammar, spelling, and punctuation in the user's text. Do NOT change the meaning, tone, register, or wording beyond what is needed for correctness. If the text is already correct, output it unchanged. Output ONLY the corrected text — no preamble, no quotes, no explanation, no list of fixes.`,
+  concise: `${REWRITE_BASE_RULES}
+
+Style for this rewrite: more concise. Remove filler words, redundancies, and softeners. Preserve all facts, names, dates, numbers, and requests verbatim. Aim for 60–70% of the original length — no longer.`,
+
+  friendly: `${REWRITE_BASE_RULES}
+
+Style for this rewrite: warmer and more conversational, while remaining professional. Preserve meaning and length (±20%).`,
+
+  grammar: `${REWRITE_BASE_RULES}
+
+Style for this rewrite: fix grammar, spelling, and punctuation only. Do NOT change meaning, tone, register, or wording. If the text is already correct, output it unchanged.`,
 };
 
 const REWRITE_CONTEXT_RULE = `
 
-The user's message may include a <context> block describing an email the user is replying to or forwarding. Use the context ONLY to inform tone, register, and naming choices in your rewrite — match the formality of the other party. Do NOT echo any part of the context in your output. Rewrite ONLY the text inside the <text> block.`;
+The user's message includes an INCOMING_EMAIL block — that is the email they received and are replying to. Use it ONLY to gauge tone and formality. Do NOT include any of its content in your output. Rewrite ONLY the DRAFT_TO_REWRITE text.`;
 
 export interface RewriteOptions {
   model: string;
@@ -136,9 +155,21 @@ export async function rewriteText(
 
   const ctx = opts.context?.trim();
   const system = ctx ? REWRITE_PROMPTS[mode] + REWRITE_CONTEXT_RULE : REWRITE_PROMPTS[mode];
+  // Plain-text labels (instead of XML tags) are easier for small local
+  // models. Putting the action sentence LAST leverages recency bias so a
+  // 2–3B model is more likely to stay on task.
   const userPayload = ctx
-    ? `<context>\n${truncate(ctx, 1500)}\n</context>\n\n<text>\n${plain}\n</text>`
-    : plain;
+    ? `INCOMING_EMAIL (for tone reference only — do NOT include in your output):
+${truncate(ctx, 1500)}
+
+DRAFT_TO_REWRITE:
+${plain}
+
+Rewrite the DRAFT_TO_REWRITE only. Do not include any of the INCOMING_EMAIL in your reply. Do not invent content. Output the rewrite and nothing else.`
+    : `DRAFT_TO_REWRITE:
+${plain}
+
+Rewrite the DRAFT_TO_REWRITE. Preserve all facts. Do not invent content. Output the rewrite and nothing else.`;
 
   // Roughly proportional to input — local 7B models max out around 600 tokens.
   const approxTokens = Math.min(600, Math.max(96, Math.ceil(plain.length / 3)));

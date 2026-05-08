@@ -30,7 +30,7 @@ import { DocPickerDialog, type DocAttachMode } from './DocPickerDialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
-import { rewriteText, type RewriteMode, htmlToPlainText } from '@/lib/ai/tasks';
+import { rewriteText, type RewriteMode, htmlToPlainText, suggestReply } from '@/lib/ai/tasks';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -329,6 +329,7 @@ export default function ComposeModal({
   const [rewriting, setRewriting] = useState(false);
   const [rewriteMode, setRewriteMode] = useState<RewriteMode>('paraphrase');
   const [rewriteError, setRewriteError] = useState<string | null>(null);
+  const [aiAction, setAiAction] = useState<'rewrite' | 'suggest'>('rewrite');
   const {
     text: rewriteText_,
     push: pushRewrite,
@@ -639,6 +640,7 @@ export default function ComposeModal({
       setRewriteRange({ from, to });
       setRewriteOpen(true);
       setRewriting(true);
+      setAiAction('rewrite');
 
       // For replies/forwards, hand the model the message we're responding to
       // so it can match tone and register without a second LLM call.
@@ -689,21 +691,74 @@ export default function ComposeModal({
   }, [resetRewrite]);
 
   const applyRewrite = useCallback(() => {
-    if (!editor || !rewriteRange || !rewriteText_.trim()) return;
+    if (!editor || !rewriteText_.trim()) return;
     // Insert as plain paragraphs so we don't accidentally drop unsanitized HTML.
     const paragraphs = rewriteText_
       .trim()
       .split(/\n\n+/)
       .map((p) => `<p>${p.replace(/\n/g, '<br/>').replace(/</g, '&lt;')}</p>`)
       .join('');
-    editor
-      .chain()
-      .focus()
-      .insertContentAt({ from: rewriteRange.from, to: rewriteRange.to }, paragraphs)
-      .run();
-    closeRewrite();
-    toast.success('Rewrite applied');
-  }, [editor, rewriteRange, rewriteText_, closeRewrite]);
+    if (aiAction === 'suggest') {
+      // Suggestions go at the very top of the doc so the signature (at the
+      // bottom) is preserved. If the user already typed something, the
+      // suggestion lands above their text — they can edit/move as needed.
+      editor.chain().focus().insertContentAt(0, paragraphs).run();
+      closeRewrite();
+      toast.success('Reply suggestion inserted');
+    } else {
+      if (!rewriteRange) return;
+      editor
+        .chain()
+        .focus()
+        .insertContentAt({ from: rewriteRange.from, to: rewriteRange.to }, paragraphs)
+        .run();
+      closeRewrite();
+      toast.success('Rewrite applied');
+    }
+  }, [editor, rewriteRange, rewriteText_, closeRewrite, aiAction]);
+
+  const handleSuggestReply = useCallback(async () => {
+    if (!editor || !originalMessage) return;
+    setShowRewrite(false);
+
+    rewriteAbortRef.current?.abort();
+    const abort = new AbortController();
+    rewriteAbortRef.current = abort;
+    resetRewrite();
+    setRewriteError(null);
+    setRewriteOriginal('');
+    setRewriteRange(null);
+    setRewriteOpen(true);
+    setRewriting(true);
+    setAiAction('suggest');
+
+    const fromLabel = originalMessage.fromName
+      ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
+      : originalMessage.fromEmail;
+    const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
+    const body = htmlToPlainText(originalMessage.bodyHtml ?? originalMessage.bodyText ?? '');
+    const incoming = `${subj}From: ${fromLabel}\n\n${body}`;
+
+    try {
+      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+      await suggestReply(
+        client,
+        incoming,
+        {
+          model: aiModel,
+          userName: user?.displayName ?? user?.email ?? 'the user',
+          signal: abort.signal,
+        },
+        pushRewrite,
+      );
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      const m = err instanceof Error ? err.message : String(err);
+      setRewriteError(m);
+    } finally {
+      setRewriting(false);
+    }
+  }, [editor, originalMessage, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, user]);
 
   // ── Send (with 5-second undo window) ──────────────────────────────────────
   const handleSend = async () => {
@@ -1062,7 +1117,28 @@ export default function ComposeModal({
                       <Sparkles className="w-3.5 h-3.5" />
                     </ToolbarBtn>
                     {showRewrite && (
-                      <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[180px]">
+                      <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[200px]">
+                        {originalMessage && (
+                          <>
+                            <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                              Reply
+                            </p>
+                            <ul className="py-1 border-b border-border/30">
+                              <li>
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    void handleSuggestReply();
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/60 text-foreground transition-colors"
+                                >
+                                  Suggest reply
+                                </button>
+                              </li>
+                            </ul>
+                          </>
+                        )}
                         <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
                           Rewrite
                         </p>
@@ -1119,7 +1195,9 @@ export default function ComposeModal({
                     <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
                       <Sparkles className="w-3.5 h-3.5 text-primary" />
                       <span className="text-[12px] font-semibold text-foreground capitalize">
-                        {rewriteMode === 'grammar' ? 'Grammar fix' : rewriteMode}
+                        {aiAction === 'suggest'
+                          ? 'Reply suggestion'
+                          : rewriteMode === 'grammar' ? 'Grammar fix' : rewriteMode}
                       </span>
                       {rewriting && (
                         <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
@@ -1128,24 +1206,34 @@ export default function ComposeModal({
                         type="button"
                         onClick={closeRewrite}
                         className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
-                        aria-label="Close rewrite"
+                        aria-label="Close"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                     <div className="flex-1 overflow-y-auto px-3.5 py-3 space-y-3">
+                      {aiAction === 'rewrite' && (
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Original</p>
+                          <p className="text-[12px] text-muted-foreground/80 leading-relaxed line-clamp-4 whitespace-pre-wrap">
+                            {rewriteOriginal}
+                          </p>
+                        </div>
+                      )}
                       <div>
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Original</p>
-                        <p className="text-[12px] text-muted-foreground/80 leading-relaxed line-clamp-4 whitespace-pre-wrap">
-                          {rewriteOriginal}
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">
+                          {aiAction === 'suggest' ? 'Suggested reply' : 'Rewrite'}
                         </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Rewrite</p>
                         {rewriteError ? (
                           <p className="text-[12px] text-destructive">
                             {rewriteError}{' '}
-                            <button type="button" onClick={() => handleRewrite(rewriteMode)} className="underline ml-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                aiAction === 'suggest' ? handleSuggestReply() : handleRewrite(rewriteMode)
+                              }
+                              className="underline ml-1"
+                            >
                               Retry
                             </button>
                           </p>
@@ -1170,7 +1258,7 @@ export default function ComposeModal({
                         disabled={rewriting || !rewriteText_.trim() || !!rewriteError}
                         className="ml-auto text-[12px] px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
-                        Replace
+                        {aiAction === 'suggest' ? 'Insert' : 'Replace'}
                       </button>
                     </div>
                   </aside>

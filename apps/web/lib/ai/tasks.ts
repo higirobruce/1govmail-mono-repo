@@ -143,6 +143,56 @@ export interface RewriteOptions {
   signal?: AbortSignal;
 }
 
+// ── Reply suggestion ──────────────────────────────────────────────────────
+
+const SUGGEST_REPLY_SYSTEM_TEMPLATE = (userName: string) => `You draft a brief, professional reply on behalf of ${userName}, who has just received the email shown below.
+
+Strict rules:
+- Write ONLY the reply body. No greeting line. No sign-off, no signature (the user has those configured separately).
+- 2–4 short sentences. Be substantive but tight; no padding.
+- Address what is actually asked or stated in the incoming email. If a question is asked, answer briefly. If a request or announcement is made, acknowledge or confirm.
+- Speak as the user in first person ("I", "we"). Never use placeholders like [name], [date], or [your answer].
+- Match the formality of the incoming email.
+- Do NOT invent commitments, dates, numbers, or facts the user has not specified. If a detail is uncertain, hedge in plain prose ("I'll confirm by end of week"), never a placeholder.
+- Output ONLY the reply text. No preamble, no quotes, no commentary.`;
+
+export interface SuggestReplyOptions {
+  model: string;
+  /** The user's display name, used so the model writes consistently in first person. */
+  userName: string;
+  signal?: AbortSignal;
+}
+
+export async function suggestReply(
+  client: AIClient,
+  incomingEmail: string,
+  opts: SuggestReplyOptions,
+  onChunk: (delta: string) => void,
+): Promise<string> {
+  const incoming = truncate(htmlToPlainText(incomingEmail).trim(), 1800);
+  if (!incoming) return '';
+
+  const system = SUGGEST_REPLY_SYSTEM_TEMPLATE(opts.userName || 'the user');
+  const user = `INCOMING_EMAIL:
+${incoming}
+
+Draft the reply body now. Output ONLY the reply text.`;
+
+  return client.chatStream(
+    {
+      model: opts.model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      temperature: 0.4,
+      maxTokens: 320,
+      signal: opts.signal,
+    },
+    onChunk,
+  );
+}
+
 export async function rewriteText(
   client: AIClient,
   text: string,

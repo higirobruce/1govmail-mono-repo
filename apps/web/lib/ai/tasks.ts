@@ -96,3 +96,53 @@ export async function summarizeThread(
 ): Promise<string> {
   return runSummarize(client, SUMMARIZE_THREAD_SYSTEM, body, opts, onChunk);
 }
+
+// ── Rewrite ───────────────────────────────────────────────────────────────
+
+export type RewriteMode = 'paraphrase' | 'formal' | 'concise' | 'friendly' | 'grammar';
+
+const REWRITE_PROMPTS: Record<RewriteMode, string> = {
+  paraphrase: `Rewrite the user's text in different words while preserving the exact meaning. Match the original tone, register, and approximate length. Output ONLY the rewritten text — no preamble, no quotes, no explanation, no "Here is…" or "Sure!".`,
+
+  formal: `Rewrite the user's text in a more formal, professional register suitable for government or business correspondence. Preserve the meaning. Keep approximately the same length. Output ONLY the rewritten text — no preamble, no quotes, no explanation.`,
+
+  concise: `Rewrite the user's text more concisely. Remove filler words, redundancies, and softeners. Preserve all factual content, names, dates, numbers, and requests. Aim for roughly 60–70% of the original length. Output ONLY the rewritten text — no preamble, no quotes, no explanation.`,
+
+  friendly: `Rewrite the user's text in a warmer, friendlier tone — natural, conversational, but still professional. Preserve the meaning and any factual content. Keep approximately the same length. Output ONLY the rewritten text — no preamble, no quotes, no explanation.`,
+
+  grammar: `Fix grammar, spelling, and punctuation in the user's text. Do NOT change the meaning, tone, register, or wording beyond what is needed for correctness. If the text is already correct, output it unchanged. Output ONLY the corrected text — no preamble, no quotes, no explanation, no list of fixes.`,
+};
+
+export interface RewriteOptions {
+  model: string;
+  signal?: AbortSignal;
+}
+
+export async function rewriteText(
+  client: AIClient,
+  text: string,
+  mode: RewriteMode,
+  opts: RewriteOptions,
+  onChunk: (delta: string) => void,
+): Promise<string> {
+  const plain = htmlToPlainText(text).trim();
+  if (!plain) return '';
+
+  const system = REWRITE_PROMPTS[mode];
+  // Roughly proportional to input — local 7B models max out around 600 tokens.
+  const approxTokens = Math.min(600, Math.max(96, Math.ceil(plain.length / 3)));
+
+  return client.chatStream(
+    {
+      model: opts.model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: plain },
+      ],
+      temperature: mode === 'grammar' ? 0.1 : 0.4,
+      maxTokens: approxTokens,
+      signal: opts.signal,
+    },
+    onChunk,
+  );
+}

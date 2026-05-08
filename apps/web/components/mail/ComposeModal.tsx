@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -20,7 +20,7 @@ import { DateTimePicker } from '@/components/ui/date-time-picker';
 import {
   X, Send, Loader2, ChevronDown, ChevronUp, Minus,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Link2, Paperclip,
-  Clock, FileText, Calendar, Files,
+  Clock, FileText, Calendar, Files, Sparkles,
 } from 'lucide-react';
 import { api, type Doc } from '@/lib/api';
 import { sanitizeEmailHtml } from '@/lib/sanitize';
@@ -28,6 +28,10 @@ import { generateDocPdfBlob } from '@/lib/docExport';
 import { EmailChipInput } from './EmailChipInput';
 import { DocPickerDialog, type DocAttachMode } from './DocPickerDialog';
 import { useAuthStore } from '@/stores/auth.store';
+import { useAIStore } from '@/stores/ai.store';
+import { AIClient } from '@/lib/ai/client';
+import { rewriteText, type RewriteMode } from '@/lib/ai/tasks';
+import { useCharStream } from '@/lib/ai/useCharStream';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -279,6 +283,35 @@ export default function ComposeModal({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showTemplates]);
+
+  // ── Rewrite (AI) ──────────────────────────────────────────────────────────
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiBaseUrl = useAIStore((s) => s.baseUrl);
+  const aiModel = useAIStore((s) => s.model);
+  const aiApiKey = useAIStore((s) => s.apiKey);
+  const [showRewrite, setShowRewrite] = useState(false);
+  const rewriteRef = useRef<HTMLDivElement>(null);
+  const [rewriteOriginal, setRewriteOriginal] = useState<string>(''); // plain text snapshot
+  const [rewriteRange, setRewriteRange] = useState<{ from: number; to: number } | null>(null);
+  const [rewriteOpen, setRewriteOpen] = useState(false);
+  const [rewriting, setRewriting] = useState(false);
+  const [rewriteMode, setRewriteMode] = useState<RewriteMode>('paraphrase');
+  const [rewriteError, setRewriteError] = useState<string | null>(null);
+  const {
+    text: rewriteText_,
+    push: pushRewrite,
+    reset: resetRewrite,
+  } = useCharStream();
+  const rewriteAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!showRewrite) return;
+    const handler = (e: MouseEvent) => {
+      if (rewriteRef.current && !rewriteRef.current.contains(e.target as Node)) setShowRewrite(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showRewrite]);
 
   // ── Attachments ────────────────────────────────────────────────────────────
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -537,6 +570,84 @@ export default function ComposeModal({
     setSavedDraftId(null); setDraftStatus('idle');
     onClose();
   };
+
+  // ── Rewrite handlers ──────────────────────────────────────────────────────
+  const handleRewrite = useCallback(
+    async (mode: RewriteMode) => {
+      if (!editor) return;
+      setShowRewrite(false);
+
+      // If the user has selected text, operate on the selection. Otherwise
+      // grab the entire body. We snapshot the range so Replace knows where
+      // to put the rewritten output, even if the user clicks elsewhere.
+      const sel = editor.state.selection;
+      const hasSelection = !sel.empty;
+      const from = hasSelection ? sel.from : 0;
+      const to = hasSelection ? sel.to : editor.state.doc.content.size;
+      const original = editor.state.doc.textBetween(from, to, '\n').trim();
+
+      if (!original) {
+        toast.error('Nothing to rewrite — type some text first.');
+        return;
+      }
+
+      rewriteAbortRef.current?.abort();
+      const abort = new AbortController();
+      rewriteAbortRef.current = abort;
+      resetRewrite();
+      setRewriteError(null);
+      setRewriteMode(mode);
+      setRewriteOriginal(original);
+      setRewriteRange({ from, to });
+      setRewriteOpen(true);
+      setRewriting(true);
+
+      try {
+        const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+        await rewriteText(
+          client,
+          original,
+          mode,
+          { model: aiModel, signal: abort.signal },
+          pushRewrite,
+        );
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        const m = err instanceof Error ? err.message : String(err);
+        setRewriteError(m);
+      } finally {
+        setRewriting(false);
+      }
+    },
+    [editor, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite],
+  );
+
+  const closeRewrite = useCallback(() => {
+    rewriteAbortRef.current?.abort();
+    rewriteAbortRef.current = null;
+    setRewriteOpen(false);
+    resetRewrite();
+    setRewriteError(null);
+    setRewriting(false);
+    setRewriteRange(null);
+  }, [resetRewrite]);
+
+  const applyRewrite = useCallback(() => {
+    if (!editor || !rewriteRange || !rewriteText_.trim()) return;
+    // Insert as plain paragraphs so we don't accidentally drop unsanitized HTML.
+    const paragraphs = rewriteText_
+      .trim()
+      .split(/\n\n+/)
+      .map((p) => `<p>${p.replace(/\n/g, '<br/>').replace(/</g, '&lt;')}</p>`)
+      .join('');
+    editor
+      .chain()
+      .focus()
+      .insertContentAt({ from: rewriteRange.from, to: rewriteRange.to }, paragraphs)
+      .run();
+    closeRewrite();
+    toast.success('Rewrite applied');
+  }, [editor, rewriteRange, rewriteText_, closeRewrite]);
 
   // ── Send (with 5-second undo window) ──────────────────────────────────────
   const handleSend = async () => {
@@ -883,6 +994,48 @@ export default function ComposeModal({
                     )}
                   </div>
                 )}
+
+                {/* Rewrite (AI) */}
+                {aiEnabled && (
+                  <div ref={rewriteRef} className="relative">
+                    <ToolbarBtn
+                      title="Rewrite with AI"
+                      onClick={() => setShowRewrite((v) => !v)}
+                      active={showRewrite || rewriteOpen}
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </ToolbarBtn>
+                    {showRewrite && (
+                      <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[180px]">
+                        <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                          Rewrite
+                        </p>
+                        <ul className="py-1">
+                          {([
+                            { id: 'paraphrase', label: 'Paraphrase' },
+                            { id: 'formal', label: 'More formal' },
+                            { id: 'concise', label: 'More concise' },
+                            { id: 'friendly', label: 'Friendlier' },
+                            { id: 'grammar', label: 'Fix grammar' },
+                          ] as { id: RewriteMode; label: string }[]).map((opt) => (
+                            <li key={opt.id}>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  void handleRewrite(opt.id);
+                                }}
+                                className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/60 text-foreground transition-colors"
+                              >
+                                {opt.label}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* TipTap editor */}
@@ -893,6 +1046,79 @@ export default function ComposeModal({
                   </div>
                 )}
                 <EditorContent editor={editor} />
+
+                {aiEnabled && (
+                  <aside
+                    aria-hidden={!rewriteOpen}
+                    className={cn(
+                      'absolute top-2 right-2 w-[340px] max-h-[60vh] z-30',
+                      'rounded-xl border border-border/40 bg-card shadow-xl',
+                      'flex flex-col overflow-hidden',
+                      'transition-all duration-200 ease-out',
+                      rewriteOpen
+                        ? 'translate-x-0 opacity-100 scale-100'
+                        : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
+                    )}
+                  >
+                    <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
+                      <Sparkles className="w-3.5 h-3.5 text-primary" />
+                      <span className="text-[12px] font-semibold text-foreground capitalize">
+                        {rewriteMode === 'grammar' ? 'Grammar fix' : rewriteMode}
+                      </span>
+                      {rewriting && (
+                        <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
+                      )}
+                      <button
+                        type="button"
+                        onClick={closeRewrite}
+                        className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
+                        aria-label="Close rewrite"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-3.5 py-3 space-y-3">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Original</p>
+                        <p className="text-[12px] text-muted-foreground/80 leading-relaxed line-clamp-4 whitespace-pre-wrap">
+                          {rewriteOriginal}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Rewrite</p>
+                        {rewriteError ? (
+                          <p className="text-[12px] text-destructive">
+                            {rewriteError}{' '}
+                            <button type="button" onClick={() => handleRewrite(rewriteMode)} className="underline ml-1">
+                              Retry
+                            </button>
+                          </p>
+                        ) : (
+                          <p className="text-[12.5px] text-foreground/90 leading-relaxed whitespace-pre-wrap">
+                            {rewriteText_ || (rewriting ? 'Thinking…' : '')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 px-3.5 py-2.5 border-t border-border/30 shrink-0 bg-muted/20">
+                      <button
+                        type="button"
+                        onClick={closeRewrite}
+                        className="text-[12px] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                      >
+                        Discard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={applyRewrite}
+                        disabled={rewriting || !rewriteText_.trim() || !!rewriteError}
+                        className="ml-auto text-[12px] px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Replace
+                      </button>
+                    </div>
+                  </aside>
+                )}
               </div>
 
               {/* Quoted original */}

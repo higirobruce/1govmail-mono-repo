@@ -1,9 +1,10 @@
 'use client';
 
 import { formatDistanceToNow, parseISO } from 'date-fns';
-import { X, Reply, ReplyAll, Forward } from 'lucide-react';
+import { X, Reply, ReplyAll, Forward, Sparkles, MessageSquareReply } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { MailAvatar } from './MailAvatar';
 
 export interface ThreadParticipant {
   email: string;
@@ -22,6 +23,9 @@ interface Props {
   onReply: () => void;
   onReplyAll: () => void;
   onForward: () => void;
+  onSummarize?: () => void;
+  summarizing?: boolean;
+  onQuickReply?: () => void;
 }
 
 function getInitials(name: string | null, email: string): string {
@@ -69,6 +73,9 @@ export default function ThreadHeader({
   onReply,
   onReplyAll,
   onForward,
+  onSummarize,
+  summarizing,
+  onQuickReply,
 }: Props) {
   const status = deriveStatus(lastSenderEmail, currentUserEmail, unreadCount);
 
@@ -123,10 +130,15 @@ export default function ThreadHeader({
                 <Tooltip key={p.email}>
                   <TooltipTrigger asChild>
                     <div
-                      className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[9px] font-semibold flex items-center justify-center ring-1 ring-background cursor-default"
+                      className="cursor-default"
                       style={{ zIndex: visibleParticipants.length - i }}
                     >
-                      {getInitials(p.name, p.email)}
+                      <MailAvatar
+                        name={p.name}
+                        email={p.email}
+                        size="xs"
+                        className="ring-1 ring-background"
+                      />
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-xs">
@@ -135,7 +147,7 @@ export default function ThreadHeader({
                 </Tooltip>
               ))}
               {extraParticipantCount > 0 && (
-                <div className="w-5 h-5 rounded-full bg-muted text-muted-foreground text-[9px] flex items-center justify-center ring-1 ring-background">
+                <div className="w-6 h-6 rounded-full bg-muted text-muted-foreground text-[9px] font-medium flex items-center justify-center ring-1 ring-background">
                   +{extraParticipantCount}
                 </div>
               )}
@@ -168,6 +180,40 @@ export default function ThreadHeader({
               <TooltipContent side="bottom" className="text-xs">{label}</TooltipContent>
             </Tooltip>
           ))}
+          {onSummarize && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={onSummarize}
+                  disabled={summarizing}
+                  className={cn(
+                    'p-1.5 rounded-md transition-colors',
+                    summarizing
+                      ? 'text-primary'
+                      : 'text-muted-foreground/50 hover:text-foreground hover:bg-muted',
+                  )}
+                  aria-label="Summarize"
+                >
+                  <Sparkles className={cn('w-4 h-4', summarizing && 'animate-pulse')} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">Summarize</TooltipContent>
+            </Tooltip>
+          )}
+          {onQuickReply && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={onQuickReply}
+                  className="p-1.5 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors"
+                  aria-label="Quick reply (AI)"
+                >
+                  <MessageSquareReply className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">Quick reply (AI)</TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
     </div>

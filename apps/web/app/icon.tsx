@@ -12,7 +12,7 @@ export default function Icon() {
     (
       <div
         style={{
-          background: '#1c1c1c',
+          background: '#0F4C81',
           borderRadius: '7px',
           width: 32,
           height: 32,

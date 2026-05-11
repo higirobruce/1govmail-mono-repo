@@ -1,0 +1,134 @@
+# 1Gov Mail — Production Docker Compose
+# Usage: cp .env.example .env  →  edit .env  →  docker compose up -d
+#
+# HTTPS is handled automatically by https-portal (Let's Encrypt).
+# DNS for ${DOMAIN} must point to this server on ports 80 and 443.
+#
+# Build the web image with public URLs baked in (uses .env values):
+#   docker compose build web
+#   docker compose up -d
+
+x-api-env: &api-env
+  DATABASE_URL: postgresql://govmail:${POSTGRES_PASSWORD}@postgres:5432/govmail
+  JWT_SECRET: ${JWT_SECRET}
+  JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+  FRONTEND_URL: ${FRONTEND_URL}
+  PORT: "3001"
+  HOCUSPOCUS_PORT: "1234"
+  NODE_ENV: production
+
+services:
+  # ── Database ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: govmail
+      POSTGRES_USER: govmail
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U govmail -d govmail"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Cache ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── DB migrations (one-off, exits 0 when done) ────────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["node_modules/.bin/prisma", "migrate", "deploy"]
+    environment:
+      <<: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ── NestJS API + Hocuspocus collab server ─────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    # Not exposed to host — nginx is the only ingress point
+    expose:
+      - "3001"
+      - "1234"
+
+  # ── Next.js web app ───────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_COLLAB_WS_URL: ${NEXT_PUBLIC_COLLAB_WS_URL}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    depends_on:
+      - api
+    expose:
+      - "3000"
+
+  # ── Internal reverse proxy ────────────────────────────────────────────────
+  # Routes /api/ → NestJS, /collab → Hocuspocus WS, / → Next.js.
+  # SSL is terminated by https-portal; this service speaks HTTP only.
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - web
+    expose:
+      - "80"
+
+  # ── HTTPS / SSL termination ───────────────────────────────────────────────
+  # Automatically obtains and renews Let's Encrypt TLS certificates.
+  # Set HTTPS_STAGE=staging to test without hitting LE rate limits.
+  https-portal:
+    image: steveltn/https-portal:1
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAINS: "${DOMAIN} -> http://nginx:80"
+      STAGE: "${HTTPS_STAGE:-production}"
+      # Pass WebSocket Upgrade headers through for Hocuspocus /collab
+      WEBSOCKET: "true"
+      CLIENT_MAX_BODY_SIZE: "100m"
+    volumes:
+      - ssl_certs:/var/lib/https-portal
+    depends_on:
+      - nginx
+
+volumes:
+  pgdata:
+  redisdata:
+  ssl_certs:

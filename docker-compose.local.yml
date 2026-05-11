@@ -1,0 +1,106 @@
+# 1Gov Mail — Local Docker Compose (no TLS, no domain)
+# Usage: cp .env.local.example .env.local  →  docker compose -f docker-compose.local.yml --env-file .env.local up -d
+
+x-api-env: &api-env
+  DATABASE_URL: postgresql://govmail:govmail@postgres:5432/govmail
+  JWT_SECRET: local_dev_secret_do_not_use_in_production
+  JWT_EXPIRES_IN: 24h
+  FRONTEND_URL: http://localhost
+  PORT: "3001"
+  HOCUSPOCUS_PORT: "1234"
+  NODE_ENV: production
+
+services:
+  # ── Database ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"   # exposed so you can connect with TablePlus / psql
+    volumes:
+      - pgdata_local:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: govmail
+      POSTGRES_USER: govmail
+      POSTGRES_PASSWORD: govmail
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U govmail -d govmail"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Cache ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"   # exposed for local inspection
+    volumes:
+      - redisdata_local:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── DB migrations (one-off) ───────────────────────────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["node_modules/.bin/prisma", "migrate", "deploy"]
+    environment:
+      <<: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ── NestJS API + Hocuspocus ───────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    expose:
+      - "3001"
+      - "1234"
+
+  # ── Next.js web app ───────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost/api
+        NEXT_PUBLIC_COLLAB_WS_URL: ws://localhost/collab
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    depends_on:
+      - api
+    expose:
+      - "3000"
+
+  # ── Reverse proxy (HTTP only) ─────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.local.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - web
+
+volumes:
+  pgdata_local:
+  redisdata_local:

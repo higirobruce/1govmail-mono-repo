@@ -15,7 +15,10 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { sanitizeEmailHtml } from '@/lib/sanitize';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { MailAvatar } from './MailAvatar';
+import { AttachmentTile } from './AttachmentTile';
 
 // ─── Email rendering (mirrors MailDetail.tsx constants) ─────────────────────
 
@@ -58,199 +61,9 @@ pre{background-color:#f3f4f6!important;padding:12px!important}
 img{background-color:transparent!important}
 `;
 
-function extractBodyContent(html: string): string {
-  const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  if (match) return match[1];
-  return html
-    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
-    .replace(/<\/?(html|body)[^>]*>/gi, '')
-    .trim();
-}
-
-function EmailBodyFrame({ html, text }: { html: string | null; text: string | null }) {
-  const normalizeStyles =
-    typeof window !== 'undefined'
-      ? localStorage.getItem('1gov_normalize_email_styles') !== 'false'
-      : true;
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(200);
-
-  const resizeFrame = useCallback(() => {
-    const doc = iframeRef.current?.contentDocument;
-    if (!doc) return;
-    requestAnimationFrame(() =>
-      setHeight(Math.max(doc.documentElement.scrollHeight, 100)),
-    );
-  }, []);
-
-  const handleLoad = useCallback(() => {
-    const doc = iframeRef.current?.contentDocument;
-    if (!doc) return;
-
-    // ── Strip quoted thread history ─────────────────────────────────────────
-    // In thread view the full history is shown as individual rows, so we remove
-    // embedded quoted content from each message body. We use DOM removal (not
-    // CSS display:none) because Zimbra and many clients use plain <div> blocks
-    // with inline styles that CSS selectors can't reliably target.
-
-    // Pass 1 — remove elements with known quote class/id
-    [
-      'blockquote',
-      '.gmail_quote', '.gmail_extra', '.gmail_attr',
-      '[class*="yahoo_quoted"]', '[id*="yahoo_quoted"]',
-      '.moz-cite-prefix',
-      '#divRplyFwdMsg', '#divReplyFwdMsg', '#appendonsend',
-      '.OutlookMessageHeader', '.x_OutlookMessageHeader',
-      '[id^="ms-outlook"]',
-      '[class*="BodyFragment"] blockquote',
-    ].forEach((sel) => {
-      doc.querySelectorAll(sel).forEach((el) => el.remove());
-    });
-
-    // Pass 2 — remove a recognised quote-separator and everything after it.
-    //
-    // Detection priority (most-specific → least-specific to avoid false positives):
-    //   1. Zimbra     <hr id="zwchr">
-    //   2. Apple Mail <hr class*="Apple-interchange">
-    //   3. Outlook    <div style="border-top:solid …"> wrapping From/Sent/To lines
-    //   4. <hr> whose next-sibling text starts with "On … wrote:" / "From:" / etc.
-    //   5. "On Mon, 1 Jan 2024 at 12:00, Name <email> wrote:" standalone block
-    //   6. Outlook "From: Name <email>" block confirmed by sibling "Date:" / "Sent:"
-    //   7. Pure separator line "________" or "--------" followed by "From:" / "On…"
-    //   8. "---- Original Message ----" / "---- Forwarded Message ----" dividers
-    const findQuoteSep = (): Element | null => {
-      if (!doc.body) return null;
-
-      // 1. Zimbra
-      const byId = doc.body.querySelector<Element>('#zwchr');
-      if (byId) return byId;
-
-      // 2. Apple Mail
-      const byApple = doc.body.querySelector<Element>('hr[class*="Apple-interchange"]');
-      if (byApple) return byApple;
-
-      // 3. Outlook reply wrapper: <div style="…border-top:solid…"> that Outlook inserts
-      //    above the quoted message header. Confirmed by "From:" / "Sent:" inside it.
-      for (const div of Array.from(doc.body.querySelectorAll<Element>('div[style*="border-top"]'))) {
-        if (/From\s*:|Sent\s*:/i.test(div.textContent ?? '')) return div;
-      }
-
-      // 4. <hr> whose next sibling looks like an email quote header
-      const byHrHeuristic = Array.from(doc.body.querySelectorAll<Element>('hr')).find((hr) => {
-        const t = hr.nextElementSibling?.textContent ?? '';
-        return /^\s*(On\s.+wrote:|From\s*:|Sent\s*:|De\s*:|Von\s*:|-{3,})/i.test(t);
-      });
-      if (byHrHeuristic) return byHrHeuristic;
-
-      // 5. "On Mon, 1 Jan 2024 at 12:00, Name <email> wrote:" — Gmail / Apple / Zimbra
-      const onWroteRe = /^On\s+\S[\s\S]{5,250}wrote\s*:\s*$/i;
-      const byOnWrote = Array.from(doc.body.querySelectorAll<Element>('div, p, span'))
-        .find((el) => {
-          if (el.children.length > 4) return false;
-          const t = (el.textContent ?? '').trim();
-          return t.length < 300 && onWroteRe.test(t);
-        });
-      if (byOnWrote) return byOnWrote;
-
-      // 6. Outlook / calendar "From: Name <email>" or "From: email@domain" block.
-      //    Angle brackets are optional (calendar invites omit them).
-      //    Confirmed by a sibling or inline field: Date/Sent/When/To/Subject.
-      const emailFromRe = /^From\s*:\s*(?:[^<\n]{0,100}<)?[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+/i;
-      const byOutlookFrom = Array.from(doc.body.querySelectorAll<Element>('p, div, td'))
-        .find((el) => {
-          if (el.children.length > 6) return false;
-          const t = (el.textContent ?? '').trim();
-          // Multi-line single element: contains the whole header block inline
-          if (emailFromRe.test(t) && /(Date|Sent|When)\s*:/i.test(t) && /(To|Subject)\s*:/i.test(t)) return true;
-          // Single "From:" line — next sibling must be a header field
-          if (emailFromRe.test(t) && t.length <= 250) {
-            const nextT = el.nextElementSibling?.textContent?.trim() ?? '';
-            return /^(Date|Sent|To|When|Subject|À|An)\s*:/i.test(nextT);
-          }
-          return false;
-        });
-      if (byOutlookFrom) return byOutlookFrom;
-
-      // 7. Pure separator line ("________", "--------", "========") followed by "From:" or "On…wrote:"
-      const pureSepRe = /^[-_=*]{5,}$/;
-      const byPureSep = Array.from(doc.body.querySelectorAll<Element>('p, div, span'))
-        .find((el) => {
-          if ((el.textContent ?? '').trim().match(pureSepRe) === null) return false;
-          const nextT = el.nextElementSibling?.textContent?.trim() ?? '';
-          return /^From\s*:/i.test(nextT) || /^On\s+\S.{5,}wrote\s*:/i.test(nextT);
-        });
-      if (byPureSep) return byPureSep;
-
-      // 8. "---- Original Message ----" / "---- Forwarded Message ----" dividers
-      const dashMsgRe = /^[-_*\s]{2,}(Original|Forwarded)\s+(Message|mail|e-?mail)[-_*\s]*/i;
-      const byDashMsg = Array.from(doc.body.querySelectorAll<Element>('div, p'))
-        .find((el) => {
-          const t = (el.textContent ?? '').trim();
-          return dashMsgRe.test(t) && t.length < 80;
-        });
-      if (byDashMsg) return byDashMsg;
-
-      // Do NOT fall back to the first <hr> unconditionally — newsletters and
-      // formatted emails use <hr> for design/layout.
-      return null;
-    };
-
-    const sep = findQuoteSep();
-    if (sep) {
-      // Build the ancestor chain from sep up to (but not including) body.
-      // We capture this BEFORE any removals so parentElement references stay valid.
-      const ancestors: Element[] = [];
-      let node: Element = sep;
-      while (node.parentElement && node.parentElement !== doc.body) {
-        ancestors.push(node.parentElement);
-        node = node.parentElement;
-      }
-
-      // Step 1: Remove sep + all its following siblings at its own DOM level.
-      //         This preserves content that precedes sep inside the same container.
-      let sib: Element | null = sep;
-      while (sib) { const nx: Element | null = sib.nextElementSibling; sib.remove(); sib = nx; }
-
-      // Step 2: For every ancestor (inner → outer), remove the ancestor's
-      //         following siblings.  Content INSIDE the ancestor (before sep)
-      //         is untouched; only sibling containers after the ancestor are cut.
-      for (const anc of ancestors) {
-        let sib2: Element | null = anc.nextElementSibling;
-        while (sib2) { const nx = sib2.nextElementSibling; sib2.remove(); sib2 = nx; }
-      }
-    }
-
-    resizeFrame();
-
-    doc.querySelectorAll('img').forEach((img) => {
-      if (!img.complete) {
-        img.addEventListener('load', resizeFrame, { once: true });
-        img.addEventListener('error', resizeFrame, { once: true });
-      }
-    });
-  }, [resizeFrame]);
-
-  if (!html) {
-    return (
-      <pre className="whitespace-pre-wrap font-sans text-[13px] text-foreground/80 leading-relaxed p-4">
-        {text ?? 'No content'}
-      </pre>
-    );
-  }
-
-  // Zimbra uses `dfsrc` instead of `src` on images (deferred loading). Convert
-  // them to standard `src` so the browser renders them correctly.
-  // Also strip the non-standard `name=` parameter from data URIs — e.g.
-  // `data:image/gif; name="foo.gif";base64,...` — whose unescaped inner quotes
-  // break HTML attribute parsing and cause the image to render as broken.
-  const body = extractBodyContent(html)
-    .replace(/\bdfsrc=/gi, 'src=')
-    .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;');
-  const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
-  // In thread view each message is shown individually, so suppress the quoted
-  // history that email clients embed inside every reply/forward body.
-  // This covers: standard blockquote, Gmail, Yahoo, Mozilla, Outlook, Zimbra.
-  const HIDE_QUOTES_CSS = `
+// In thread view each message is shown individually so quoted history is stripped.
+// The CSS below is baked into the srcDoc for the stripQuotes=true (multi-message) path.
+const HIDE_QUOTES_CSS = `
 blockquote{display:none!important}
 .gmail_quote,.gmail_extra,.gmail_attr{display:none!important}
 [class*="yahoo_quoted"],[id*="yahoo_quoted"]{display:none!important}
@@ -260,15 +73,291 @@ blockquote{display:none!important}
 [id^="ms-outlook"]{display:none!important}
 div.WordSection1 blockquote{display:none!important}
 `;
-  const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${HIDE_QUOTES_CSS}</style></head><body>${body}</body></html>`;
 
+// Selectors used by the JS DOM stripper (stripQuotes=true path)
+const QUOTE_SELECTORS = [
+  'blockquote',
+  '.gmail_quote', '.gmail_extra', '.gmail_attr',
+  '[class*="yahoo_quoted"]', '[id*="yahoo_quoted"]',
+  '.moz-cite-prefix',
+  '#divRplyFwdMsg', '#divReplyFwdMsg', '#appendonsend',
+  '.OutlookMessageHeader', '.x_OutlookMessageHeader',
+  '[id^="ms-outlook"]',
+  '[class*="BodyFragment"] blockquote',
+];
+
+// Finds the first element that marks the start of quoted content in `root`.
+// Works on any Element so it can be used both inside iframe handleLoad callbacks
+// and on temporary div elements for pre-render splitting.
+function findQuoteSep(root: Element): Element | null {
+  const byId = root.querySelector<Element>('#zwchr');
+  if (byId) return byId;
+
+  const byApple = root.querySelector<Element>('hr[class*="Apple-interchange"]');
+  if (byApple) return byApple;
+
+  for (const div of Array.from(root.querySelectorAll<Element>('div[style*="border-top"]'))) {
+    if (/From\s*:|Sent\s*:/i.test(div.textContent ?? '')) return div;
+  }
+
+  const byHrHeuristic = Array.from(root.querySelectorAll<Element>('hr')).find((hr) => {
+    const t = hr.nextElementSibling?.textContent ?? '';
+    return /^\s*(On\s.+wrote:|From\s*:|Sent\s*:|De\s*:|Von\s*:|-{3,})/i.test(t);
+  });
+  if (byHrHeuristic) return byHrHeuristic;
+
+  const onWroteRe = /^On\s+\S[\s\S]{5,250}wrote\s*:\s*$/i;
+  const byOnWrote = Array.from(root.querySelectorAll<Element>('div, p, span'))
+    .find((el) => {
+      if (el.children.length > 4) return false;
+      const t = (el.textContent ?? '').trim();
+      return t.length < 300 && onWroteRe.test(t);
+    });
+  if (byOnWrote) return byOnWrote;
+
+  const emailFromRe = /^From\s*:\s*(?:[^<\n]{0,100}<)?[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+/i;
+  const byOutlookFrom = Array.from(root.querySelectorAll<Element>('p, div, td'))
+    .find((el) => {
+      if (el.children.length > 6) return false;
+      const t = (el.textContent ?? '').trim();
+      if (emailFromRe.test(t) && /(Date|Sent|When)\s*:/i.test(t) && /(To|Subject)\s*:/i.test(t)) return true;
+      if (emailFromRe.test(t) && t.length <= 250) {
+        const nextT = el.nextElementSibling?.textContent?.trim() ?? '';
+        return /^(Date|Sent|To|When|Subject|À|An)\s*:/i.test(nextT);
+      }
+      return false;
+    });
+  if (byOutlookFrom) return byOutlookFrom;
+
+  const pureSepRe = /^[-_=*]{5,}$/;
+  const byPureSep = Array.from(root.querySelectorAll<Element>('p, div, span'))
+    .find((el) => {
+      if ((el.textContent ?? '').trim().match(pureSepRe) === null) return false;
+      const nextT = el.nextElementSibling?.textContent?.trim() ?? '';
+      return /^From\s*:/i.test(nextT) || /^On\s+\S.{5,}wrote\s*:/i.test(nextT);
+    });
+  if (byPureSep) return byPureSep;
+
+  const dashMsgRe = /^[-_*\s]{2,}(Original|Forwarded)\s+(Message|mail|e-?mail)[-_*\s]*/i;
+  const byDashMsg = Array.from(root.querySelectorAll<Element>('div, p'))
+    .find((el) => {
+      const t = (el.textContent ?? '').trim();
+      return dashMsgRe.test(t) && t.length < 80;
+    });
+  if (byDashMsg) return byDashMsg;
+
+  return null;
+}
+
+// Splits preprocessed email HTML into main content and quoted content using the
+// same heuristics as the iframe DOM stripper.  Returns { main, quoted } where
+// quoted is null when no split point is found.  Client-side only.
+function splitEmailBody(html: string): { main: string; quoted: string | null } {
+  if (typeof document === 'undefined') return { main: html, quoted: null };
+
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+
+  const quotedNodes: Node[] = [];
+  const sep = findQuoteSep(tmp);
+
+  if (sep) {
+    const ancestors: Element[] = [];
+    let node: Element = sep;
+    while (node.parentElement && node.parentElement !== tmp) {
+      ancestors.push(node.parentElement);
+      node = node.parentElement;
+    }
+    let sib: Element | null = sep;
+    while (sib) { const nx: Element | null = sib.nextElementSibling; quotedNodes.push(sib); sib.remove(); sib = nx; }
+    for (const anc of ancestors) {
+      let sib2: Element | null = anc.nextElementSibling;
+      while (sib2) { const nx: Element | null = sib2.nextElementSibling; quotedNodes.push(sib2); sib2.remove(); sib2 = nx; }
+    }
+  } else {
+    // Fallback: split at the first blockquote
+    const firstBq = tmp.querySelector('blockquote');
+    if (firstBq) {
+      let sib: ChildNode | null = firstBq;
+      while (sib) { const nx: ChildNode | null = sib.nextSibling; quotedNodes.push(sib); tmp.removeChild(sib); sib = nx; }
+    }
+  }
+
+  if (quotedNodes.length === 0) return { main: html, quoted: null };
+
+  const quotedDiv = document.createElement('div');
+  quotedNodes.forEach((n) => quotedDiv.appendChild(n));
+  return { main: tmp.innerHTML, quoted: quotedDiv.innerHTML };
+}
+
+function extractBodyContent(html: string): string {
+  const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  if (match) return match[1];
+  return html
+    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<\/?(html|body)[^>]*>/gi, '')
+    .trim();
+}
+
+function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | null; text: string | null; stripQuotes?: boolean }) {
+  const normalizeStyles =
+    typeof window !== 'undefined'
+      ? localStorage.getItem('1gov_normalize_email_styles') !== 'false'
+      : true;
+
+  const mainRef  = useRef<HTMLIFrameElement>(null);
+  const quotedRef = useRef<HTMLIFrameElement>(null);
+  const [mainHeight,   setMainHeight]   = useState(200);
+  const [quotedHeight, setQuotedHeight] = useState(200);
+  const [showQuoted, setShowQuoted] = useState(false);
+
+  const resizeMain = useCallback(() => {
+    const doc = mainRef.current?.contentDocument;
+    if (!doc) return;
+    requestAnimationFrame(() => setMainHeight(Math.max(doc.documentElement.scrollHeight, 100)));
+  }, []);
+
+  const resizeQuoted = useCallback(() => {
+    const doc = quotedRef.current?.contentDocument;
+    if (!doc) return;
+    requestAnimationFrame(() => setQuotedHeight(Math.max(doc.documentElement.scrollHeight, 100)));
+  }, []);
+
+  // handleLoad for the main iframe.
+  // When stripQuotes=false the body was already split before render, so just resize.
+  // When stripQuotes=true run the full JS + CSS quote-stripping pass.
+  const handleMainLoad = useCallback(() => {
+    const doc = mainRef.current?.contentDocument;
+    if (!doc) return;
+
+    if (!stripQuotes) {
+      resizeMain();
+      doc.querySelectorAll('img').forEach((img) => {
+        if (!img.complete) {
+          img.addEventListener('load',  resizeMain, { once: true });
+          img.addEventListener('error', resizeMain, { once: true });
+        }
+      });
+      return;
+    }
+
+    // Pass 1 — remove elements with known quote class/id
+    QUOTE_SELECTORS.forEach((sel) => {
+      doc.querySelectorAll(sel).forEach((el) => el.remove());
+    });
+
+    // Pass 2 — remove separator and everything after it
+    if (doc.body) {
+      const sep = findQuoteSep(doc.body);
+      if (sep) {
+        const ancestors: Element[] = [];
+        let node: Element = sep;
+        while (node.parentElement && node.parentElement !== doc.body) {
+          ancestors.push(node.parentElement);
+          node = node.parentElement;
+        }
+        let sib: Element | null = sep;
+        while (sib) { const nx: Element | null = sib.nextElementSibling; sib.remove(); sib = nx; }
+        for (const anc of ancestors) {
+          let sib2: Element | null = anc.nextElementSibling;
+          while (sib2) { const nx = sib2.nextElementSibling; sib2.remove(); sib2 = nx; }
+        }
+      }
+    }
+
+    resizeMain();
+    doc.querySelectorAll('img').forEach((img) => {
+      if (!img.complete) {
+        img.addEventListener('load',  resizeMain, { once: true });
+        img.addEventListener('error', resizeMain, { once: true });
+      }
+    });
+  }, [resizeMain, stripQuotes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleQuotedLoad = useCallback(() => {
+    const doc = quotedRef.current?.contentDocument;
+    if (!doc) return;
+    resizeQuoted();
+    doc.querySelectorAll('img').forEach((img) => {
+      if (!img.complete) {
+        img.addEventListener('load',  resizeQuoted, { once: true });
+        img.addEventListener('error', resizeQuoted, { once: true });
+      }
+    });
+  }, [resizeQuoted]);
+
+  if (!html) {
+    return (
+      <pre className="whitespace-pre-wrap font-sans text-[13px] text-foreground/80 leading-relaxed p-4">
+        {text ?? 'No content'}
+      </pre>
+    );
+  }
+
+  // Preprocess: fix Zimbra deferred images and malformed data URIs, then
+  // sanitize to strip scripts, event handlers, and other XSS vectors before
+  // the HTML reaches the iframe srcDoc. The iframe is still sandboxed but
+  // sanitization is defense-in-depth.
+  const body = sanitizeEmailHtml(
+    extractBodyContent(html)
+      .replace(/\bdfsrc=/gi, 'src=')
+      .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;'),
+  );
+  const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
+  const mkSrcDoc = (content: string, hideQuotes = false) =>
+    `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${hideQuotes ? HIDE_QUOTES_CSS : ''}</style></head><body>${content}</body></html>`;
+
+  // ── stripQuotes=false: split body into main + quoted, render two iframes ──
+  if (!stripQuotes) {
+    const split = splitEmailBody(body);
+
+    return (
+      <div>
+        <iframe
+          ref={mainRef}
+          srcDoc={mkSrcDoc(split.main)}
+          onLoad={handleMainLoad}
+          className="w-full border-0 block"
+          style={{ height: mainHeight }}
+          sandbox="allow-same-origin"
+          title="Email message"
+        />
+        {split.quoted && (
+          <div className="border-t border-border/10">
+            <div className="px-4 py-2">
+              <button
+                onClick={() => setShowQuoted((v) => !v)}
+                className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {showQuoted ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                {showQuoted ? 'Hide quoted message' : 'Show quoted message'}
+              </button>
+            </div>
+            {showQuoted && (
+              <iframe
+                ref={quotedRef}
+                srcDoc={mkSrcDoc(split.quoted)}
+                onLoad={handleQuotedLoad}
+                className="w-full border-0 block"
+                style={{ height: quotedHeight }}
+                sandbox="allow-same-origin"
+                title="Quoted message"
+              />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── stripQuotes=true: single iframe, JS + CSS stripping in handleMainLoad ──
   return (
     <iframe
-      ref={iframeRef}
-      srcDoc={srcDoc}
-      onLoad={handleLoad}
+      ref={mainRef}
+      srcDoc={mkSrcDoc(body, true)}
+      onLoad={handleMainLoad}
       className="w-full border-0 block"
-      style={{ height }}
+      style={{ height: mainHeight }}
       sandbox="allow-same-origin"
       title="Email message"
     />
@@ -336,6 +425,8 @@ interface Props {
   onToggleStar: () => void;
   /** Called when the user clicks a draft row to continue editing it */
   onOpenDraft?: (message: ThreadMessageMeta) => void;
+  /** When true, quoted history in the body is preserved (single-message threads) */
+  isOnlyMessage?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -350,6 +441,7 @@ export default function ThreadMessage({
   onDelete,
   onToggleStar,
   onOpenDraft,
+  isOnlyMessage = false,
 }: Props) {
   const [fullMessage, setFullMessage] = useState<any>(null);
   const [loadingBody, setLoadingBody] = useState(false);
@@ -402,14 +494,18 @@ export default function ThreadMessage({
         aria-label={`${message.isDraft ? 'Draft: ' : ''}Message from ${displayName}, ${timeStr}${!message.isRead ? ', unread' : ''}`}
       >
         {/* Avatar node — ring punches through spine line */}
-        <div className={cn(
-          'w-7 h-7 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0 relative z-10 ring-2 ring-background',
-          message.isDraft
-            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
-            : 'bg-primary/10 text-primary',
-        )}>
-          {initials}
-        </div>
+        {message.isDraft ? (
+          <div className="w-7 h-7 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0 relative z-10 ring-2 ring-background bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+            {initials}
+          </div>
+        ) : (
+          <MailAvatar
+            name={message.fromName}
+            email={message.fromEmail}
+            size="xs"
+            className="relative z-10 ring-2 ring-background"
+          />
+        )}
 
         {/* Sender name */}
         <span className={cn(
@@ -463,9 +559,12 @@ export default function ThreadMessage({
       aria-expanded={true}
     >
       {/* Avatar node — sits on the spine */}
-      <div className="w-7 h-7 rounded-full bg-primary/10 text-primary text-[11px] font-semibold flex items-center justify-center shrink-0 mt-1 relative z-10 ring-2 ring-background">
-        {initials}
-      </div>
+      <MailAvatar
+        name={message.fromName}
+        email={message.fromEmail}
+        size="xs"
+        className="mt-1 relative z-10 ring-2 ring-background"
+      />
 
       {/* Card */}
       <div className="flex-1 min-w-0 rounded-xl border border-border/30 bg-card shadow-sm overflow-hidden mb-2">
@@ -534,7 +633,7 @@ export default function ThreadMessage({
             </div>
           ) : fullMessage ? (
             <div className="border-t border-border/10">
-              <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} />
+              <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} stripQuotes={!isOnlyMessage} />
             </div>
           ) : (
             <div className="px-4 py-4 text-[13px] text-muted-foreground/50">
@@ -544,31 +643,34 @@ export default function ThreadMessage({
 
           {/* Attachments */}
           {(fullMessage?.attachments?.length ?? 0) > 0 && (
-            <div className="px-4 pt-2 pb-3 flex flex-wrap gap-2 border-t border-border/10">
-              {fullMessage.attachments.map((att: any) => (
-                <button
-                  key={att.id}
-                  onClick={() =>
-                    api.mail
-                      .downloadAttachment(message.id, att.id)
-                      .then((url) => {
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = att.filename;
-                        a.click();
-                        setTimeout(() => URL.revokeObjectURL(url), 5_000);
-                      })
-                      .catch(() => {})
-                  }
-                  className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/40 hover:bg-muted text-[11px] text-foreground/70 transition-colors"
-                >
-                  <Paperclip className="w-3 h-3 text-muted-foreground/50 shrink-0" />
-                  <span className="max-w-[140px] truncate">{att.filename}</span>
-                  {att.size > 0 && (
-                    <span className="text-muted-foreground/40 shrink-0">{formatBytes(att.size)}</span>
-                  )}
-                </button>
-              ))}
+            <div className="px-4 pt-3 pb-3 border-t border-border/10">
+              <div className="flex items-center gap-1.5 mb-2.5">
+                <Paperclip className="w-3.5 h-3.5 text-muted-foreground/55" />
+                <span className="text-[11.5px] font-semibold text-foreground/85">Attachments</span>
+                <span className="text-[11px] text-muted-foreground/55">
+                  ({fullMessage.attachments.length})
+                </span>
+              </div>
+              <div className="flex items-start gap-3 flex-wrap">
+                {fullMessage.attachments.map((att: any) => (
+                  <AttachmentTile
+                    key={att.id}
+                    attachment={att}
+                    onClick={() => {
+                      api.mail
+                        .downloadAttachment(message.id, att.id)
+                        .then((url) => {
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = att.filename;
+                          a.click();
+                          setTimeout(() => URL.revokeObjectURL(url), 5_000);
+                        })
+                        .catch(() => {});
+                    }}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>

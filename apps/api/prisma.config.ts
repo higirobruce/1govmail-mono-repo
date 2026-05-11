@@ -4,10 +4,8 @@
 // directly (see src/prisma/prisma.service.ts).
 import { defineConfig } from "prisma/config";
 
-// Load .env for local development.  dotenv is a devDependency and is absent
-// from the production bundle — in that context DATABASE_URL is injected
-// directly into the process environment by the Electron main process, so a
-// missing dotenv package must not crash startup.
+// Load .env for local development. dotenv is a devDependency and is absent
+// from the production bundle — DATABASE_URL is injected via docker-compose env.
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("dotenv/config");
@@ -15,14 +13,15 @@ try {
   // production: dotenv absent — DATABASE_URL already set in env
 }
 
+// In Prisma 7, `datasource.url` here is used by the CLI (prisma migrate, generate).
+// The runtime application uses @prisma/adapter-pg passed to PrismaClient directly
+// (see src/prisma/prisma.service.ts and src/collab/collab.server.ts).
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
   },
   datasource: {
-    // The Prisma CLI uses this URL for migration operations.
-    // It accepts the SQLite "file:" scheme directly.
-    url: process.env["DATABASE_URL"] ?? "file:./dev.db",
+    url: process.env.DATABASE_URL,
   },
 });

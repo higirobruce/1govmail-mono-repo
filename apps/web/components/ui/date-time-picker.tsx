@@ -5,6 +5,7 @@ import { format, parseISO, isValid } from "date-fns"
 import { CalendarIcon, Clock } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Calendar } from "@/components/ui/calendar"
 import {
   Popover,
@@ -54,7 +55,8 @@ export function DateTimePicker({
     } else {
       const [h, m] = timeStr.split(":").map(Number)
       day.setHours(h, m, 0, 0)
-      onChange(day.toISOString().slice(0, 16))   // "YYYY-MM-DDTHH:mm"
+      // Use local-time format so the stored value matches what the user sees
+      onChange(format(day, "yyyy-MM-dd'T'HH:mm"))
     }
     if (dateOnly) setOpen(false)
   }
@@ -64,7 +66,8 @@ export function DateTimePicker({
     const [h, m] = e.target.value.split(":").map(Number)
     const base = parsed ? new Date(parsed) : new Date()
     base.setHours(h, m, 0, 0)
-    onChange(base.toISOString().slice(0, 16))
+    // Use local-time format — toISOString() would shift to UTC and cause an offset bug
+    onChange(format(base, "yyyy-MM-dd'T'HH:mm"))
   }
 
   const displayLabel = parsed
@@ -101,12 +104,12 @@ export function DateTimePicker({
         {!dateOnly && (
           <div className="border-t border-border px-3 py-2 flex items-center gap-2">
             <Clock className="size-3.5 text-muted-foreground shrink-0" />
-            <input
+            <Input
               type="time"
               value={timeStr}
               onChange={handleTimeChange}
               onBlur={() => setOpen(false)}
-              className="text-sm bg-transparent outline-none w-full text-foreground"
+              className="h-8 text-sm border-0 bg-transparent px-0 focus-visible:ring-0 shadow-none"
             />
           </div>
         )}

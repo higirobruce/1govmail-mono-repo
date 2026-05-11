@@ -28,6 +28,11 @@ import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
 import ThreadHeader, { type ThreadParticipant } from './ThreadHeader';
+import { useAIStore } from '@/stores/ai.store';
+import { AIClient } from '@/lib/ai/client';
+import { summarizeMessage, summarizeThread } from '@/lib/ai/tasks';
+import { useCharStream } from '@/lib/ai/useCharStream';
+import { Sparkles, X as XIconSmall } from 'lucide-react';
 import ThreadMessage, { type ThreadMessageMeta } from './ThreadMessage';
 import MailDetail from './MailDetail';
 import TaskModal, { type Task, PRIORITY_META } from '@/components/tasks/TaskModal';
@@ -158,6 +163,9 @@ interface Props {
   loading?: boolean;
   onClose: () => void;
   onComposeWith: (mode: 'reply' | 'replyAll' | 'forward' | 'new', target: any) => void;
+  /** Triggered by the thread toolbar's Quick Reply (AI) button. Should open
+   *  compose in 'reply' mode and auto-run the suggestReply task. */
+  onQuickReply?: (target: any) => void;
   onDelete: () => void;
   onToggleStar: () => void;
   onMoveToInbox?: () => void;
@@ -167,6 +175,7 @@ interface Props {
   refreshKey?: number;
   onMute?: () => void;
   isMuted?: boolean;
+  onSnooze?: () => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -176,6 +185,7 @@ export default function ThreadView({
   loading,
   onClose,
   onComposeWith,
+  onQuickReply,
   onDelete,
   onToggleStar,
   onMoveToInbox,
@@ -184,6 +194,7 @@ export default function ThreadView({
   refreshKey,
   onMute,
   isMuted,
+  onSnooze,
 }: Props) {
   const user = useAuthStore((s) => s.user);
 
@@ -197,6 +208,87 @@ export default function ThreadView({
 
   // Tab: 'overview' | 'messages' | 'attachments'
   const [activeTab, setActiveTab] = useState<'overview' | 'messages' | 'attachments'>('messages');
+
+  // ── AI summarize state ───────────────────────────────────────────────────
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiBaseUrl = useAIStore((s) => s.baseUrl);
+  const aiModel = useAIStore((s) => s.model);
+  const aiApiKey = useAIStore((s) => s.apiKey);
+  const { text: streamedSummary, push: pushSummary, reset: resetSummary } = useCharStream();
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const summaryAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    summaryAbortRef.current?.abort();
+    summaryAbortRef.current = null;
+    resetSummary();
+    setSummarizing(false);
+    setSummaryError(null);
+    setSummaryOpen(false);
+  }, [message?.id, resetSummary]);
+
+  // Hooks below must run on every render — keep above any conditional returns.
+  // Reads `threadMessages` from state inside the body so deps stay shallow.
+  const handleSummarize = useCallback(async () => {
+    const list = threadMessages;
+    if (list.length === 0) return;
+    summaryAbortRef.current?.abort();
+    const abort = new AbortController();
+    summaryAbortRef.current = abort;
+    resetSummary();
+    setSummaryError(null);
+    setSummarizing(true);
+    setSummaryOpen(true);
+
+    const activeBody =
+      message?.bodyHtml ?? message?.bodyText ?? message?.snippet ?? '';
+    const concatenated = list
+      .map((m) => {
+        const sender = m.fromName ? `${m.fromName} <${m.fromEmail}>` : m.fromEmail;
+        const isActive = m.id === message?.id;
+        const content = isActive && activeBody ? activeBody : (m.snippet ?? '');
+        const tag = isActive && activeBody ? '(opened)' : '(snippet)';
+        return `From: ${sender}\nDate: ${m.receivedAt} ${tag}\n\n${content}`;
+      })
+      .join('\n\n---\n\n');
+
+    try {
+      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+      const last = list[list.length - 1];
+      const isThread = list.length > 1;
+      const fn = isThread ? summarizeThread : summarizeMessage;
+      await fn(
+        client,
+        concatenated,
+        {
+          model: aiModel,
+          subject: message?.subject ?? undefined,
+          from: isThread
+            ? `Email thread with ${list.length} messages, oldest first`
+            : (last?.fromName ?? last?.fromEmail ?? ''),
+          signal: abort.signal,
+        },
+        pushSummary,
+      );
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      const m = err instanceof Error ? err.message : String(err);
+      setSummaryError(m);
+    } finally {
+      setSummarizing(false);
+    }
+  }, [threadMessages, aiBaseUrl, aiApiKey, aiModel, message, pushSummary, resetSummary]);
+
+  const closeSummary = useCallback(() => {
+    summaryAbortRef.current?.abort();
+    summaryAbortRef.current = null;
+    setSummaryOpen(false);
+    resetSummary();
+    setSummaryError(null);
+    setSummarizing(false);
+  }, [resetSummary]);
 
   // Overview tab: linked tasks
   const [linkedTasks, setLinkedTasks] = useState<Task[]>([]);
@@ -313,6 +405,7 @@ export default function ThreadView({
       onMoveToFolder={onMoveToFolder}
       onMute={onMute}
       isMuted={isMuted}
+      onSnooze={onSnooze}
     />
   );
 
@@ -400,7 +493,7 @@ export default function ThreadView({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden relative">
       {/* Thread header */}
       <ThreadHeader
         subject={message.subject}
@@ -414,6 +507,9 @@ export default function ThreadView({
         onReply={() => onComposeWith('reply', lastMessage)}
         onReplyAll={() => onComposeWith('replyAll', lastMessage)}
         onForward={() => onComposeWith('forward', lastMessage)}
+        onSummarize={aiEnabled ? handleSummarize : undefined}
+        summarizing={summarizing}
+        onQuickReply={aiEnabled && onQuickReply ? () => onQuickReply(lastMessage) : undefined}
       />
 
       {/* Tab bar + Expand All */}
@@ -679,6 +775,7 @@ export default function ThreadView({
                 key={msg.id}
                 message={msg}
                 isExpanded={!msg.isDraft && (expandAll || expandedId === msg.id)}
+                isOnlyMessage={threadMessages.length === 1}
                 onToggle={() => { if (!msg.isDraft) toggleMessage(msg.id); }}
                 onReply={(detail) => onComposeWith('reply', detail ?? msg)}
                 onReplyAll={(detail) => onComposeWith('replyAll', detail ?? msg)}
@@ -869,6 +966,58 @@ export default function ThreadView({
           </div>
         )}
       </div>
+
+      {aiEnabled && (
+        <aside
+          aria-hidden={!summaryOpen}
+          className={cn(
+            'absolute top-3 right-3 w-[340px] xl:w-[380px] max-h-[55vh] z-20',
+            'rounded-xl border border-border/40 bg-card shadow-xl',
+            'flex flex-col overflow-hidden',
+            'transition-all duration-200 ease-out',
+            'hidden lg:flex',
+            summaryOpen
+              ? 'translate-x-0 opacity-100 scale-100'
+              : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
+          )}
+        >
+          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
+            <Sparkles className="w-3.5 h-3.5 text-primary" />
+            <span className="text-[12px] font-semibold text-foreground">
+              {threadMessages.length > 1 ? 'Thread summary' : 'Summary'}
+            </span>
+            {summarizing && (
+              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
+            )}
+            <button
+              onClick={closeSummary}
+              className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
+              aria-label="Close summary"
+            >
+              <XIconSmall className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-3.5 py-3">
+            {threadMessages.length > 1 && (
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1.5">
+                {threadMessages.length} messages
+              </p>
+            )}
+            {summaryError ? (
+              <div className="text-[12px] text-destructive">
+                {summaryError}{' '}
+                <button onClick={handleSummarize} className="underline ml-1">
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <p className="text-[12.5px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+                {streamedSummary || (summarizing ? 'Thinking…' : '')}
+              </p>
+            )}
+          </div>
+        </aside>
+      )}
     </div>
   );
 }

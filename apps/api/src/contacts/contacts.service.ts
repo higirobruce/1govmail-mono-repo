@@ -132,27 +132,32 @@ export class ContactsService {
     userId: string,
     query: string,
   ): Promise<Array<{ email: string; display: string }>> {
+    const q = (query ?? '').trim();
+    if (!q) return [];
     const user = await this.getUser(userId);
-    const [personal, gal] = await Promise.all([
+    const [personal, gal, history] = await Promise.all([
       this.zimbra.autoCompleteContacts(
         user.zimbraHost,
         user.authToken!,
-        query,
+        q,
         user.csrfToken ?? undefined,
       ),
       this.zimbra.searchGal(
         user.zimbraHost,
         user.authToken!,
-        query,
+        q,
         user.csrfToken ?? undefined,
       ),
+      this.autocompleteFromHistory(userId, q),
     ]);
 
-    // Merge: personal contacts first (they have richer display names), then
-    // append any GAL entries not already covered.
+    // Merge priority: Zimbra personal contacts + GAL first (richer display names
+    // and organisational data), then fill in any addresses the user has seen in
+    // their mail history — this matches Zimbra Web Client's behaviour where
+    // previously-emailed-with addresses autocomplete even without being saved.
     const seen = new Set<string>();
     const merged: Array<{ email: string; display: string }> = [];
-    for (const item of [...personal, ...gal]) {
+    for (const item of [...personal, ...gal, ...history]) {
       const key = item.email.toLowerCase();
       if (!seen.has(key)) {
         seen.add(key);
@@ -160,6 +165,88 @@ export class ContactsService {
       }
     }
     return merged.slice(0, 20);
+  }
+
+  /**
+   * Search the user's own mail history for addresses matching the query —
+   * covers senders of received mail and recipients of sent mail, so the user
+   * can autocomplete anyone they've corresponded with even if that person
+   * isn't saved as a contact or in the GAL.
+   *
+   * Postgres-specific: identifiers are camelCase in the schema so they need
+   * double-quoting (otherwise Postgres folds to lowercase), and we use ILIKE
+   * for case-insensitive matching. JSONB recipient columns are cast to text
+   * so LIKE works — good enough since we re-filter each entry in JS below.
+   */
+  private async autocompleteFromHistory(
+    userId: string,
+    query: string,
+  ): Promise<Array<{ email: string; display: string }>> {
+    const q = query.trim();
+    if (q.length < 2) return [];
+    const like = `%${q.replace(/[%_\\]/g, '\\$&')}%`;
+
+    type Row = {
+      fromEmail: string;
+      fromName: string | null;
+      toRecipients: unknown;
+      ccRecipients: unknown;
+      bccRecipients: unknown;
+    };
+    let rows: Row[] = [];
+    try {
+      rows = await this.prisma.$queryRaw<Row[]>`
+        SELECT "fromEmail", "fromName", "toRecipients", "ccRecipients", "bccRecipients"
+        FROM messages
+        WHERE "userId" = ${userId}
+          AND (
+            "fromEmail"              ILIKE ${like} OR
+            "fromName"               ILIKE ${like} OR
+            "toRecipients"::text     ILIKE ${like} OR
+            "ccRecipients"::text     ILIKE ${like} OR
+            "bccRecipients"::text    ILIKE ${like}
+          )
+        ORDER BY "receivedAt" DESC
+        LIMIT 300
+      `;
+    } catch (err: any) {
+      // Never throw — autocomplete must degrade gracefully to Zimbra-only results
+      console.warn(`autocompleteFromHistory: ${err?.message ?? err}`);
+      return [];
+    }
+
+    const qLower = q.toLowerCase();
+    const map = new Map<string, { email: string; display: string }>();
+    const consider = (email?: string | null, name?: string | null) => {
+      if (!email) return;
+      const trimmed = email.trim();
+      if (!trimmed) return;
+      const hay = `${trimmed} ${name ?? ''}`.toLowerCase();
+      if (!hay.includes(qLower)) return;
+      const key = trimmed.toLowerCase();
+      if (map.has(key)) return;
+      const display = name && name.trim() && name.trim() !== trimmed ? name.trim() : trimmed;
+      map.set(key, { email: trimmed, display });
+    };
+
+    // JSONB columns are returned as already-parsed objects/arrays by the pg driver.
+    const toArray = (v: unknown): Array<{ email?: string; name?: string | null }> => {
+      if (Array.isArray(v)) return v as any[];
+      if (typeof v === 'string') {
+        try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+      }
+      return [];
+    };
+
+    for (const r of rows) {
+      consider(r.fromEmail, r.fromName);
+      for (const field of [r.toRecipients, r.ccRecipients, r.bccRecipients]) {
+        for (const entry of toArray(field)) consider(entry?.email, entry?.name ?? null);
+      }
+      if (map.size >= 40) break;
+    }
+
+    return Array.from(map.values());
   }
 
   // ── List / sync ────────────────────────────────────────────────────────────

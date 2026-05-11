@@ -1,28 +1,31 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
-// ElectronTitleBarLoader is a Client Component that wraps ElectronTitleBar with
-// next/dynamic ssr:false — keeping it 100 % browser-only so it never runs
-// during Next.js prerendering (including the /_global-error static page).
 import { ElectronTitleBarLoader } from "@/components/layout/ElectronTitleBarLoader";
+import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+// Inter with `latin-ext` so Kinyarwanda and French diacritics render correctly
+// (e.g. "Nyarugenge", "Rwandais"). `variable` exposes the font as
+// `--font-inter`, consumed by Tailwind via globals.css.
+const inter = Inter({
+  variable: "--font-inter",
+  subsets: ["latin", "latin-ext"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
+  subsets: ["latin", "latin-ext"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
   title: "1Gov Mail",
-  description: "A modern Zimbra email client",
+  description: "Government of Rwanda — secure email, calendar, and documents",
 };
 
 export default function RootLayout({
@@ -33,10 +36,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}
       >
-        {/* Renders a drag-region title bar only in the Electron desktop app on macOS */}
         <ElectronTitleBarLoader />
+        <ServiceWorkerRegister />
         <QueryProvider>
         <ThemeProvider>
         <TooltipProvider delayDuration={300}>

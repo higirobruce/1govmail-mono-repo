@@ -330,6 +330,17 @@ export const api = {
       if (USE_MOCK) return delay({ success: true });
       return request<any>(`/mail/folders/${folderId}`, { method: 'DELETE' });
     },
+    emptyFolder: (folderId: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<any>(`/mail/folders/${folderId}/empty`, { method: 'POST' });
+    },
+    renameFolder: (folderId: string, name: string) => {
+      if (USE_MOCK) return delay({ id: folderId, name });
+      return request<any>(`/mail/folders/${folderId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      });
+    },
     /**
      * Download an attachment and return a blob object-URL.
      * The caller must call URL.revokeObjectURL(url) when the download is done.
@@ -651,25 +662,90 @@ export const api = {
       return request<Doc[]>('/docs');
     },
     getOne: (id: string) => {
-      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, parentId: null, position: 0, isFavorite: false, tags: [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>(`/docs/${id}`);
     },
-    create: (data?: { title?: string; emoji?: string }) => {
-      if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: data?.title ?? 'Untitled', emoji: data?.emoji ?? null, position: 0, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    create: (data?: { title?: string; emoji?: string; parentId?: string; content?: string; tags?: string[] }) => {
+      if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: data?.title ?? 'Untitled', emoji: data?.emoji ?? null, parentId: data?.parentId ?? null, position: 0, isFavorite: false, tags: data?.tags ?? [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>('/docs', { method: 'POST', body: JSON.stringify(data ?? {}) });
     },
-    update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number }>) => {
-      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, position: 0, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number; parentId: string | null; isFavorite: boolean; tags: string[]; coverColor: string | null }>) => {
+      if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, parentId: null, position: 0, isFavorite: false, tags: [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>(`/docs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
     },
     delete: (id: string) => {
       if (USE_MOCK) return delay({ success: true });
       return request<{ success: boolean }>(`/docs/${id}`, { method: 'DELETE' });
     },
+    duplicate: (id: string) => {
+      if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: 'Untitled (copy)', emoji: null, parentId: null, position: 0, isFavorite: false, tags: [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      return request<Doc>(`/docs/${id}/duplicate`, { method: 'POST' });
+    },
+    toggleFavorite: (id: string) => {
+      if (USE_MOCK) return delay({ id, isFavorite: true });
+      return request<{ id: string; isFavorite: boolean }>(`/docs/${id}/favorite`, { method: 'PATCH' });
+    },
+    getSharedWithMe: () => {
+      if (USE_MOCK) return delay<InvitedDoc[]>([]);
+      return request<InvitedDoc[]>('/docs/shared-with-me');
+    },
     share: {
       enable:  (id: string) => request<{ shareToken: string; isShared: boolean }>(`/docs/${id}/share`, { method: 'POST' }),
       disable: (id: string) => request<{ shareToken: null; isShared: false }>(`/docs/${id}/share`, { method: 'DELETE' }),
     },
+    invites: {
+      list: (docId: string) => request<DocInvite[]>(`/docs/${docId}/invites`),
+      add:  (docId: string, data: { email: string; role: 'VIEWER' | 'EDITOR' }) =>
+        request<DocInvite>(`/docs/${docId}/invites`, { method: 'POST', body: JSON.stringify(data) }),
+      updateRole: (docId: string, inviteId: string, role: 'VIEWER' | 'EDITOR') =>
+        request<DocInvite>(`/docs/${docId}/invites/${inviteId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+      remove: (docId: string, inviteId: string) =>
+        request<{ success: boolean }>(`/docs/${docId}/invites/${inviteId}`, { method: 'DELETE' }),
+    },
+    members: {
+      list: (docId: string) => request<{ id: string; displayName: string | null; email: string }[]>(`/docs/${docId}/members`),
+    },
+    comments: {
+      list: (docId: string) => request<any[]>(`/docs/${docId}/comments`),
+      create: (docId: string, data: { anchorId: string; content: string; parentId?: string }) =>
+        request<any>(`/docs/${docId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
+      update: (docId: string, commentId: string, data: { content?: string; resolved?: boolean }) =>
+        request<any>(`/docs/${docId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      delete: (docId: string, commentId: string) =>
+        request<{ success: boolean }>(`/docs/${docId}/comments/${commentId}`, { method: 'DELETE' }),
+      toggleReaction: (docId: string, commentId: string, emoji: string) =>
+        request<any[]>(`/docs/${docId}/comments/${commentId}/reactions`, { method: 'POST', body: JSON.stringify({ emoji }) }),
+    },
+    versions: {
+      list: (docId: string) => request<any[]>(`/docs/${docId}/versions`),
+      get: (docId: string, versionId: string) => request<any>(`/docs/${docId}/versions/${versionId}`),
+      restore: (docId: string, versionId: string) =>
+        request<{ success: boolean }>(`/docs/${docId}/versions/${versionId}/restore`, { method: 'POST' }),
+    },
+    activity: {
+      list: (docId: string) => request<any[]>(`/docs/${docId}/activity`),
+    },
+    /**
+     * Diagnostic endpoint — returns REST `content` vs Yjs `yjsState` stats
+     * plus image-node counts for one doc. Used by the `?debug=docs` overlay
+     * to diagnose images-not-rendering-in-prod issues.
+     */
+    debug: (docId: string) =>
+      request<{
+        id: string;
+        title: string;
+        createdAt: string;
+        updatedAt: string;
+        content: {
+          bytes: number;
+          isValidJson: boolean;
+          imageCount: number;
+          imageBytesTotal: number;
+          images: Array<{ srcBytes: number; srcPrefix: string; alt: string | null }>;
+        };
+        yjsState: { bytes: number; present: boolean };
+        drift: { likelyStale: boolean };
+      }>(`/docs/${docId}/debug`),
   },
 
   shared: {
@@ -684,9 +760,41 @@ export interface Doc {
   title: string;
   emoji: string | null;
   content?: string;
+  parentId: string | null;
   position: number;
+  isFavorite: boolean;
+  tags: string[];
+  coverColor: string | null;
   shareToken: string | null;
   isShared: boolean;
   createdAt: string;
   updatedAt: string;
+  /** Present when the requesting user is an invitee (not the owner) */
+  _invite?: { role: 'VIEWER' | 'EDITOR' };
+}
+
+export interface DocInvite {
+  id: string;
+  invitedEmail: string;
+  role: 'VIEWER' | 'EDITOR';
+  createdAt: string;
+  inviter?: { displayName: string | null; email: string };
+}
+
+export interface InvitedDoc {
+  id: string;
+  title: string;
+  emoji: string | null;
+  coverColor: string | null;
+  tags: string[];
+  isShared: boolean;
+  shareToken: string | null;
+  createdAt: string;
+  updatedAt: string;
+  _invite: {
+    id: string;
+    role: 'VIEWER' | 'EDITOR';
+    invitedByName: string;
+    invitedByEmail: string;
+  };
 }

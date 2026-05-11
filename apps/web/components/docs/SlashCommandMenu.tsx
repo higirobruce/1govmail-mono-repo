@@ -7,6 +7,7 @@ import {
   Table, Code, Quote, Minus,
   Lightbulb, ChevronRight,
   LayoutGrid, LayoutList, GalleryHorizontal, GanttChart, CalendarDays,
+  Image, Globe, Sigma, GitBranch,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Editor, Range } from '@tiptap/core';
@@ -139,6 +140,60 @@ export const SLASH_COMMANDS: SlashCommandItem[] = [
     category: 'Basic Blocks',
     command: ({ editor, range }) =>
       editor.chain().focus().deleteRange(range).setHorizontalRule().run(),
+  },
+
+  // ── Media & Embeds ────────────────────────────────────────────────────────
+  {
+    title: 'Image',
+    description: 'Upload or embed an image',
+    icon: <Image className="w-3.5 h-3.5" />,
+    keywords: ['image', 'photo', 'picture', 'upload', 'img'],
+    category: 'Media',
+    command: ({ editor, range }) => {
+      editor.chain().focus().deleteRange(range).run();
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+          const res = await fetch('/upload/image', { method: 'POST', body: formData });
+          const { url } = await res.json();
+          editor.chain().focus().setImage({ src: url, alt: file.name }).run();
+        } catch { /* ignore */ }
+      };
+      input.click();
+    },
+  },
+  {
+    title: 'Embed',
+    description: 'YouTube, Figma, Loom, Google Maps',
+    icon: <Globe className="w-3.5 h-3.5" />,
+    keywords: ['embed', 'youtube', 'figma', 'loom', 'maps', 'video', 'iframe', 'url'],
+    category: 'Media',
+    command: ({ editor, range }) =>
+      editor.chain().focus().deleteRange(range).insertEmbed().run(),
+  },
+  {
+    title: 'Math Equation',
+    description: 'LaTeX-powered math expression',
+    icon: <Sigma className="w-3.5 h-3.5" />,
+    keywords: ['math', 'equation', 'latex', 'formula', 'katex', 'sigma', 'integral'],
+    category: 'Media',
+    command: ({ editor, range }) =>
+      editor.chain().focus().deleteRange(range).insertMathBlock().run(),
+  },
+  {
+    title: 'Diagram',
+    description: 'Mermaid flowchart or sequence diagram',
+    icon: <GitBranch className="w-3.5 h-3.5" />,
+    keywords: ['diagram', 'mermaid', 'flowchart', 'sequence', 'graph', 'chart', 'flow'],
+    category: 'Media',
+    command: ({ editor, range }) =>
+      editor.chain().focus().deleteRange(range).insertMermaidBlock().run(),
   },
 
   // ── Table ─────────────────────────────────────────────────────────────────

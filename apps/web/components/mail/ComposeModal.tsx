@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import { TextStyle } from '@tiptap/extension-text-style';
@@ -20,10 +20,18 @@ import { DateTimePicker } from '@/components/ui/date-time-picker';
 import {
   X, Send, Loader2, ChevronDown, ChevronUp, Minus,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Link2, Paperclip,
-  Clock, FileText, Calendar,
+  Clock, FileText, Calendar, Files, Sparkles,
 } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, type Doc } from '@/lib/api';
+import { sanitizeEmailHtml } from '@/lib/sanitize';
+import { generateDocPdfBlob } from '@/lib/docExport';
+import { EmailChipInput } from './EmailChipInput';
+import { DocPickerDialog, type DocAttachMode } from './DocPickerDialog';
 import { useAuthStore } from '@/stores/auth.store';
+import { useAIStore } from '@/stores/ai.store';
+import { AIClient } from '@/lib/ai/client';
+import { rewriteText, type RewriteMode, htmlToPlainText, suggestReply } from '@/lib/ai/tasks';
+import { useCharStream } from '@/lib/ai/useCharStream';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -62,9 +70,11 @@ export interface ComposeMessage {
   fromName: string | null;
   toRecipients: Array<{ email: string; name?: string }>;
   ccRecipients: Array<{ email: string; name?: string }>;
+  bccRecipients?: Array<{ email: string; name?: string }>;
   bodyHtml: string | null;
   bodyText: string | null;
   receivedAt: string;
+  attachments?: Array<{ id: string; filename: string; mimeType: string; size: number }>;
 }
 
 interface ComposeModalProps {
@@ -80,125 +90,13 @@ interface ComposeModalProps {
   initialBcc?: string[];
   initialSubject?: string;
   initialBody?: string;
+  /** When true and originalMessage is present, automatically run Suggest Reply
+   *  once the modal opens. Used by the thread toolbar's Quick Reply action. */
+  autoSuggestReply?: boolean;
 }
 
 // ── Email chip input ──────────────────────────────────────────────────────────
-
-interface ContactSuggestion {
-  email: string;
-  display: string;
-}
-
-function EmailChipInput({
-  label,
-  value,
-  onChange,
-  placeholder,
-  autoFocus,
-}: {
-  label: string;
-  value: string[];
-  onChange: (emails: string[]) => void;
-  placeholder?: string;
-  autoFocus?: boolean;
-}) {
-  const [input, setInput] = useState('');
-  const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
-  const [activeIdx, setActiveIdx] = useState(-1);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (autoFocus) inputRef.current?.focus();
-  }, [autoFocus]);
-
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (input.trim().length < 2) {
-      setSuggestions([]);
-      setActiveIdx(-1);
-      setLoadingSuggestions(false);
-      return;
-    }
-    setLoadingSuggestions(true);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const results = await api.contacts.autocomplete(input.trim());
-        setSuggestions(results.filter((r) => !value.includes(r.email)));
-      } catch {
-        setSuggestions([]);
-      } finally {
-        setLoadingSuggestions(false);
-        setActiveIdx(-1);
-      }
-    }, 280);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const closeSuggestions = () => { setSuggestions([]); setActiveIdx(-1); setLoadingSuggestions(false); };
-  const commit = (raw: string) => {
-    const email = raw.trim().replace(/,+$/, '');
-    if (email && !value.includes(email)) onChange([...value, email]);
-    setInput(''); closeSuggestions();
-  };
-  const selectSuggestion = (s: ContactSuggestion) => {
-    if (!value.includes(s.email)) onChange([...value, s.email]);
-    setInput(''); closeSuggestions(); inputRef.current?.focus();
-  };
-
-  const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    const hasSuggestions = suggestions.length > 0;
-    if (e.key === 'ArrowDown' && hasSuggestions) { e.preventDefault(); setActiveIdx((p) => (p + 1) % suggestions.length); return; }
-    if (e.key === 'ArrowUp' && hasSuggestions) { e.preventDefault(); setActiveIdx((p) => (p <= 0 ? suggestions.length - 1 : p - 1)); return; }
-    if (e.key === 'Escape') { closeSuggestions(); return; }
-    if ((e.key === 'Enter' || e.key === 'Tab') && hasSuggestions && activeIdx >= 0) { e.preventDefault(); selectSuggestion(suggestions[activeIdx]); return; }
-    if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') { e.preventDefault(); commit(input); }
-    else if (e.key === 'Backspace' && input === '' && value.length > 0) { onChange(value.slice(0, -1)); }
-  };
-
-  const showDropdown = loadingSuggestions || suggestions.length > 0;
-  return (
-    <div className="flex items-start gap-2 min-h-[36px]">
-      <Label className="text-xs font-medium text-muted-foreground/60 uppercase tracking-wider shrink-0 pt-2 w-14 text-right">{label}</Label>
-      <div className="relative flex-1">
-        <div className="flex flex-wrap gap-1.5 px-3 py-1.5 bg-muted/30 border border-border/50 rounded-lg cursor-text min-h-[36px]" onClick={() => inputRef.current?.focus()}>
-          {value.map((email) => (
-            <span key={email} className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 border border-primary/20 text-primary text-xs rounded-full">
-              {email}
-              <button type="button" onClick={(e) => { e.stopPropagation(); onChange(value.filter((v) => v !== email)); }} className="text-primary/60 hover:text-primary leading-none"><X className="w-3 h-3" /></button>
-            </span>
-          ))}
-          <input ref={inputRef} type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKey}
-            onBlur={() => setTimeout(() => { if (!dropdownRef.current?.contains(document.activeElement)) { if (input.trim()) commit(input); else closeSuggestions(); } }, 150)}
-            placeholder={value.length === 0 ? placeholder : ''}
-            className="flex-1 min-w-[140px] bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/40"
-          />
-        </div>
-        {showDropdown && (
-          <div ref={dropdownRef} className="absolute left-0 right-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-lg shadow-lg overflow-hidden">
-            {loadingSuggestions && suggestions.length === 0 ? (
-              <div className="flex items-center gap-2 px-3 py-2.5 text-xs text-muted-foreground/50"><Loader2 className="w-3 h-3 animate-spin" />Searching…</div>
-            ) : (
-              <ul className="max-h-52 overflow-y-auto py-1">
-                {suggestions.map((s, i) => (
-                  <li key={s.email}>
-                    <button type="button" onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
-                      className={`w-full text-left px-3 py-2 flex flex-col gap-0.5 transition-colors ${i === activeIdx ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/60 text-foreground'}`}>
-                      <span className="text-xs font-medium leading-tight truncate">{s.display !== s.email ? s.display : ''}</span>
-                      <span className={`text-xs leading-tight truncate ${s.display !== s.email ? 'text-muted-foreground/60' : 'font-medium'}`}>{s.email}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+// Defined in EmailChipInput.tsx — imported below with other components.
 
 // ── Toolbar button ────────────────────────────────────────────────────────────
 
@@ -251,9 +149,20 @@ function buildHtmlBody(userHtml: string, mode: ComposeMode, original?: ComposeMe
   // Strip document-level wrapper tags from the original body so that nesting
   // it inside a <blockquote> produces valid HTML and does not confuse the
   // greedy extractBodyContent() regex when the reply is later rendered.
-  const quoteContent = original.bodyHtml
+  // Strip data: URI images from the quoted content before sending.
+  // The original message's inline images (signatures, etc.) are already stored
+  // in Zimbra — embedding them as base64 in the reply body would create a
+  // massive payload and they don't need to be re-uploaded.
+  const rawQuote = original.bodyHtml
     ? stripHtmlDocWrapper(original.bodyHtml)
     : (original.bodyText ? `<pre style="font-family:inherit;white-space:pre-wrap;margin:0">${original.bodyText}</pre>` : '');
+  // Strip nested blockquotes (previous thread history) — only preserve the direct
+  // parent's new content. Nested <blockquote> elements are the older parts of the
+  // thread chain; including them causes exponential HTML growth across many replies.
+  // This matches how Gmail/Outlook handle multi-level reply threads.
+  const nestedBqStart = rawQuote.search(/<blockquote/i);
+  const directParentContent = nestedBqStart !== -1 ? rawQuote.slice(0, nestedBqStart) : rawQuote;
+  const quoteContent = directParentContent.replace(/src=["']data:[^"']*["']/gi, 'src=""');
   const quote = `<blockquote style="margin:4px 0 0 .8ex;border-left:2px solid #555;padding-left:1ex;color:#aaa;">${quoteContent}</blockquote>`;
   return `${userHtml}${header}${quote}`;
 }
@@ -262,6 +171,38 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
+/**
+ * Find where the signature begins in the editor's document, if it does.
+ *
+ * The signature is inserted as `<div data-sig="1">…</div>` but TipTap's
+ * default schema strips the wrapper, so we can't query by attribute. We
+ * fall back to text-matching: look for the first ~60 chars of the
+ * signature's plain text inside the doc, and clip the rewrite range to
+ * the start of the block that contains it. Returns the doc position to
+ * use as the upper bound, or null if no signature is detectable.
+ */
+function findSignatureBoundary(editor: Editor, signatureHtml: string): number | null {
+  const sigPlain = htmlToPlainText(signatureHtml).trim();
+  if (!sigPlain) return null;
+  const firstLine = sigPlain.split(/\n+/).find((l) => l.trim().length >= 4);
+  if (!firstLine) return null;
+  const needle = firstLine.trim().slice(0, 60);
+
+  let foundPos: number | null = null;
+  editor.state.doc.descendants((node, pos) => {
+    if (foundPos != null) return false;
+    if (node.isText && node.text && node.text.includes(needle)) {
+      foundPos = pos + node.text.indexOf(needle);
+      return false;
+    }
+    return true;
+  });
+  if (foundPos == null) return null;
+
+  const $pos = editor.state.doc.resolve(foundPos);
+  return $pos.before($pos.depth);
 }
 
 // ── Font options ──────────────────────────────────────────────────────────────
@@ -284,6 +225,7 @@ const TITLE: Record<ComposeMode, string> = { new: 'New Message', reply: 'Reply',
 export default function ComposeModal({
   open, mode, originalMessage, onClose, onSent,
   initialDraftZimbraId, initialTo, initialCc, initialBcc, initialSubject, initialBody,
+  autoSuggestReply,
 }: ComposeModalProps) {
   const user = useAuthStore((s) => s.user);
 
@@ -343,7 +285,6 @@ export default function ComposeModal({
   const [cc, setCc] = useState<string[]>([]);
   const [bcc, setBcc] = useState<string[]>([]);
   const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
   const [showCcBcc, setShowCcBcc] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -355,6 +296,9 @@ export default function ComposeModal({
   // ── Scheduled send ─────────────────────────────────────────────────────────
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState('');
+
+  // ── Doc attach ────────────────────────────────────────────────────────────
+  const [showDocPicker, setShowDocPicker] = useState(false);
 
   // ── Templates ─────────────────────────────────────────────────────────────
   const [showTemplates, setShowTemplates] = useState(false);
@@ -376,8 +320,41 @@ export default function ComposeModal({
     return () => document.removeEventListener('mousedown', handler);
   }, [showTemplates]);
 
+  // ── Rewrite (AI) ──────────────────────────────────────────────────────────
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiBaseUrl = useAIStore((s) => s.baseUrl);
+  const aiModel = useAIStore((s) => s.model);
+  const aiApiKey = useAIStore((s) => s.apiKey);
+  const [showRewrite, setShowRewrite] = useState(false);
+  const rewriteRef = useRef<HTMLDivElement>(null);
+  const [rewriteOriginal, setRewriteOriginal] = useState<string>(''); // plain text snapshot
+  const [rewriteRange, setRewriteRange] = useState<{ from: number; to: number } | null>(null);
+  const [rewriteOpen, setRewriteOpen] = useState(false);
+  const [rewriting, setRewriting] = useState(false);
+  const [rewriteMode, setRewriteMode] = useState<RewriteMode>('paraphrase');
+  const [rewriteError, setRewriteError] = useState<string | null>(null);
+  const [aiAction, setAiAction] = useState<'rewrite' | 'suggest'>('rewrite');
+  const {
+    text: rewriteText_,
+    push: pushRewrite,
+    reset: resetRewrite,
+  } = useCharStream();
+  const rewriteAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!showRewrite) return;
+    const handler = (e: MouseEvent) => {
+      if (rewriteRef.current && !rewriteRef.current.contains(e.target as Node)) setShowRewrite(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showRewrite]);
+
   // ── Attachments ────────────────────────────────────────────────────────────
   const [attachments, setAttachments] = useState<File[]>([]);
+  // Attachments from the original message carried forward (forward mode only).
+  // Stored as { id (part), filename, mimeType, size } referencing the original msg.
+  const [forwardedAttachments, setForwardedAttachments] = useState<Array<{ id: string; filename: string; mimeType: string; size: number }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
 
@@ -387,7 +364,6 @@ export default function ComposeModal({
   // ── Draft auto-save state ─────────────────────────────────────────────────
   const [savedDraftId, setSavedDraftId] = useState<string | null>(null);
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Ref so handleSend can be called from the TipTap keydown handler without stale closure
@@ -425,9 +401,6 @@ export default function ComposeModal({
       Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { class: 'text-primary underline' } }),
     ],
     content: '',
-    onUpdate({ editor: ed }) {
-      setBody(ed.getHTML());
-    },
     editorProps: {
       attributes: {
         class: [
@@ -461,6 +434,7 @@ export default function ComposeModal({
     setError(null);
     setSending(false);
     setAttachments([]);
+    setForwardedAttachments([]);
     setSavedDraftId(initialDraftZimbraId ?? null);
     setDraftStatus('idle');
     setMinimised(false);
@@ -477,7 +451,7 @@ export default function ComposeModal({
         return;
       }
       setTo([]); setCc([]); setBcc([]);
-      setSubject(''); setBody('');
+      setSubject('');
       setShowCcBcc(false);
       editor?.commands.setContent('<p></p>');
       setTimeout(() => editor?.commands.focus(), 50);
@@ -485,26 +459,55 @@ export default function ComposeModal({
     }
 
     const origSubject = originalMessage.subject ?? '(no subject)';
-    const selfEmail = user?.email ?? '';
+    const norm = (e: string) => e.trim().toLowerCase();
+    const selfEmail = norm(user?.email ?? '');
+    const origTo = (originalMessage.toRecipients ?? []).map((r) => r.email).filter(Boolean);
+    const origCc = (originalMessage.ccRecipients ?? []).map((r) => r.email).filter(Boolean);
+    const origBcc = (originalMessage.bccRecipients ?? []).map((r) => r.email).filter(Boolean);
+    // The user is replying to their own sent message — treat original To as the reply target.
+    const isOwnMessage = !!selfEmail && norm(originalMessage.fromEmail) === selfEmail;
+
+    // Dedupe preserving first occurrence; everything compared case-insensitively.
+    const dedupe = (list: string[]) => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const e of list) {
+        const k = norm(e);
+        if (k && !seen.has(k)) { seen.add(k); out.push(e); }
+      }
+      return out;
+    };
+    const excludeSelf = (list: string[]) => list.filter((e) => norm(e) !== selfEmail);
 
     if (mode === 'reply') {
-      setTo([originalMessage.fromEmail]); setCc([]); setBcc([]);
+      const toList = isOwnMessage ? dedupe(excludeSelf(origTo)) : [originalMessage.fromEmail];
+      setTo(toList); setCc([]); setBcc([]);
       setSubject(origSubject.match(/^Re:/i) ? origSubject : `Re: ${origSubject}`);
       setShowCcBcc(false);
     } else if (mode === 'replyAll') {
-      const toList = [originalMessage.fromEmail, ...originalMessage.toRecipients.map((r) => r.email).filter((e) => e !== selfEmail)];
-      const ccList = originalMessage.ccRecipients.map((r) => r.email).filter((e) => e !== selfEmail);
-      setTo(toList); setCc(ccList); setBcc([]);
-      setShowCcBcc(ccList.length > 0);
+      const toSeed = isOwnMessage
+        ? excludeSelf(origTo)
+        : [originalMessage.fromEmail, ...excludeSelf(origTo)];
+      const toList = dedupe(toSeed);
+      const toSet = new Set(toList.map(norm));
+      const ccList = dedupe(excludeSelf(origCc)).filter((e) => !toSet.has(norm(e)));
+      // Include Bcc only when replying to our own sent message (where we have the Bcc list).
+      const bccList = isOwnMessage
+        ? dedupe(excludeSelf(origBcc)).filter((e) => !toSet.has(norm(e)) && !ccList.some((c) => norm(c) === norm(e)))
+        : [];
+      setTo(toList); setCc(ccList); setBcc(bccList);
+      setShowCcBcc(ccList.length > 0 || bccList.length > 0);
       setSubject(origSubject.match(/^Re:/i) ? origSubject : `Re: ${origSubject}`);
     } else if (mode === 'forward') {
+      // Forward should not carry over any recipients — forwarding to someone new
+      // with the original Cc/Bcc would leak addresses from the prior thread.
       setTo([]); setCc([]); setBcc([]);
-      setSubject(origSubject.match(/^Fwd:/i) ? origSubject : `Fwd: ${origSubject}`);
       setShowCcBcc(false);
+      setSubject(origSubject.match(/^Fwd:/i) ? origSubject : `Fwd: ${origSubject}`);
+      setForwardedAttachments(originalMessage.attachments ?? []);
     }
 
     editor?.commands.setContent('<p></p>');
-    setBody('');
     if (mode !== 'forward') {
       setTimeout(() => editor?.commands.focus(), 50);
     }
@@ -537,39 +540,316 @@ export default function ComposeModal({
     }
   }, [editor, open, signatureHtml, initialDraftZimbraId]);
 
-  // ── Auto-save draft ────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!open || sending) return;
+  // ── Explicit save draft ───────────────────────────────────────────────────
+  // Autosave was removed by product decision: users save drafts explicitly via
+  // the "Save draft" button. Closing the modal does NOT persist a draft — this
+  // prevents clutter in the Drafts folder from stray composes.
+  const handleSaveDraft = async () => {
     const currentBody = editor?.getHTML() ?? '';
-    const hasContent = to.length > 0 || cc.length > 0 || subject.trim().length > 0 || (currentBody && currentBody !== '<p></p>');
-    if (!hasContent) return;
+    const hasContent = to.length > 0 || cc.length > 0 || bcc.length > 0 || subject.trim().length > 0 || (currentBody && currentBody !== '<p></p>');
+    if (!hasContent) { toast.info('Nothing to save'); return; }
+    setDraftStatus('saving');
+    try {
+      const result = await api.mail.saveDraft({
+        to, cc, bcc, subject,
+        body: currentBody,
+        draftId: savedDraftId ?? undefined,
+      });
+      setSavedDraftId(result.zimbraId);
+      setDraftStatus('saved');
+      if (draftStatusTimerRef.current) clearTimeout(draftStatusTimerRef.current);
+      draftStatusTimerRef.current = setTimeout(() => setDraftStatus('idle'), 3000);
+      toast.success('Draft saved');
+    } catch (err: any) {
+      setDraftStatus('idle');
+      toast.error('Failed to save draft', { description: err?.message });
+    }
+  };
 
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(async () => {
-      setDraftStatus('saving');
-      try {
-        const result = await api.mail.saveDraft({
-          to, cc, bcc, subject,
-          body: editor?.getHTML() ?? '',
-          draftId: savedDraftId ?? undefined,
-        });
-        setSavedDraftId(result.zimbraId);
-        setDraftStatus('saved');
-        if (draftStatusTimerRef.current) clearTimeout(draftStatusTimerRef.current);
-        draftStatusTimerRef.current = setTimeout(() => setDraftStatus('idle'), 3000);
-      } catch { setDraftStatus('idle'); }
-    }, 3000);
-
-    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-  }, [to, cc, bcc, subject, body, open]); // eslint-disable-line
+  // ── Attach doc from Docs module ────────────────────────────────────────────
+  // Two modes: "pdf" generates a server-side PDF and adds it to attachments;
+  // "link" enables sharing on the doc (if needed) and inserts a share-link
+  // anchor at the current editor selection.
+  const handleDocAttach = async (doc: Doc, mode: DocAttachMode) => {
+    try {
+      if (mode === 'pdf') {
+        // List endpoint omits `content` for perf — fetch the full doc first.
+        const full = await api.docs.getOne(doc.id);
+        const blob = await generateDocPdfBlob(full.title || 'Untitled', full.content);
+        const safeTitle = (full.title || 'Untitled').replace(/[^a-z0-9 _-]/gi, '_');
+        const file = new File([blob], `${safeTitle}.pdf`, { type: 'application/pdf' });
+        setAttachments((prev) => [...prev, file]);
+        toast.success('Document attached as PDF');
+      } else {
+        let shareToken = doc.shareToken;
+        if (!shareToken) {
+          const res = await api.docs.share.enable(doc.id);
+          shareToken = res.shareToken;
+        }
+        const url = `${window.location.origin}/docs/share/${shareToken}`;
+        const label = `${doc.emoji ? doc.emoji + ' ' : ''}${doc.title || 'Untitled'}`;
+        editor?.chain().focus().insertContent({
+          type: 'paragraph',
+          content: [{ type: 'text', text: label, marks: [{ type: 'link', attrs: { href: url } }] }],
+        }).run();
+        toast.success('Share link inserted');
+      }
+    } catch (err: any) {
+      toast.error('Failed to attach document', { description: err?.message });
+    } finally {
+      setShowDocPicker(false);
+    }
+  };
 
   // ── Discard ────────────────────────────────────────────────────────────────
   const handleDiscard = async () => {
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     if (savedDraftId) api.mail.discardDraft(savedDraftId).catch(() => {});
     setSavedDraftId(null); setDraftStatus('idle');
     onClose();
   };
+
+  // ── Rewrite handlers ──────────────────────────────────────────────────────
+  const handleRewrite = useCallback(
+    async (mode: RewriteMode) => {
+      if (!editor) return;
+      setShowRewrite(false);
+
+      // If the user has selected text, operate on the selection. Otherwise
+      // grab the entire body — but exclude the signature so the rewrite
+      // doesn't clobber it. We snapshot the range so Replace knows where
+      // to put the rewritten output, even if the user clicks elsewhere.
+      const sel = editor.state.selection;
+      const hasSelection = !sel.empty;
+      const sigBoundary = !hasSelection && signatureHtml
+        ? findSignatureBoundary(editor, signatureHtml)
+        : null;
+      const from = hasSelection ? sel.from : 0;
+      const to = hasSelection
+        ? sel.to
+        : (sigBoundary ?? editor.state.doc.content.size);
+      const original = editor.state.doc.textBetween(from, to, '\n').trim();
+
+      if (!original) {
+        toast.error('Nothing to rewrite — type some text first.');
+        return;
+      }
+
+      rewriteAbortRef.current?.abort();
+      const abort = new AbortController();
+      rewriteAbortRef.current = abort;
+      resetRewrite();
+      setRewriteError(null);
+      setRewriteMode(mode);
+      setRewriteOriginal(original);
+      setRewriteRange({ from, to });
+      setRewriteOpen(true);
+      setRewriting(true);
+      setAiAction('rewrite');
+
+      // For replies/forwards, hand the model the message we're responding to
+      // so it can match tone and register without a second LLM call.
+      const contextStr = (() => {
+        if (mode === 'paraphrase' || mode === 'formal' || mode === 'concise' || mode === 'friendly') {
+          if (!originalMessage) return undefined;
+          const fromLabel = originalMessage.fromName
+            ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
+            : originalMessage.fromEmail;
+          const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
+          const fromLine = `From: ${fromLabel}\n`;
+          const body = htmlToPlainText(originalMessage.bodyHtml ?? originalMessage.bodyText ?? '');
+          if (!body) return undefined;
+          return `${subj}${fromLine}\n${body}`;
+        }
+        // Grammar mode is purely local — context could mislead it.
+        return undefined;
+      })();
+
+      try {
+        const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+        await rewriteText(
+          client,
+          original,
+          mode,
+          { model: aiModel, context: contextStr, signal: abort.signal },
+          pushRewrite,
+        );
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        const m = err instanceof Error ? err.message : String(err);
+        setRewriteError(m);
+      } finally {
+        setRewriting(false);
+      }
+    },
+    [editor, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, signatureHtml, originalMessage],
+  );
+
+  const closeRewrite = useCallback(() => {
+    rewriteAbortRef.current?.abort();
+    rewriteAbortRef.current = null;
+    setRewriteOpen(false);
+    resetRewrite();
+    setRewriteError(null);
+    setRewriting(false);
+    setRewriteRange(null);
+  }, [resetRewrite]);
+
+  const applyRewrite = useCallback(() => {
+    if (!editor || !rewriteText_.trim()) return;
+    // Insert as plain paragraphs so we don't accidentally drop unsanitized HTML.
+    const paragraphs = rewriteText_
+      .trim()
+      .split(/\n\n+/)
+      .map((p) => `<p>${p.replace(/\n/g, '<br/>').replace(/</g, '&lt;')}</p>`)
+      .join('');
+    if (aiAction === 'suggest') {
+      // Suggestions go at the very top of the doc so the signature (at the
+      // bottom) is preserved. If the user already typed something, the
+      // suggestion lands above their text — they can edit/move as needed.
+      editor.chain().focus().insertContentAt(0, paragraphs).run();
+      closeRewrite();
+      toast.success('Reply suggestion inserted');
+    } else {
+      if (!rewriteRange) return;
+      editor
+        .chain()
+        .focus()
+        .insertContentAt({ from: rewriteRange.from, to: rewriteRange.to }, paragraphs)
+        .run();
+      closeRewrite();
+      toast.success('Rewrite applied');
+    }
+  }, [editor, rewriteRange, rewriteText_, closeRewrite, aiAction]);
+
+  const handleSuggestReply = useCallback(async () => {
+    if (!editor || !originalMessage) return;
+    setShowRewrite(false);
+
+    rewriteAbortRef.current?.abort();
+    const abort = new AbortController();
+    rewriteAbortRef.current = abort;
+    resetRewrite();
+    setRewriteError(null);
+    setRewriteOriginal('');
+    setRewriteRange(null);
+    setRewriteOpen(true);
+    setRewriting(true);
+    setAiAction('suggest');
+
+    const fromLabel = originalMessage.fromName
+      ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
+      : originalMessage.fromEmail;
+    const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
+    const body = htmlToPlainText(originalMessage.bodyHtml ?? originalMessage.bodyText ?? '');
+    const incoming = `${subj}From: ${fromLabel}\n\n${body}`;
+
+    try {
+      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+      await suggestReply(
+        client,
+        incoming,
+        {
+          model: aiModel,
+          userName: user?.displayName ?? user?.email ?? 'the user',
+          signal: abort.signal,
+        },
+        pushRewrite,
+      );
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      const m = err instanceof Error ? err.message : String(err);
+      setRewriteError(m);
+    } finally {
+      setRewriting(false);
+    }
+  }, [editor, originalMessage, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, user]);
+
+  // Re-run the current AI action with a fresh stream. For rewrite mode we
+  // replay using the snapshotted original text (so the new run sees the
+  // same input even if the editor selection has changed since the click).
+  // Non-zero temperature in the underlying tasks gives meaningfully
+  // different output on each call.
+  const regenerate = useCallback(() => {
+    if (aiAction === 'suggest') {
+      void handleSuggestReply();
+      return;
+    }
+    if (!rewriteOriginal) return;
+
+    rewriteAbortRef.current?.abort();
+    const abort = new AbortController();
+    rewriteAbortRef.current = abort;
+    resetRewrite();
+    setRewriteError(null);
+    setRewriting(true);
+
+    const contextStr = (() => {
+      if (
+        rewriteMode === 'paraphrase' ||
+        rewriteMode === 'formal' ||
+        rewriteMode === 'concise' ||
+        rewriteMode === 'friendly'
+      ) {
+        if (!originalMessage) return undefined;
+        const fromLabel = originalMessage.fromName
+          ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
+          : originalMessage.fromEmail;
+        const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
+        const fromLine = `From: ${fromLabel}\n`;
+        const body = htmlToPlainText(originalMessage.bodyHtml ?? originalMessage.bodyText ?? '');
+        if (!body) return undefined;
+        return `${subj}${fromLine}\n${body}`;
+      }
+      return undefined;
+    })();
+
+    void (async () => {
+      try {
+        const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+        await rewriteText(
+          client,
+          rewriteOriginal,
+          rewriteMode,
+          { model: aiModel, context: contextStr, signal: abort.signal },
+          pushRewrite,
+        );
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        const m = err instanceof Error ? err.message : String(err);
+        setRewriteError(m);
+      } finally {
+        setRewriting(false);
+      }
+    })();
+  }, [
+    aiAction,
+    rewriteOriginal,
+    rewriteMode,
+    originalMessage,
+    aiBaseUrl,
+    aiApiKey,
+    aiModel,
+    pushRewrite,
+    resetRewrite,
+    handleSuggestReply,
+  ]);
+
+  // Auto-trigger Suggest Reply when the modal was opened via the thread
+  // toolbar's Quick Reply button. Fires once per open cycle.
+  const autoSuggestFiredRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      autoSuggestFiredRef.current = false;
+      return;
+    }
+    if (!autoSuggestReply || !originalMessage || !aiEnabled || !editor || autoSuggestFiredRef.current) return;
+    autoSuggestFiredRef.current = true;
+    // Small delay so signature injection and the editor focus settle first.
+    const t = setTimeout(() => {
+      void handleSuggestReply();
+    }, 200);
+    return () => clearTimeout(t);
+  }, [open, autoSuggestReply, originalMessage, aiEnabled, editor, handleSuggestReply]);
 
   // ── Send (with 5-second undo window) ──────────────────────────────────────
   const handleSend = async () => {
@@ -583,7 +863,11 @@ export default function ComposeModal({
       ...(bcc.length > 0 ? { bcc } : {}),
       subject,
       body: finalBody,
-      ...(mode === 'reply' || mode === 'replyAll' ? { replyToId: originalMessage?.id } : {}),
+      ...(mode === 'reply' || mode === 'replyAll' ? { replyToId: originalMessage?.id, replyType: 'r' } : {}),
+      ...(mode === 'forward' ? { replyToId: originalMessage?.id, replyType: 'w' } : {}),
+      ...(mode === 'forward' && forwardedAttachments.length > 0
+        ? { forwardedAttachments: forwardedAttachments.map((a) => ({ mid: originalMessage!.id, part: a.id })) }
+        : {}),
     };
 
     undoCancelledRef.current = false;
@@ -653,10 +937,14 @@ export default function ComposeModal({
   // Keep the ref current so TipTap's keydown handler can call it
   handleSendRef.current = handleSend;
 
-  const quoteHtml = (() => {
+  // Sanitize the quoted original body once per message — DOMPurify on a large
+  // threaded body can take hundreds of ms, so doing it on every keystroke
+  // (which used to happen via the unmemoised JSX call) froze the editor.
+  const sanitizedQuoteHtml = useMemo(() => {
     if (!originalMessage || mode === 'new') return null;
-    return originalMessage.bodyHtml ?? (originalMessage.bodyText ? `<pre style="font-family:inherit;white-space:pre-wrap;font-size:12px">${originalMessage.bodyText}</pre>` : null);
-  })();
+    const raw = originalMessage.bodyHtml ?? (originalMessage.bodyText ? `<pre style="font-family:inherit;white-space:pre-wrap;font-size:12px">${originalMessage.bodyText}</pre>` : null);
+    return raw ? sanitizeEmailHtml(raw) : null;
+  }, [originalMessage, mode]);
 
   const placeholder = mode === 'forward' ? 'Add a message…' : mode === 'new' ? 'Compose your message…' : 'Write your reply…';
 
@@ -689,7 +977,7 @@ export default function ComposeModal({
             {minimised ? <ChevronDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
           </Button>
           <Button variant="ghost" size="sm" onClick={onClose} disabled={sending}
-            className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title="Close — draft is kept">
+            className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title="Close">
             <X className="w-3.5 h-3.5" />
           </Button>
         </div>
@@ -730,10 +1018,23 @@ export default function ComposeModal({
           </div>
 
           {/* ── Attachment pills ── */}
-          {attachments.length > 0 && (
+          {(attachments.length > 0 || forwardedAttachments.length > 0) && (
             <div className="flex flex-wrap gap-1.5 px-5 py-2 border-b border-border/30 bg-muted/10">
+              {/* Forwarded attachments from original message */}
+              {forwardedAttachments.map((att, i) => (
+                <span key={`fwd-${i}`} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 border border-primary/30 text-xs rounded-full max-w-[200px]">
+                  <Paperclip className="w-3 h-3 text-primary/60 shrink-0" />
+                  <span className="truncate">{att.filename}</span>
+                  {att.size > 0 && <span className="text-muted-foreground/40 shrink-0">({formatFileSize(att.size)})</span>}
+                  <button type="button" onClick={() => setForwardedAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    className="text-muted-foreground/60 hover:text-destructive leading-none shrink-0">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+              {/* Newly added attachments */}
               {attachments.map((file, i) => (
-                <span key={i} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-muted/50 border border-border/50 text-xs rounded-full max-w-[200px]">
+                <span key={`new-${i}`} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-muted/50 border border-border/50 text-xs rounded-full max-w-[200px]">
                   <Paperclip className="w-3 h-3 text-muted-foreground/60 shrink-0" />
                   <span className="truncate">{file.name}</span>
                   <span className="text-muted-foreground/40 shrink-0">({formatFileSize(file.size)})</span>
@@ -857,6 +1158,11 @@ export default function ComposeModal({
                   }}
                 />
 
+                {/* Attach doc from Docs module */}
+                <ToolbarBtn title="Attach document" onClick={() => setShowDocPicker(true)}>
+                  <Files className="w-3.5 h-3.5" />
+                </ToolbarBtn>
+
                 {/* Templates */}
                 {(templates as any[]).length > 0 && (
                   <div ref={templatesRef} className="relative">
@@ -890,6 +1196,69 @@ export default function ComposeModal({
                     )}
                   </div>
                 )}
+
+                {/* Rewrite (AI) */}
+                {aiEnabled && (
+                  <div ref={rewriteRef} className="relative">
+                    <ToolbarBtn
+                      title="Rewrite with AI"
+                      onClick={() => setShowRewrite((v) => !v)}
+                      active={showRewrite || rewriteOpen}
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </ToolbarBtn>
+                    {showRewrite && (
+                      <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[200px]">
+                        {originalMessage && (
+                          <>
+                            <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                              Reply
+                            </p>
+                            <ul className="py-1 border-b border-border/30">
+                              <li>
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    void handleSuggestReply();
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/60 text-foreground transition-colors"
+                                >
+                                  Suggest reply
+                                </button>
+                              </li>
+                            </ul>
+                          </>
+                        )}
+                        <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                          Rewrite
+                        </p>
+                        <ul className="py-1">
+                          {([
+                            { id: 'paraphrase', label: 'Paraphrase' },
+                            { id: 'formal', label: 'More formal' },
+                            { id: 'concise', label: 'More concise' },
+                            { id: 'friendly', label: 'Friendlier' },
+                            { id: 'grammar', label: 'Fix grammar' },
+                          ] as { id: RewriteMode; label: string }[]).map((opt) => (
+                            <li key={opt.id}>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  void handleRewrite(opt.id);
+                                }}
+                                className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/60 text-foreground transition-colors"
+                              >
+                                {opt.label}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* TipTap editor */}
@@ -900,15 +1269,109 @@ export default function ComposeModal({
                   </div>
                 )}
                 <EditorContent editor={editor} />
+
+                {aiEnabled && (
+                  <aside
+                    aria-hidden={!rewriteOpen}
+                    className={cn(
+                      'absolute top-2 right-2 w-[340px] max-h-[60vh] z-30',
+                      'rounded-xl border border-border/40 bg-card shadow-xl',
+                      'flex flex-col overflow-hidden',
+                      'transition-all duration-200 ease-out',
+                      rewriteOpen
+                        ? 'translate-x-0 opacity-100 scale-100'
+                        : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
+                    )}
+                  >
+                    <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
+                      <Sparkles className="w-3.5 h-3.5 text-primary" />
+                      <span className="text-[12px] font-semibold text-foreground capitalize">
+                        {aiAction === 'suggest'
+                          ? 'Reply suggestion'
+                          : rewriteMode === 'grammar' ? 'Grammar fix' : rewriteMode}
+                      </span>
+                      {rewriting && (
+                        <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
+                      )}
+                      <button
+                        type="button"
+                        onClick={closeRewrite}
+                        className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
+                        aria-label="Close"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto px-3.5 py-3 space-y-3">
+                      {aiAction === 'rewrite' && (
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Original</p>
+                          <p className="text-[12px] text-muted-foreground/80 leading-relaxed line-clamp-4 whitespace-pre-wrap">
+                            {rewriteOriginal}
+                          </p>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">
+                          {aiAction === 'suggest' ? 'Suggested reply' : 'Rewrite'}
+                        </p>
+                        {rewriteError ? (
+                          <p className="text-[12px] text-destructive">
+                            {rewriteError}{' '}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                aiAction === 'suggest' ? handleSuggestReply() : handleRewrite(rewriteMode)
+                              }
+                              className="underline ml-1"
+                            >
+                              Retry
+                            </button>
+                          </p>
+                        ) : (
+                          <p className="text-[12.5px] text-foreground/90 leading-relaxed whitespace-pre-wrap">
+                            {rewriteText_ || (rewriting ? 'Thinking…' : '')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 px-3.5 py-2.5 border-t border-border/30 shrink-0 bg-muted/20">
+                      <button
+                        type="button"
+                        onClick={closeRewrite}
+                        className="text-[12px] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                      >
+                        Discard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={regenerate}
+                        disabled={rewriting}
+                        className="ml-auto text-[12px] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        title="Generate a different version"
+                      >
+                        Try another
+                      </button>
+                      <button
+                        type="button"
+                        onClick={applyRewrite}
+                        disabled={rewriting || !rewriteText_.trim() || !!rewriteError}
+                        className="text-[12px] px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {aiAction === 'suggest' ? 'Insert' : 'Replace'}
+                      </button>
+                    </div>
+                  </aside>
+                )}
               </div>
 
               {/* Quoted original */}
-              {quoteHtml && (
+              {sanitizedQuoteHtml && (
                 <>
                   <Separator className="my-4 bg-border/40" />
                   <div
                     className="text-xs prose prose-sm prose-invert max-w-none prose-a:text-primary opacity-60 pointer-events-none select-none"
-                    dangerouslySetInnerHTML={{ __html: quoteHtml }}
+                    dangerouslySetInnerHTML={{ __html: sanitizedQuoteHtml }}
                   />
                 </>
               )}
@@ -947,8 +1410,17 @@ export default function ComposeModal({
               )}
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={handleDiscard}
-                className="text-muted-foreground/60 hover:text-destructive/70 h-8">Discard</Button>
+              <Button variant="destructive-ghost" size="sm" onClick={handleDiscard} className="h-8">Discard</Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleSaveDraft}
+                disabled={draftStatus === 'saving'}
+                title="Save draft"
+                className="h-8 px-3 text-muted-foreground/70 hover:text-foreground"
+              >
+                {draftStatus === 'saving' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Save draft'}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -966,6 +1438,12 @@ export default function ComposeModal({
           </div>
         </div>
       )}
+
+      <DocPickerDialog
+        open={showDocPicker}
+        onClose={() => setShowDocPicker(false)}
+        onPick={handleDocAttach}
+      />
     </div>
   );
 }

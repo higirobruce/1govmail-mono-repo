@@ -1,11 +1,22 @@
 import {
   IsArray,
   IsEmail,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
   ArrayMinSize,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+class ForwardedAttachmentDto {
+  @IsString()
+  mid: string;
+
+  @IsString()
+  part: string;
+}
 
 export class SendMessageDto {
   @IsArray()
@@ -33,4 +44,14 @@ export class SendMessageDto {
   @IsOptional()
   @IsString()
   replyToId?: string;
+
+  @IsOptional()
+  @IsIn(['r', 'w'])
+  replyType?: 'r' | 'w';
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ForwardedAttachmentDto)
+  forwardedAttachments?: ForwardedAttachmentDto[];
 }

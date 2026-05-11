@@ -1,16 +1,14 @@
 generator client {
-  provider = "prisma-client-js"
-  // With the better-sqlite3 driver adapter the Rust query engine binary is
-  // only needed for `prisma migrate`; the runtime client is pure JavaScript.
-  // "native" covers the current build machine; the others cover packaging targets.
-  binaryTargets = ["native", "darwin", "darwin-arm64", "windows", "debian-openssl-3.0.x", "linux-musl"]
+  provider      = "prisma-client-js"
+  // "native" covers dev machines. linux targets cover Docker (glibc + musl/Alpine).
+  // darwin targets kept for local development.
+  binaryTargets = ["native", "darwin", "darwin-arm64", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "sqlite"
-  // url is intentionally absent: in Prisma 7 the connection is established
-  // via a driver adapter passed to PrismaClient at construction time (runtime)
-  // and via prisma.config.ts for the Prisma CLI / migrations.
+  provider = "postgresql"
+  // Connection is configured via prisma.config.ts using @prisma/adapter-pg.
+  // Prisma 7 no longer accepts `url` here — use the driver adapter pattern.
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
@@ -39,9 +37,41 @@ model User {
   mutedConversations MutedConversation[]
   contactGroups      ContactGroup[]
   notifications      Notification[]
-  documents          Document[]
+  documents              Document[]
+  sentInvites            DocumentInvite[]
+  docComments            DocComment[]
+  docCommentReactions    DocCommentReaction[]
+  docVersionsCreated     DocVersion[]
+  docActivity            DocActivity[]
+  auditLogs              AuditLog[]
 
   @@map("users")
+}
+
+// ─── Audit log ───────────────────────────────────────────────────────────────
+// Tamper-resistant append-only record of security-relevant events. Writes
+// happen best-effort (never blocks the primary action) but reads are required
+// for compliance and incident response.
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  email      String?
+  action     String   // LOGIN_SUCCESS | LOGIN_FAILURE | LOGIN_2FA_REQUIRED | LOGOUT | DOC_SHARE_ENABLED | DOC_SHARE_DISABLED | DOC_INVITE_ADDED | DOC_INVITE_REMOVED | SIGNATURE_CHANGED | PASSWORD_CHANGED | PREFS_CHANGED
+  resource   String?  // e.g. "document", "signature"
+  resourceId String?
+  ip         String?
+  userAgent  String?
+  success    Boolean  @default(true)
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
 
 model Session {
@@ -371,18 +401,118 @@ model Document {
   title      String   @default("Untitled")
   content    String?  // TipTap JSON stringified
   emoji      String?  // Page icon
-  parentId   String?  // Reserved for Phase 2 nesting
+  parentId   String?  // Nested pages
   position   Int      @default(0)
   shareToken String?  @unique   // UUID; set when sharing is enabled
   isShared   Boolean  @default(false)
   yjsState   Bytes?               // Yjs encoded binary state for real-time collaboration
+  isFavorite Boolean  @default(false)
+  tags       String[] @default([])
+  coverColor String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invites   DocumentInvite[]
+  comments  DocComment[]
+  versions  DocVersion[]
+  activity  DocActivity[]
 
   @@index([userId])
+  @@index([userId, isFavorite])
   @@map("documents")
+}
+
+enum InviteRole {
+  VIEWER
+  EDITOR
+}
+
+model DocumentInvite {
+  id           String     @id @default(cuid())
+  documentId   String
+  invitedEmail String
+  invitedBy    String
+  role         InviteRole @default(EDITOR)
+  createdAt    DateTime   @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  inviter  User     @relation(fields: [invitedBy], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, invitedEmail])
+  @@index([invitedEmail])
+  @@map("document_invites")
+}
+
+model DocComment {
+  id         String    @id @default(cuid())
+  documentId String
+  anchorId   String    // UUID matching TipTap mark's data-cid attribute
+  content    String
+  authorId   String?
+  authorName String?
+  resolvedAt DateTime?
+  parentId   String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  document  Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author    User?                @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  parent    DocComment?          @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   DocComment[]         @relation("CommentReplies")
+  reactions DocCommentReaction[]
+
+  @@index([documentId])
+  @@index([anchorId])
+  @@map("doc_comments")
+}
+
+model DocCommentReaction {
+  id        String   @id @default(cuid())
+  commentId String
+  userId    String
+  userName  String?
+  emoji     String
+  createdAt DateTime @default(now())
+
+  comment DocComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, emoji])
+  @@index([commentId])
+  @@map("doc_comment_reactions")
+}
+
+model DocVersion {
+  id          String   @id @default(cuid())
+  documentId  String
+  title       String
+  content     String
+  authorId    String?
+  authorName  String?
+  createdAt   DateTime @default(now())
+
+  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@map("doc_versions")
+}
+
+model DocActivity {
+  id         String   @id @default(cuid())
+  documentId String
+  userId     String?
+  actorName  String?
+  type       String   // VIEWED | EDITED | COMMENTED | RESOLVED | MENTIONED
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@map("doc_activity")
 }
 
 // ─── Calendar ────────────────────────────────────────────────────────────────
@@ -404,6 +534,8 @@ model CalendarEvent {
   attendees       Json     @default("[]")
   calendarName    String?
   color           String?
+  linkedMessageId String?
+  linkedSubject   String?
   syncedAt        DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

@@ -159,8 +159,10 @@ export class ZimbraService {
     // Always re-throw our own NestJS exceptions as-is
     if (err instanceof HttpException) throw err;
 
-    // Parse a Zimbra SOAP fault from the axios error response body
-    const fault = err?.response?.data?.Body?.Fault;
+    // Parse a Zimbra SOAP fault from the axios error response body.
+    // Zimbra returns HTTP 500 for SOAP faults; the body is usually JSON with Body.Fault.
+    const responseData = err?.response?.data;
+    const fault = responseData?.Body?.Fault;
     if (fault) {
       const code: string = fault?.Detail?.Error?.Code ?? '';
       const text: string =
@@ -178,10 +180,20 @@ export class ZimbraService {
       throw new BadGatewayException(text);
     }
 
-    // Network error, timeout, TLS failure, etc.
-    this.logger.error(`[${context}] ${err.message}`);
+    // Log the raw response body so we can diagnose unparseable errors
+    if (responseData) {
+      const raw = typeof responseData === 'string'
+        ? responseData.slice(0, 800)
+        : JSON.stringify(responseData).slice(0, 800);
+      this.logger.error(`[${context}] HTTP ${err.response?.status} — response body: ${raw}`);
+    } else {
+      this.logger.error(`[${context}] ${err.message}`);
+    }
+
     throw new BadGatewayException(
-      `Could not reach the Zimbra server: ${err.message}`,
+      err.response?.status
+        ? `Zimbra server error (HTTP ${err.response.status})`
+        : `Could not reach the Zimbra server: ${err.message}`,
     );
   }
 
@@ -437,7 +449,7 @@ export class ZimbraService {
     limit = 50,
     offset = 0,
     csrfToken?: string,
-  ): Promise<{ messages: ZimbraMessage[]; total: number }> {
+  ): Promise<{ messages: ZimbraMessage[]; total: number; more: boolean }> {
     const client = this.buildClient(host, authToken, csrfToken);
     try {
       // NOTE: do NOT include `fetch` — fetching message bodies for every result
@@ -459,12 +471,15 @@ export class ZimbraService {
 
       const body = response.data?.Body?.SearchResponse;
       const messages: ZimbraMessage[] = body?.m ?? [];
-      // Zimbra returns `more` flag and `total` estimate
+      // Zimbra returns a `more` boolean (reliable) and an optional `total` estimate.
+      // Prefer `more` for hasMore; fall back to a full-page heuristic when Zimbra
+      // omits the field (some versions only include `more` when it is true).
       const total: number = body?.total ?? messages.length;
-      return { messages, total };
+      const more: boolean = !!body?.more || messages.length >= limit;
+      return { messages, total, more };
     } catch (err: any) {
       this.handleZimbraError(err, `searchMessages("${query}")`);
-      return { messages: [], total: 0 }; // unreachable but satisfies TS
+      return { messages: [], total: 0, more: false }; // unreachable but satisfies TS
     }
   }
 
@@ -559,62 +574,78 @@ export class ZimbraService {
       subject: string;
       body: string;
       replyToId?: string;
+      /** 'r' = reply, 'w' = forward — marks the original message accordingly */
+      replyType?: 'r' | 'w';
     },
     csrfToken?: string,
     attachmentAids: string[] = [],
     inlineImageAids: Array<{ aid: string; cid: string; ct: string }> = [],
+    forwardedAttachments: Array<{ mid: string; part: string }> = [],
   ): Promise<{ zimbraId: string; conversationId: string | null }> {
     const client = this.buildClient(host, authToken, csrfToken);
     const toAddrs  = payload.to.map((a) => ({ t: 't', a }));
     const ccAddrs  = (payload.cc  ?? []).map((a) => ({ t: 'c', a }));
     const bccAddrs = (payload.bcc ?? []).map((a) => ({ t: 'b', a }));
 
-    // Build the top-level MIME part.
-    // When there are inline images (signature logos etc.) we use multipart/related
-    // so that recipients see the images embedded in the message body.
-    // The HTML part references each image by CID (src="cid:…") and each image
-    // is attached as a separate inline MIME part identified by that CID.
-    // Note: ci must NOT include angle brackets — Zimbra adds them when building
-    // the MIME Content-ID header.  The HTML src="cid:xxx" also has no brackets.
+    // HTML part — body:true tells Zimbra this is the display body.
+    // content must be a plain string (NOT { _content: "…" }) for Zimbra JSON SOAP.
     const htmlPart = {
       ct: 'text/html',
-      content: { _content: payload.body },
+      body: true,
+      content: payload.body,
     };
 
-    const topMp = inlineImageAids.length > 0
+    // If there are inline images (signature logos, pasted images) wrap in
+    // multipart/related so recipients see them embedded.  Each image is an
+    // already-uploaded attachment referenced by its CID.
+    // ci must NOT include angle brackets — Zimbra adds <…> itself.
+    const innerPart = inlineImageAids.length > 0
       ? {
           ct: 'multipart/related',
           mp: [
             htmlPart,
             ...inlineImageAids.map(({ aid, cid, ct }) => ({
-              ct,           // use the real image content type (image/gif, image/png, …)
+              ct,
               attach: { aid },
-              ci: cid,      // no angle brackets — Zimbra wraps in <…> itself
+              ci: cid,
               cd: 'inline',
             })),
           ],
         }
       : htmlPart;
 
-    try {
-      const res = await client.post('/service/soap', {
-        Body: {
-          SendMsgRequest: {
-            _jsns: 'urn:zimbraMail',
-            m: {
-              ...(payload.replyToId ? { origid: payload.replyToId } : {}),
-              e: [...toAddrs, ...ccAddrs, ...bccAddrs],
-              su: { _content: payload.subject },
-              mp: topMp,
-              // Attach pre-uploaded files by their Zimbra attachment IDs
-              ...(attachmentAids.length > 0
-                ? { attach: { aid: attachmentAids.join(',') } }
-                : {}),
-            },
+    const requestBody = {
+      Body: {
+        SendMsgRequest: {
+          _jsns: 'urn:zimbraMail',
+          m: {
+            ...(payload.replyToId  ? { origid: payload.replyToId }  : {}),
+            ...(payload.replyType  ? { rt: payload.replyType }      : {}),
+            e: [...toAddrs, ...ccAddrs, ...bccAddrs],
+            su: payload.subject,
+            mp: [innerPart],
+            ...((attachmentAids.length > 0 || forwardedAttachments.length > 0)
+              ? {
+                  attach: {
+                    ...(attachmentAids.length > 0 ? { aid: attachmentAids.join(',') } : {}),
+                    ...(forwardedAttachments.length > 0
+                      ? { mp: forwardedAttachments.map((a) => ({ mid: a.mid, part: a.part })) }
+                      : {}),
+                  },
+                }
+              : {}),
           },
         },
-        Header: this.soapHeader(csrfToken),
-      });
+      },
+      Header: this.soapHeader(csrfToken),
+    };
+
+    this.logger.log(
+      `[sendMessage] outgoing SOAP: ${JSON.stringify(requestBody).slice(0, 2000)}`,
+    );
+
+    try {
+      const res = await client.post('/service/soap', requestBody);
       const sent = res.data?.Body?.SendMsgResponse?.m?.[0];
       return {
         zimbraId:       sent?.id  != null ? String(sent.id)  : '',
@@ -644,6 +675,51 @@ export class ZimbraService {
       });
     } catch (err: any) {
       this.handleZimbraError(err, `deleteFolder(${zimbraFolderId})`);
+    }
+  }
+
+  async emptyFolder(
+    host: string,
+    authToken: string,
+    zimbraFolderId: string,
+    csrfToken?: string,
+  ): Promise<void> {
+    const client = this.buildClient(host, authToken, csrfToken);
+    try {
+      await client.post('/service/soap', {
+        Body: {
+          FolderActionRequest: {
+            _jsns: 'urn:zimbraMail',
+            action: { id: zimbraFolderId, op: 'empty', recursive: 1 },
+          },
+        },
+        Header: this.soapHeader(csrfToken),
+      });
+    } catch (err: any) {
+      this.handleZimbraError(err, `emptyFolder(${zimbraFolderId})`);
+    }
+  }
+
+  async renameFolder(
+    host: string,
+    authToken: string,
+    zimbraFolderId: string,
+    newName: string,
+    csrfToken?: string,
+  ): Promise<void> {
+    const client = this.buildClient(host, authToken, csrfToken);
+    try {
+      await client.post('/service/soap', {
+        Body: {
+          FolderActionRequest: {
+            _jsns: 'urn:zimbraMail',
+            action: { id: zimbraFolderId, op: 'rename', name: newName },
+          },
+        },
+        Header: this.soapHeader(csrfToken),
+      });
+    } catch (err: any) {
+      this.handleZimbraError(err, `renameFolder(${zimbraFolderId})`);
     }
   }
 
@@ -1030,7 +1106,7 @@ export class ZimbraService {
       ...(payload.id ? { id: payload.id } : {}),
       su: payload.subject ?? '',
       ...(e.length > 0 ? { e } : {}),
-      mp: [{ ct: 'text/html', content: { _content: payload.body ?? '' } }],
+      mp: [{ ct: 'text/html', body: true, content: payload.body ?? '' }],
     };
 
     try {
@@ -1100,7 +1176,9 @@ export class ZimbraService {
         },
         Header: this.soapHeader(csrfToken),
       });
-      return response.data?.Body?.GetAppointmentResponse?.appt?.[0] ?? null;
+      // Zimbra's JSON bridge sometimes returns a single-item array as a plain object
+      const apptData = response.data?.Body?.GetAppointmentResponse?.appt;
+      return (Array.isArray(apptData) ? apptData[0] : apptData) ?? null;
     } catch (err: any) {
       this.handleZimbraError(err, `getAppointment(${zimbraId})`);
     }
@@ -1157,7 +1235,11 @@ export class ZimbraService {
             _jsns: 'urn:zimbraMail',
             m: {
               su: payload.title,
-              e: [{ t: 'f', ...or }],
+              // 'f' = from (organizer); 't' = to (each attendee gets an invite email)
+              e: [
+                { t: 'f', ...or },
+                ...(payload.attendees ?? []).map((a) => ({ t: 't', a })),
+              ],
               inv: {
                 comp: [
                   {
@@ -1205,7 +1287,8 @@ export class ZimbraService {
       organizerEmail: string;
       organizerName?: string;
       attendees?: string[];
-      seq?: number;
+      modifiedSequence?: number;
+      rev?: number;
     },
     csrfToken?: string,
   ): Promise<void> {
@@ -1240,15 +1323,24 @@ export class ZimbraService {
         Body: {
           ModifyAppointmentRequest: {
             _jsns: 'urn:zimbraMail',
+            // id must be "{calItemId}-{invMsgId}" — the full invite ID, not just calItemId
             id: zimbraId,
+            comp: '0',
+            // modifiedSequence and rev are required for Zimbra's conflict detection
+            ...(payload.modifiedSequence !== undefined ? { modifiedSequence: payload.modifiedSequence } : {}),
+            ...(payload.rev !== undefined ? { rev: payload.rev } : {}),
             m: {
               su: payload.title,
-              e: [{ t: 'f', ...or }],
+              // 'f' = from (organizer); 't' = to (attendees receive update email)
+              e: [
+                { t: 'f', ...or },
+                ...(payload.attendees ?? []).map((a) => ({ t: 't', a })),
+              ],
               inv: {
                 comp: [
                   {
                     name: payload.title,
-                    seq: payload.seq ?? 0,
+                    // No seq in comp — Zimbra manages it internally
                     loc: payload.location ?? '',
                     allDay: payload.allDay ? 1 : 0,
                     fb: 'B',

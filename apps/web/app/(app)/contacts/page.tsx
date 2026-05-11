@@ -6,14 +6,23 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
+import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverAnchor } from '@/components/ui/popover';
 import { toast } from 'sonner';
 import {
   Search, Plus, User, Mail, Phone, Building2, Briefcase,
-  Pencil, Trash2, X, Check, Loader2, ChevronLeft, UsersRound,
+  Pencil, Trash2, X, Check, Loader2, ChevronLeft, UsersRound, Menu,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -129,6 +138,7 @@ export default function ContactsPage() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [hydrated, setHydrated] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [tab, setTab] = useState<Tab>('contacts');
 
@@ -151,6 +161,9 @@ export default function ContactsPage() {
   const [groupDesc, setGroupDesc] = useState('');
   const [groupMembers, setGroupMembers] = useState<Array<{ email: string; name?: string }>>([]);
   const [memberInput, setMemberInput] = useState('');
+  const [memberSuggestions, setMemberSuggestions] = useState<Array<{ email: string; display: string }>>([]);
+  const [memberPopoverOpen, setMemberPopoverOpen] = useState(false);
+  const memberDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [groupSaving, setGroupSaving] = useState(false);
   const [groupDeleting, setGroupDeleting] = useState(false);
 
@@ -303,6 +316,8 @@ export default function ContactsPage() {
     setGroupDesc('');
     setGroupMembers([]);
     setMemberInput('');
+    setMemberSuggestions([]);
+    setMemberPopoverOpen(false);
     setSelectedGroup(null);
     setGroupMode('create');
   };
@@ -312,19 +327,42 @@ export default function ContactsPage() {
     setGroupDesc(g.description ?? '');
     setGroupMembers([...g.members]);
     setMemberInput('');
+    setMemberSuggestions([]);
+    setMemberPopoverOpen(false);
     setSelectedGroup(g);
     setGroupMode('edit');
   };
 
-  const addMember = () => {
-    const email = memberInput.trim().toLowerCase();
+  const addMember = (emailOverride?: string, nameOverride?: string) => {
+    const email = (emailOverride ?? memberInput).trim().toLowerCase();
     if (!email || !email.includes('@')) return;
     if (groupMembers.some(m => m.email === email)) {
       toast.error('Already in group');
       return;
     }
-    setGroupMembers(prev => [...prev, { email }]);
+    setGroupMembers(prev => [...prev, { email, ...(nameOverride ? { name: nameOverride } : {}) }]);
     setMemberInput('');
+    setMemberSuggestions([]);
+    setMemberPopoverOpen(false);
+  };
+
+  const handleMemberInputChange = (value: string) => {
+    setMemberInput(value);
+    if (memberDebounce.current) clearTimeout(memberDebounce.current);
+    if (!value.trim() || value.length < 2) {
+      setMemberSuggestions([]);
+      setMemberPopoverOpen(false);
+      return;
+    }
+    memberDebounce.current = setTimeout(async () => {
+      try {
+        const results = await api.contacts.autocomplete(value.trim());
+        setMemberSuggestions(results);
+        setMemberPopoverOpen(results.length > 0);
+      } catch {
+        setMemberSuggestions([]);
+      }
+    }, 250);
   };
 
   const removeMember = (email: string) => {
@@ -395,6 +433,8 @@ export default function ContactsPage() {
 
   if (!hydrated) return null;
 
+  const detailOpen = selectedContact !== null || selectedGroup !== null || formMode !== 'view';
+
   return (
     <div className="flex h-screen bg-background overflow-hidden">
       <Sidebar
@@ -403,12 +443,33 @@ export default function ContactsPage() {
         onFolderSelect={() => router.push('/mail')}
         onCompose={() => router.push('/mail')}
       />
+      <MobileSidebarSheet
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        folders={[]}
+        activeFolderId=""
+        onFolderSelect={() => router.push('/mail')}
+        onCompose={() => router.push('/mail')}
+      />
 
-      {/* ── Left panel ── */}
-      <div className="w-72 shrink-0 flex flex-col border-r border-border/50 h-full bg-card/50">
+      {/* ── Left panel ── full width on mobile when nothing selected */}
+      <div className={cn(
+        'shrink-0 flex flex-col border-r border-border/50 h-full bg-card/50',
+        'w-full lg:w-72',
+        detailOpen ? 'hidden lg:flex' : 'flex',
+      )}>
         <div className="px-4 pt-4 pb-3 border-b border-border/40 space-y-2.5">
           <div className="flex items-center justify-between">
-            <h1 className="text-sm font-semibold text-foreground">Contacts</h1>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-1 -ml-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                aria-label="Open navigation"
+              >
+                <Menu className="w-4 h-4" />
+              </button>
+              <h1 className="text-sm font-semibold text-foreground">Contacts</h1>
+            </div>
             <Button
               size="sm" variant="ghost"
               onClick={tab === 'groups' ? openCreateGroup : openCreate}
@@ -546,8 +607,8 @@ export default function ContactsPage() {
         </ScrollArea>
       </div>
 
-      {/* ── Detail / form panel ── */}
-      <div className="flex-1 min-w-0 flex flex-col h-full">
+      {/* ── Detail / form panel — full width on mobile when open */}
+      <div className={cn('flex-1 min-w-0 flex flex-col h-full', !detailOpen && 'hidden lg:flex')}>
         {tab === 'contacts' ? (
           formMode === 'create' || formMode === 'edit' ? (
             /* ── Edit / Create contact form ── */
@@ -618,7 +679,14 @@ export default function ContactsPage() {
           ) : selectedContact ? (
             /* ── Contact detail view ── */
             <div className="flex flex-col h-full">
-              <div className="px-6 py-4 border-b border-border/40 flex items-center gap-3">
+              <div className="px-4 lg:px-6 py-3 lg:py-4 border-b border-border/40 flex items-center gap-3">
+                <button
+                  onClick={() => setSelectedContact(null)}
+                  className="lg:hidden p-1 -ml-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                  aria-label="Back to contacts"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
                 <h2 className="text-sm font-semibold text-foreground flex-1 truncate">
                   {contactDisplayName(selectedContact)}
                 </h2>
@@ -630,10 +698,10 @@ export default function ContactsPage() {
                   <Pencil className="w-3.5 h-3.5" /> Edit
                 </Button>
                 <Button
-                  variant="ghost" size="sm"
+                  variant="destructive-ghost" size="sm"
                   onClick={() => handleDelete(selectedContact)}
                   disabled={deleting}
-                  className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-destructive gap-1.5"
+                  className="h-8 px-3 text-xs gap-1.5"
                 >
                   {deleting
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -769,26 +837,66 @@ export default function ContactsPage() {
                   <div className="pt-1 border-t border-border/30">
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Members</p>
 
-                    {/* Add member input */}
-                    <div className="flex gap-2 mb-3">
-                      <Input
-                        value={memberInput}
-                        onChange={(e) => setMemberInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addMember(); } }}
-                        placeholder="email@example.com"
-                        type="email"
-                        className="flex-1 h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={addMember}
-                        className="h-8 px-3 shrink-0"
-                        title="Add member (Enter)"
+                    {/* Add member input with autocomplete */}
+                    <Popover open={memberPopoverOpen} onOpenChange={setMemberPopoverOpen}>
+                      <div className="flex gap-2 mb-3">
+                        <PopoverAnchor asChild>
+                          <Input
+                            value={memberInput}
+                            onChange={(e) => handleMemberInputChange(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.preventDefault(); addMember(); }
+                              if (e.key === 'Escape') { setMemberPopoverOpen(false); }
+                            }}
+                            onFocus={() => { if (memberSuggestions.length > 0) setMemberPopoverOpen(true); }}
+                            placeholder="Name or email@example.com"
+                            className="flex-1 h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20"
+                          />
+                        </PopoverAnchor>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => addMember()}
+                          className="h-8 px-3 shrink-0"
+                          title="Add member (Enter)"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                      <PopoverContent
+                        className="p-0 w-72"
+                        align="start"
+                        onOpenAutoFocus={(e) => e.preventDefault()}
+                        onInteractOutside={() => setMemberPopoverOpen(false)}
                       >
-                        <Plus className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
+                        <Command>
+                          <CommandList>
+                            <CommandEmpty>No contacts found</CommandEmpty>
+                            <CommandGroup>
+                              {memberSuggestions.map((s) => (
+                                <CommandItem
+                                  key={s.email}
+                                  value={s.email}
+                                  onSelect={() => addMember(s.email, s.display !== s.email ? s.display : undefined)}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div className="w-6 h-6 rounded-full bg-muted/60 flex items-center justify-center shrink-0">
+                                      <User className="w-3 h-3 text-muted-foreground/50" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      {s.display !== s.email && (
+                                        <p className="text-[13px] font-medium truncate">{s.display}</p>
+                                      )}
+                                      <p className="text-[12px] text-muted-foreground/65 truncate">{s.email}</p>
+                                    </div>
+                                  </div>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
 
                     {/* Member chips */}
                     {groupMembers.length === 0 ? (
@@ -819,7 +927,14 @@ export default function ContactsPage() {
           ) : selectedGroup ? (
             /* Group detail view */
             <div className="flex flex-col h-full">
-              <div className="px-6 py-4 border-b border-border/40 flex items-center gap-3">
+              <div className="px-4 lg:px-6 py-3 lg:py-4 border-b border-border/40 flex items-center gap-3">
+                <button
+                  onClick={() => setSelectedGroup(null)}
+                  className="lg:hidden p-1 -ml-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                  aria-label="Back to groups"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
                 <h2 className="text-sm font-semibold text-foreground flex-1 truncate">{selectedGroup.name}</h2>
                 <Button
                   variant="ghost" size="sm"
@@ -829,10 +944,10 @@ export default function ContactsPage() {
                   <Pencil className="w-3.5 h-3.5" /> Edit
                 </Button>
                 <Button
-                  variant="ghost" size="sm"
+                  variant="destructive-ghost" size="sm"
                   onClick={() => handleDeleteGroup(selectedGroup)}
                   disabled={groupDeleting}
-                  className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-destructive gap-1.5"
+                  className="h-8 px-3 text-xs gap-1.5"
                 >
                   {groupDeleting
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />

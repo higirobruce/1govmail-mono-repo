@@ -1,18 +1,13 @@
 import { Server } from '@hocuspocus/server';
 import { Database } from '@hocuspocus/extension-database';
 import { PrismaClient } from '@prisma/client';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 import * as jwt from 'jsonwebtoken';
 
-function makePrisma(): PrismaClient {
-  const dbUrl = process.env.DATABASE_URL ?? 'file:./dev.db';
-  const dbPath = dbUrl.replace(/^file:/, '');
-  const adapter = new PrismaBetterSqlite3({ url: dbPath });
-  return new PrismaClient({ adapter } as ConstructorParameters<typeof PrismaClient>[0]);
-}
-
 export function createCollabServer() {
-  const prisma = makePrisma();
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   const jwtSecret = process.env.JWT_SECRET;
 
   if (!jwtSecret) {
@@ -22,9 +17,9 @@ export function createCollabServer() {
   return new Server({
     port: Number(process.env.HOCUSPOCUS_PORT ?? 1234),
     quiet: true,
-    debounce: 300,         // persist yjsState 300ms after last update (default: 2000)
-    maxDebounce: 2000,     // cap at 2s during continuous editing (default: 10000)
-    stopOnSignals: false,  // NestJS manages process lifecycle
+    debounce: 300,
+    maxDebounce: 2000,
+    stopOnSignals: false,
 
     // ── Authentication ──────────────────────────────────────────────────────
     async onAuthenticate({ token, documentName }) {
@@ -45,8 +40,23 @@ export function createCollabServer() {
           where: { id: documentName },
           select: { userId: true },
         });
-        if (!doc || doc.userId !== payload.sub) throw new Error('Forbidden');
-        return { userId: payload.sub };
+        if (!doc) throw new Error('Forbidden');
+
+        // Owner — full access
+        if (doc.userId === payload.sub) return { userId: payload.sub };
+
+        // Check invite — invitees (any role) may connect for real-time updates
+        const user = await prisma.user.findUnique({
+          where: { id: payload.sub },
+          select: { email: true },
+        });
+        if (!user) throw new Error('Forbidden');
+        const invite = await prisma.documentInvite.findUnique({
+          where: { documentId_invitedEmail: { documentId: documentName, invitedEmail: user.email } },
+          select: { role: true },
+        });
+        if (!invite) throw new Error('Forbidden');
+        return { userId: payload.sub, role: invite.role };
       }
 
       if (type === 'share') {
@@ -69,7 +79,6 @@ export function createCollabServer() {
             where: { id: documentName },
             select: { yjsState: true },
           });
-          // null → client will bootstrap from initialContent JSON
           return doc?.yjsState ?? null;
         },
 

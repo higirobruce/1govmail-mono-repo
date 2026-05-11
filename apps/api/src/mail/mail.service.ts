@@ -202,6 +202,10 @@ export class MailService {
     const ccRecipients = (m.e ?? [])
       .filter((e) => e.t === 'c')
       .map((e) => ({ email: e.a, name: e.d ?? null }));
+    // Bcc is only visible on user's own sent/draft items — Zimbra returns it via e.t='b'.
+    const bccRecipients = (m.e ?? [])
+      .filter((e) => e.t === 'b')
+      .map((e) => ({ email: e.a, name: e.d ?? null }));
 
     // Embed inline images with a time budget.
     // - If Zimbra responds quickly (< 5 s): return fully embedded HTML immediately.
@@ -253,7 +257,7 @@ export class MailService {
     if (cached) {
       result = await this.prisma.message.update({
         where: { id: cached.id },
-        data: { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients },
+        data: { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients, bccRecipients },
       });
     } else {
       // Message is not in DB yet (e.g. opened from search results before the folder
@@ -278,6 +282,7 @@ export class MailService {
             fromName:       fromAddr?.d ?? null,
             toRecipients:   toAddrs,
             ccRecipients,
+            bccRecipients,
             isRead:         !flags.includes('u'),
             isStarred:      flags.includes('f'),
             isDraft:        flags.includes('d'),
@@ -295,11 +300,12 @@ export class MailService {
             inlineImages,
             hasAttachments: attachments.length > 0,
             ccRecipients,
+            bccRecipients,
           },
         });
       } else {
         // Folder not yet synced — return ephemeral object (no caching possible).
-        result = { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients };
+        result = { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients, bccRecipients };
       }
     }
 
@@ -323,6 +329,84 @@ export class MailService {
     // Standalone message — no conversation
     if (!msg.conversationId) {
       return { conversationId: null, messages: [] };
+    }
+
+    // Back-fill conversation messages not yet in the local DB by querying Zimbra.
+    // This ensures the full thread history is visible when a user was CC'd mid-thread
+    // or when older messages haven't been reached by the incremental folder sync yet.
+    try {
+      const user = await this.getUser(userId);
+
+      // Find zimbraIds already in the DB for this conversation to avoid re-fetching
+      const existing = await this.prisma.message.findMany({
+        where: { userId, conversationId: msg.conversationId },
+        select: { zimbraId: true },
+      });
+      const existingZimbraIds = new Set(existing.map((m) => m.zimbraId));
+
+      const { messages: zimbraMsgs } = await this.zimbra.searchMessages(
+        user.zimbraHost,
+        user.authToken!,
+        `conv:${msg.conversationId}`,
+        200,
+        0,
+        user.csrfToken ?? undefined,
+      );
+
+      // Build a folder zimbraId → DB folder map so we avoid per-message DB lookups
+      const folders = await this.prisma.folder.findMany({
+        where: { userId },
+        select: { id: true, zimbraId: true },
+      });
+      const folderByZimbraId = new Map(folders.map((f) => [f.zimbraId, f.id]));
+
+      for (const m of zimbraMsgs) {
+        const zimbraId = String(m.id);
+        if (existingZimbraIds.has(zimbraId)) continue; // already synced
+
+        try {
+          const fromAddr    = m.e?.find((e) => e.t === 'f');
+          const toAddrs     = (m.e ?? []).filter((e) => e.t === 't').map((e) => ({ email: e.a, name: e.d ?? null }));
+          const ccAddrs     = (m.e ?? []).filter((e) => e.t === 'c').map((e) => ({ email: e.a, name: e.d ?? null }));
+          const flags       = m.f ?? '';
+          const folderId    = folderByZimbraId.get(String(m.l));
+
+          if (!folderId) continue; // folder not yet synced — skip
+
+          await this.prisma.message.upsert({
+            where:  { userId_zimbraId: { userId, zimbraId } },
+            create: {
+              userId,
+              folderId,
+              zimbraId,
+              conversationId: msg.conversationId,
+              subject:        m.su  ?? null,
+              snippet:        m.fr  ?? null,
+              fromEmail:      fromAddr?.a ?? '',
+              fromName:       fromAddr?.d ?? null,
+              toRecipients:   toAddrs,
+              ccRecipients:   ccAddrs,
+              isRead:         !flags.includes('u'),
+              isStarred:       flags.includes('f'),
+              isDraft:         flags.includes('d'),
+              hasAttachments:  flags.includes('a'),
+              receivedAt:      new Date(m.d),
+            },
+            update: {
+              conversationId: msg.conversationId,
+              isRead:    !flags.includes('u'),
+              isStarred:  flags.includes('f'),
+              isDraft:    flags.includes('d'),
+              syncedAt:   new Date(),
+            },
+          });
+        } catch (err: any) {
+          this.logger.warn(`[getConversation] failed to upsert zimbraId=${m.id}: ${err?.message}`);
+        }
+      }
+    } catch (err: any) {
+      // Back-fill is best-effort — a Zimbra outage must not break the thread view
+      this.logger.warn(`[getConversation] Zimbra back-fill failed: ${err?.message}`);
     }
 
     const messages = await this.prisma.message.findMany({
@@ -353,7 +437,7 @@ export class MailService {
   async searchMessages(userId: string, query: string, limit = 50, offset = 0) {
     const user = await this.getUser(userId);
 
-    const { messages, total } = await this.zimbra.searchMessages(
+    const { messages, total, more } = await this.zimbra.searchMessages(
       user.zimbraHost,
       user.authToken!,
       query,
@@ -420,7 +504,7 @@ export class MailService {
       }
     }
 
-    return { messages: saved, total, offset, limit, hasMore: offset + messages.length < total };
+    return { messages: saved, total, offset, limit, hasMore: more };
   }
 
   async downloadAttachment(userId: string, messageId: string, partId: string) {
@@ -447,6 +531,8 @@ export class MailService {
       subject: string;
       body: string;
       replyToId?: string;
+      replyType?: 'r' | 'w';
+      forwardedAttachments?: Array<{ mid: string; part: string }>;
     },
     files: Express.Multer.File[] = [],
   ) {
@@ -478,22 +564,53 @@ export class MailService {
       cid: string;              // generated Content-ID (without angle brackets)
     }
 
+    this.logger.log(`[sendMessage] payload.body length: ${payload.body.length}`);
+
     const pendingImages: InlineImageInfo[] = [];
     // Strip data-zimbra-src while collecting — that attribute was only needed
     // for the round-trip save path and is meaningless in outgoing mail.
+    // Handle both double-quoted and single-quoted src attributes.
     let cleanBody = payload.body
-      .replace(/\s*data-zimbra-src="[^"]*"/gi, '')
+      .replace(/\s*data-zimbra-src=["'][^"']*["']/gi, '')
       .replace(
-        /src="(data:(image\/[^;]+);base64,([^"]{1,5000000}))"/gi,
-        (_m: string, dataUri: string, contentType: string, base64Data: string) => {
+        /src=(["'])(data:(image\/[^;]+);base64,([^"']{1,5000000}))\1/gi,
+        (_m: string, _q: string, dataUri: string, contentType: string, base64Data: string) => {
           const cid = `img${pendingImages.length}-${Date.now()}@govmail`;
           pendingImages.push({ dataUri, contentType, base64Data, cid });
           return `src="cid:${cid}"`;
         },
       );
 
-    // Step 2 — strip any remaining large data URIs (non-image or upload-failed).
-    cleanBody = cleanBody.replace(/src=["']data:[^"']{50000,}["']/gi, 'src=""');
+    this.logger.log(`[sendMessage] after step1: cleanBody.length=${cleanBody.length} pendingImages=${pendingImages.length} hasDataUri=${cleanBody.includes('data:')}`);
+
+    // Step 2 — strip ALL remaining data URIs unconditionally.
+    // Any data: URI that survived step 1 (wrong type, too large, or from
+    // quoted original content) must not be forwarded to Zimbra as-is.
+    cleanBody = cleanBody.replace(/src=["']data:[^"']*["']/gi, 'src=""');
+
+    this.logger.log(`[sendMessage] after step2: cleanBody.length=${cleanBody.length} hasDataUri=${cleanBody.includes('data:')}`);
+
+    // Step 2.5 — trim thread quote if body still exceeds Zimbra's SOAP request limit.
+    // Fallback for edge cases where the frontend didn't strip nested blockquotes
+    // (e.g., very large direct-parent email, plain-text fallback, etc.).
+    // Zimbra's zimbraSoapRequestMaxSize is 15,360,000 bytes; 12MB gives safe headroom.
+    const BODY_SAFE_LIMIT = 12 * 1024 * 1024;
+    if (cleanBody.length > BODY_SAFE_LIMIT) {
+      const sepMatch = /<br\/?>\s*<br\/?>\s*<div[^>]*color:\s*#999/i.exec(cleanBody);
+      if (sepMatch) {
+        cleanBody =
+          cleanBody.slice(0, sepMatch.index) +
+          '<p style="color:#999;font-size:11px;font-style:italic;">[Previous messages omitted — thread too large to quote]</p>';
+      } else {
+        const bqIdx = cleanBody.lastIndexOf('<blockquote');
+        if (bqIdx !== -1) {
+          cleanBody =
+            cleanBody.slice(0, bqIdx) +
+            '<p style="color:#999;font-size:11px;font-style:italic;">[Previous messages omitted — thread too large to quote]</p>';
+        }
+      }
+      this.logger.warn(`[sendMessage] Thread quote trimmed (backend fallback): body was ${cleanBody.length} chars after trim`);
+    }
 
     // Step 3 — upload each collected image to Zimbra and get an attachment ID.
     const inlineImageAids: Array<{ aid: string; cid: string; ct: string }> = [];
@@ -538,15 +655,46 @@ export class MailService {
       );
     }
 
-    const { zimbraId: sentZimbraId, conversationId: sentCid } =
-      await this.zimbra.sendMessage(
+    // Resolve forwarded attachment references: translate our internal Prisma
+    // message IDs to Zimbra numeric IDs so the SOAP request can use <mp mid=…>.
+    let resolvedForwardedAttachments: Array<{ mid: string; part: string }> = [];
+    if (payload.forwardedAttachments?.length) {
+      const midSet = new Set(payload.forwardedAttachments.map((a) => a.mid));
+      const idToZimbraId = new Map<string, string>();
+      await Promise.all(
+        Array.from(midSet).map(async (prismaId) => {
+          const msg = await this.prisma.message.findFirst({
+            where: { userId, id: prismaId },
+            select: { zimbraId: true },
+          });
+          if (msg?.zimbraId) idToZimbraId.set(prismaId, msg.zimbraId);
+        }),
+      );
+      resolvedForwardedAttachments = payload.forwardedAttachments
+        .map((a) => ({ mid: idToZimbraId.get(a.mid) ?? a.mid, part: a.part }));
+    }
+
+    let sendResult: { zimbraId: string | null; conversationId: string | null };
+    try {
+      sendResult = await this.zimbra.sendMessage(
         user.zimbraHost,
         user.authToken!,
         { ...payload, body: cleanBody, replyToId: zimbraReplyToId },
         user.csrfToken ?? undefined,
         attachmentAids,
         inlineImageAids,
+        resolvedForwardedAttachments,
       );
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException) {
+        await this.prisma.user.update({
+          where: { id: userId },
+          data: { authToken: null, tokenExpiry: null },
+        });
+      }
+      throw err;
+    }
+    const { zimbraId: sentZimbraId, conversationId: sentCid } = sendResult;
 
     // Persist the sent message to the local DB so it appears in thread view.
     // Best-effort: a failure here must NOT prevent the 200 response reaching
@@ -584,6 +732,7 @@ export class MailService {
               fromName:       user.displayName ?? null,
               toRecipients:   payload.to.map((a) => ({ email: a, name: null })),
               ccRecipients:   (payload.cc ?? []).map((a) => ({ email: a, name: null })),
+              bccRecipients:  (payload.bcc ?? []).map((a) => ({ email: a, name: null })),
               isRead:         true,
               isDraft:        false,
               hasAttachments: files.length > 0,
@@ -863,6 +1012,53 @@ export class MailService {
     await this.prisma.folder.delete({ where: { id: folderId } });
 
     return { success: true };
+  }
+
+  async emptyFolder(userId: string, folderId: string) {
+    const user = await this.getUser(userId);
+
+    const folder = await this.prisma.folder.findFirst({
+      where: { userId, id: folderId },
+    });
+    if (!folder) throw new NotFoundException('Folder not found');
+
+    await this.zimbra.emptyFolder(
+      user.zimbraHost,
+      user.authToken!,
+      folder.zimbraId,
+      user.csrfToken ?? undefined,
+    );
+
+    // Clear locally-cached messages so the list refreshes on next load
+    await this.prisma.message.deleteMany({ where: { folderId } });
+    await this.prisma.folder.update({
+      where: { id: folderId },
+      data: { unreadCount: 0, totalCount: 0 },
+    });
+
+    return { success: true };
+  }
+
+  async renameFolder(userId: string, folderId: string, name: string) {
+    const user = await this.getUser(userId);
+
+    const folder = await this.prisma.folder.findFirst({
+      where: { userId, id: folderId },
+    });
+    if (!folder) throw new NotFoundException('Folder not found');
+
+    await this.zimbra.renameFolder(
+      user.zimbraHost,
+      user.authToken!,
+      folder.zimbraId,
+      name,
+      user.csrfToken ?? undefined,
+    );
+
+    return this.prisma.folder.update({
+      where: { id: folderId },
+      data: { name, path: `/${name}` },
+    });
   }
 
   async createFolder(userId: string, name: string) {

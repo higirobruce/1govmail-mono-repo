@@ -86,7 +86,7 @@ export class MailController {
    *  The JSON payload fields are carried as a single `payload` form field. */
   @Post('send-with-attachments')
   @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FilesInterceptor('attachments', 10))
+  @UseInterceptors(FilesInterceptor('attachments', 10, { limits: { fieldSize: 50 * 1024 * 1024 } }))
   sendMessageWithAttachments(
     @Req() req: AuthenticatedRequest,
     @Body('payload') payloadJson: string,
@@ -158,6 +158,25 @@ export class MailController {
     @Param('folderId') folderId: string,
   ) {
     return this.mailService.deleteFolder(req.user.sub, folderId);
+  }
+
+  @Post('folders/:folderId/empty')
+  @HttpCode(HttpStatus.OK)
+  emptyFolder(
+    @Req() req: AuthenticatedRequest,
+    @Param('folderId') folderId: string,
+  ) {
+    return this.mailService.emptyFolder(req.user.sub, folderId);
+  }
+
+  @Patch('folders/:folderId')
+  @HttpCode(HttpStatus.OK)
+  renameFolder(
+    @Req() req: AuthenticatedRequest,
+    @Param('folderId') folderId: string,
+    @Body('name') name: string,
+  ) {
+    return this.mailService.renameFolder(req.user.sub, folderId, name);
   }
 
   /**

@@ -6,7 +6,9 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
+import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import MailList, { type ContextAction, type BulkAction } from '@/components/mail/MailList';
+import { InboxZero } from '@/components/mail/InboxZero';
 import SnoozeModal from '@/components/mail/SnoozeModal';
 import MailDetail from '@/components/mail/MailDetail';
 import ThreadView from '@/components/mail/ThreadView';
@@ -16,8 +18,9 @@ import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Input } from '@/components/ui/input';
-import { Search, RefreshCw, X as XIcon } from 'lucide-react';
+import { Search, RefreshCw, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useOffline } from '@/lib/offline/provider';
 import { toast } from 'sonner';
 
 export default function MailPage() {
@@ -26,7 +29,9 @@ export default function MailPage() {
   const [hydrated, setHydrated] = useState(false);
 
   const queryClient = useQueryClient();
+  const offline = useOffline();
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [folders, setFolders] = useState<any[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string>('');
   const [activeMessageId, setActiveMessageId] = useState<string | undefined>();
@@ -47,8 +52,31 @@ export default function MailPage() {
     refetch: refetchMessages,
   } = useInfiniteQuery({
     queryKey: ['messages', activeFolderId],
-    queryFn: ({ pageParam = 0 }) =>
-      api.mail.getMessages(activeFolderId, 50, pageParam as number),
+    queryFn: async ({ pageParam = 0 }) => {
+      const offset = pageParam as number;
+      const isFirstPage = offset === 0;
+      const onlineNow = typeof navigator === 'undefined' ? true : navigator.onLine;
+
+      if (!onlineNow && isFirstPage) {
+        const cached = await offline.mail.getFolderPage(activeFolderId);
+        if (cached) return cached as { messages: any[]; hasMore: boolean; total: number };
+        throw new Error('Offline and no cached messages for this folder');
+      }
+
+      try {
+        const data = await api.mail.getMessages(activeFolderId, 50, offset);
+        if (isFirstPage) {
+          void offline.mail.setFolderPage(activeFolderId, data);
+        }
+        return data;
+      } catch (err) {
+        if (isFirstPage) {
+          const cached = await offline.mail.getFolderPage(activeFolderId);
+          if (cached) return cached as { messages: any[]; hasMore: boolean; total: number };
+        }
+        throw err;
+      }
+    },
     getNextPageParam: (lastPage: any, allPages: any[]) =>
       lastPage.hasMore
         ? allPages.reduce((sum: number, p: any) => sum + p.messages.length, 0)
@@ -97,6 +125,21 @@ export default function MailPage() {
   // ── Snooze state ───────────────────────────────────────────────────────────
   const [snoozeTarget, setSnoozeTarget] = useState<{ messageId: string; folderId: string } | null>(null);
 
+  // ── Label filter state ────────────────────────────────────────────────────
+  // Multi-select label filter applied to the active folder's message list.
+  // When non-empty, MailList shows only rows whose `tags` intersect this set.
+  const [selectedLabelNames, setSelectedLabelNames] = useState<Set<string>>(() => new Set());
+  const toggleLabelFilter = useCallback((name: string) => {
+    setSelectedLabelNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }, []);
+  const clearLabelFilter = useCallback(() => setSelectedLabelNames(new Set()), []);
+  // Reset filter when navigating to a different folder.
+  useEffect(() => { setSelectedLabelNames(new Set()); }, [activeFolderId]);
+
   // ── Mute state ─────────────────────────────────────────────────────────────
   const [mutedConversationIds, setMutedConversationIds] = useState<string[]>([]);
 
@@ -109,9 +152,21 @@ export default function MailPage() {
   // ── Create-task-from-email state ───────────────────────────────────────────
   const [createTaskPrefill, setCreateTaskPrefill] = useState<{ linkedMessageId: string; linkedSubject: string } | null>(null);
 
+  // ── Deep-link: open specific message via ?open=<messageId> ────────────────
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated || !activeFolderId) return;
+    const params = new URLSearchParams(window.location.search);
+    const openId = params.get('open');
+    if (!openId) return;
+    // Clean up the URL without navigating
+    window.history.replaceState({}, '', window.location.pathname);
+    openMessage(openId);
+  }, [hydrated, isAuthenticated, activeFolderId]); // eslint-disable-line
+
   // ── Compose state ──────────────────────────────────────────────────────────
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeMode, setComposeMode] = useState<ComposeMode>('new');
+  const [composeAutoSuggest, setComposeAutoSuggest] = useState(false);
   /** Populated when the user opens a draft — passed as initial values to ComposeModal */
   const [composeDraftProps, setComposeDraftProps] = useState<{
     zimbraId: string;
@@ -244,6 +299,44 @@ export default function MailPage() {
     }
   }, [activeFolderId]);
 
+  // ── Inbox Zero celebration ────────────────────────────────────────────────
+  // Fires a one-shot confetti + empty-state message when the inbox unread
+  // count transitions from >0 to 0, gated to once per local day.
+  //
+  // Baseline: the first folder snapshot after mount is recorded but does NOT
+  // trigger — we only celebrate a *transition* the user caused in this session,
+  // not the initial state of an already-empty inbox.
+  const prevInboxUnreadRef = useRef<number | null>(null);
+  const [pendingInboxZero, setPendingInboxZero] = useState(false);
+  useEffect(() => {
+    const inbox = folders.find((f) => f.path === '/Inbox');
+    if (!inbox) return;
+    const current: number = inbox.unreadCount ?? 0;
+    const prev = prevInboxUnreadRef.current;
+    prevInboxUnreadRef.current = current;
+    if (prev === null) return; // baseline snapshot — no celebration
+    if (prev > 0 && current === 0) {
+      if (typeof window === 'undefined') return;
+      const enabled = localStorage.getItem('1gov_inbox_zero_enabled') !== 'false';
+      if (!enabled) return;
+      const today = new Date().toISOString().slice(0, 10);
+      if (localStorage.getItem('1gov_inbox_zero_last_celebration') === today) return;
+      setPendingInboxZero(true);
+    }
+  }, [folders]);
+
+  const handleInboxZeroCelebrated = useCallback(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    try { localStorage.setItem('1gov_inbox_zero_last_celebration', today); } catch { /* ignore quota/private-mode */ }
+    setPendingInboxZero(false);
+  }, []);
+
+  const activeFolder = folders.find((f) => f.id === activeFolderId);
+  const isInboxActive = activeFolder?.path === '/Inbox';
+  // Only surface the Inbox Zero empty-state when the inbox is genuinely at
+  // zero unread — otherwise "0 starred" on the starred tab would trigger it.
+  const showInboxZeroEmptyState = isInboxActive && (activeFolder?.unreadCount ?? 0) === 0;
+
   // Load full message
   const openMessage = useCallback(async (messageId: string) => {
     // Look in both messages list and search results
@@ -268,7 +361,33 @@ export default function MailPage() {
       updateFolderCounts(activeFolderId, -1);
     }
     try {
-      const data = await api.mail.getMessage(messageId);
+      const onlineNow = typeof navigator === 'undefined' ? true : navigator.onLine;
+      let data: any;
+      if (!onlineNow) {
+        data = await offline.mail.getMessage(messageId);
+        if (!data) {
+          toast.error('This message is not available offline');
+          setActiveMessageId(undefined);
+          if (wasUnread && !isDraft) {
+            updateMessageInCache(activeFolderId, messageId, (m) => ({ ...m, isRead: false }));
+            updateFolderCounts(activeFolderId, +1);
+          }
+          setLoadingMessage(false);
+          return;
+        }
+      } else {
+        try {
+          data = await api.mail.getMessage(messageId);
+          void offline.mail.setMessage(messageId, data);
+        } catch (netErr) {
+          const cached = await offline.mail.getMessage(messageId);
+          if (cached) {
+            data = cached;
+          } else {
+            throw netErr;
+          }
+        }
+      }
 
       if (isDraft) {
         // Open the draft in the compose panel instead of the detail view
@@ -307,98 +426,129 @@ export default function MailPage() {
     } finally {
       setLoadingMessage(false);
     }
-  }, [messages, searchResults, folders, activeFolderId, updateFolderCounts, updateMessageInCache]);
+  }, [messages, searchResults, folders, activeFolderId, updateFolderCounts, updateMessageInCache, offline]);
 
   const handleMoveToFolder = useCallback(async (folderId: string) => {
     if (!activeMessageId) return;
-    const removed = messages.find((m) => m.id === activeMessageId);
+    const messageId = activeMessageId;
+    const sourceFolderId = activeFolderId;
+    const removed = messages.find((m) => m.id === messageId);
     const wasUnread = removed ? !removed.isRead : false;
-    removeMessageFromCache(activeFolderId, activeMessageId);
+    removeMessageFromCache(sourceFolderId, messageId);
     setActiveMessageId(undefined);
     setActiveMessage(null);
-    updateFolderCounts(activeFolderId, wasUnread ? -1 : 0, -1);
-    try {
-      await api.mail.moveMessage(activeMessageId, folderId);
-      const targetName = folders.find((f) => f.id === folderId)?.name ?? 'folder';
-      toast.success(`Moved to ${targetName}`);
-    } catch (err: any) {
-      invalidateMessages(); // refetch from server to restore true state
-      updateFolderCounts(activeFolderId, wasUnread ? +1 : 0, +1);
-      toast.error('Failed to move message', { description: err?.message });
-    }
-  }, [activeMessageId, messages, folders, activeFolderId, updateFolderCounts, removeMessageFromCache, invalidateMessages]);
+    updateFolderCounts(sourceFolderId, wasUnread ? -1 : 0, -1);
+    const targetName = folders.find((f) => f.id === folderId)?.name ?? 'folder';
+    toast.success(`Moved to ${targetName}`);
+    await offline.enqueue<{ messageId: string; folderId: string }>({
+      kind: 'mail.move',
+      payload: { messageId, folderId },
+      idempotencyKey: `mail.move:${messageId}:${folderId}`,
+      onFailed: (errMessage) => {
+        invalidateMessages();
+        updateFolderCounts(sourceFolderId, wasUnread ? +1 : 0, +1);
+        toast.error('Failed to move message', { description: errMessage });
+      },
+    });
+  }, [activeMessageId, messages, folders, activeFolderId, updateFolderCounts, removeMessageFromCache, invalidateMessages, offline]);
 
   const moveToInbox = useCallback(async () => {
     if (!activeMessageId) return;
     const inboxFolder = folders.find((f) => f.path === '/Inbox');
     if (!inboxFolder) return;
-    const removed = messages.find((m) => m.id === activeMessageId);
+    const messageId = activeMessageId;
+    const sourceFolderId = activeFolderId;
+    const inboxFolderId = inboxFolder.id;
+    const removed = messages.find((m) => m.id === messageId);
     const wasUnread = removed ? !removed.isRead : false;
-    removeMessageFromCache(activeFolderId, activeMessageId);
+    removeMessageFromCache(sourceFolderId, messageId);
     setActiveMessageId(undefined);
     setActiveMessage(null);
-    updateFolderCounts(activeFolderId, wasUnread ? -1 : 0, -1);
-    try {
-      await api.mail.moveMessage(activeMessageId, inboxFolder.id);
-      toast.success('Message moved to Inbox');
-    } catch (err: any) {
-      invalidateMessages(); // refetch from server to restore true state
-      updateFolderCounts(activeFolderId, wasUnread ? +1 : 0, +1);
-      toast.error('Failed to move message', { description: err?.message });
-    }
-  }, [activeMessageId, folders, messages, activeFolderId, updateFolderCounts, removeMessageFromCache, invalidateMessages]);
+    updateFolderCounts(sourceFolderId, wasUnread ? -1 : 0, -1);
+    toast.success('Message moved to Inbox');
+    await offline.enqueue<{ messageId: string; folderId: string }>({
+      kind: 'mail.move',
+      payload: { messageId, folderId: inboxFolderId },
+      idempotencyKey: `mail.move:${messageId}:${inboxFolderId}`,
+      onFailed: (errMessage) => {
+        invalidateMessages();
+        updateFolderCounts(sourceFolderId, wasUnread ? +1 : 0, +1);
+        toast.error('Failed to move message', { description: errMessage });
+      },
+    });
+  }, [activeMessageId, folders, messages, activeFolderId, updateFolderCounts, removeMessageFromCache, invalidateMessages, offline]);
 
   const deleteMessage = useCallback(async () => {
     if (!activeMessageId) return;
-    // Optimistic: remove from list immediately
-    const removed = messages.find((m) => m.id === activeMessageId);
+    const messageId = activeMessageId;
+    const sourceFolderId = activeFolderId;
+    const removed = messages.find((m) => m.id === messageId);
     const wasUnread = removed ? !removed.isRead : false;
-    removeMessageFromCache(activeFolderId, activeMessageId);
-    setSearchResults((prev) => prev.filter((m) => m.id !== activeMessageId));
+    removeMessageFromCache(sourceFolderId, messageId);
+    setSearchResults((prev) => prev.filter((m) => m.id !== messageId));
     setActiveMessageId(undefined);
     setActiveMessage(null);
-    updateFolderCounts(activeFolderId, wasUnread ? -1 : 0, -1);
-    try {
-      await api.mail.delete(activeMessageId);
-      toast.success('Message moved to Trash');
-    } catch (err: any) {
-      // Restore on failure by refetching from server
-      invalidateMessages();
-      updateFolderCounts(activeFolderId, wasUnread ? +1 : 0, +1);
-      toast.error('Failed to delete message', { description: err?.message });
-    }
-  }, [activeMessageId, messages, activeFolderId, updateFolderCounts, removeMessageFromCache, invalidateMessages]);
+    updateFolderCounts(sourceFolderId, wasUnread ? -1 : 0, -1);
+    toast.success('Message moved to Trash');
+    await offline.enqueue<{ messageId: string }>({
+      kind: 'mail.delete',
+      payload: { messageId },
+      idempotencyKey: `mail.delete:${messageId}`,
+      onFailed: (errMessage) => {
+        invalidateMessages();
+        updateFolderCounts(sourceFolderId, wasUnread ? +1 : 0, +1);
+        toast.error('Failed to delete message', { description: errMessage });
+      },
+    });
+  }, [activeMessageId, messages, activeFolderId, updateFolderCounts, removeMessageFromCache, invalidateMessages, offline]);
 
   const handleBulkAction = useCallback(async (action: BulkAction) => {
     const { messageIds } = action;
     if (!messageIds.length) return;
-    try {
-      if (action.type === 'markRead' || action.type === 'markUnread') {
-        const read = action.type === 'markRead';
-        messageIds.forEach((id) => updateMessageInCache(activeFolderId, id, (m) => ({ ...m, isRead: read })));
-        await api.mail.bulkMarkRead(messageIds, read);
-        toast.success(`Marked ${messageIds.length} message${messageIds.length !== 1 ? 's' : ''} as ${read ? 'read' : 'unread'}`);
-      } else if (action.type === 'delete') {
-        messageIds.forEach((id) => removeMessageFromCache(activeFolderId, id));
-        if (activeMessageId && messageIds.includes(activeMessageId)) { setActiveMessageId(undefined); setActiveMessage(null); }
-        await api.mail.bulkDelete(messageIds);
-        toast.success(`Deleted ${messageIds.length} message${messageIds.length !== 1 ? 's' : ''}`);
-      } else if (action.type === 'move' && action.targetFolderId) {
-        messageIds.forEach((id) => removeMessageFromCache(activeFolderId, id));
-        if (activeMessageId && messageIds.includes(activeMessageId)) { setActiveMessageId(undefined); setActiveMessage(null); }
-        await api.mail.bulkMove(messageIds, action.targetFolderId);
-        const targetName = folders.find((f) => f.id === action.targetFolderId)?.name ?? 'folder';
-        toast.success(`Moved ${messageIds.length} message${messageIds.length !== 1 ? 's' : ''} to ${targetName}`);
-      }
-    } catch (err: any) {
+    const sourceFolderId = activeFolderId;
+    const count = messageIds.length;
+    const plural = count !== 1 ? 's' : '';
+    const onFailed = (errMessage: string) => {
       invalidateMessages();
-      toast.error('Bulk action failed', { description: err?.message });
+      toast.error('Bulk action failed', { description: errMessage });
+    };
+
+    if (action.type === 'markRead' || action.type === 'markUnread') {
+      const read = action.type === 'markRead';
+      messageIds.forEach((id) => updateMessageInCache(sourceFolderId, id, (m) => ({ ...m, isRead: read })));
+      toast.success(`Marked ${count} message${plural} as ${read ? 'read' : 'unread'}`);
+      await offline.enqueue<{ messageIds: string[]; read: boolean }>({
+        kind: 'mail.bulkMarkRead',
+        payload: { messageIds, read },
+        onFailed,
+      });
+    } else if (action.type === 'delete') {
+      messageIds.forEach((id) => removeMessageFromCache(sourceFolderId, id));
+      if (activeMessageId && messageIds.includes(activeMessageId)) { setActiveMessageId(undefined); setActiveMessage(null); }
+      toast.success(`Deleted ${count} message${plural}`);
+      await offline.enqueue<{ messageIds: string[] }>({
+        kind: 'mail.bulkDelete',
+        payload: { messageIds },
+        onFailed,
+      });
+    } else if (action.type === 'move' && action.targetFolderId) {
+      const targetFolderId = action.targetFolderId;
+      messageIds.forEach((id) => removeMessageFromCache(sourceFolderId, id));
+      if (activeMessageId && messageIds.includes(activeMessageId)) { setActiveMessageId(undefined); setActiveMessage(null); }
+      const targetName = folders.find((f) => f.id === targetFolderId)?.name ?? 'folder';
+      toast.success(`Moved ${count} message${plural} to ${targetName}`);
+      await offline.enqueue<{ messageIds: string[]; folderId: string }>({
+        kind: 'mail.bulkMove',
+        payload: { messageIds, folderId: targetFolderId },
+        onFailed,
+      });
     }
-  }, [activeFolderId, activeMessageId, folders, updateMessageInCache, removeMessageFromCache, invalidateMessages]);
+  }, [activeFolderId, activeMessageId, folders, updateMessageInCache, removeMessageFromCache, invalidateMessages, offline]);
 
   const openCompose = useCallback((mode: ComposeMode) => {
     setComposeDraftProps(null); // clear any draft — this is a fresh reply/forward/new
     setComposeMode(mode);
+    setComposeAutoSuggest(false);
     setComposeOpen(true);
   }, []);
 
@@ -410,6 +560,20 @@ export default function MailPage() {
       setActiveMessage(target);
       setComposeDraftProps(null);
       setComposeMode(mode);
+      setComposeAutoSuggest(false);
+      setComposeOpen(true);
+    },
+    [],
+  );
+
+  /** Called from ThreadView's Quick Reply (AI) button. Opens compose in
+   *  reply mode and tells ComposeModal to auto-run the suggestReply task. */
+  const openQuickReply = useCallback(
+    (target: any) => {
+      setActiveMessage(target);
+      setComposeDraftProps(null);
+      setComposeMode('reply');
+      setComposeAutoSuggest(true);
       setComposeOpen(true);
     },
     [],
@@ -440,6 +604,15 @@ export default function MailPage() {
 
     if (type === 'createTask') {
       setCreateTaskPrefill({ linkedMessageId: messageId, linkedSubject: msg.subject ?? '' });
+      return;
+    }
+
+    if (type === 'createEvent') {
+      const params = new URLSearchParams({
+        createFromEmail: messageId,
+        subject: msg.subject ?? '',
+      });
+      router.push(`/calendar?${params.toString()}`);
       return;
     }
 
@@ -482,21 +655,24 @@ export default function MailPage() {
 
     if (type === 'markRead' || type === 'markUnread') {
       const read = type === 'markRead';
+      const sourceFolderId = activeFolderId;
       const wasUnread = !msg.isRead;
-      updateMessageInCache(activeFolderId, messageId, (m) => ({ ...m, isRead: read }));
+      updateMessageInCache(sourceFolderId, messageId, (m) => ({ ...m, isRead: read }));
       setSearchResults((prev) => prev.map((m) => m.id === messageId ? { ...m, isRead: read } : m));
       if (activeMessage?.id === messageId) setActiveMessage((m: any) => m && { ...m, isRead: read });
-      // Update unread count: marking read decrements, marking unread increments (if state changes)
-      if (read && wasUnread) updateFolderCounts(activeFolderId, -1);
-      if (!read && !wasUnread) updateFolderCounts(activeFolderId, +1);
-      try { await api.mail.markRead(messageId, read); }
-      catch { // revert
-        updateMessageInCache(activeFolderId, messageId, (m) => ({ ...m, isRead: !read }));
-        setSearchResults((prev) => prev.map((m) => m.id === messageId ? { ...m, isRead: !read } : m));
-        if (read && wasUnread) updateFolderCounts(activeFolderId, +1);
-        if (!read && !wasUnread) updateFolderCounts(activeFolderId, -1);
-        toast.error('Failed to update message');
-      }
+      if (read && wasUnread) updateFolderCounts(sourceFolderId, -1);
+      if (!read && !wasUnread) updateFolderCounts(sourceFolderId, +1);
+      await offline.enqueue<{ messageId: string; read: boolean }>({
+        kind: 'mail.markRead',
+        payload: { messageId, read },
+        onFailed: () => {
+          updateMessageInCache(sourceFolderId, messageId, (m) => ({ ...m, isRead: !read }));
+          setSearchResults((prev) => prev.map((m) => m.id === messageId ? { ...m, isRead: !read } : m));
+          if (read && wasUnread) updateFolderCounts(sourceFolderId, +1);
+          if (!read && !wasUnread) updateFolderCounts(sourceFolderId, -1);
+          toast.error('Failed to update message');
+        },
+      });
       return;
     }
 
@@ -509,40 +685,49 @@ export default function MailPage() {
     }
 
     if (type === 'delete') {
+      const sourceFolderId = activeFolderId;
       const removed = messages.find((m) => m.id === messageId);
       const wasUnread = removed ? !removed.isRead : false;
-      removeMessageFromCache(activeFolderId, messageId);
+      removeMessageFromCache(sourceFolderId, messageId);
       setSearchResults((prev) => prev.filter((m) => m.id !== messageId));
       if (activeMessageId === messageId) { setActiveMessageId(undefined); setActiveMessage(null); }
-      updateFolderCounts(activeFolderId, wasUnread ? -1 : 0, -1);
-      try {
-        await api.mail.delete(messageId);
-        toast.success('Message moved to Trash');
-      } catch (err: any) {
-        invalidateMessages(); // refetch from server to restore true state
-        updateFolderCounts(activeFolderId, wasUnread ? +1 : 0, +1);
-        toast.error('Failed to delete message', { description: err?.message });
-      }
+      updateFolderCounts(sourceFolderId, wasUnread ? -1 : 0, -1);
+      toast.success('Message moved to Trash');
+      await offline.enqueue<{ messageId: string }>({
+        kind: 'mail.delete',
+        payload: { messageId },
+        idempotencyKey: `mail.delete:${messageId}`,
+        onFailed: (errMessage) => {
+          invalidateMessages();
+          updateFolderCounts(sourceFolderId, wasUnread ? +1 : 0, +1);
+          toast.error('Failed to delete message', { description: errMessage });
+        },
+      });
     }
 
     if (type === 'moveToFolder' && action.targetFolderId) {
+      const targetFolderId = action.targetFolderId;
       const removed = messages.find((m) => m.id === messageId);
       const wasUnread = removed ? !removed.isRead : false;
-      removeMessageFromCache(activeFolderId, messageId);
+      const sourceFolderId = activeFolderId;
+      removeMessageFromCache(sourceFolderId, messageId);
       setSearchResults((prev) => prev.filter((m) => m.id !== messageId));
       if (activeMessageId === messageId) { setActiveMessageId(undefined); setActiveMessage(null); }
-      updateFolderCounts(activeFolderId, wasUnread ? -1 : 0, -1);
-      try {
-        await api.mail.moveMessage(messageId, action.targetFolderId);
-        const targetName = folders.find((f) => f.id === action.targetFolderId)?.name ?? 'folder';
-        toast.success(`Moved to ${targetName}`);
-      } catch (err: any) {
-        invalidateMessages(); // refetch from server to restore true state
-        updateFolderCounts(activeFolderId, wasUnread ? +1 : 0, +1);
-        toast.error('Failed to move message', { description: err?.message });
-      }
+      updateFolderCounts(sourceFolderId, wasUnread ? -1 : 0, -1);
+      const targetName = folders.find((f) => f.id === targetFolderId)?.name ?? 'folder';
+      toast.success(`Moved to ${targetName}`);
+      await offline.enqueue<{ messageId: string; folderId: string }>({
+        kind: 'mail.move',
+        payload: { messageId, folderId: targetFolderId },
+        idempotencyKey: `mail.move:${messageId}:${targetFolderId}`,
+        onFailed: (errMessage) => {
+          invalidateMessages();
+          updateFolderCounts(sourceFolderId, wasUnread ? +1 : 0, +1);
+          toast.error('Failed to move message', { description: errMessage });
+        },
+      });
     }
-  }, [messages, searchResults, activeMessage, activeMessageId, openMessage, openCompose, folders, activeFolderId, updateFolderCounts, updateMessageInCache, removeMessageFromCache, invalidateMessages]); // eslint-disable-line
+  }, [messages, searchResults, activeMessage, activeMessageId, openMessage, openCompose, folders, activeFolderId, updateFolderCounts, updateMessageInCache, removeMessageFromCache, invalidateMessages, offline]); // eslint-disable-line
 
   // Debounce search input → fire query after 400 ms of silence
   const handleSearchInput = useCallback((value: string) => {
@@ -562,6 +747,7 @@ export default function MailPage() {
     if (!query.trim()) return;
     if (reset) {
       searchOffsetRef.current = 0;
+      setSearchResults([]);
       setLoadingSearch(true);
     } else {
       setLoadingMoreSearch(true);
@@ -673,6 +859,41 @@ export default function MailPage() {
     }
   }, [folders, activeFolderId]);
 
+  const handleEmptyFolder = useCallback(async (folderId: string) => {
+    try {
+      await api.mail.emptyFolder(folderId);
+      // Clear messages if this is the currently viewed folder
+      if (activeFolderId === folderId) {
+        queryClient.setQueryData(['messages', folderId], (old: any) =>
+          old ? { ...old, pages: old.pages.map((p: any) => ({ ...p, messages: [], hasMore: false })) } : old,
+        );
+        setActiveMessageId(undefined);
+        setActiveMessage(null);
+      }
+      // Reset folder counts
+      setFolders((prev) =>
+        prev.map((f) => f.id === folderId ? { ...f, unreadCount: 0, totalCount: 0 } : f),
+      );
+      toast.success('Folder emptied');
+    } catch (err: any) {
+      toast.error('Failed to empty folder', { description: err?.message });
+      throw err;
+    }
+  }, [activeFolderId, queryClient]);
+
+  const handleRenameFolder = useCallback(async (folderId: string, name: string) => {
+    const prev = folders.find((f) => f.id === folderId);
+    setFolders((old) => old.map((f) => f.id === folderId ? { ...f, name } : f));
+    try {
+      await api.mail.renameFolder(folderId, name);
+      toast.success('Folder renamed');
+    } catch (err: any) {
+      if (prev) setFolders((old) => old.map((f) => f.id === folderId ? prev : f));
+      toast.error('Failed to rename folder', { description: err?.message });
+      throw err;
+    }
+  }, [folders]);
+
   // Show a minimal full-screen loader while waiting for persisted auth to hydrate
   if (!hydrated) {
     return (
@@ -696,15 +917,47 @@ export default function MailPage() {
         onCompose={() => { setComposeOpen(true); setComposeMode('new'); }}
         onCreateFolder={handleCreateFolder}
         onDeleteFolder={handleDeleteFolder}
+        onEmptyFolder={handleEmptyFolder}
+        onRenameFolder={handleRenameFolder}
+        selectedLabelNames={selectedLabelNames}
+        onToggleLabelFilter={toggleLabelFilter}
+        onClearLabelFilter={clearLabelFilter}
+      />
+      <MobileSidebarSheet
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        folders={folders}
+        activeFolderId={activeFolderId}
+        onFolderSelect={(id) => setActiveFolderId(id)}
+        onCompose={() => { setComposeOpen(true); setComposeMode('new'); }}
+        onCreateFolder={handleCreateFolder}
+        onDeleteFolder={handleDeleteFolder}
+        onEmptyFolder={handleEmptyFolder}
+        onRenameFolder={handleRenameFolder}
+        selectedLabelNames={selectedLabelNames}
+        onToggleLabelFilter={toggleLabelFilter}
+        onClearLabelFilter={clearLabelFilter}
       />
 
-      {/* Mail list pane */}
-      <div className="w-[300px] shrink-0 flex flex-col h-full border-r border-border/50">
+      {/* Mail list pane — full width on mobile, fixed 300px on desktop */}
+      <div className={cn(
+        'shrink-0 flex flex-col h-full border-r border-border/50',
+        'w-full lg:w-[300px]',
+        activeMessageId ? 'hidden lg:flex' : 'flex',
+      )}>
         {/* List header */}
         <div className="px-3 pt-3 pb-2.5 border-b border-border/25 shrink-0">
           {/* Title row */}
           <div className="flex items-center justify-between mb-2.5">
             <div className="flex items-center gap-1">
+              {/* Hamburger — mobile only */}
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-1 -ml-1 mr-1 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                aria-label="Open navigation"
+              >
+                <Menu className="w-4 h-4" />
+              </button>
               <h2 className="text-[14px] font-semibold text-foreground">
                 {isSearchMode
                   ? 'Search'
@@ -767,8 +1020,16 @@ export default function MailPage() {
           )}
         </div>
 
+        {!offline.status.online && (
+          <div className="px-3 py-1.5 text-[12px] bg-amber-500/10 text-amber-700 dark:text-amber-300 border-b border-amber-500/20 flex items-center gap-2">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+            <span className="truncate">You&rsquo;re offline. Showing cached messages; some may be unavailable.</span>
+          </div>
+        )}
+
         {isSearchMode ? (
           <MailList
+            key="search"
             messages={searchResults}
             activeMessageId={activeMessageId}
             loading={loadingSearch && searchResults.length === 0}
@@ -780,9 +1041,11 @@ export default function MailPage() {
             onBulkAction={handleBulkAction}
             folders={folders}
             mutedConversationIds={mutedConversationIds}
+            filterTagNames={selectedLabelNames}
           />
         ) : (
           <MailList
+            key="regular"
             messages={messages}
             activeMessageId={activeMessageId}
             loading={loadingMessages && messages.length === 0}
@@ -792,19 +1055,35 @@ export default function MailPage() {
             hasMore={!!hasNextPage}
             onContextAction={handleContextAction}
             onBulkAction={handleBulkAction}
+            filterTagNames={selectedLabelNames}
             folders={folders}
             mutedConversationIds={mutedConversationIds}
+            emptyState={showInboxZeroEmptyState ? (
+              <InboxZero celebrate={pendingInboxZero} onCelebrated={handleInboxZeroCelebrated} />
+            ) : undefined}
           />
         )}
       </div>
 
-      {/* Detail pane — always visible so clicking a message always shows it */}
-      <div className="flex-1 min-w-0 h-full">
+      {/* Detail pane — full width on mobile when message selected, always visible on desktop */}
+      <div className={cn('flex-1 min-w-0 h-full flex flex-col', !activeMessageId && 'hidden lg:flex')}>
+        {/* Mobile back button */}
+        <div className="lg:hidden flex items-center px-3 py-2 border-b border-border/25 shrink-0">
+          <button
+            onClick={() => { setActiveMessageId(undefined); setActiveMessage(null); }}
+            className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70 hover:text-foreground transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back
+          </button>
+        </div>
+        <div className="flex-1 min-h-0">
         <ThreadView
           message={activeMessage}
           loading={loadingMessage}
           onClose={() => { setActiveMessageId(undefined); setActiveMessage(null); }}
           onComposeWith={openComposeWith}
+          onQuickReply={openQuickReply}
           onDelete={deleteMessage}
           onToggleStar={toggleStar}
           onMoveToInbox={
@@ -834,7 +1113,9 @@ export default function MailPage() {
             }
           } : undefined}
           isMuted={activeMessage?.conversationId ? mutedConversationIds.includes(activeMessage.conversationId) : false}
+          onSnooze={activeMessageId ? () => setSnoozeTarget({ messageId: activeMessageId, folderId: activeFolderId }) : undefined}
         />
+        </div>
       </div>
 
       {/* Snooze modal */}
@@ -869,7 +1150,8 @@ export default function MailPage() {
         open={composeOpen}
         mode={composeMode}
         originalMessage={activeMessage}
-        onClose={() => { setComposeOpen(false); setComposeDraftProps(null); }}
+        autoSuggestReply={composeAutoSuggest}
+        onClose={() => { setComposeOpen(false); setComposeDraftProps(null); setComposeAutoSuggest(false); }}
         onSent={() => {
           setComposeOpen(false);
           setComposeDraftProps(null);

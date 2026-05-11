@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
+import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,7 +18,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
   Clock, MapPin, Calendar as CalendarIcon, Trash2, Users,
   Video, Repeat, ExternalLink, Pencil, CheckCircle2,
-  HelpCircle, XCircle,
+  HelpCircle, XCircle, Menu, Mail, Sparkles,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth,
@@ -51,6 +52,8 @@ interface CalEvent {
   isRecurring: boolean;
   organizer: string | null;
   attendees: Array<{ email: string; name?: string; ptst?: string }>;
+  linkedMessageId?: string | null;
+  linkedSubject?: string | null;
 }
 
 type CalView = 'day' | 'workweek' | 'week' | 'month' | 'year' | 'agenda';
@@ -312,7 +315,7 @@ function CreateEventModal({
 }: {
   initialDate?: Date;
   initialData?: CalEvent;
-  prefillData?: { title?: string; description?: string };
+  prefillData?: { title?: string; description?: string; linkedMessageId?: string; linkedSubject?: string };
   isEdit?: boolean;
   onClose: () => void;
   onCreated: (event: CalEvent) => void;
@@ -337,6 +340,57 @@ function CreateEventModal({
   );
   const [saving, setSaving]     = useState(false);
 
+  // ── Find-a-time (scheduling assistant inline in the event modal) ────────
+  const [showFindTime, setShowFindTime] = useState(false);
+  const [fbLoading, setFbLoading]       = useState(false);
+  const [fbResults, setFbResults]       = useState<FreeBusyData[]>([]);
+
+  const handleFindTime = async () => {
+    if (attendees.length === 0) {
+      toast.error('Add at least one attendee first');
+      return;
+    }
+    setFbLoading(true);
+    try {
+      const from = new Date();
+      const until = addDays(from, 30);
+      const res = await api.calendar.getFreeBusyBatch(
+        attendees,
+        from.toISOString(),
+        until.toISOString(),
+      );
+      setFbResults(res as FreeBusyData[]);
+      setShowFindTime(true);
+    } catch (err: any) {
+      toast.error('Failed to check availability', { description: err?.message });
+    } finally {
+      setFbLoading(false);
+    }
+  };
+
+  // Preserve the current event duration when applying a suggested slot so the
+  // user's start/end stay in sync with the slot length they picked above.
+  const durationMs = (() => {
+    const s = new Date(startAt).getTime();
+    const e = new Date(endAt).getTime();
+    const d = e - s;
+    return Number.isFinite(d) && d > 0 ? d : 60 * 60_000;
+  })();
+
+  const suggestedSlots = showFindTime && fbResults.length > 0
+    ? findFreeSlots(fbResults, new Date(), durationMs, 6)
+    : [];
+
+  const applySlot = (slot: SuggestedSlot) => {
+    setStart(format(slot.start, "yyyy-MM-dd'T'HH:mm"));
+    setEnd(format(slot.end, "yyyy-MM-dd'T'HH:mm"));
+    setShowFindTime(false);
+  };
+
+  // Linked email (from email context action or existing event)
+  const linkedMessageId = prefillData?.linkedMessageId ?? initialData?.linkedMessageId ?? null;
+  const linkedSubject   = prefillData?.linkedSubject   ?? initialData?.linkedSubject   ?? null;
+
   const handleSave = async () => {
     if (!title.trim()) { toast.error('Title is required'); return; }
     setSaving(true);
@@ -356,6 +410,8 @@ function CreateEventModal({
         endAt: endIso,
         allDay,
         attendees: attendees.length > 0 ? attendees : undefined,
+        linkedMessageId: linkedMessageId ?? undefined,
+        linkedSubject:   linkedSubject   ?? undefined,
       };
 
       if (isEdit && initialData) {
@@ -419,6 +475,71 @@ function CreateEventModal({
                 />
               </div>
             </div>
+            {!allDay && (
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleFindTime}
+                  disabled={fbLoading || attendees.length === 0}
+                  className="h-7 px-2 text-[11px] gap-1.5 text-muted-foreground/70 hover:text-primary"
+                  title={attendees.length === 0 ? 'Add attendees below first' : 'Find a time that works for everyone'}
+                >
+                  {fbLoading
+                    ? <><Loader2 className="w-3 h-3 animate-spin" /> Checking…</>
+                    : <><Sparkles className="w-3 h-3" /> Find a time</>}
+                </Button>
+                {showFindTime && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFindTime(false)}
+                    className="text-[10px] text-muted-foreground/50 hover:text-foreground"
+                  >
+                    hide
+                  </button>
+                )}
+              </div>
+            )}
+            {showFindTime && !allDay && (
+              <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 space-y-1.5">
+                <p className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
+                  Suggested slots ({Math.round(durationMs / 60_000)} min, weekdays 9–5)
+                </p>
+                {suggestedSlots.length === 0 ? (
+                  <p className="text-xs text-muted-foreground/60 italic">
+                    No common free time in the next 30 weekdays.
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {suggestedSlots.map((slot, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-emerald-500/8 border border-emerald-500/20 hover:bg-emerald-500/12 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-medium text-foreground/80 truncate">
+                            {format(slot.start, 'EEE, MMM d')}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground/60">
+                            {format(slot.start, 'h:mm a')} – {format(slot.end, 'h:mm a')}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => applySlot(slot)}
+                          className="h-6 px-2 text-[10px] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1"
+                        >
+                          Use <ChevronRight className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <div>
               <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Location</Label>
               <Input value={location} onChange={(e) => setLocation(e.target.value)}
@@ -430,6 +551,19 @@ function CreateEventModal({
                 placeholder="Add description" className="h-8 text-sm bg-muted/30 border-border/50" />
             </div>
             <AttendeePicker attendees={attendees} onChange={setAttendees} />
+            {linkedMessageId && linkedSubject && (
+              <div>
+                <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Linked email</Label>
+                <a
+                  href={`/mail?open=${encodeURIComponent(linkedMessageId)}`}
+                  className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs hover:bg-amber-100 dark:hover:bg-amber-800/30 transition-colors"
+                >
+                  <Mail className="w-3.5 h-3.5 shrink-0" />
+                  <span className="flex-1 truncate">{linkedSubject}</span>
+                  <ExternalLink className="w-3 h-3 shrink-0 opacity-60" />
+                </a>
+              </div>
+            )}
           </div>
         </ScrollArea>
         <div className="flex justify-end gap-2 px-5 py-3 border-t border-border/40 shrink-0">
@@ -464,7 +598,12 @@ function MonthView({
     end:   endOfWeek(endOfMonth(currentDate),    { weekStartsOn: 1 }),
   });
   const eventsForDay = (day: Date) =>
-    events.filter((e) => { try { return isSameDay(parseISO(e.startAt), day); } catch { return false; } });
+    events.filter((e) => {
+      try {
+        const d = startOfDay(day);
+        return d >= startOfDay(parseISO(e.startAt)) && d <= startOfDay(parseISO(e.endAt));
+      } catch { return false; }
+    });
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
@@ -528,10 +667,13 @@ function YearView({
 }) {
   const year = currentDate.getFullYear();
   const months = Array.from({ length: 12 }, (_, i) => new Date(year, i, 1));
-  const eventDays = new Set(events.map((e) => {
-    try { return format(parseISO(e.startAt), 'yyyy-MM-dd'); }
-    catch { return ''; }
-  }));
+  const eventDays = new Set<string>();
+  events.forEach((e) => {
+    try {
+      eachDayOfInterval({ start: parseISO(e.startAt), end: parseISO(e.endAt) })
+        .forEach((d) => eventDays.add(format(d, 'yyyy-MM-dd')));
+    } catch {}
+  });
 
   return (
     <ScrollArea className="flex-1 min-h-0">
@@ -609,14 +751,19 @@ function TimelineView({
   const allDayFor = (day: Date) =>
     events.filter((e) => {
       if (!e.allDay) return false;
-      try { return isSameDay(parseISO(e.startAt), day); } catch { return false; }
+      try {
+        const d = startOfDay(day);
+        return d >= startOfDay(parseISO(e.startAt)) && d <= startOfDay(parseISO(e.endAt));
+      } catch { return false; }
     });
 
   /** Timed events for a specific day */
   const timedFor = (day: Date) =>
     events.filter((e) => {
       if (e.allDay) return false;
-      try { return isSameDay(parseISO(e.startAt), day); } catch { return false; }
+      try {
+        return parseISO(e.startAt) < endOfDay(day) && parseISO(e.endAt) > startOfDay(day);
+      } catch { return false; }
     });
 
   /** Free/busy blocks for a specific day */
@@ -626,18 +773,6 @@ function TimelineView({
     return arr.filter((b) => isSameDay(new Date(b.s), day));
   };
 
-  const eventTop = (isoStart: string) => {
-    try {
-      const d = parseISO(isoStart);
-      return (getHours(d) + getMinutes(d) / 60) * SLOT_H;
-    } catch { return 0; }
-  };
-  const eventHeight = (isoStart: string, isoEnd: string) => {
-    try {
-      const mins = differenceInMinutes(parseISO(isoEnd), parseISO(isoStart));
-      return Math.max(20, (mins / 60) * SLOT_H);
-    } catch { return SLOT_H; }
-  };
 
   const nowTop = (() => {
     const now = new Date();
@@ -752,8 +887,13 @@ function TimelineView({
                 const dayEvents = timedFor(day);
                 const layout    = layoutOverlapping(dayEvents);
                 return dayEvents.map((ev) => {
-                  const top = eventTop(ev.startAt);
-                  const h   = eventHeight(ev.startAt, ev.endAt);
+                  const evStart   = parseISO(ev.startAt);
+                  const evEnd     = parseISO(ev.endAt);
+                  // Use the original start/end time on every spanned day
+                  const startHour = getHours(evStart) + getMinutes(evStart) / 60;
+                  const endHour   = getHours(evEnd)   + getMinutes(evEnd)   / 60;
+                  const top = startHour * SLOT_H;
+                  const h   = Math.max(20, (endHour - startHour) * SLOT_H);
                   const { col, totalCols } = layout.get(ev.id) ?? { col: 0, totalCols: 1 };
                   const widthPct = 100 / totalCols;
                   const leftPct  = col * widthPct;
@@ -968,12 +1108,22 @@ function findFreeSlots(
   maxSlots = 5,
 ): SuggestedSlot[] {
   const slots: SuggestedSlot[] = [];
-  const days = eachDayOfInterval({ start: startOfDay(fromDate), end: addDays(fromDate, 29) });
+  const now = new Date();
+  // Never suggest slots in the past — start from whichever is later
+  const effectiveFrom = fromDate > now ? fromDate : now;
+  const days = eachDayOfInterval({ start: startOfDay(effectiveFrom), end: addDays(effectiveFrom, 29) });
 
   for (const day of days) {
     if (slots.length >= maxSlots) break;
-    const wStart = new Date(day); wStart.setHours(8, 0, 0, 0);
-    const wEnd   = new Date(day); wEnd.setHours(18, 0, 0, 0);
+    // Skip weekends
+    const dow = day.getDay();
+    if (dow === 0 || dow === 6) continue;
+
+    const wStart = new Date(day); wStart.setHours(9, 0, 0, 0);
+    const wEnd   = new Date(day); wEnd.setHours(17, 0, 0, 0);
+    // For today: don't look at hours already past
+    if (wEnd <= effectiveFrom) continue;
+    if (wStart < effectiveFrom) wStart.setTime(effectiveFrom.getTime());
 
     // Combine all busy + tentative from all attendees
     const allBusy: Array<{ s: number; e: number }> = results.flatMap((r) => [
@@ -1505,6 +1655,21 @@ function EventDetailPanel({
             </div>
           )}
 
+          {/* Linked source email */}
+          {event.linkedMessageId && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Source email</p>
+              <a
+                href={`/mail?open=${encodeURIComponent(event.linkedMessageId)}`}
+                className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs hover:bg-amber-100 dark:hover:bg-amber-800/30 transition-colors"
+              >
+                <Mail className="w-3.5 h-3.5 shrink-0" />
+                <span className="flex-1 truncate">{event.linkedSubject ?? 'View email'}</span>
+                <ExternalLink className="w-3 h-3 shrink-0 opacity-60" />
+              </a>
+            </div>
+          )}
+
           {/* Organizer */}
           {event.organizer && (
             <div>
@@ -1574,8 +1739,8 @@ function EventDetailPanel({
 
       {/* Footer */}
       <div className="px-4 py-3 border-t border-border/40 shrink-0">
-        <Button variant="ghost" size="sm" onClick={() => onDelete(event)} disabled={deleting}
-          className="w-full text-destructive/70 hover:text-destructive hover:bg-destructive/10 h-8 gap-1.5 text-xs">
+        <Button variant="destructive-ghost" size="sm" onClick={() => onDelete(event)} disabled={deleting}
+          className="w-full h-8 gap-1.5 text-xs">
           {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
           Delete event
         </Button>
@@ -1595,6 +1760,7 @@ export default function CalendarPage() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const currentUser     = useAuthStore((s) => s.user);
   const [hydrated, setHydrated] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [calView, setCalView]       = useState<CalView>('agenda');
   const confirm = useConfirmStore((s) => s.confirm);
@@ -1606,7 +1772,7 @@ export default function CalendarPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createForDay, setCreateForDay]  = useState<Date | undefined>();
   const [editingEvent, setEditingEvent]  = useState<CalEvent | null>(null);
-  const [dragPrefill, setDragPrefill] = useState<{ title?: string; description?: string } | null>(null);
+  const [dragPrefill, setDragPrefill] = useState<{ title?: string; description?: string; linkedMessageId?: string; linkedSubject?: string } | null>(null);
   const [deleting, setDeleting]     = useState(false);
 
   // Availability
@@ -1660,6 +1826,18 @@ export default function CalendarPage() {
     if (!hydrated || !isAuthenticated) return;
     loadEvents(rangeStart, rangeEnd);
   }, [hydrated, isAuthenticated, rangeStart.toISOString(), rangeEnd.toISOString()]); // eslint-disable-line
+
+  // Open create modal when navigating from mail with ?createFromEmail=<id>&subject=<subject>
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated) return;
+    const params = new URLSearchParams(window.location.search);
+    const createFromEmail = params.get('createFromEmail');
+    if (!createFromEmail) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    const subject = params.get('subject') ?? '';
+    setDragPrefill({ title: subject, linkedMessageId: createFromEmail, linkedSubject: subject });
+    setShowCreate(true);
+  }, [hydrated, isAuthenticated]); // eslint-disable-line
 
   // When an event is selected, fetch full details from Zimbra (complete attendee list)
   useEffect(() => {
@@ -1774,6 +1952,14 @@ export default function CalendarPage() {
         onFolderSelect={() => router.push('/mail')}
         onCompose={() => router.push('/mail')}
       />
+      <MobileSidebarSheet
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        folders={[]}
+        activeFolderId=""
+        onFolderSelect={() => router.push('/mail')}
+        onCompose={() => router.push('/mail')}
+      />
 
       <div
         className="flex-1 min-w-0 flex flex-col h-full overflow-hidden"
@@ -1781,54 +1967,75 @@ export default function CalendarPage() {
         onDrop={handleMailDrop}
       >
         {/* ── Top bar ── */}
-        <div className="flex items-center justify-between px-6 py-3 border-b border-border/40 shrink-0 gap-4">
-          {/* Navigation */}
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm"
-              onClick={() => setCurrentDate((d) => navigate(d, calView, -1))}
-              className="h-8 w-8 p-0 text-muted-foreground/60 hover:text-foreground">
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <h1 className="text-sm font-semibold text-foreground min-w-[200px] text-center">
-              {viewLabel(currentDate, calView)}
-            </h1>
-            <Button variant="ghost" size="sm"
-              onClick={() => setCurrentDate((d) => navigate(d, calView, 1))}
-              className="h-8 w-8 p-0 text-muted-foreground/60 hover:text-foreground">
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-            <Button variant="ghost" size="sm"
-              onClick={() => setCurrentDate(new Date())}
-              className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-foreground">
-              Today
-            </Button>
-          </div>
-
-          {/* View switcher */}
-          <div className="flex items-center rounded-lg border border-border/40 overflow-hidden shrink-0">
-            {(Object.keys(VIEW_LABELS) as CalView[]).map((v) => (
-              <button key={v} onClick={() => setCalView(v)}
-                className={cn('px-3 py-1.5 text-xs font-medium transition-colors border-r border-border/30 last:border-r-0',
-                  calView === v
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/50')}>
-                {VIEW_LABELS[v]}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between px-3 lg:px-6 py-2 lg:py-3 border-b border-border/40 shrink-0 gap-2">
+          {/* Row 1: navigation + New Event (mobile) */}
+          <div className="flex items-center justify-between gap-1 lg:gap-2">
+            <div className="flex items-center gap-1 lg:gap-2">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-1.5 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+                aria-label="Open navigation"
+              >
+                <Menu className="w-4 h-4" />
               </button>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm"
-              onClick={() => setShowAvailability((v) => !v)}
-              className={cn('h-8 px-3 text-xs gap-1.5', showAvailability ? 'text-primary bg-primary/10' : 'text-muted-foreground/60 hover:text-foreground')}>
-              <Users className="w-3.5 h-3.5" /> Availability
-            </Button>
+              <Button variant="ghost" size="sm"
+                onClick={() => setCurrentDate((d) => navigate(d, calView, -1))}
+                className="h-8 w-8 p-0 text-muted-foreground/60 hover:text-foreground">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <h1 className="text-xs lg:text-sm font-semibold text-foreground min-w-[100px] lg:min-w-[200px] text-center">
+                {viewLabel(currentDate, calView)}
+              </h1>
+              <Button variant="ghost" size="sm"
+                onClick={() => setCurrentDate((d) => navigate(d, calView, 1))}
+                className="h-8 w-8 p-0 text-muted-foreground/60 hover:text-foreground">
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="sm"
+                onClick={() => setCurrentDate(new Date())}
+                className="h-8 px-2 lg:px-3 text-xs text-muted-foreground/60 hover:text-foreground">
+                Today
+              </Button>
+            </div>
+            {/* New Event — shown on mobile right side of row 1 */}
             <Button size="sm"
               onClick={() => { setCreateForDay(undefined); setShowCreate(true); }}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-4 gap-1.5">
-              <Plus className="w-3.5 h-3.5" /> New Event
+              className="lg:hidden bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-3 gap-1.5">
+              <Plus className="w-3.5 h-3.5" /> New
             </Button>
+          </div>
+
+          {/* Row 2 on mobile / middle+right on desktop: view switcher + actions */}
+          <div className="flex items-center justify-between gap-2">
+            {/* View switcher — scrollable; mobile shows only day + agenda */}
+            <div className="flex items-center rounded-lg border border-border/40 overflow-x-auto shrink-0 min-w-0">
+              {(Object.keys(VIEW_LABELS) as CalView[]).map((v) => (
+                <button key={v} onClick={() => setCalView(v)}
+                  className={cn(
+                    'px-2 lg:px-3 py-1.5 text-xs font-medium transition-colors border-r border-border/30 last:border-r-0 whitespace-nowrap',
+                    v !== 'day' && v !== 'agenda' && 'hidden lg:block',
+                    calView === v
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/50')}>
+                  {VIEW_LABELS[v]}
+                </button>
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2 shrink-0">
+              <Button variant="ghost" size="sm"
+                onClick={() => setShowAvailability((v) => !v)}
+                className={cn('h-8 px-3 text-xs gap-1.5', showAvailability ? 'text-primary bg-primary/10' : 'text-muted-foreground/60 hover:text-foreground')}>
+                <Users className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Availability</span>
+              </Button>
+              <Button size="sm"
+                onClick={() => { setCreateForDay(undefined); setShowCreate(true); }}
+                className="hidden lg:flex bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-4 gap-1.5">
+                <Plus className="w-3.5 h-3.5" /> New Event
+              </Button>
+            </div>
           </div>
         </div>
 

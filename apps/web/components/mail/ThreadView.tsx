@@ -211,9 +211,7 @@ export default function ThreadView({
 
   // ── AI summarize state ───────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
-  const aiBaseUrl = useAIStore((s) => s.baseUrl);
   const aiModel = useAIStore((s) => s.model);
-  const aiApiKey = useAIStore((s) => s.apiKey);
   const { text: streamedSummary, push: pushSummary, reset: resetSummary } = useCharStream();
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -243,7 +241,7 @@ export default function ThreadView({
     setSummaryOpen(true);
 
     const activeBody =
-      message?.bodyHtml ?? message?.bodyText ?? message?.snippet ?? '';
+      message?.bodyText ?? message?.bodyHtml ?? message?.snippet ?? '';
     const concatenated = list
       .map((m) => {
         const sender = m.fromName ? `${m.fromName} <${m.fromEmail}>` : m.fromEmail;
@@ -255,7 +253,7 @@ export default function ThreadView({
       .join('\n\n---\n\n');
 
     try {
-      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+      const client = new AIClient();
       const last = list[list.length - 1];
       const isThread = list.length > 1;
       const fn = isThread ? summarizeThread : summarizeMessage;
@@ -279,7 +277,7 @@ export default function ThreadView({
     } finally {
       setSummarizing(false);
     }
-  }, [threadMessages, aiBaseUrl, aiApiKey, aiModel, message, pushSummary, resetSummary]);
+  }, [threadMessages, aiModel, message, pushSummary, resetSummary]);
 
   const closeSummary = useCallback(() => {
     summaryAbortRef.current?.abort();
@@ -791,8 +789,41 @@ export default function ThreadView({
                         toast.error('Failed to delete draft');
                       }
                     }
-                  : onDelete}
-                onToggleStar={onToggleStar}
+                  // Parent onDelete acts on the SELECTED message — only use it
+                  // for that row; other rows delete their own message.
+                  : msg.id === message.id
+                  ? onDelete
+                  : async () => {
+                      try {
+                        await api.mail.delete(msg.id);
+                        locallyDeletedDraftIds.current.add(msg.id);
+                        setThreadMessages((prev) => prev.filter((m) => m.id !== msg.id));
+                        toast.success('Message moved to Trash');
+                      } catch {
+                        toast.error('Failed to delete message');
+                      }
+                    }}
+                onToggleStar={async () => {
+                  if (msg.id === message.id) {
+                    onToggleStar();
+                    setThreadMessages((prev) =>
+                      prev.map((m) => (m.id === msg.id ? { ...m, isStarred: !m.isStarred } : m)),
+                    );
+                    return;
+                  }
+                  const newStarred = !msg.isStarred;
+                  setThreadMessages((prev) =>
+                    prev.map((m) => (m.id === msg.id ? { ...m, isStarred: newStarred } : m)),
+                  );
+                  try {
+                    // Same persistence call the parent's toggleStar uses.
+                    await api.mail.markRead(msg.id, msg.isRead);
+                  } catch {
+                    setThreadMessages((prev) =>
+                      prev.map((m) => (m.id === msg.id ? { ...m, isStarred: !newStarred } : m)),
+                    );
+                  }
+                }}
                 onOpenDraft={msg.isDraft
                   ? (draftMsg) => {
                       // Build a ComposeMessage-compatible object so ComposeModal can pre-fill

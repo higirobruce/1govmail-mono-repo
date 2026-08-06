@@ -3,28 +3,24 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+/**
+ * AI feature settings. The endpoint and credentials live on the server —
+ * the browser only chooses whether AI is on and which model name to send.
+ */
 export interface AIState {
   enabled: boolean;
-  baseUrl: string;
   model: string;
-  apiKey: string;
   setEnabled: (v: boolean) => void;
-  setBaseUrl: (v: string) => void;
   setModel: (v: string) => void;
-  setApiKey: (v: string) => void;
 }
 
 export const useAIStore = create<AIState>()(
   persist(
     (set) => ({
       enabled: false,
-      baseUrl: 'http://localhost:11434/v1',
-      model: 'llama3.1',
-      apiKey: '',
+      model: 'gemma2:2b',
       setEnabled: (enabled) => set({ enabled }),
-      setBaseUrl: (baseUrl) => set({ baseUrl }),
       setModel: (model) => set({ model }),
-      setApiKey: (apiKey) => set({ apiKey }),
     }),
     { name: '1gov-ai' },
   ),

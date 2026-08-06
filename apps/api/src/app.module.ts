@@ -13,6 +13,7 @@ import { SettingsModule } from './settings/settings.module';
 import { TasksModule } from './tasks/tasks.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { DocsModule } from './docs/docs.module';
+import { AiModule } from './ai/ai.module';
 import { AuditModule } from './common/audit/audit.module';
 
 @Module({
@@ -35,6 +36,7 @@ import { AuditModule } from './common/audit/audit.module';
     TasksModule,
     NotificationsModule,
     DocsModule,
+    AiModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

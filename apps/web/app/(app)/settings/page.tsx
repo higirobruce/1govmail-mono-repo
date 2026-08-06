@@ -1152,24 +1152,16 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
 
 function AISection() {
   const enabled = useAIStore((s) => s.enabled);
-  const baseUrl = useAIStore((s) => s.baseUrl);
   const model = useAIStore((s) => s.model);
-  const apiKey = useAIStore((s) => s.apiKey);
   const setEnabled = useAIStore((s) => s.setEnabled);
-  const setBaseUrl = useAIStore((s) => s.setBaseUrl);
   const setModel = useAIStore((s) => s.setModel);
-  const setApiKey = useAIStore((s) => s.setApiKey);
 
-  const [draftBaseUrl, setDraftBaseUrl] = useState(baseUrl);
   const [draftModel, setDraftModel] = useState(model);
-  const [draftApiKey, setDraftApiKey] = useState(apiKey);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<null | { ok: boolean; detail: string }>(null);
 
   const handleSave = () => {
-    setBaseUrl(draftBaseUrl.trim());
     setModel(draftModel.trim());
-    setApiKey(draftApiKey.trim());
     toast.success('AI settings saved');
   };
 
@@ -1177,7 +1169,7 @@ function AISection() {
     setTesting(true);
     setTestResult(null);
     try {
-      const client = new AIClient({ baseUrl: draftBaseUrl.trim(), apiKey: draftApiKey.trim() || undefined });
+      const client = new AIClient();
       const reply = await client.chat({
         model: draftModel.trim(),
         messages: [
@@ -1195,65 +1187,39 @@ function AISection() {
     }
   };
 
-  const sentToHost = (() => {
-    try {
-      return new URL(draftBaseUrl).host;
-    } catch {
-      return draftBaseUrl;
-    }
-  })();
-
   return (
     <>
       <SectionHeader
         title="AI Assistant"
-        description="Optional. When enabled, you can summarize, paraphrase, and analyze emails using a local or configured AI model."
+        description="Summarize threads, paraphrase drafts, and suggest replies using the organisation's hosted model."
       />
 
       <div className="space-y-1 mb-6">
         <SettingRow
           label="Enable AI features"
-          description="Adds Summarize and related actions inside open messages."
+          description="Adds Summarize, Rewrite, and Suggest Reply actions in mail."
         >
           <Switch checked={enabled} onChange={setEnabled} />
         </SettingRow>
       </div>
 
-      <SectionHeader title="Provider" description="Most users run a local model server like Ollama or LM Studio. The OpenAI HTTP shape is required." />
+      <SectionHeader
+        title="Model"
+        description="Name of the model the server should use. Must match a model installed on the API host."
+      />
 
       <div className="space-y-3 mb-6">
-        <div>
-          <Label className="text-xs text-muted-foreground">Base URL</Label>
-          <Input
-            value={draftBaseUrl}
-            onChange={(e) => setDraftBaseUrl(e.target.value)}
-            placeholder="http://localhost:11434/v1"
-            className="mt-1"
-          />
-          <p className="text-[11px] text-muted-foreground/70 mt-1">
-            For Ollama: <code className="font-mono">http://localhost:11434/v1</code>. For LM Studio: <code className="font-mono">http://localhost:1234/v1</code>.
-          </p>
-        </div>
-
         <div>
           <Label className="text-xs text-muted-foreground">Model</Label>
           <Input
             value={draftModel}
             onChange={(e) => setDraftModel(e.target.value)}
-            placeholder="llama3.1"
+            placeholder="gemma2:2b"
             className="mt-1"
           />
-        </div>
-
-        <div>
-          <Label className="text-xs text-muted-foreground">API key (optional)</Label>
-          <Input
-            value={draftApiKey}
-            onChange={(e) => setDraftApiKey(e.target.value)}
-            placeholder="Leave blank for local servers"
-            type="password"
-            className="mt-1"
-          />
+          <p className="text-[11px] text-muted-foreground/70 mt-1">
+            Default: <code className="font-mono">gemma2:2b</code>. Change only if your administrator has installed another model.
+          </p>
         </div>
 
         <div className="flex items-center gap-2 pt-1">
@@ -1283,7 +1249,7 @@ function AISection() {
         <div>
           <p className="font-medium">Privacy notice</p>
           <p className="mt-0.5 text-amber-700/80 dark:text-amber-300/80">
-            When you use AI features, the email content (subject, sender, and body) is sent over the network to <span className="font-mono">{sentToHost}</span>. Make sure this host is your local machine or an organisation-approved provider.
+            When you use AI features, the email content (subject, sender, and body) is sent to the API server, which forwards it to a self-hosted model. Content does not leave your organisation's infrastructure.
           </p>
         </div>
       </div>

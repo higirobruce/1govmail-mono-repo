@@ -322,9 +322,7 @@ export default function ComposeModal({
 
   // ── Rewrite (AI) ──────────────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
-  const aiBaseUrl = useAIStore((s) => s.baseUrl);
   const aiModel = useAIStore((s) => s.model);
-  const aiApiKey = useAIStore((s) => s.apiKey);
   const [showRewrite, setShowRewrite] = useState(false);
   const rewriteRef = useRef<HTMLDivElement>(null);
   const [rewriteOriginal, setRewriteOriginal] = useState<string>(''); // plain text snapshot
@@ -656,7 +654,7 @@ export default function ComposeModal({
             : originalMessage.fromEmail;
           const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
           const fromLine = `From: ${fromLabel}\n`;
-          const body = htmlToPlainText(originalMessage.bodyHtml ?? originalMessage.bodyText ?? '');
+          const body = htmlToPlainText(originalMessage.bodyText ?? originalMessage.bodyHtml ?? '');
           if (!body) return undefined;
           return `${subj}${fromLine}\n${body}`;
         }
@@ -665,7 +663,7 @@ export default function ComposeModal({
       })();
 
       try {
-        const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+        const client = new AIClient();
         await rewriteText(
           client,
           original,
@@ -681,7 +679,7 @@ export default function ComposeModal({
         setRewriting(false);
       }
     },
-    [editor, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, signatureHtml, originalMessage],
+    [editor, aiModel, pushRewrite, resetRewrite, signatureHtml, originalMessage],
   );
 
   const closeRewrite = useCallback(() => {
@@ -740,11 +738,11 @@ export default function ComposeModal({
       ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
       : originalMessage.fromEmail;
     const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
-    const body = htmlToPlainText(originalMessage.bodyHtml ?? originalMessage.bodyText ?? '');
+    const body = htmlToPlainText(originalMessage.bodyText ?? originalMessage.bodyHtml ?? '');
     const incoming = `${subj}From: ${fromLabel}\n\n${body}`;
 
     try {
-      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+      const client = new AIClient();
       await suggestReply(
         client,
         incoming,
@@ -762,7 +760,7 @@ export default function ComposeModal({
     } finally {
       setRewriting(false);
     }
-  }, [editor, originalMessage, aiBaseUrl, aiApiKey, aiModel, pushRewrite, resetRewrite, user]);
+  }, [editor, originalMessage, aiModel, pushRewrite, resetRewrite, user]);
 
   // Re-run the current AI action with a fresh stream. For rewrite mode we
   // replay using the snapshotted original text (so the new run sees the
@@ -796,7 +794,7 @@ export default function ComposeModal({
           : originalMessage.fromEmail;
         const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
         const fromLine = `From: ${fromLabel}\n`;
-        const body = htmlToPlainText(originalMessage.bodyHtml ?? originalMessage.bodyText ?? '');
+        const body = htmlToPlainText(originalMessage.bodyText ?? originalMessage.bodyHtml ?? '');
         if (!body) return undefined;
         return `${subj}${fromLine}\n${body}`;
       }
@@ -805,7 +803,7 @@ export default function ComposeModal({
 
     void (async () => {
       try {
-        const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+        const client = new AIClient();
         await rewriteText(
           client,
           rewriteOriginal,
@@ -826,8 +824,6 @@ export default function ComposeModal({
     rewriteOriginal,
     rewriteMode,
     originalMessage,
-    aiBaseUrl,
-    aiApiKey,
     aiModel,
     pushRewrite,
     resetRewrite,

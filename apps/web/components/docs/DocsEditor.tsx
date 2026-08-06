@@ -51,6 +51,7 @@ import { MathBlock } from './extensions/MathBlock';
 import { MermaidBlock } from './extensions/MermaidBlock';
 import Image from '@tiptap/extension-image';
 import { PresentationMode } from './PresentationMode';
+import { bearerHeaders } from '@/lib/authed-fetch';
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_WS_URL ?? 'ws://localhost:1234';
 
@@ -309,7 +310,7 @@ export function DocsEditor({
           try {
             const formData = new FormData();
             formData.append('file', file);
-            const res = await fetch('/upload/image', { method: 'POST', body: formData });
+            const res = await fetch('/upload/image', { method: 'POST', body: formData, headers: bearerHeaders() });
             dlog('image upload response', { status: res.status, ok: res.ok });
             if (!res.ok) return;
             const { url } = await res.json() as { url: string };
@@ -353,7 +354,7 @@ export function DocsEditor({
             try {
               const formData = new FormData();
               formData.append('file', file);
-              const res = await fetch('/upload/image', { method: 'POST', body: formData });
+              const res = await fetch('/upload/image', { method: 'POST', body: formData, headers: bearerHeaders() });
               dlog('image upload response', { status: res.status, ok: res.ok });
               if (!res.ok) return;
               const { url } = await res.json() as { url: string };

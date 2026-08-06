@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Editor, Range } from '@tiptap/core';
+import { bearerHeaders } from '@/lib/authed-fetch';
 
 // ── Command items ─────────────────────────────────────────────────────────────
 
@@ -160,7 +161,7 @@ export const SLASH_COMMANDS: SlashCommandItem[] = [
         const formData = new FormData();
         formData.append('file', file);
         try {
-          const res = await fetch('/upload/image', { method: 'POST', body: formData });
+          const res = await fetch('/upload/image', { method: 'POST', body: formData, headers: bearerHeaders() });
           const { url } = await res.json();
           editor.chain().focus().setImage({ src: url, alt: file.name }).run();
         } catch { /* ignore */ }

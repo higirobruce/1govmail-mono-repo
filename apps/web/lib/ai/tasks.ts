@@ -7,9 +7,10 @@ import { AIClient } from './client';
  */
 export function htmlToPlainText(html: string): string {
   if (typeof document === 'undefined') return html;
-  const div = document.createElement('div');
-  div.innerHTML = html;
-  return (div.textContent ?? div.innerText ?? '').replace(/\s+/g, ' ').trim();
+  // DOMParser produces an inert document: no resource fetches (tracking
+  // pixels) and no event handlers fire, unlike innerHTML on a live element.
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return (doc.body?.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
 /** Trim to a character cap with a clear ellipsis marker. ~3000 chars ≈ 700–900 tokens. */

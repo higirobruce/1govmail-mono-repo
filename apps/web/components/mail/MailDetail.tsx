@@ -117,6 +117,15 @@ function ActionBtn({
   );
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function extractBodyContent(html: string): string {
   // Greedy match so that an early stray </body> inside the email body doesn't
   // truncate the content (common in newsletter templates / old Outlook HTML).
@@ -311,9 +320,7 @@ export default function MailDetail({
 
   // ── AI summarize state ────────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
-  const aiBaseUrl = useAIStore((s) => s.baseUrl);
   const aiModel = useAIStore((s) => s.model);
-  const aiApiKey = useAIStore((s) => s.apiKey);
   const { text: streamedSummary, push: pushSummary, reset: resetSummary } = useCharStream();
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -340,8 +347,8 @@ export default function MailDetail({
     setSummarizing(true);
     setSummaryOpen(true);
     try {
-      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
-      const body = message.bodyHtml ?? message.bodyText ?? '';
+      const client = new AIClient();
+      const body = message.bodyText ?? message.bodyHtml ?? '';
       const fromLabel = message.fromName
         ? `${message.fromName} <${message.fromEmail}>`
         : message.fromEmail;
@@ -363,7 +370,7 @@ export default function MailDetail({
     } finally {
       setSummarizing(false);
     }
-  }, [message, aiBaseUrl, aiApiKey, aiModel, pushSummary, resetSummary]);
+  }, [message, aiModel, pushSummary, resetSummary]);
 
   const closeSummary = useCallback(() => {
     summaryAbortRef.current?.abort();
@@ -407,21 +414,43 @@ export default function MailDetail({
       h1{font-size:20px;margin-bottom:4px}
       .meta{font-size:12px;color:#666;margin-bottom:16px;border-bottom:1px solid #e5e7eb;padding-bottom:12px}
       .meta span{margin-right:16px}`;
-    const body = message.bodyHtml ?? `<pre style="white-space:pre-wrap">${message.bodyText ?? ''}</pre>`;
-    const printWin = window.open('', '_blank', 'width=800,height=600');
-    if (!printWin) return;
-    printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style><title>${message.subject ?? 'Email'}</title></head><body>
-      <h1>${message.subject ?? '(no subject)'}</h1>
+    // Same sanitize pipeline as EmailBody — never inject raw email HTML.
+    const body = message.bodyHtml
+      ? sanitizeEmailHtml(
+          extractBodyContent(message.bodyHtml)
+            .replace(/\bdfsrc=/gi, 'src=')
+            .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;'),
+        )
+      : `<pre style="white-space:pre-wrap">${escapeHtml(message.bodyText ?? '')}</pre>`;
+    const fromStr = message.fromName
+      ? `${escapeHtml(message.fromName)} &lt;${escapeHtml(message.fromEmail)}&gt;`
+      : escapeHtml(message.fromEmail);
+    const toStr = escapeHtml(message.toRecipients.map((r) => r.name ?? r.email).join(', '));
+    const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="script-src 'none'"><style>${css}</style><title>${escapeHtml(message.subject ?? 'Email')}</title></head><body>
+      <h1>${escapeHtml(message.subject ?? '(no subject)')}</h1>
       <div class="meta">
-        <span><b>From:</b> ${message.fromName ? `${message.fromName} &lt;${message.fromEmail}&gt;` : message.fromEmail}</span>
-        <span><b>To:</b> ${message.toRecipients.map((r) => r.name ?? r.email).join(', ')}</span>
-        <span><b>Date:</b> ${message.receivedAt}</span>
+        <span><b>From:</b> ${fromStr}</span>
+        <span><b>To:</b> ${toStr}</span>
+        <span><b>Date:</b> ${escapeHtml(message.receivedAt)}</span>
       </div>
       ${body}
-      </body></html>`);
-    printWin.document.close();
-    printWin.focus();
-    setTimeout(() => { printWin.print(); }, 400);
+      </body></html>`;
+    // Hidden sandboxed iframe (no allow-scripts) instead of a same-origin
+    // popup, so the printed content can never reach the app's localStorage.
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
+    frame.style.position = 'fixed';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    frame.style.width = '0';
+    frame.style.height = '0';
+    frame.style.border = '0';
+    frame.onload = () => {
+      frame.contentWindow?.print();
+      setTimeout(() => frame.remove(), 1000);
+    };
+    frame.srcdoc = srcDoc;
+    document.body.appendChild(frame);
   }, [message]);
 
   const handleDownload = useCallback(async (att: { id: string; filename: string }) => {

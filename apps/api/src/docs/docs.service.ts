@@ -15,11 +15,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InviteRole, Prisma } from '@prisma/client';
+import { InviteRole, Prisma, SharePermission } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
+import { ShareDocDto } from './dto/share-doc.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { UpdateInviteDto } from './dto/update-invite.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -274,13 +275,19 @@ export class DocsService {
 
   // ── Share link ────────────────────────────────────────────────────────────
 
-  async enableSharing(userId: string, id: string) {
-    await this.verifyOwnership(userId, id);
-    const shareToken = shortToken();
+  async enableSharing(userId: string, id: string, dto: ShareDocDto) {
+    const doc = await this.verifyOwnership(userId, id);
+    // Keep the existing token when re-sharing so permission changes don't
+    // invalidate links already handed out.
+    const shareToken = doc.shareToken ?? shortToken();
     const result = await this.prisma.document.update({
       where: { id },
-      data: { shareToken, isShared: true },
-      select: { shareToken: true, isShared: true },
+      data: {
+        shareToken,
+        isShared: true,
+        sharePermission: dto.sharePermission ?? SharePermission.VIEW,
+      },
+      select: { shareToken: true, isShared: true, sharePermission: true },
     });
     return result;
   }
@@ -304,6 +311,9 @@ export class DocsService {
   async updateByShareToken(token: string, dto: UpdateDocDto) {
     const doc = await this.prisma.document.findUnique({ where: { shareToken: token } });
     if (!doc || !doc.isShared) throw new NotFoundException('Shared document not found');
+    if (doc.sharePermission !== SharePermission.EDIT) {
+      throw new ForbiddenException('This share link is view-only');
+    }
     return this.prisma.document.update({
       where: { id: doc.id },
       data: {
@@ -471,11 +481,17 @@ export class DocsService {
   }
 
   async updateComment(userId: string, docId: string, commentId: string, dto: UpdateCommentDto) {
+    await this.verifyReadAccess(userId, docId);
     const comment = await this.prisma.docComment.findFirst({ where: { id: commentId, documentId: docId } });
     if (!comment) throw new NotFoundException('Comment not found');
 
     if (dto.content !== undefined && comment.authorId !== userId) {
       throw new ForbiddenException('Only the comment author may edit its content');
+    }
+
+    // Resolving/unresolving requires write access, unless it's your own comment
+    if (dto.resolved !== undefined && comment.authorId !== userId) {
+      await this.verifyWriteAccess(userId, docId);
     }
 
     const wasResolved = !!comment.resolvedAt;

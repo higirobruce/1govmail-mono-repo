@@ -284,6 +284,7 @@ model SnoozedMessage {
 
 enum ScheduledMessageStatus {
   PENDING
+  SENDING
   SENT
   FAILED
   CANCELLED
@@ -395,6 +396,11 @@ model Notification {
 
 // ─── Docs ─────────────────────────────────────────────────────────────────────
 
+enum SharePermission {
+  VIEW
+  EDIT
+}
+
 model Document {
   id         String   @id @default(cuid())
   userId     String
@@ -405,6 +411,7 @@ model Document {
   position   Int      @default(0)
   shareToken String?  @unique   // UUID; set when sharing is enabled
   isShared   Boolean  @default(false)
+  sharePermission SharePermission @default(VIEW)   // what a share-link holder may do
   yjsState   Bytes?               // Yjs encoded binary state for real-time collaboration
   isFavorite Boolean  @default(false)
   tags       String[] @default([])

@@ -1,6 +1,6 @@
 import { Server } from '@hocuspocus/server';
 import { Database } from '@hocuspocus/extension-database';
-import { PrismaClient } from '@prisma/client';
+import { InviteRole, PrismaClient, SharePermission } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import * as jwt from 'jsonwebtoken';
@@ -22,7 +22,7 @@ export function createCollabServer() {
     stopOnSignals: false,
 
     // ── Authentication ──────────────────────────────────────────────────────
-    async onAuthenticate({ token, documentName }) {
+    async onAuthenticate({ token, documentName, connectionConfig }) {
       let parsed: { type: string; value: string };
 
       try {
@@ -56,15 +56,18 @@ export function createCollabServer() {
           select: { role: true },
         });
         if (!invite) throw new Error('Forbidden');
+        // Viewers may receive updates but must not push edits
+        if (invite.role === InviteRole.VIEWER) connectionConfig.readOnly = true;
         return { userId: payload.sub, role: invite.role };
       }
 
       if (type === 'share') {
         const doc = await prisma.document.findUnique({
           where: { shareToken: value },
-          select: { id: true, isShared: true },
+          select: { id: true, isShared: true, sharePermission: true },
         });
         if (!doc || !doc.isShared || doc.id !== documentName) throw new Error('Forbidden');
+        if (doc.sharePermission !== SharePermission.EDIT) connectionConfig.readOnly = true;
         return { userId: null };
       }
 

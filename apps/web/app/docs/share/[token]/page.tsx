@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { Loader2, Globe, Eye } from 'lucide-react';
 import { api, type Doc } from '@/lib/api';
 import { DocsEditor } from '@/components/docs/DocsEditor';
@@ -9,14 +9,15 @@ import { getUserColor } from '@/lib/utils';
 
 export default function SharedDocPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const token = params?.token as string;
-  const canEdit = searchParams.get('edit') === '1';
 
   const [doc, setDoc] = useState<Doc | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [localTitle, setLocalTitle] = useState('');
+
+  // Permission comes from the API — enforced server-side on both REST and WS
+  const canEdit = doc?.sharePermission === 'EDIT';
 
   useEffect(() => {
     if (!token) return;

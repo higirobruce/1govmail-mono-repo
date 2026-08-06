@@ -690,7 +690,8 @@ export const api = {
       return request<InvitedDoc[]>('/docs/shared-with-me');
     },
     share: {
-      enable:  (id: string) => request<{ shareToken: string; isShared: boolean }>(`/docs/${id}/share`, { method: 'POST' }),
+      enable:  (id: string, data?: { sharePermission?: 'VIEW' | 'EDIT' }) =>
+        request<{ shareToken: string; isShared: boolean; sharePermission: 'VIEW' | 'EDIT' }>(`/docs/${id}/share`, { method: 'POST', body: JSON.stringify(data ?? {}) }),
       disable: (id: string) => request<{ shareToken: null; isShared: false }>(`/docs/${id}/share`, { method: 'DELETE' }),
     },
     invites: {
@@ -767,6 +768,7 @@ export interface Doc {
   coverColor: string | null;
   shareToken: string | null;
   isShared: boolean;
+  sharePermission?: 'VIEW' | 'EDIT';
   createdAt: string;
   updatedAt: string;
   /** Present when the requesting user is an invitee (not the owner) */

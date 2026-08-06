@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -118,15 +118,14 @@ export class MailService {
       user.csrfToken ?? undefined,
     );
 
-    const saved: any[] = [];
-    for (const m of messages) {
-      try {
+    const results = await Promise.allSettled(
+      messages.map((m) => {
         const fromAddr = m.e?.find((e) => e.t === 'f');
         const toAddrs = (m.e ?? []).filter((e) => e.t === 't').map((e) => ({ email: e.a, name: e.d }));
         const flags = m.f ?? '';
         const zimbraId = String(m.id);   // Zimbra may return numeric IDs
 
-        const msg = await this.prisma.message.upsert({
+        return this.prisma.message.upsert({
           where: { userId_zimbraId: { userId, zimbraId } },
           update: {
             isRead:    !flags.includes('u'),
@@ -150,16 +149,47 @@ export class MailService {
             hasAttachments:  flags.includes('a'),
             receivedAt:      new Date(m.d),
           },
+          // Metadata only — the list view never needs bodies, and bodyHtml
+          // with embedded base64 images for 50 messages at once can exceed
+          // V8's string length limit in JSON.stringify.
+          select: {
+            id: true,
+            userId: true,
+            folderId: true,
+            zimbraId: true,
+            conversationId: true,
+            subject: true,
+            snippet: true,
+            fromEmail: true,
+            fromName: true,
+            toRecipients: true,
+            ccRecipients: true,
+            bccRecipients: true,
+            replyTo: true,
+            isRead: true,
+            isStarred: true,
+            isDraft: true,
+            hasAttachments: true,
+            flags: true,
+            tags: true,
+            sentAt: true,
+            receivedAt: true,
+            syncedAt: true,
+            createdAt: true,
+            updatedAt: true,
+          },
         });
-        // Strip large body fields — the list view only needs metadata.
-        // Returning bodyHtml with embedded base64 images for 50 messages at
-        // once can exceed V8's string length limit in JSON.stringify.
-        const { bodyHtml: _bh, bodyText: _bt, inlineImages: _ii, attachments: _att, ...msgMeta } = msg as any;
-        saved.push(msgMeta);
-      } catch (err: any) {
-        this.logger.error(`Failed to upsert message zimbraId=${m.id}: ${err?.message}`);
+      }),
+    );
+
+    const saved: any[] = [];
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled') {
+        saved.push(result.value);
+      } else {
+        this.logger.error(`Failed to upsert message zimbraId=${messages[i].id}: ${result.reason?.message}`);
       }
-    }
+    });
 
     return {
       messages: saved,
@@ -1220,7 +1250,17 @@ export class MailService {
   async cancelScheduledMessage(userId: string, id: string) {
     const msg = await this.prisma.scheduledMessage.findFirst({ where: { userId, id } });
     if (!msg) throw new NotFoundException('Scheduled message not found');
-    return this.prisma.scheduledMessage.update({ where: { id }, data: { status: 'CANCELLED' } });
+    // Only PENDING rows can be cancelled: once processDueScheduled has claimed
+    // one as SENDING the send is already in flight, and reporting it cancelled
+    // would contradict the mail the recipient receives.
+    const cancelled = await this.prisma.scheduledMessage.updateMany({
+      where: { id, status: 'PENDING' },
+      data: { status: 'CANCELLED' },
+    });
+    if (cancelled.count === 0) {
+      throw new ConflictException('Message is already being sent and can no longer be cancelled');
+    }
+    return this.prisma.scheduledMessage.findUnique({ where: { id } });
   }
 
   async getScheduledMessages(userId: string) {
@@ -1233,6 +1273,17 @@ export class MailService {
 
   /** Called by MailScheduler — send all due scheduled messages */
   async processDueScheduled() {
+    // Sweep rows stranded in SENDING by a crash mid-send; mark FAILED rather
+    // than PENDING so an uncertain send is never retried as a duplicate.
+    const stuckBefore = new Date(Date.now() - 15 * 60 * 1000);
+    const swept = await this.prisma.scheduledMessage.updateMany({
+      where: { status: 'SENDING', updatedAt: { lt: stuckBefore } },
+      data: { status: 'FAILED', errorMsg: 'Send did not complete (stuck in SENDING)' },
+    });
+    if (swept.count > 0) {
+      this.logger.warn(`Marked ${swept.count} scheduled message(s) stuck in SENDING as FAILED`);
+    }
+
     const due = await this.prisma.scheduledMessage.findMany({
       where: { status: 'PENDING', sendAt: { lte: new Date() } },
       include: { user: true },
@@ -1240,6 +1291,12 @@ export class MailService {
     for (const msg of due) {
       const user = msg.user as any;
       if (!user.authToken) continue;
+      // Atomic claim — only one worker wins the PENDING→SENDING transition.
+      const claimed = await this.prisma.scheduledMessage.updateMany({
+        where: { id: msg.id, status: 'PENDING' },
+        data: { status: 'SENDING' },
+      });
+      if (claimed.count === 0) continue;
       try {
         await this.zimbra.sendMessage(
           user.zimbraHost,
@@ -1253,7 +1310,10 @@ export class MailService {
           },
           user.csrfToken ?? undefined,
         );
-        await this.prisma.scheduledMessage.update({ where: { id: msg.id }, data: { status: 'SENT' } });
+        await this.prisma.scheduledMessage.updateMany({
+          where: { id: msg.id, status: 'SENDING' },
+          data: { status: 'SENT' },
+        });
         await this.notifications.createNotification(
           msg.userId,
           'SCHEDULED_SENT',
@@ -1262,8 +1322,8 @@ export class MailService {
         ).catch(() => {});
       } catch (err: any) {
         this.logger.warn(`Scheduled message ${msg.id} failed: ${err?.message}`);
-        await this.prisma.scheduledMessage.update({
-          where: { id: msg.id },
+        await this.prisma.scheduledMessage.updateMany({
+          where: { id: msg.id, status: 'SENDING' },
           data: { status: 'FAILED', errorMsg: err?.message ?? 'Unknown error' },
         });
       }

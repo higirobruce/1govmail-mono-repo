@@ -28,6 +28,7 @@ import { SnoozeMessageDto } from './dto/snooze-message.dto';
 import { ScheduleMessageDto } from './dto/schedule-message.dto';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { CreateRuleDto } from './dto/create-rule.dto';
+import { CreateSenderRuleDto } from './dto/create-sender-rule.dto';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 
 @UseGuards(JwtAuthGuard)
@@ -288,6 +289,25 @@ export class MailController {
   @HttpCode(HttpStatus.OK)
   deleteRule(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.mailService.deleteRule(req.user.sub, id);
+  }
+
+  // ── Sender Rules ─────────────────────────────────────────────────────────────
+
+  @Get('sender-rules')
+  getSenderRules(@Req() req: AuthenticatedRequest) {
+    return this.mailService.getSenderRules(req.user.sub);
+  }
+
+  @Post('sender-rules')
+  @HttpCode(HttpStatus.OK)
+  createSenderRule(@Req() req: AuthenticatedRequest, @Body() dto: CreateSenderRuleDto) {
+    return this.mailService.createSenderRule(req.user.sub, dto);
+  }
+
+  @Delete('sender-rules/:id')
+  @HttpCode(HttpStatus.OK)
+  deleteSenderRule(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.mailService.deleteSenderRule(req.user.sub, id);
   }
 
   // ── Mute ─────────────────────────────────────────────────────────────────────

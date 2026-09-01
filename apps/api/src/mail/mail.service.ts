@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, Logger, UnauthorizedException, ConflictE
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { matchSenderRule } from './sender-rule-matcher';
 
 @Injectable()
 export class MailService {
@@ -101,6 +102,31 @@ export class MailService {
     return saved;
   }
 
+  private async enforceSenderRules(
+    userId: string,
+    user: { zimbraHost: string; authToken: string; csrfToken?: string | null },
+    message: { id: string; zimbraId: string; fromEmail: string; folderId: string },
+  ): Promise<void> {
+    const rules = await this.prisma.senderRule.findMany({ where: { userId } });
+    if (rules.length === 0) return;
+    if (matchSenderRule(message.fromEmail, rules) !== 'BLOCK') return;
+
+    const currentFolder = await this.prisma.folder.findFirst({ where: { id: message.folderId } });
+    if (currentFolder?.path === '/Junk') return;
+
+    const junkFolder = await this.prisma.folder.findFirst({ where: { userId, path: '/Junk' } });
+    if (!junkFolder) return;
+
+    await this.zimbra.moveMessage(
+      user.zimbraHost,
+      user.authToken,
+      message.zimbraId,
+      junkFolder.zimbraId,
+      user.csrfToken ?? undefined,
+    );
+    await this.prisma.message.update({ where: { id: message.id }, data: { folderId: junkFolder.id } });
+  }
+
   async getMessages(userId: string, folderId: string, limit = 50, offset = 0) {
     const user = await this.getUser(userId);
 
@@ -190,6 +216,20 @@ export class MailService {
         this.logger.error(`Failed to upsert message zimbraId=${messages[i].id}: ${result.reason?.message}`);
       }
     });
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        // `user.authToken` is typed `string | null` on the Prisma model, but
+        // `getUser()` above already throws UnauthorizedException when it's
+        // falsy — the `!` mirrors the same assertion this method already
+        // makes a few lines up when calling `this.zimbra.getMessages(...)`.
+        await this.enforceSenderRules(
+          userId,
+          { zimbraHost: user.zimbraHost, authToken: user.authToken!, csrfToken: user.csrfToken },
+          result.value,
+        );
+      }
+    }
 
     return {
       messages: saved,

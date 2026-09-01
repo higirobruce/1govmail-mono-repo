@@ -9,6 +9,7 @@ import { useThemeStore, type FontSize } from '@/stores/theme.store';
 import { useAIStore } from '@/stores/ai.store';
 import { api } from '@/lib/api';
 import { AIClient } from '@/lib/ai/client';
+import { isValidSenderAddress } from './blocked-senders-helpers';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -20,7 +21,7 @@ import { toast } from 'sonner';
 import {
   User, Pen, Shield, Mail, Loader2, Plus, Trash2,
   Check, ChevronRight, RotateCcw, FileSignature,
-  Palmtree, Settings2, Sparkles, AlertTriangle,
+  Palmtree, Settings2, Sparkles, AlertTriangle, Ban,
   Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
 } from 'lucide-react';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -75,7 +76,7 @@ interface SettingsData {
   signatures: Signature[];
 }
 
-type Section = 'profile' | 'signatures' | 'vacation' | 'preferences' | 'ai' | 'security';
+type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'security';
 
 // ── Toggle Switch ──────────────────────────────────────────────────────────────
 
@@ -457,6 +458,7 @@ export default function SettingsPage() {
         <NavItem icon={User}          label="Profile"       active={section === 'profile'}     onClick={() => setSection('profile')} />
         <NavItem icon={FileSignature} label="Signatures"    active={section === 'signatures'}  onClick={() => setSection('signatures')} />
         <NavItem icon={Palmtree}      label="Vacation Reply" active={section === 'vacation'}   onClick={() => setSection('vacation')} />
+        <NavItem icon={Ban}           label="Blocked Senders" active={section === 'blocked-senders'} onClick={() => setSection('blocked-senders')} />
         <NavItem icon={Settings2}     label="Preferences"   active={section === 'preferences'} onClick={() => setSection('preferences')} />
         <NavItem icon={Sparkles}      label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
         <NavItem icon={Shield}        label="Security"      active={section === 'security'}    onClick={() => setSection('security')} />
@@ -474,6 +476,7 @@ export default function SettingsPage() {
               {section === 'profile'     && <ProfileSection     data={data} onUpdate={loadSettings} />}
               {section === 'signatures'  && <SignaturesSection   data={data} onUpdate={loadSettings} />}
               {section === 'vacation'    && <VacationSection     data={data} onUpdate={loadSettings} />}
+              {section === 'blocked-senders' && <BlockedSendersSection />}
               {section === 'preferences' && <PreferencesSection  data={data} onUpdate={loadSettings} />}
               {section === 'ai'          && <AISection />}
               {section === 'security'    && <SecuritySection     data={data} />}
@@ -957,6 +960,126 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
           Save changes
         </Button>
+      </div>
+    </div>
+  );
+}
+
+function BlockedSendersSection() {
+  const [rules, setRules]   = useState<Array<{ id: string; type: 'BLOCK' | 'ALLOW'; address: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [blockInput, setBlockInput] = useState('');
+  const [allowInput, setAllowInput] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.mail.senderRules.list();
+      setRules(data);
+    } catch (err: any) {
+      toast.error('Failed to load sender rules', { description: err?.message });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addRule = async (type: 'BLOCK' | 'ALLOW') => {
+    const address = (type === 'BLOCK' ? blockInput : allowInput).trim();
+    if (!isValidSenderAddress(address)) {
+      toast.error('Enter an email address or a domain like "@example.com"');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.mail.senderRules.create({ type, address });
+      type === 'BLOCK' ? setBlockInput('') : setAllowInput('');
+      await load();
+      toast.success(type === 'BLOCK' ? 'Sender blocked' : 'Sender allowed');
+    } catch (err: any) {
+      toast.error('Failed to save', { description: err?.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeRule = async (id: string) => {
+    try {
+      await api.mail.senderRules.remove(id);
+      setRules((prev) => prev.filter((r) => r.id !== id));
+    } catch (err: any) {
+      toast.error('Failed to remove', { description: err?.message });
+    }
+  };
+
+  const blocked = rules.filter((r) => r.type === 'BLOCK');
+  const allowed = rules.filter((r) => r.type === 'ALLOW');
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/40" />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <SectionHeader
+        title="Blocked & Allowed Senders"
+        description="Mail from blocked senders is moved to Spam automatically. Allowed senders are never auto-filed there."
+      />
+
+      <div className="max-w-sm space-y-6">
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Blocked</Label>
+          <div className="flex gap-2">
+            <Input
+              value={blockInput}
+              onChange={(e) => setBlockInput(e.target.value)}
+              placeholder="person@example.com or @example.com"
+              className="h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/30"
+            />
+            <Button size="sm" onClick={() => addRule('BLOCK')} disabled={saving} className="h-8 text-xs gap-1.5">
+              <Plus className="w-3.5 h-3.5" /> Block
+            </Button>
+          </div>
+          {blocked.map((r) => (
+            <div key={r.id} className="flex items-center justify-between text-sm py-1.5 px-2 rounded bg-muted/20">
+              <span>{r.address}</span>
+              <button onClick={() => removeRule(r.id)} className="text-muted-foreground/60 hover:text-destructive">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Allowed</Label>
+          <div className="flex gap-2">
+            <Input
+              value={allowInput}
+              onChange={(e) => setAllowInput(e.target.value)}
+              placeholder="person@example.com or @example.com"
+              className="h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/30"
+            />
+            <Button size="sm" onClick={() => addRule('ALLOW')} disabled={saving} className="h-8 text-xs gap-1.5">
+              <Plus className="w-3.5 h-3.5" /> Allow
+            </Button>
+          </div>
+          {allowed.map((r) => (
+            <div key={r.id} className="flex items-center justify-between text-sm py-1.5 px-2 rounded bg-muted/20">
+              <span>{r.address}</span>
+              <button onClick={() => removeRule(r.id)} className="text-muted-foreground/60 hover:text-destructive">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

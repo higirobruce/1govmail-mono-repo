@@ -1382,6 +1382,27 @@ export class MailService {
     return { success: true };
   }
 
+  // ─── Sender Rules (Blocked / Allowed) ───────────────────────────────────────
+
+  async getSenderRules(userId: string) {
+    await this.getUser(userId);
+    return this.prisma.senderRule.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+  }
+
+  async createSenderRule(userId: string, dto: { type: 'BLOCK' | 'ALLOW'; address: string }) {
+    await this.getUser(userId);
+    return this.prisma.senderRule.create({
+      data: { userId, type: dto.type, address: dto.address.trim().toLowerCase() },
+    });
+  }
+
+  async deleteSenderRule(userId: string, id: string) {
+    const rule = await this.prisma.senderRule.findFirst({ where: { userId, id } });
+    if (!rule) throw new NotFoundException('Sender rule not found');
+    await this.prisma.senderRule.delete({ where: { id } });
+    return { success: true };
+  }
+
   // ─── Mute Conversation ───────────────────────────────────────────────────────
 
   async muteConversation(userId: string, conversationId: string) {

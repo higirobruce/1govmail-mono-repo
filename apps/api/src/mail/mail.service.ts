@@ -2,7 +2,12 @@ import { Injectable, NotFoundException, Logger, UnauthorizedException, ConflictE
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { matchSenderRule } from './sender-rule-matcher';
+import { matchSenderRule, type SenderRuleLike } from './sender-rule-matcher';
+
+// Different Zimbra deployments report the spam folder under either path —
+// this app's own Sidebar (apps/web/components/layout/Sidebar.tsx) already
+// treats both as "the spam folder", so enforcement must match both too.
+const SPAM_FOLDER_PATHS = ['/Junk', '/Spam'];
 
 @Injectable()
 export class MailService {
@@ -102,20 +107,29 @@ export class MailService {
     return saved;
   }
 
+  // `rules` and `junkFolder` are resolved once per `getMessages` call (see the
+  // caller) rather than fetched here — this method used to re-query both on
+  // every single message, which meant ~50 serialized Postgres queries (plus a
+  // Zimbra SOAP call per match) added to every folder-open, for every user,
+  // whether or not they use this feature at all.
   private async enforceSenderRules(
     userId: string,
     user: { zimbraHost: string; authToken: string; csrfToken?: string | null },
     message: { id: string; zimbraId: string; fromEmail: string; folderId: string },
+    rules: SenderRuleLike[],
+    junkFolder: { id: string; zimbraId: string } | null,
   ): Promise<void> {
-    const rules = await this.prisma.senderRule.findMany({ where: { userId } });
-    if (rules.length === 0) return;
     if (matchSenderRule(message.fromEmail, rules) !== 'BLOCK') return;
 
-    const currentFolder = await this.prisma.folder.findFirst({ where: { id: message.folderId } });
-    if (currentFolder?.path === '/Junk') return;
+    const currentFolder = await this.prisma.folder.findFirst({ where: { userId, id: message.folderId } });
+    if (currentFolder && SPAM_FOLDER_PATHS.includes(currentFolder.path)) return;
 
-    const junkFolder = await this.prisma.folder.findFirst({ where: { userId, path: '/Junk' } });
-    if (!junkFolder) return;
+    if (!junkFolder) {
+      this.logger.warn(
+        `Sender rule BLOCK matched for message id=${message.id} (userId=${userId}) but no /Junk or /Spam folder is synced for this account — skipping auto-file.`,
+      );
+      return;
+    }
 
     await this.zimbra.moveMessage(
       user.zimbraHost,
@@ -217,23 +231,42 @@ export class MailService {
       }
     });
 
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        // `user.authToken` is typed `string | null` on the Prisma model, but
-        // `getUser()` above already throws UnauthorizedException when it's
-        // falsy — the `!` mirrors the same assertion this method already
-        // makes a few lines up when calling `this.zimbra.getMessages(...)`.
-        try {
-          await this.enforceSenderRules(
-            userId,
-            { zimbraHost: user.zimbraHost, authToken: user.authToken!, csrfToken: user.csrfToken },
-            result.value,
-          );
-        } catch (err: any) {
-          // Enforcement is a best-effort side effect of the read-through cache —
-          // a failure here (e.g. a transient Zimbra error) must not prevent the
-          // already-fetched messages from reaching the client.
-          this.logger.error(`Failed to enforce sender rules for message id=${result.value.id}: ${err?.message}`);
+    // Enforcement only runs for the Inbox listing — this is where new mail is
+    // first observed. Running it for every folder (Archive, Trash, Sent,
+    // custom folders, ...) would retroactively sweep a user's already-organized
+    // mail into Spam the next time they happen to open that folder, which is
+    // unrequested destructive data movement and not what this feature is for.
+    if (folder.path === '/Inbox') {
+      const rules = await this.prisma.senderRule.findMany({ where: { userId } });
+
+      // Skip the whole loop (including the Junk-folder lookup below) for the
+      // overwhelming majority of users who have never created a sender rule.
+      if (rules.length > 0) {
+        const junkFolder = await this.prisma.folder.findFirst({
+          where: { userId, path: { in: SPAM_FOLDER_PATHS } },
+        });
+
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            // `user.authToken` is typed `string | null` on the Prisma model, but
+            // `getUser()` above already throws UnauthorizedException when it's
+            // falsy — the `!` mirrors the same assertion this method already
+            // makes a few lines up when calling `this.zimbra.getMessages(...)`.
+            try {
+              await this.enforceSenderRules(
+                userId,
+                { zimbraHost: user.zimbraHost, authToken: user.authToken!, csrfToken: user.csrfToken },
+                result.value,
+                rules,
+                junkFolder,
+              );
+            } catch (err: any) {
+              // Enforcement is a best-effort side effect of the read-through cache —
+              // a failure here (e.g. a transient Zimbra error) must not prevent the
+              // already-fetched messages from reaching the client.
+              this.logger.error(`Failed to enforce sender rules for message id=${result.value.id}: ${err?.message}`);
+            }
+          }
         }
       }
     }

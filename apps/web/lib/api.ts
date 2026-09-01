@@ -421,6 +421,22 @@ export const api = {
       return request<any>(`/mail/rules/${id}`, { method: 'DELETE' });
     },
 
+    // ── Sender Rules ─────────────────────────────────────────────────────────
+    senderRules: {
+      list: () => {
+        if (USE_MOCK) return delay<any[]>([]);
+        return request<any[]>('/mail/sender-rules');
+      },
+      create: (data: { type: 'BLOCK' | 'ALLOW'; address: string }) => {
+        if (USE_MOCK) return delay({ id: `sr-${Date.now()}`, ...data });
+        return request<any>('/mail/sender-rules', { method: 'POST', body: JSON.stringify(data) });
+      },
+      remove: (id: string) => {
+        if (USE_MOCK) return delay({ success: true });
+        return request<any>(`/mail/sender-rules/${id}`, { method: 'DELETE' });
+      },
+    },
+
     // ── Mute ──────────────────────────────────────────────────────────────────
     muteConversation: (conversationId: string) => {
       if (USE_MOCK) return delay({ success: true, muted: true });

@@ -223,11 +223,18 @@ export class MailService {
         // `getUser()` above already throws UnauthorizedException when it's
         // falsy — the `!` mirrors the same assertion this method already
         // makes a few lines up when calling `this.zimbra.getMessages(...)`.
-        await this.enforceSenderRules(
-          userId,
-          { zimbraHost: user.zimbraHost, authToken: user.authToken!, csrfToken: user.csrfToken },
-          result.value,
-        );
+        try {
+          await this.enforceSenderRules(
+            userId,
+            { zimbraHost: user.zimbraHost, authToken: user.authToken!, csrfToken: user.csrfToken },
+            result.value,
+          );
+        } catch (err: any) {
+          // Enforcement is a best-effort side effect of the read-through cache —
+          // a failure here (e.g. a transient Zimbra error) must not prevent the
+          // already-fetched messages from reaching the client.
+          this.logger.error(`Failed to enforce sender rules for message id=${result.value.id}: ${err?.message}`);
+        }
       }
     }
 

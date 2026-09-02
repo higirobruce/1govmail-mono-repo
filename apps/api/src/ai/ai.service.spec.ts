@@ -57,4 +57,15 @@ describe('AiService.upstream', () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('forwards response_format to the backend', async () => {
+    fetchMock.mockResolvedValue(new Response('{}', { status: 200 }));
+
+    await service.upstream(
+      { ...body, response_format: { type: 'json_object' } } as ChatRequestDto,
+      new AbortController().signal,
+    );
+
+    expect(sentBody()).toMatchObject({ response_format: { type: 'json_object' } });
+  });
 });

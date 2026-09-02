@@ -20,6 +20,8 @@ export interface ChatOptions {
   temperature?: number;
   /** Cap response length. Most local 7B models are happy with 256–512 tokens. */
   maxTokens?: number;
+  /** Ask the backend for strict-JSON output (Ollama/OpenAI json mode). */
+  responseFormat?: 'json';
   signal?: AbortSignal;
 }
 
@@ -46,6 +48,7 @@ export class AIClient {
         temperature: opts.temperature ?? 0.3,
         max_tokens: opts.maxTokens ?? 512,
         stream: false,
+        ...(opts.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: opts.signal,
     });
@@ -67,6 +70,7 @@ export class AIClient {
         temperature: opts.temperature ?? 0.3,
         max_tokens: opts.maxTokens ?? 512,
         stream: true,
+        ...(opts.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: opts.signal,
     });

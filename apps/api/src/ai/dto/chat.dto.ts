@@ -20,6 +20,11 @@ export class ChatMessageDto {
   content!: string;
 }
 
+export class ResponseFormatDto {
+  @IsIn(['json_object'])
+  type!: 'json_object';
+}
+
 export class ChatRequestDto {
   @IsString()
   model!: string;
@@ -44,4 +49,10 @@ export class ChatRequestDto {
   @IsOptional()
   @IsBoolean()
   stream?: boolean;
+
+  /** OpenAI-style JSON mode — forwarded to the backend verbatim. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ResponseFormatDto)
+  response_format?: ResponseFormatDto;
 }

@@ -1,5 +1,6 @@
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
+import { NotFoundException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
@@ -76,5 +77,48 @@ describe('AuthService.login', () => {
         zimbraHost: 'mail.example.com',
       },
     });
+  });
+});
+
+describe('AuthService sessions', () => {
+  it('lists sessions ordered by lastSeenAt, flagging the current one', async () => {
+    const { service, prisma } = makeService();
+    prisma.session.findMany.mockResolvedValue([
+      { id: 's1', userAgent: 'Chrome', ipAddress: '10.0.0.1', createdAt: new Date(), lastSeenAt: new Date() },
+      { id: 's2', userAgent: 'Firefox', ipAddress: '10.0.0.2', createdAt: new Date(), lastSeenAt: new Date() },
+    ]);
+
+    const result = await service.getSessions('u1', 's2');
+
+    expect(prisma.session.findMany).toHaveBeenCalledWith({ where: { userId: 'u1' }, orderBy: { lastSeenAt: 'desc' } });
+    expect(result.find((s: any) => s.id === 's2').isCurrent).toBe(true);
+    expect(result.find((s: any) => s.id === 's1').isCurrent).toBe(false);
+  });
+
+  it('revokeSession deletes an owned session', async () => {
+    const { service, prisma } = makeService();
+    prisma.session.findFirst.mockResolvedValue({ id: 's1', userId: 'u1' });
+
+    const result = await service.revokeSession('u1', 's1');
+
+    expect(prisma.session.delete).toHaveBeenCalledWith({ where: { id: 's1' } });
+    expect(result).toEqual({ success: true });
+  });
+
+  it('revokeSession throws NotFoundException for a session the user does not own', async () => {
+    const { service, prisma } = makeService();
+    prisma.session.findFirst.mockResolvedValue(null);
+
+    await expect(service.revokeSession('u1', 'missing')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('revokeOtherSessions deletes every session except the current one', async () => {
+    const { service, prisma } = makeService();
+    prisma.session.deleteMany.mockResolvedValue({ count: 2 });
+
+    const result = await service.revokeOtherSessions('u1', 's-current');
+
+    expect(prisma.session.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u1', id: { not: 's-current' } } });
+    expect(result).toEqual({ success: true, revoked: 2 });
   });
 });

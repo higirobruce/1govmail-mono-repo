@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -196,5 +196,34 @@ export class AuthService {
       ip: ctx.ip,
       userAgent: ctx.userAgent,
     });
+  }
+
+  async getSessions(userId: string, currentSessionId: string) {
+    const sessions = await this.prisma.session.findMany({
+      where: { userId },
+      orderBy: { lastSeenAt: 'desc' },
+    });
+    return sessions.map((s) => ({
+      id: s.id,
+      userAgent: s.userAgent,
+      ipAddress: s.ipAddress,
+      createdAt: s.createdAt,
+      lastSeenAt: s.lastSeenAt,
+      isCurrent: s.id === currentSessionId,
+    }));
+  }
+
+  async revokeSession(userId: string, sessionId: string) {
+    const session = await this.prisma.session.findFirst({ where: { userId, id: sessionId } });
+    if (!session) throw new NotFoundException('Session not found');
+    await this.prisma.session.delete({ where: { id: sessionId } });
+    return { success: true };
+  }
+
+  async revokeOtherSessions(userId: string, currentSessionId: string) {
+    const { count } = await this.prisma.session.deleteMany({
+      where: { userId, id: { not: currentSessionId } },
+    });
+    return { success: true, revoked: count };
   }
 }

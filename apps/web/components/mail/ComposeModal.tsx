@@ -81,6 +81,8 @@ export interface ComposeMessage {
   bccRecipients?: Array<{ email: string; name?: string }>;
   bodyHtml: string | null;
   bodyText: string | null;
+  /** Present on lightweight thread metas, which carry no body at all. */
+  snippet?: string | null;
   receivedAt: string;
   attachments?: Array<{ id: string; filename: string; mimeType: string; size: number }>;
 }
@@ -354,6 +356,43 @@ export default function ComposeModal({
     replace: replaceRewrite,
   } = useCharStream();
   const rewriteAbortRef = useRef<AbortController | null>(null);
+
+  // Thread rows hand compose a lightweight message meta (snippet only — no
+  // body, often no subject), so replying from a thread toolbar or Quick Reply
+  // used to feed the AI an essentially empty email. Fetch the full message
+  // once per compose target and cache it for every AI prompt that needs it.
+  const hydratedOriginalRef = useRef<{ id: string; message: ComposeMessage } | null>(null);
+  const getOriginalWithBody = useCallback(async (): Promise<ComposeMessage | null> => {
+    if (!originalMessage) return null;
+    if (originalMessage.bodyText || originalMessage.bodyHtml) return originalMessage;
+    if (hydratedOriginalRef.current?.id === originalMessage.id) {
+      return hydratedOriginalRef.current.message;
+    }
+    try {
+      const full = await api.mail.getMessage(originalMessage.id);
+      hydratedOriginalRef.current = { id: originalMessage.id, message: full };
+      return full;
+    } catch {
+      // A snippet beats nothing — callers fall back to whatever is present.
+      return originalMessage;
+    }
+  }, [originalMessage]);
+
+  /** Subject + sender + full body of the message being replied to, for AI prompts. */
+  const buildIncomingEmail = useCallback(async (): Promise<{ text: string; body: string } | null> => {
+    const source = await getOriginalWithBody();
+    if (!source) return null;
+    const fromLabel = source.fromName
+      ? `${source.fromName} <${source.fromEmail}>`
+      : source.fromEmail;
+    const body = htmlToPlainText(source.bodyText ?? source.bodyHtml ?? source.snippet ?? '');
+    if (!body) return null;
+    const subj = source.subject ?? originalMessage?.subject;
+    return {
+      text: `${subj ? `Subject: ${subj}\n` : ''}From: ${fromLabel}\n\n${body}`,
+      body,
+    };
+  }, [getOriginalWithBody, originalMessage]);
 
   useEffect(() => {
     if (!showRewrite) return;
@@ -665,21 +704,15 @@ export default function ComposeModal({
 
       // For replies/forwards, hand the model the message we're responding to
       // so it can match tone and register without a second LLM call.
-      const contextStr = (() => {
+      const contextStr = await (async () => {
         if (mode === 'paraphrase' || mode === 'formal' || mode === 'concise' || mode === 'friendly') {
           if (!originalMessage) return undefined;
-          const fromLabel = originalMessage.fromName
-            ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
-            : originalMessage.fromEmail;
-          const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
-          const fromLine = `From: ${fromLabel}\n`;
-          const body = htmlToPlainText(originalMessage.bodyText ?? originalMessage.bodyHtml ?? '');
-          if (!body) return undefined;
-          return `${subj}${fromLine}\n${body}`;
+          return (await buildIncomingEmail())?.text;
         }
         // Grammar mode is purely local — context could mislead it.
         return undefined;
       })();
+      if (abort.signal.aborted) return;
 
       try {
         const client = new AIClient();
@@ -704,7 +737,7 @@ export default function ComposeModal({
         setRewriting(false);
       }
     },
-    [editor, aiModel, aiCustomInstructions, pushRewrite, resetRewrite, replaceRewrite, signatureHtml, originalMessage],
+    [editor, aiModel, aiCustomInstructions, pushRewrite, resetRewrite, replaceRewrite, signatureHtml, originalMessage, buildIncomingEmail],
   );
 
   const closeRewrite = useCallback(() => {
@@ -761,19 +794,20 @@ export default function ComposeModal({
     setRewriting(true);
     setAiAction('suggest');
 
-    const fromLabel = originalMessage.fromName
-      ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
-      : originalMessage.fromEmail;
-    const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
-    const body = htmlToPlainText(originalMessage.bodyText ?? originalMessage.bodyHtml ?? '');
-    const incoming = `${subj}From: ${fromLabel}\n\n${body}`;
-    setInjectionWarning(detectInjectionAttempt(body));
+    const incoming = await buildIncomingEmail();
+    if (abort.signal.aborted) return;
+    if (!incoming) {
+      setRewriteError('Could not load the message being replied to.');
+      setRewriting(false);
+      return;
+    }
+    setInjectionWarning(detectInjectionAttempt(incoming.body));
 
     try {
       const client = new AIClient();
       const final = await suggestReply(
         client,
-        incoming,
+        incoming.text,
         {
           model: aiModel,
           userName: user?.displayName ?? user?.email ?? 'the user',
@@ -802,6 +836,7 @@ export default function ComposeModal({
     pushRewrite,
     resetRewrite,
     replaceRewrite,
+    buildIncomingEmail,
     user,
   ]);
 
@@ -824,27 +859,21 @@ export default function ComposeModal({
     setRewriteError(null);
     setRewriting(true);
 
-    const contextStr = (() => {
-      if (
-        rewriteMode === 'paraphrase' ||
-        rewriteMode === 'formal' ||
-        rewriteMode === 'concise' ||
-        rewriteMode === 'friendly'
-      ) {
-        if (!originalMessage) return undefined;
-        const fromLabel = originalMessage.fromName
-          ? `${originalMessage.fromName} <${originalMessage.fromEmail}>`
-          : originalMessage.fromEmail;
-        const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
-        const fromLine = `From: ${fromLabel}\n`;
-        const body = htmlToPlainText(originalMessage.bodyText ?? originalMessage.bodyHtml ?? '');
-        if (!body) return undefined;
-        return `${subj}${fromLine}\n${body}`;
-      }
-      return undefined;
-    })();
-
     void (async () => {
+      const contextStr = await (async () => {
+        if (
+          rewriteMode === 'paraphrase' ||
+          rewriteMode === 'formal' ||
+          rewriteMode === 'concise' ||
+          rewriteMode === 'friendly'
+        ) {
+          if (!originalMessage) return undefined;
+          return (await buildIncomingEmail())?.text;
+        }
+        return undefined;
+      })();
+      if (abort.signal.aborted) return;
+
       try {
         const client = new AIClient();
         const final = await rewriteText(
@@ -878,6 +907,7 @@ export default function ComposeModal({
     pushRewrite,
     resetRewrite,
     replaceRewrite,
+    buildIncomingEmail,
     handleSuggestReply,
   ]);
 

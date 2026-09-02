@@ -245,6 +245,27 @@ describe('parseBriefJson', () => {
   it('returns null on garbage', () => {
     expect(parseBriefJson('nope', cards)).toBeNull();
   });
+
+  it('salvages a brief truncated by the token limit, keeping complete items', () => {
+    const full = JSON.stringify({
+      needsDecision: [
+        { text: 'Approve the Q3 budget', messageIds: ['m1'] },
+        { text: 'Sign the annex', messageIds: ['m2'] },
+      ],
+      waitingOnYou: [{ text: 'Reply to the PS office', messageIds: ['m2'] }],
+      youPromised: [],
+      deadlines: [{ text: 'Report due Friday', messageIds: ['m2'] }],
+      worthKnowing: [],
+    });
+    // Cut mid-way through the deadlines item's text — like finish_reason: length.
+    const truncated = full.slice(0, full.indexOf('Report due') + 6);
+    const brief = parseBriefJson(truncated, cards);
+    expect(brief).not.toBeNull();
+    expect(brief!.needsDecision).toHaveLength(2);
+    expect(brief!.waitingOnYou).toHaveLength(1);
+    // The mangled trailing item is dropped, not invented.
+    expect(brief!.deadlines).toHaveLength(0);
+  });
 });
 
 describe('composeBrief', () => {

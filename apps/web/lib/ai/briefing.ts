@@ -186,6 +186,82 @@ function firstJsonObject(raw: string): string | null {
   return start >= 0 && end > start ? cleaned.slice(start, end + 1) : null;
 }
 
+/**
+ * Closers needed to balance a JSON prefix, or null when the prefix cannot be
+ * balanced at this cut (ends inside a string, or brackets mismatch).
+ */
+function missingClosers(slice: string): string | null {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of slice) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') {
+      if (stack.pop() !== ch) return null;
+    }
+  }
+  if (inString) return null;
+  return stack.reverse().join('');
+}
+
+/**
+ * Best-effort repair of JSON cut off by a hit token limit (finish_reason
+ * "length"): back up to the last complete element boundary and close every
+ * bracket still open. Complete items survive; the mangled tail is dropped.
+ */
+function repairTruncatedJson(text: string): string | null {
+  let cut = text.length;
+  while (cut > 1) {
+    const slice = text.slice(0, cut);
+    const closers = missingClosers(slice);
+    if (closers !== null) {
+      const candidate = slice + closers;
+      try {
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        // fall through — cut further back
+      }
+    }
+    const prev = Math.max(slice.lastIndexOf('}', cut - 2), slice.lastIndexOf(']', cut - 2));
+    if (prev <= 0) return null;
+    cut = prev + 1;
+  }
+  return null;
+}
+
+/** Parse a model's JSON-object output, salvaging truncated output when possible. */
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  const jsonText = firstJsonObject(raw ?? '');
+  if (jsonText) {
+    try {
+      const parsed = JSON.parse(jsonText) as unknown;
+      if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
+    } catch {
+      // fall through to repair
+    }
+  }
+  const cleaned = (raw ?? '').replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/, '').trim();
+  const start = cleaned.indexOf('{');
+  if (start < 0) return null;
+  const repaired = repairTruncatedJson(cleaned.slice(start));
+  if (!repaired) return null;
+  try {
+    const parsed = JSON.parse(repaired) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Model output and any values echoed back from attacker-controlled email
 // content (subject lines, sender names, attachment names) must never carry a
 // forgeable fence/role-marker shape into a later prompt (the reduce step).
@@ -194,11 +270,8 @@ const strArr = (v: unknown, maxItems = 6, maxLen = 200): string[] =>
     .slice(0, maxItems).map((s) => neutralizeMarkers(s).slice(0, maxLen)) : [];
 
 export function parseCardJson(raw: string, msg: BriefingSourceMessage, body: string): BriefingCard | null {
-  const jsonText = firstJsonObject(raw ?? '');
-  if (!jsonText) return null;
-  let data: Record<string, unknown>;
-  try { data = JSON.parse(jsonText); } catch { return null; }
-  if (!data || typeof data !== 'object') return null;
+  const data = parseJsonObject(raw);
+  if (!data) return null;
   const importance = data.importance === 'high' || data.importance === 'low' ? data.importance : 'normal';
   return {
     messageId: msg.id,
@@ -229,7 +302,7 @@ export async function extractCard(
   for (const responseFormat of ['json', undefined] as const) {
     if (signal?.aborted) return null;
     try {
-      const raw = await chatThrottleAware(client, { model, messages, temperature: 0, maxTokens: 220, signal, ...(responseFormat ? { responseFormat } : {}) });
+      const raw = await chatThrottleAware(client, { model, messages, temperature: 0, maxTokens: 300, signal, ...(responseFormat ? { responseFormat } : {}) });
       const card = parseCardJson(raw, msg, body);
       if (card) return card;
     } catch (err) {
@@ -250,7 +323,8 @@ const REDUCE_SYSTEM = `You compose an executive's mailbox briefing from structur
 Output ONLY a JSON object with keys "needsDecision", "waitingOnYou", "youPromised", "deadlines", "worthKnowing" — each an array of {"text": string, "messageIds": string[]}.
 Rules:
 - Base every item ONLY on the cards. Every item MUST carry the messageId(s) of its source card(s).
-- needsDecision: asksOfMe entries that require a decision or approval. waitingOnYou: other asksOfMe requests. youPromised: commitmentsIMade from sent cards. deadlines: dated items, soonest first. worthKnowing: at most 5 high-signal remaining items.
+- needsDecision: asksOfMe entries that require a decision or approval. waitingOnYou: other asksOfMe requests. youPromised: commitmentsIMade from sent cards. deadlines: dated items, soonest first. worthKnowing: high-signal remaining items.
+- HARD LIMITS: at most 5 items per section; each item text is ONE sentence of at most 25 words. Merge related items aggressively and cite all their messageIds — the reader wants signal, not an inventory.
 - Merge duplicates about the same matter into one item citing all sources. Skip pleasantries and pure FYI noise. Plain, brisk prose; no names invented, no dates invented. Empty arrays are fine.`;
 
 export function buildReduceInput(cards: BriefingCard[]): string {
@@ -296,10 +370,8 @@ function toItems(v: unknown, known: Set<string>, suspicious: Set<string>): Brief
 }
 
 export function parseBriefJson(raw: string, cards: BriefingCard[]): Brief | null {
-  const jsonText = firstJsonObject(raw ?? '');
-  if (!jsonText) return null;
-  let data: Record<string, unknown>;
-  try { data = JSON.parse(jsonText); } catch { return null; }
+  const data = parseJsonObject(raw);
+  if (!data) return null;
   const known = new Set(cards.map((c) => c.messageId));
   const suspicious = new Set(cards.filter((c) => c.injectionSuspected).map((c) => c.messageId));
   return {
@@ -322,7 +394,7 @@ export async function composeBrief(
   for (const responseFormat of ['json', undefined] as const) {
     if (signal?.aborted) return null;
     try {
-      const raw = await chatThrottleAware(client, { model, messages, temperature: 0.2, maxTokens: 900, signal, ...(responseFormat ? { responseFormat } : {}) });
+      const raw = await chatThrottleAware(client, { model, messages, temperature: 0.2, maxTokens: 2000, signal, ...(responseFormat ? { responseFormat } : {}) });
       const brief = parseBriefJson(raw, cards);
       if (brief) return brief;
     } catch (err) {

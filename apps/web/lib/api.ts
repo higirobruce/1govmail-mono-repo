@@ -220,6 +220,18 @@ export const api = {
       if (USE_MOCK) return delay(undefined);
       return request<void>('/auth/logout', { method: 'POST' });
     },
+    getSessions: () => {
+      if (USE_MOCK) return delay<any[]>([]);
+      return request<any[]>('/auth/sessions');
+    },
+    revokeSession: (id: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<any>(`/auth/sessions/${id}`, { method: 'DELETE' });
+    },
+    revokeOtherSessions: () => {
+      if (USE_MOCK) return delay({ success: true, revoked: 0 });
+      return request<any>('/auth/sessions/revoke-others', { method: 'POST' });
+    },
   },
 
   mail: {

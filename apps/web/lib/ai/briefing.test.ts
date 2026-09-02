@@ -238,14 +238,23 @@ describe('generateBriefing', () => {
     expect(chatCalls.length).toBe(before + 1);   // only the reduce call repeats
   });
 
-  it('counts failed cards instead of throwing', async () => {
-    const client = { chat: async (o: any) => o.messages[1].content.startsWith('CARDS:') ? jsonBrief : 'garbage' };
+  it('counts failed cards instead of throwing on partial failure', async () => {
+    const client = { chat: async (o: any) => { const u = o.messages[1].content; if (u.startsWith('CARDS:')) return jsonBrief; return u.includes('s-bad') ? 'garbage' : jsonCard; } };
     const result = await generateBriefing(
-      { client: client as any, mail: fakeMail([msg('a', 1)], []) as any, model: 'test' },
+      { client: client as any, mail: fakeMail([msg('good', 1), msg('bad', 2)], []) as any, model: 'test' },
       { window: '24h', now: NOW },
     );
     expect(result.failedCount).toBe(1);
-    expect(result.coveredCount).toBe(0);
+    expect(result.coveredCount).toBe(1);
+    expect(result.brief.needsDecision).toHaveLength(1);
+  });
+
+  it('throws when no cards can be extracted from any message', async () => {
+    const client = { chat: async (o: any) => o.messages[1].content.startsWith('CARDS:') ? jsonBrief : 'garbage' };
+    await expect(generateBriefing(
+      { client: client as any, mail: fakeMail([msg('a', 1)], []) as any, model: 'test' },
+      { window: '24h', now: NOW },
+    )).rejects.toThrow(/could not analyze/i);
   });
 
   it('throws a clear error when no messages are in the window', async () => {

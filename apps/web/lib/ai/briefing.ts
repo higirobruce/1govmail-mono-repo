@@ -354,16 +354,12 @@ export async function generateBriefing(
   if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
 
   const good = cards.filter((c): c is BriefingCard => c !== null);
+  if (good.length === 0) throw new Error('Could not analyze any messages — the AI backend may be unavailable.');
 
   onProgress?.({ phase: 'compose', done: 0, total: 1 });
-  let brief: Brief;
-  if (good.length === 0) {
-    brief = { needsDecision: [], waitingOnYou: [], youPromised: [], deadlines: [], worthKnowing: [] };
-  } else {
-    const composed = await composeBrief(client, model, good, signal);
-    if (!composed) throw new Error('The AI backend did not return a valid briefing.');
-    brief = composed;
-  }
+  const brief = await composeBrief(client, model, good, signal);
+  if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+  if (!brief) throw new Error('The AI backend did not return a valid briefing.');
 
   return {
     brief,

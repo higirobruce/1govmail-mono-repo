@@ -52,7 +52,10 @@ export default function BriefingPanel({ open, onClose, onOpenMessage }: {
       if ((err as Error)?.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setRunning(false);
+      // Only clear `running` if this call is still the active one — an
+      // earlier, already-aborted run's finally must not stomp on a newer
+      // run's in-flight state.
+      if (abortRef.current === abort) setRunning(false);
     }
   }, [model]);
 
@@ -63,6 +66,16 @@ export default function BriefingPanel({ open, onClose, onOpenMessage }: {
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Escape closes the panel.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -122,6 +135,7 @@ export default function BriefingPanel({ open, onClose, onOpenMessage }: {
             disabled={running}
             onClick={() => void run(window_)}
             title="Regenerate"
+            aria-label="Regenerate"
             className={cn(
               'ml-auto p-1.5 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors',
               running && 'opacity-50 cursor-not-allowed',
@@ -211,7 +225,7 @@ export default function BriefingPanel({ open, onClose, onOpenMessage }: {
         <div className="shrink-0 space-y-1 border-t border-border/30 px-4 py-2.5">
           {result && (
             <p className="text-[11px] text-muted-foreground/60">
-              Covered {result.coveredCount} of {result.totalInWindow} messages
+              Covered {result.coveredCount} of {result.totalInWindow}{result.totalIsLowerBound ? '+' : ''} messages
               {result.failedCount > 0 && ` · ${result.failedCount} could not be analyzed`}
               {' · '}
               {new Date(result.generatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}

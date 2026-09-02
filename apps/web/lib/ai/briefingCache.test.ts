@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { getCachedCard, putCachedCard, CARD_CACHE_MAX } from './briefingCache';
+import { getCachedCard, putCachedCard, clearCardCache, CARD_CACHE_MAX } from './briefingCache';
 import type { BriefingCard } from './briefing';
 
 const card = (id: string): BriefingCard => ({
@@ -30,5 +30,10 @@ describe('briefing card cache', () => {
     expect(getCachedCard('m1', 'model-a')).toBeNull();
     putCachedCard('m1', 'model-a', card('m1'));   // must not throw
     expect(getCachedCard('m1', 'model-a')).not.toBeNull();
+  });
+  it('clearCardCache wipes every entry', () => {
+    putCachedCard('m1', 'model-a', card('m1'));
+    clearCardCache();
+    expect(getCachedCard('m1', 'model-a')).toBeNull();
   });
 });

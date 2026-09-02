@@ -34,3 +34,11 @@ export function putCachedCard(messageId: string, model: string, card: BriefingCa
   }
   save(map);
 }
+
+/**
+ * Wipe the entire card cache. Called on logout / 401 so the next user of a
+ * shared machine never sees a previous user's cached briefing cards.
+ */
+export function clearCardCache(): void {
+  try { localStorage.removeItem(KEY); } catch { /* best-effort */ }
+}

@@ -119,7 +119,7 @@ function normalizeLabel(label: string): string {
  * marker. Only structure is touched — prose is never rewritten, so the model
  * still sees whatever the sender actually wrote.
  */
-function neutralizeMarkers(content: string): string {
+export function neutralizeMarkers(content: string): string {
   return content
     .replace(SPECIAL_TOKEN, SANITIZED_MARKER)
     .replace(ROLE_MARKER_LINE, SANITIZED_MARKER)

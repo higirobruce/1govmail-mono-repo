@@ -4,7 +4,7 @@
  */
 
 import { extractEmailText } from './extract';
-import { UNTRUSTED_CONTENT_RULE, detectInjectionAttempt, fenceUntrusted } from './prompt';
+import { UNTRUSTED_CONTENT_RULE, detectInjectionAttempt, fenceUntrusted, neutralizeMarkers } from './prompt';
 import type { AIClient } from './client';
 
 export type BriefingWindow = 'today' | '24h' | 'week';
@@ -39,11 +39,15 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)}MB`;
 }
 
-function toSource(raw: unknown, direction: 'received' | 'sent'): BriefingSourceMessage | null {
-  const m = raw as Record<string, unknown>;
-  if (!m || typeof m.id !== 'string' || typeof m.receivedAt !== 'string') return null;
-  const attachments = Array.isArray(m.attachments)
-    ? m.attachments
+/**
+ * Format a message's attachment metadata into "name.ext (size)" strings.
+ * Shared by the listing-row path (`toSource`, which mostly sees none — the
+ * real listing endpoint returns only `hasAttachments`) and the hydrate step
+ * in `generateBriefing`, which fills this in from `getMessage` detail.
+ */
+export function formatAttachments(raw: unknown): string[] {
+  return Array.isArray(raw)
+    ? raw
         .map((a) => a as { filename?: unknown; size?: unknown })
         .filter((a) => a && typeof a.filename === 'string')
         .map((a) => {
@@ -53,6 +57,11 @@ function toSource(raw: unknown, direction: 'received' | 'sent'): BriefingSourceM
           return `${filename}${sizeStr ? ` (${sizeStr})` : ''}`;
         })
     : [];
+}
+
+function toSource(raw: unknown, direction: 'received' | 'sent'): BriefingSourceMessage | null {
+  const m = raw as Record<string, unknown>;
+  if (!m || typeof m.id !== 'string' || typeof m.receivedAt !== 'string') return null;
   return {
     id: m.id,
     conversationId: typeof m.conversationId === 'string' ? m.conversationId : null,
@@ -64,7 +73,7 @@ function toSource(raw: unknown, direction: 'received' | 'sent'): BriefingSourceM
     bodyText: typeof m.bodyText === 'string' ? m.bodyText : null,
     bodyHtml: typeof m.bodyHtml === 'string' ? m.bodyHtml : null,
     snippet: typeof m.snippet === 'string' ? m.snippet : null,
-    attachments,
+    attachments: formatAttachments(m.attachments),
   };
 }
 
@@ -73,15 +82,25 @@ export function selectWindowMessages(
   cap: number = BRIEFING_MESSAGE_CAP,
 ): { selected: BriefingSourceMessage[]; totalInWindow: number } {
   const start = windowStart(window, now).getTime();
-  const all = [
+  // Two-minute tolerance on the upper bound absorbs clock skew between the
+  // Zimbra server and this client — a message stamped a few seconds "in the
+  // future" should not be silently dropped.
+  const filtered = [
     ...inbox.map((m) => toSource(m, 'received')),
     ...sent.map((m) => toSource(m, 'sent')),
   ].filter((m): m is BriefingSourceMessage => m !== null)
    .filter((m) => {
      const t = Date.parse(m.receivedAt);
-     return Number.isFinite(t) && t >= start && t <= now.getTime();
-   })
-   .sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt));
+     return Number.isFinite(t) && t >= start && t <= now.getTime() + 2 * 60_000;
+   });
+  // Dedupe by message id (a message can legitimately appear in both an
+  // inbox-style folder listing and a sent listing search, or across
+  // overlapping paginated fetches) — first occurrence wins.
+  const deduped = new Map<string, BriefingSourceMessage>();
+  for (const m of filtered) {
+    if (!deduped.has(m.id)) deduped.set(m.id, m);
+  }
+  const all = [...deduped.values()].sort((a, b) => Date.parse(b.receivedAt) - Date.parse(a.receivedAt));
   return { selected: all.slice(0, cap), totalInWindow: all.length };
 }
 
@@ -134,9 +153,12 @@ function firstJsonObject(raw: string): string | null {
   return start >= 0 && end > start ? cleaned.slice(start, end + 1) : null;
 }
 
+// Model output and any values echoed back from attacker-controlled email
+// content (subject lines, sender names, attachment names) must never carry a
+// forgeable fence/role-marker shape into a later prompt (the reduce step).
 const strArr = (v: unknown, maxItems = 6, maxLen = 200): string[] =>
   Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
-    .slice(0, maxItems).map((s) => s.slice(0, maxLen)) : [];
+    .slice(0, maxItems).map((s) => neutralizeMarkers(s).slice(0, maxLen)) : [];
 
 export function parseCardJson(raw: string, msg: BriefingSourceMessage, body: string): BriefingCard | null {
   const jsonText = firstJsonObject(raw ?? '');
@@ -152,11 +174,11 @@ export function parseCardJson(raw: string, msg: BriefingSourceMessage, body: str
     from: msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail,
     subject: msg.subject,
     receivedAt: msg.receivedAt,
-    gist: (typeof data.gist === 'string' ? data.gist : '').slice(0, 300),
+    gist: neutralizeMarkers(typeof data.gist === 'string' ? data.gist : '').slice(0, 300),
     asksOfMe: strArr(data.asksOfMe),
     deadlines: strArr(data.deadlines),
     commitmentsIMade: msg.direction === 'sent' ? strArr(data.commitmentsIMade) : [],
-    waitingOn: typeof data.waitingOn === 'string' ? data.waitingOn.slice(0, 200) : null,
+    waitingOn: typeof data.waitingOn === 'string' ? neutralizeMarkers(data.waitingOn).slice(0, 200) : null,
     importance,
     attachments: msg.attachments,
     injectionSuspected: detectInjectionAttempt(body),
@@ -209,11 +231,20 @@ export function buildReduceInput(cards: BriefingCard[]): string {
     }
   }
   const kept = [...newestPerConversation.values(), ...solo];
+  // Defense in depth: everything below ultimately traces back to
+  // attacker-controlled email content (sender, subject, attachment names) or
+  // model output (gist/asks/deadlines/etc). Launder every string field again
+  // here so the reduce prompt never receives a forgeable fence/role-marker
+  // shape, regardless of whether the card was built via parseCardJson.
   return JSON.stringify(kept.map((c) => ({
-    id: c.messageId, direction: c.direction, from: c.from, subject: c.subject,
-    at: c.receivedAt, gist: c.gist, asksOfMe: c.asksOfMe, deadlines: c.deadlines,
-    commitmentsIMade: c.commitmentsIMade, waitingOn: c.waitingOn,
-    importance: c.importance, attachments: c.attachments,
+    id: c.messageId, direction: c.direction, from: neutralizeMarkers(c.from),
+    subject: c.subject ? neutralizeMarkers(c.subject) : c.subject,
+    at: c.receivedAt, gist: neutralizeMarkers(c.gist),
+    asksOfMe: c.asksOfMe.map((s) => neutralizeMarkers(s)),
+    deadlines: c.deadlines.map((s) => neutralizeMarkers(s)),
+    commitmentsIMade: c.commitmentsIMade.map((s) => neutralizeMarkers(s)),
+    waitingOn: c.waitingOn ? neutralizeMarkers(c.waitingOn) : c.waitingOn,
+    importance: c.importance, attachments: c.attachments.map((s) => neutralizeMarkers(s)),
   })));
 }
 
@@ -273,13 +304,16 @@ export interface BriefingResult {
   brief: Brief;
   coveredCount: number;
   totalInWindow: number;
+  /** True when totalInWindow is a lower bound — the page budget ran out
+   *  before we could confirm we'd seen every message in the window. */
+  totalIsLowerBound: boolean;
   failedCount: number;
   generatedAt: string;
 }
 export interface BriefingMailApi {
-  getFolders(): Promise<unknown[]>;
-  getMessages(folderId: string, limit?: number, offset?: number): Promise<unknown>;
-  getMessage(messageId: string): Promise<unknown>;
+  getFolders(opts?: { signal?: AbortSignal }): Promise<unknown[]>;
+  getMessages(folderId: string, limit?: number, offset?: number, opts?: { signal?: AbortSignal }): Promise<unknown>;
+  getMessage(messageId: string, opts?: { signal?: AbortSignal }): Promise<unknown>;
 }
 
 import { getCachedCard, putCachedCard } from './briefingCache';
@@ -291,19 +325,29 @@ const MAX_PAGES = 4;
 
 async function fetchFolderWindow(
   mail: BriefingMailApi, folderId: string, startMs: number, signal?: AbortSignal,
-): Promise<unknown[]> {
+): Promise<{ rows: unknown[]; exhausted: boolean }> {
   const out: unknown[] = [];
+  let pagesFetched = 0;
+  let lastHasMore = false;
+  let lastPastWindow = false;
   for (let page = 0; page < MAX_PAGES; page++) {
     if (signal?.aborted) break;
-    const raw = await mail.getMessages(folderId, PAGE_SIZE, page * PAGE_SIZE);
+    const raw = await mail.getMessages(folderId, PAGE_SIZE, page * PAGE_SIZE, { signal });
+    pagesFetched++;
     const data = raw as { messages?: unknown[]; hasMore?: boolean } | undefined;
     const messages: unknown[] = data?.messages ?? [];
     out.push(...messages);
     const oldest = messages[messages.length - 1] as { receivedAt?: unknown } | undefined;
     const oldestMs = oldest && typeof oldest.receivedAt === 'string' ? Date.parse(oldest.receivedAt) : NaN;
-    if (!data?.hasMore || messages.length === 0 || (Number.isFinite(oldestMs) && oldestMs < startMs)) break;
+    lastPastWindow = Number.isFinite(oldestMs) && oldestMs < startMs;
+    lastHasMore = !!data?.hasMore;
+    if (!lastHasMore || messages.length === 0 || lastPastWindow) break;
   }
-  return out;
+  // Exhausted: the loop ran out of page budget while the server still had
+  // more to give and we never actually reached a row older than the window
+  // start — so totalInWindow below is a lower bound, not a true count.
+  const exhausted = pagesFetched === MAX_PAGES && lastHasMore && !lastPastWindow;
+  return { rows: out, exhausted };
 }
 
 async function mapWithConcurrency<T, R>(
@@ -331,26 +375,30 @@ export async function generateBriefing(
   const startMs = windowStart(window, now).getTime();
 
   onProgress?.({ phase: 'fetch', done: 0, total: 1 });
-  const folders = await mail.getFolders();
+  const folders = await mail.getFolders({ signal });
   const folderPath = (f: unknown): unknown => (f as { path?: unknown } | null)?.path;
   const folderId = (f: unknown): unknown => (f as { id?: unknown } | null)?.id;
   const inboxFolder = folders.find((f) => folderPath(f) === '/Inbox');
   const sentFolder = folders.find((f) => folderPath(f) === '/Sent');
-  const [inbox, sent] = await Promise.all([
-    inboxFolder ? fetchFolderWindow(mail, folderId(inboxFolder) as string, startMs, signal) : Promise.resolve([]),
-    sentFolder ? fetchFolderWindow(mail, folderId(sentFolder) as string, startMs, signal) : Promise.resolve([]),
+  const [inboxResult, sentResult] = await Promise.all([
+    inboxFolder ? fetchFolderWindow(mail, folderId(inboxFolder) as string, startMs, signal) : Promise.resolve({ rows: [], exhausted: false }),
+    sentFolder ? fetchFolderWindow(mail, folderId(sentFolder) as string, startMs, signal) : Promise.resolve({ rows: [], exhausted: false }),
   ]);
-  const { selected, totalInWindow } = selectWindowMessages(inbox, sent, window, now);
+  const totalIsLowerBound = inboxResult.exhausted || sentResult.exhausted;
+  const { selected, totalInWindow } = selectWindowMessages(inboxResult.rows, sentResult.rows, window, now);
   if (selected.length === 0) throw new Error('No messages in this time window — nothing to brief.');
 
-  // Hydrate bodies where the listing gave none.
+  // Hydrate bodies (and attachments, when the listing didn't include any —
+  // the real listing endpoint only returns `hasAttachments`) where the
+  // listing gave none.
   await mapWithConcurrency(selected, HYDRATE_CONCURRENCY, async (m) => {
     if (m.bodyText || m.bodyHtml || signal?.aborted) return;
     try {
-      const raw = await mail.getMessage(m.id);
+      const raw = await mail.getMessage(m.id, { signal });
       const full = raw as { bodyText?: unknown; bodyHtml?: unknown } | null;
       m.bodyText = (typeof full?.bodyText === 'string' ? full.bodyText : null);
       m.bodyHtml = (typeof full?.bodyHtml === 'string' ? full.bodyHtml : null);
+      if (m.attachments.length === 0) m.attachments = formatAttachments((full as Record<string, unknown>)?.attachments);
     } catch { /* card falls back to snippet, or fails and is counted */ }
   });
 
@@ -377,6 +425,7 @@ export async function generateBriefing(
     brief,
     coveredCount: good.length,
     totalInWindow,
+    totalIsLowerBound,
     failedCount: selected.length - good.length,
     generatedAt: new Date().toISOString(),
   };

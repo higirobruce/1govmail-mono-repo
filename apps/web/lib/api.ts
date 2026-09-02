@@ -3,6 +3,7 @@ import {
   MOCK_MESSAGES,
   MOCK_MESSAGE_DETAIL,
 } from './mock-data';
+import { clearCardCache } from './ai/briefingCache';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
@@ -49,6 +50,7 @@ async function request<T>(
       // Clear the persisted auth state so the store starts fresh on /login
       localStorage.removeItem('auth');
       localStorage.removeItem('access_token'); // legacy key, safe to clear
+      clearCardCache(); // don't leak this user's briefing cards to the next login
       window.location.replace('/login');
       throw new Error('Session expired — please log in again');
     }
@@ -235,19 +237,19 @@ export const api = {
   },
 
   mail: {
-    getFolders: () => {
+    getFolders: (opts?: { signal?: AbortSignal }) => {
       if (USE_MOCK) return delay(MOCK_FOLDERS);
-      return request<any[]>('/mail/folders');
+      return request<any[]>('/mail/folders', { signal: opts?.signal });
     },
-    getMessages: (folderId: string, limit = 50, offset = 0) => {
+    getMessages: (folderId: string, limit = 50, offset = 0, opts?: { signal?: AbortSignal }) => {
       if (USE_MOCK)
         return delay({ messages: MOCK_MESSAGES, total: 120, offset: 0, limit: 50, hasMore: true });
-      return request<any>(`/mail/folders/${folderId}/messages?limit=${limit}&offset=${offset}`);
+      return request<any>(`/mail/folders/${folderId}/messages?limit=${limit}&offset=${offset}`, { signal: opts?.signal });
     },
-    getMessage: (messageId: string) => {
+    getMessage: (messageId: string, opts?: { signal?: AbortSignal }) => {
       if (USE_MOCK)
         return delay(messageId === 'm1' ? MOCK_MESSAGE_DETAIL : MOCK_MESSAGES.find((m) => m.id === messageId) ?? MOCK_MESSAGE_DETAIL);
-      return request<any>(`/mail/messages/${messageId}`);
+      return request<any>(`/mail/messages/${messageId}`, { signal: opts?.signal });
     },
     /** Fetch all messages in the same conversation, ordered oldest → newest.
      *  Body fields are omitted — fetch individual messages via getMessage on expand. */

@@ -76,13 +76,14 @@ model AuditLog {
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  userAgent String?
-  ipAddress String?
+  id         String   @id @default(cuid())
+  userId     String
+  token      String   @unique
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  userAgent  String?
+  ipAddress  String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

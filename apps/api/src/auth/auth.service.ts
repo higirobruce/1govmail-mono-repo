@@ -128,6 +128,16 @@ export class AuthService {
 
     const accessToken = this.jwt.sign({ sub: user.id, email: user.email });
 
+    await this.prisma.session.create({
+      data: {
+        userId: user.id,
+        token: accessToken,
+        expiresAt: tokenExpiry,
+        userAgent: ctx.userAgent ?? null,
+        ipAddress: ctx.ip ?? null,
+      },
+    });
+
     await this.audit.record('LOGIN_SUCCESS', {
       userId: user.id,
       email: user.email,

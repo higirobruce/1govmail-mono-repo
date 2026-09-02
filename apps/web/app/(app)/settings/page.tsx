@@ -23,7 +23,9 @@ import {
   Check, ChevronRight, RotateCcw, FileSignature,
   Palmtree, Settings2, Sparkles, AlertTriangle, Ban,
   Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
+  Monitor, LogOut,
 } from 'lucide-react';
+import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -1390,6 +1392,46 @@ function SecuritySection({ data }: { data: SettingsData }) {
   const [confirmPwd, setConfirmPwd] = useState('');
   const [saving, setSaving]         = useState(false);
 
+  const [sessions, setSessions] = useState<Array<{
+    id: string; userAgent: string | null; ipAddress: string | null;
+    createdAt: string; lastSeenAt: string; isCurrent: boolean;
+  }>>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+
+  const loadSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    try {
+      const data = await api.auth.getSessions();
+      setSessions(data);
+    } catch (err: any) {
+      toast.error('Failed to load sessions', { description: err?.message });
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  const handleRevoke = async (id: string) => {
+    try {
+      await api.auth.revokeSession(id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+      toast.success('Session signed out');
+    } catch (err: any) {
+      toast.error('Failed to sign out session', { description: err?.message });
+    }
+  };
+
+  const handleRevokeOthers = async () => {
+    try {
+      const result = await api.auth.revokeOtherSessions();
+      toast.success(`Signed out ${result.revoked} other session${result.revoked === 1 ? '' : 's'}`);
+      await loadSessions();
+    } catch (err: any) {
+      toast.error('Failed to sign out other sessions', { description: err?.message });
+    }
+  };
+
   const handleChange = async () => {
     if (!oldPwd || !newPwd || !confirmPwd) {
       toast.error('All password fields are required');
@@ -1477,6 +1519,57 @@ function SecuritySection({ data }: { data: SettingsData }) {
           </Button>
         </div>
       </div>
+
+      <Separator className="my-6" />
+
+      <SectionHeader
+        title="Active sessions"
+        description="Devices currently signed in to your account."
+      />
+
+      {sessionsLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/40" />
+        </div>
+      ) : (
+        <div className="max-w-md space-y-2">
+          {sessions.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-3 py-2 px-3 rounded bg-muted/20">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Monitor className="w-4 h-4 text-muted-foreground/50 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm truncate">
+                    {s.userAgent ?? 'Unknown device'}
+                    {s.isCurrent && <span className="ml-2 text-xs text-primary">This session</span>}
+                  </p>
+                  <p className="text-xs text-muted-foreground/60">
+                    {s.ipAddress ?? 'Unknown IP'} · last active {formatDistanceToNow(parseISO(s.lastSeenAt), { addSuffix: true })}
+                  </p>
+                </div>
+              </div>
+              {!s.isCurrent && (
+                <button
+                  onClick={() => handleRevoke(s.id)}
+                  className="text-xs text-muted-foreground/60 hover:text-destructive shrink-0 flex items-center gap-1"
+                >
+                  <LogOut className="w-3.5 h-3.5" /> Sign out
+                </button>
+              )}
+            </div>
+          ))}
+
+          {sessions.filter((s) => !s.isCurrent).length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRevokeOthers}
+              className="h-8 text-xs gap-1.5 mt-2"
+            >
+              <LogOut className="w-3.5 h-3.5" /> Sign out all other sessions
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

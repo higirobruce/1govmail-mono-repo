@@ -259,3 +259,117 @@ export async function composeBrief(
   }
   return null;
 }
+
+export interface BriefingProgress { phase: 'fetch' | 'analyze' | 'compose'; done: number; total: number }
+export interface BriefingResult {
+  brief: Brief;
+  coveredCount: number;
+  totalInWindow: number;
+  failedCount: number;
+  generatedAt: string;
+}
+export interface BriefingMailApi {
+  getFolders(): Promise<any[]>;
+  getMessages(folderId: string, limit?: number, offset?: number): Promise<any>;
+  getMessage(messageId: string): Promise<any>;
+}
+
+import { getCachedCard, putCachedCard } from './briefingCache';
+
+const HYDRATE_CONCURRENCY = 4;
+const MAP_CONCURRENCY = 4;
+const PAGE_SIZE = 50;
+const MAX_PAGES = 4;
+
+async function fetchFolderWindow(
+  mail: BriefingMailApi, folderId: string, startMs: number, signal?: AbortSignal,
+): Promise<any[]> {
+  const out: any[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    if (signal?.aborted) break;
+    const data = await mail.getMessages(folderId, PAGE_SIZE, page * PAGE_SIZE);
+    const messages: any[] = data?.messages ?? [];
+    out.push(...messages);
+    const oldest = messages[messages.length - 1];
+    const oldestMs = oldest ? Date.parse(oldest.receivedAt) : NaN;
+    if (!data?.hasMore || messages.length === 0 || (Number.isFinite(oldestMs) && oldestMs < startMs)) break;
+  }
+  return out;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[], limit: number, fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }));
+  return results;
+}
+
+export async function generateBriefing(
+  deps: { client: Pick<AIClient, 'chat'>; mail: BriefingMailApi; model: string },
+  opts: { window: BriefingWindow; signal?: AbortSignal; now?: Date },
+  onProgress?: (p: BriefingProgress) => void,
+): Promise<BriefingResult> {
+  const { client, mail, model } = deps;
+  const { window, signal } = opts;
+  const now = opts.now ?? new Date();
+  const startMs = windowStart(window, now).getTime();
+
+  onProgress?.({ phase: 'fetch', done: 0, total: 1 });
+  const folders = await mail.getFolders();
+  const inboxFolder = folders.find((f: any) => f?.path === '/Inbox');
+  const sentFolder = folders.find((f: any) => f?.path === '/Sent');
+  const [inbox, sent] = await Promise.all([
+    inboxFolder ? fetchFolderWindow(mail, inboxFolder.id, startMs, signal) : Promise.resolve([]),
+    sentFolder ? fetchFolderWindow(mail, sentFolder.id, startMs, signal) : Promise.resolve([]),
+  ]);
+  const { selected, totalInWindow } = selectWindowMessages(inbox, sent, window, now);
+  if (selected.length === 0) throw new Error('No messages in this time window — nothing to brief.');
+
+  // Hydrate bodies where the listing gave none.
+  await mapWithConcurrency(selected, HYDRATE_CONCURRENCY, async (m) => {
+    if (m.bodyText || m.bodyHtml || signal?.aborted) return;
+    try {
+      const full = await mail.getMessage(m.id);
+      m.bodyText = full?.bodyText ?? null;
+      m.bodyHtml = full?.bodyHtml ?? null;
+    } catch { /* card falls back to snippet, or fails and is counted */ }
+  });
+
+  // Map: one card per message, cache-first.
+  let done = 0;
+  const cards = await mapWithConcurrency(selected, MAP_CONCURRENCY, async (m) => {
+    const cached = getCachedCard(m.id, model);
+    const card = cached ?? (await extractCard(client, model, m, signal));
+    if (card && !cached) putCachedCard(m.id, model, card);
+    onProgress?.({ phase: 'analyze', done: ++done, total: selected.length });
+    return card;
+  });
+  if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+
+  const good = cards.filter((c): c is BriefingCard => c !== null);
+
+  onProgress?.({ phase: 'compose', done: 0, total: 1 });
+  let brief: Brief;
+  if (good.length === 0) {
+    brief = { needsDecision: [], waitingOnYou: [], youPromised: [], deadlines: [], worthKnowing: [] };
+  } else {
+    const composed = await composeBrief(client, model, good, signal);
+    if (!composed) throw new Error('The AI backend did not return a valid briefing.');
+    brief = composed;
+  }
+
+  return {
+    brief,
+    coveredCount: good.length,
+    totalInWindow,
+    failedCount: selected.length - good.length,
+    generatedAt: new Date().toISOString(),
+  };
+}

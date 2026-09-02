@@ -189,3 +189,70 @@ describe('composeBrief', () => {
     expect(calls[0]).toMatchObject({ responseFormat: 'json', temperature: 0.2 });
   });
 });
+
+import { generateBriefing } from './briefing';
+
+function fakeMail(inbox: any[], sent: any[], details: Record<string, any> = {}) {
+  return {
+    getFolders: async () => [
+      { id: 'f-in', path: '/Inbox' }, { id: 'f-sent', path: '/Sent' }, { id: 'f-junk', path: '/Junk' },
+    ],
+    getMessages: async (folderId: string) => ({
+      messages: folderId === 'f-in' ? inbox : folderId === 'f-sent' ? sent : [],
+      hasMore: false,
+    }),
+    getMessage: async (id: string) => details[id] ?? { ...inbox.concat(sent).find((m) => m.id === id), bodyText: `full body of ${id}` },
+  };
+}
+const jsonCard = '{"gist":"g","asksOfMe":["decide"],"importance":"high"}';
+const jsonBrief = JSON.stringify({ needsDecision: [{ text: 'd', messageIds: [] }], waitingOnYou: [], youPromised: [], deadlines: [], worthKnowing: [] });
+
+describe('generateBriefing', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('runs fetch → analyze → compose and reports coverage', async () => {
+    const chatCalls: any[] = [];
+    const client = { chat: async (o: any) => { chatCalls.push(o); return o.messages[1].content.startsWith('CARDS:') ? jsonBrief : jsonCard; } };
+    const progress: any[] = [];
+    const result = await generateBriefing(
+      { client: client as any, mail: fakeMail([msg('a', 1), msg('b', 2)], [msg('s', 3)]) as any, model: 'test' },
+      { window: '24h', now: NOW },
+      (p) => progress.push(p),
+    );
+    expect(result.coveredCount).toBe(3);
+    expect(result.totalInWindow).toBe(3);
+    expect(result.failedCount).toBe(0);
+    expect(result.brief.needsDecision).toHaveLength(1);
+    expect(progress.some((p) => p.phase === 'analyze')).toBe(true);
+    // 3 card calls + 1 reduce call
+    expect(chatCalls).toHaveLength(4);
+  });
+
+  it('uses cached cards on the second run', async () => {
+    const chatCalls: any[] = [];
+    const client = { chat: async (o: any) => { chatCalls.push(o); return o.messages[1].content.startsWith('CARDS:') ? jsonBrief : jsonCard; } };
+    const deps = { client: client as any, mail: fakeMail([msg('a', 1)], []) as any, model: 'test' };
+    await generateBriefing(deps, { window: '24h', now: NOW });
+    const before = chatCalls.length;
+    await generateBriefing(deps, { window: '24h', now: NOW });
+    expect(chatCalls.length).toBe(before + 1);   // only the reduce call repeats
+  });
+
+  it('counts failed cards instead of throwing', async () => {
+    const client = { chat: async (o: any) => o.messages[1].content.startsWith('CARDS:') ? jsonBrief : 'garbage' };
+    const result = await generateBriefing(
+      { client: client as any, mail: fakeMail([msg('a', 1)], []) as any, model: 'test' },
+      { window: '24h', now: NOW },
+    );
+    expect(result.failedCount).toBe(1);
+    expect(result.coveredCount).toBe(0);
+  });
+
+  it('throws a clear error when no messages are in the window', async () => {
+    const client = { chat: async () => jsonBrief };
+    await expect(generateBriefing(
+      { client: client as any, mail: fakeMail([], []) as any, model: 'test' },
+      { window: '24h', now: NOW },
+    )).rejects.toThrow(/no messages/i);
+  });
+});

@@ -22,12 +22,40 @@ export class AiService {
 
   /** Single fetch call used by both streaming and non-streaming paths. */
   async upstream(body: ChatRequestDto, signal: AbortSignal): Promise<Response> {
-    let res: Response;
+    // Thinking models (qwen3.5, deepseek-r1, …) spend the whole max_tokens
+    // budget on hidden reasoning and return an empty `content` — the UI shows
+    // a blank response. Ollama's OpenAI layer maps reasoning_effort:"none" to
+    // thinking off; a backend that rejects the parameter gets one retry
+    // without it so non-thinking setups keep working.
+    let res = await this.postChat({ reasoning_effort: 'none', ...body }, signal);
+    if (res.status === 400) {
+      const text = await res.text().catch(() => '');
+      this.logger.warn(
+        `Ollama rejected the request with reasoning_effort (400): ${text.slice(0, 200)} — retrying without it`,
+      );
+      res = await this.postChat({ ...body }, signal);
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      this.logger.warn(`Ollama returned ${res.status}: ${text.slice(0, 200)}`);
+      throw new BadGatewayException(
+        `AI backend error (${res.status}): ${text.slice(0, 200) || res.statusText}`,
+      );
+    }
+
+    return res;
+  }
+
+  private async postChat(
+    payload: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<Response> {
     try {
-      res = await fetch(`${this.baseUrl}/chat/completions`, {
+      return await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
         signal,
       });
     } catch (err) {
@@ -41,16 +69,6 @@ export class AiService {
         'AI backend unreachable. Make sure Ollama is running on the API host.',
       );
     }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      this.logger.warn(`Ollama returned ${res.status}: ${text.slice(0, 200)}`);
-      throw new BadGatewayException(
-        `AI backend error (${res.status}): ${text.slice(0, 200) || res.statusText}`,
-      );
-    }
-
-    return res;
   }
 
   /**

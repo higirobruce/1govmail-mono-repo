@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth.store';
+import { useAIStore } from '@/stores/ai.store';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
@@ -13,12 +14,13 @@ import SnoozeModal from '@/components/mail/SnoozeModal';
 import MailDetail from '@/components/mail/MailDetail';
 import ThreadView from '@/components/mail/ThreadView';
 import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
+import BriefingPanel from '@/components/mail/BriefingPanel';
 import TaskModal from '@/components/tasks/TaskModal';
 import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Input } from '@/components/ui/input';
-import { Search, RefreshCw, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
+import { Search, RefreshCw, Sparkles, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOffline } from '@/lib/offline/provider';
 import { toast } from 'sonner';
@@ -195,6 +197,10 @@ export default function MailPage() {
 
   // ── Global search (⌘K) ─────────────────────────────────────────────────────
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+
+  // ── Executive briefing panel ────────────────────────────────────────────────
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const [briefingOpen, setBriefingOpen] = useState(false);
 
   // ── Electron background polling ────────────────────────────────────────────
   // Tracks the last known inbox unread count so we can detect new arrivals.
@@ -979,13 +985,24 @@ export default function MailPage() {
                   <XIcon className="w-3.5 h-3.5" />
                 </button>
               ) : (
-                <button
-                  onClick={() => refetchMessages()}
-                  disabled={loadingMessages}
-                  className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
-                >
-                  <RefreshCw className={cn('w-3.5 h-3.5', loadingMessages && 'animate-spin')} />
-                </button>
+                <>
+                  {aiEnabled && (
+                    <button
+                      onClick={() => setBriefingOpen(true)}
+                      title="Brief me"
+                      className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => refetchMessages()}
+                    disabled={loadingMessages}
+                    className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
+                  >
+                    <RefreshCw className={cn('w-3.5 h-3.5', loadingMessages && 'animate-spin')} />
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -1175,6 +1192,12 @@ export default function MailPage() {
       <GlobalSearch
         open={globalSearchOpen}
         onClose={() => setGlobalSearchOpen(false)}
+      />
+
+      <BriefingPanel
+        open={briefingOpen}
+        onClose={() => setBriefingOpen(false)}
+        onOpenMessage={(id) => { setBriefingOpen(false); void openMessage(id); }}
       />
     </div>
   );

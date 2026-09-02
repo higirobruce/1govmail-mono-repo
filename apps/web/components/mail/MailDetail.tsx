@@ -321,7 +321,13 @@ export default function MailDetail({
   // ── AI summarize state ────────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
   const aiModel = useAIStore((s) => s.model);
-  const { text: streamedSummary, push: pushSummary, reset: resetSummary } = useCharStream();
+  const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  const {
+    text: streamedSummary,
+    push: pushSummary,
+    reset: resetSummary,
+    replace: replaceSummary,
+  } = useCharStream();
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -352,17 +358,19 @@ export default function MailDetail({
       const fromLabel = message.fromName
         ? `${message.fromName} <${message.fromEmail}>`
         : message.fromEmail;
-      await summarizeMessage(
+      const final = await summarizeMessage(
         client,
         body,
         {
           model: aiModel,
           subject: message.subject ?? undefined,
           from: fromLabel,
+          customInstructions: aiCustomInstructions,
           signal: abort.signal,
         },
         pushSummary,
       );
+      if (!abort.signal.aborted) replaceSummary(final);
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') return;
       const m = err instanceof Error ? err.message : String(err);
@@ -370,7 +378,7 @@ export default function MailDetail({
     } finally {
       setSummarizing(false);
     }
-  }, [message, aiModel, pushSummary, resetSummary]);
+  }, [message, aiModel, aiCustomInstructions, pushSummary, resetSummary, replaceSummary]);
 
   const closeSummary = useCallback(() => {
     summaryAbortRef.current?.abort();

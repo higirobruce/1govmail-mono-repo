@@ -30,7 +30,15 @@ import { DocPickerDialog, type DocAttachMode } from './DocPickerDialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
-import { rewriteText, type RewriteMode, htmlToPlainText, suggestReply } from '@/lib/ai/tasks';
+import {
+  rewriteText,
+  type RewriteMode,
+  htmlToPlainText,
+  suggestReply,
+  type ReplyIntent,
+  type ReplyLength,
+} from '@/lib/ai/tasks';
+import { detectInjectionAttempt } from '@/lib/ai/prompt';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -323,6 +331,7 @@ export default function ComposeModal({
   // ── Rewrite (AI) ──────────────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
   const aiModel = useAIStore((s) => s.model);
+  const aiCustomInstructions = useAIStore((s) => s.customInstructions);
   const [showRewrite, setShowRewrite] = useState(false);
   const rewriteRef = useRef<HTMLDivElement>(null);
   const [rewriteOriginal, setRewriteOriginal] = useState<string>(''); // plain text snapshot
@@ -332,10 +341,17 @@ export default function ComposeModal({
   const [rewriteMode, setRewriteMode] = useState<RewriteMode>('paraphrase');
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [aiAction, setAiAction] = useState<'rewrite' | 'suggest'>('rewrite');
+  const [replyIntent, setReplyIntent] = useState<ReplyIntent>('auto');
+  const [replyLength, setReplyLength] = useState<ReplyLength>('standard');
+  // Set when the incoming email contains text addressed to the model rather
+  // than to the reader. Prompt-level defenses do not hold on small local
+  // models, so the reviewer is the control that does — say so plainly.
+  const [injectionWarning, setInjectionWarning] = useState(false);
   const {
     text: rewriteText_,
     push: pushRewrite,
     reset: resetRewrite,
+    replace: replaceRewrite,
   } = useCharStream();
   const rewriteAbortRef = useRef<AbortController | null>(null);
 
@@ -436,6 +452,8 @@ export default function ComposeModal({
     setSavedDraftId(initialDraftZimbraId ?? null);
     setDraftStatus('idle');
     setMinimised(false);
+    setReplyIntent('auto');
+    setReplyLength('standard');
     sigInserted.current = false; // reset so injection fires fresh on this open
 
     if (mode === 'new' || !originalMessage) {
@@ -643,6 +661,7 @@ export default function ComposeModal({
       setRewriteOpen(true);
       setRewriting(true);
       setAiAction('rewrite');
+      setInjectionWarning(false);
 
       // For replies/forwards, hand the model the message we're responding to
       // so it can match tone and register without a second LLM call.
@@ -664,13 +683,19 @@ export default function ComposeModal({
 
       try {
         const client = new AIClient();
-        await rewriteText(
+        const final = await rewriteText(
           client,
           original,
           mode,
-          { model: aiModel, context: contextStr, signal: abort.signal },
+          {
+            model: aiModel,
+            context: contextStr,
+            customInstructions: aiCustomInstructions,
+            signal: abort.signal,
+          },
           pushRewrite,
         );
+        if (!abort.signal.aborted) replaceRewrite(final);
       } catch (err: unknown) {
         if ((err as { name?: string })?.name === 'AbortError') return;
         const m = err instanceof Error ? err.message : String(err);
@@ -679,7 +704,7 @@ export default function ComposeModal({
         setRewriting(false);
       }
     },
-    [editor, aiModel, pushRewrite, resetRewrite, signatureHtml, originalMessage],
+    [editor, aiModel, aiCustomInstructions, pushRewrite, resetRewrite, replaceRewrite, signatureHtml, originalMessage],
   );
 
   const closeRewrite = useCallback(() => {
@@ -719,7 +744,9 @@ export default function ComposeModal({
     }
   }, [editor, rewriteRange, rewriteText_, closeRewrite, aiAction]);
 
-  const handleSuggestReply = useCallback(async () => {
+  // Overrides exist because a chip click needs to re-run with the NEW value —
+  // the state set in the same handler is not yet visible to this closure.
+  const handleSuggestReply = useCallback(async (overrides?: { intent?: ReplyIntent; length?: ReplyLength }) => {
     if (!editor || !originalMessage) return;
     setShowRewrite(false);
 
@@ -740,19 +767,24 @@ export default function ComposeModal({
     const subj = originalMessage.subject ? `Subject: ${originalMessage.subject}\n` : '';
     const body = htmlToPlainText(originalMessage.bodyText ?? originalMessage.bodyHtml ?? '');
     const incoming = `${subj}From: ${fromLabel}\n\n${body}`;
+    setInjectionWarning(detectInjectionAttempt(body));
 
     try {
       const client = new AIClient();
-      await suggestReply(
+      const final = await suggestReply(
         client,
         incoming,
         {
           model: aiModel,
           userName: user?.displayName ?? user?.email ?? 'the user',
+          intent: overrides?.intent ?? replyIntent,
+          length: overrides?.length ?? replyLength,
+          customInstructions: aiCustomInstructions,
           signal: abort.signal,
         },
         pushRewrite,
       );
+      if (!abort.signal.aborted) replaceRewrite(final);
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') return;
       const m = err instanceof Error ? err.message : String(err);
@@ -760,7 +792,18 @@ export default function ComposeModal({
     } finally {
       setRewriting(false);
     }
-  }, [editor, originalMessage, aiModel, pushRewrite, resetRewrite, user]);
+  }, [
+    editor,
+    originalMessage,
+    aiModel,
+    aiCustomInstructions,
+    replyIntent,
+    replyLength,
+    pushRewrite,
+    resetRewrite,
+    replaceRewrite,
+    user,
+  ]);
 
   // Re-run the current AI action with a fresh stream. For rewrite mode we
   // replay using the snapshotted original text (so the new run sees the
@@ -804,13 +847,19 @@ export default function ComposeModal({
     void (async () => {
       try {
         const client = new AIClient();
-        await rewriteText(
+        const final = await rewriteText(
           client,
           rewriteOriginal,
           rewriteMode,
-          { model: aiModel, context: contextStr, signal: abort.signal },
+          {
+            model: aiModel,
+            context: contextStr,
+            customInstructions: aiCustomInstructions,
+            signal: abort.signal,
+          },
           pushRewrite,
         );
+        if (!abort.signal.aborted) replaceRewrite(final);
       } catch (err: unknown) {
         if ((err as { name?: string })?.name === 'AbortError') return;
         const m = err instanceof Error ? err.message : String(err);
@@ -825,8 +874,10 @@ export default function ComposeModal({
     rewriteMode,
     originalMessage,
     aiModel,
+    aiCustomInstructions,
     pushRewrite,
     resetRewrite,
+    replaceRewrite,
     handleSuggestReply,
   ]);
 
@@ -1299,6 +1350,78 @@ export default function ComposeModal({
                       </button>
                     </div>
                     <div className="flex-1 overflow-y-auto px-3.5 py-3 space-y-3">
+                      {injectionWarning && aiAction === 'suggest' && (
+                        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11.5px] leading-relaxed text-amber-800 dark:text-amber-300">
+                          <span className="font-semibold">Check this draft carefully.</span> The
+                          incoming email contains text written to instruct an AI assistant, which
+                          can steer what is suggested here. Read every line before inserting it.
+                        </div>
+                      )}
+                      {aiAction === 'suggest' && (
+                        <div className="space-y-2">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Respond with</p>
+                            <div className="flex flex-wrap gap-1">
+                              {(
+                                [
+                                  ['auto', 'Auto'],
+                                  ['acknowledge', 'Acknowledge'],
+                                  ['accept', 'Accept'],
+                                  ['decline', 'Decline'],
+                                  ['request-info', 'Ask for info'],
+                                ] as const
+                              ).map(([value, label]) => (
+                                <button
+                                  key={value}
+                                  type="button"
+                                  disabled={rewriting}
+                                  onClick={() => {
+                                    if (value === replyIntent) return;
+                                    setReplyIntent(value);
+                                    void handleSuggestReply({ intent: value });
+                                  }}
+                                  className={cn(
+                                    'text-[11px] px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+                                    replyIntent === value
+                                      ? 'border-primary/50 bg-primary/10 text-primary'
+                                      : 'border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                                  )}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mr-1">Length</p>
+                            {(
+                              [
+                                ['brief', 'Brief'],
+                                ['standard', 'Standard'],
+                              ] as const
+                            ).map(([value, label]) => (
+                              <button
+                                key={value}
+                                type="button"
+                                disabled={rewriting}
+                                onClick={() => {
+                                  if (value === replyLength) return;
+                                  setReplyLength(value);
+                                  void handleSuggestReply({ length: value });
+                                }}
+                                className={cn(
+                                  'text-[11px] px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+                                  replyLength === value
+                                    ? 'border-primary/50 bg-primary/10 text-primary'
+                                    : 'border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                                )}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       {aiAction === 'rewrite' && (
                         <div>
                           <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Original</p>

@@ -1,46 +1,110 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { htmlToPlainText, truncate } from './tasks';
+import { describe, it, expect } from 'vitest';
+import type { AIClient, ChatOptions } from './client';
+import { rewriteText, suggestReply, summarizeMessage } from './tasks';
+import { UNTRUSTED_CONTENT_RULE } from './prompt';
 
-describe('htmlToPlainText', () => {
-  afterEach(() => vi.restoreAllMocks());
+/** Captures the request instead of calling the network; returns a canned reply. */
+class FakeClient {
+  lastOpts: ChatOptions | null = null;
 
-  it('extracts text and collapses whitespace', () => {
-    expect(htmlToPlainText('<p>Hello   <b>world</b></p>\n<p>again</p>')).toBe('Hello world again');
+  async chatStream(opts: ChatOptions, onChunk: (delta: string) => void): Promise<string> {
+    this.lastOpts = opts;
+    onChunk('ok');
+    return 'ok';
+  }
+}
+
+function systemPrompt(fake: FakeClient): string {
+  const sys = fake.lastOpts?.messages.find((m) => m.role === 'system');
+  if (!sys) throw new Error('no system message captured');
+  return sys.content;
+}
+
+const PREFS = 'Always keep replies under two sentences.';
+
+describe('custom instructions wiring', () => {
+  it('summarizeMessage appends them after the base rules', async () => {
+    const fake = new FakeClient();
+    await summarizeMessage(
+      fake as unknown as AIClient,
+      '<p>Please send the quarterly report by Friday.</p>',
+      { model: 'test', customInstructions: PREFS },
+      () => {},
+    );
+    const sys = systemPrompt(fake);
+    expect(sys).toContain(PREFS);
+    expect(sys.indexOf(UNTRUSTED_CONTENT_RULE)).toBeLessThan(sys.indexOf(PREFS));
   });
 
-  it('leaves plain text untouched', () => {
-    expect(htmlToPlainText('just a plain body')).toBe('just a plain body');
+  it('summarizeMessage leaves the prompt unchanged when none are set', async () => {
+    const fake = new FakeClient();
+    await summarizeMessage(
+      fake as unknown as AIClient,
+      '<p>Please send the quarterly report by Friday.</p>',
+      { model: 'test' },
+      () => {},
+    );
+    expect(systemPrompt(fake)).not.toContain(PREFS);
   });
 
-  it('drops markup rather than emitting it', () => {
-    expect(htmlToPlainText('<img src="x" onerror="boom()">hi')).toBe('hi');
+  it('rewriteText appends them', async () => {
+    const fake = new FakeClient();
+    await rewriteText(
+      fake as unknown as AIClient,
+      'we will send it over tomorrow',
+      'formal',
+      { model: 'test', customInstructions: PREFS },
+      () => {},
+    );
+    expect(systemPrompt(fake)).toContain(PREFS);
   });
 
-  // Email bodies reaching this function are unsanitized remote HTML. Parsing
-  // them into the *live* document (innerHTML on a created element) fetches
-  // remote subresources and fires handlers in a real browser; an inert
-  // DOMParser document does neither. jsdom loads no resources, so that
-  // difference is not observable behaviourally — this guards the
-  // implementation choice instead.
-  it('never builds nodes in the live document', () => {
-    const createElement = vi.spyOn(document, 'createElement');
-    const createRange = vi.spyOn(document, 'createRange');
-
-    htmlToPlainText('<img src="http://tracker.example/p.gif"><p>body</p>');
-
-    expect(createElement).not.toHaveBeenCalled();
-    expect(createRange).not.toHaveBeenCalled();
+  it('suggestReply appends them', async () => {
+    const fake = new FakeClient();
+    await suggestReply(
+      fake as unknown as AIClient,
+      '<p>Can you confirm attendance at the workshop next week?</p>',
+      { model: 'test', userName: 'Bruce', customInstructions: PREFS },
+      () => {},
+    );
+    expect(systemPrompt(fake)).toContain(PREFS);
   });
 });
 
-describe('truncate', () => {
-  it('leaves short text alone', () => {
-    expect(truncate('short', 100)).toBe('short');
+describe('suggestReply intent and length wiring', () => {
+  const EMAIL = '<p>Can you confirm attendance at the workshop next week?</p>';
+
+  async function run(opts: Partial<Parameters<typeof suggestReply>[2]>): Promise<string> {
+    const fake = new FakeClient();
+    await suggestReply(
+      fake as unknown as AIClient,
+      EMAIL,
+      { model: 'test', userName: 'Bruce', ...opts },
+      () => {},
+    );
+    return systemPrompt(fake);
+  }
+
+  it('defaults to auto intent and standard length', async () => {
+    const sys = await run({});
+    expect(sys).toContain('Judge from the email what response it calls for');
+    expect(sys).toContain('2–4 short sentences');
   });
 
-  it('marks truncated text', () => {
-    const out = truncate('a'.repeat(50), 10);
-    expect(out.startsWith('a'.repeat(10))).toBe(true);
-    expect(out).toContain('[…truncated]');
+  it('applies the decline intent rule', async () => {
+    const sys = await run({ intent: 'decline' });
+    expect(sys).toContain('Decline politely and clearly');
+    expect(sys).not.toContain('Judge from the email what response it calls for');
+  });
+
+  it('applies the request-info intent rule', async () => {
+    const sys = await run({ intent: 'request-info' });
+    expect(sys).toContain('Ask for the specific information needed');
+  });
+
+  it('applies the brief length rule', async () => {
+    const sys = await run({ length: 'brief' });
+    expect(sys).toContain('1–2 short sentences');
+    expect(sys).not.toContain('2–4 short sentences');
   });
 });

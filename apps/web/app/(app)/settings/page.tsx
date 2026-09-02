@@ -9,6 +9,7 @@ import { useThemeStore, type FontSize } from '@/stores/theme.store';
 import { useAIStore } from '@/stores/ai.store';
 import { api } from '@/lib/api';
 import { AIClient } from '@/lib/ai/client';
+import { CUSTOM_INSTRUCTIONS_MAX_CHARS } from '@/lib/ai/prompt';
 import { isValidSenderAddress } from './blocked-senders-helpers';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
@@ -1278,15 +1279,38 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
 function AISection() {
   const enabled = useAIStore((s) => s.enabled);
   const model = useAIStore((s) => s.model);
+  const customInstructions = useAIStore((s) => s.customInstructions);
   const setEnabled = useAIStore((s) => s.setEnabled);
   const setModel = useAIStore((s) => s.setModel);
+  const setCustomInstructions = useAIStore((s) => s.setCustomInstructions);
 
   const [draftModel, setDraftModel] = useState(model);
+  const [draftInstructions, setDraftInstructions] = useState(customInstructions);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<null | { ok: boolean; detail: string }>(null);
+  const [installed, setInstalled] = useState<string[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Offer the models actually pulled on the API host — a mistyped or
+  // un-pulled name otherwise only surfaces as a 502 at the point of use.
+  useEffect(() => {
+    const abort = new AbortController();
+    new AIClient()
+      .listModels(abort.signal)
+      .then(setInstalled)
+      .catch((err: unknown) => {
+        if (abort.signal.aborted) return;
+        setInstalled([]);
+        setLoadError(err instanceof Error ? err.message : String(err));
+      });
+    return () => abort.abort();
+  }, []);
+
+  const missing = installed !== null && installed.length > 0 && !installed.includes(draftModel);
 
   const handleSave = () => {
     setModel(draftModel.trim());
+    setCustomInstructions(draftInstructions.trim());
     toast.success('AI settings saved');
   };
 
@@ -1336,14 +1360,60 @@ function AISection() {
       <div className="space-y-3 mb-6">
         <div>
           <Label className="text-xs text-muted-foreground">Model</Label>
-          <Input
-            value={draftModel}
-            onChange={(e) => setDraftModel(e.target.value)}
-            placeholder="gemma2:2b"
-            className="mt-1"
+          {installed === null ? (
+            <div className="mt-1 flex items-center gap-2 h-9 text-[12px] text-muted-foreground/70">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Checking which models are installed…
+            </div>
+          ) : installed.length > 0 ? (
+            <div className="mt-1">
+              <Select
+                value={draftModel}
+                onChange={setDraftModel}
+                options={(installed.includes(draftModel) ? installed : [draftModel, ...installed])
+                  .map((m) => ({ value: m, label: m }))}
+              />
+            </div>
+          ) : (
+            <Input
+              value={draftModel}
+              onChange={(e) => setDraftModel(e.target.value)}
+              placeholder="gemma2:2b"
+              className="mt-1"
+            />
+          )}
+          {missing ? (
+            <p className="text-[11px] text-destructive mt-1">
+              <code className="font-mono">{draftModel}</code> is not installed on the API host. Pick an installed model, or ask your administrator to run <code className="font-mono">ollama pull {draftModel}</code>.
+            </p>
+          ) : loadError ? (
+            <p className="text-[11px] text-muted-foreground/70 mt-1">
+              Could not list installed models ({loadError}). Enter the model name manually.
+            </p>
+          ) : (
+            <p className="text-[11px] text-muted-foreground/70 mt-1">
+              Models installed on the API host. Ask your administrator to install more.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Custom instructions</Label>
+            <span className="text-[11px] text-muted-foreground/60 tabular-nums">
+              {draftInstructions.length}/{CUSTOM_INSTRUCTIONS_MAX_CHARS}
+            </span>
+          </div>
+          <textarea
+            value={draftInstructions}
+            onChange={(e) => setDraftInstructions(e.target.value.slice(0, CUSTOM_INSTRUCTIONS_MAX_CHARS))}
+            placeholder="e.g. Keep replies under three sentences. Sign summaries with bullet points. Prefer formal wording."
+            rows={3}
+            maxLength={CUSTOM_INSTRUCTIONS_MAX_CHARS}
+            className="mt-1 w-full rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/20 focus:border-primary/30 resize-y"
           />
           <p className="text-[11px] text-muted-foreground/70 mt-1">
-            Default: <code className="font-mono">gemma2:2b</code>. Change only if your administrator has installed another model.
+            Style preferences applied to every AI action (Summarize, Rewrite, Suggest Reply). They never override the built-in safety rules, and small models may follow them loosely.
           </p>
         </div>
 

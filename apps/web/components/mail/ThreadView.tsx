@@ -212,7 +212,13 @@ export default function ThreadView({
   // ── AI summarize state ───────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
   const aiModel = useAIStore((s) => s.model);
-  const { text: streamedSummary, push: pushSummary, reset: resetSummary } = useCharStream();
+  const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  const {
+    text: streamedSummary,
+    push: pushSummary,
+    reset: resetSummary,
+    replace: replaceSummary,
+  } = useCharStream();
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -257,7 +263,7 @@ export default function ThreadView({
       const last = list[list.length - 1];
       const isThread = list.length > 1;
       const fn = isThread ? summarizeThread : summarizeMessage;
-      await fn(
+      const final = await fn(
         client,
         concatenated,
         {
@@ -266,10 +272,12 @@ export default function ThreadView({
           from: isThread
             ? `Email thread with ${list.length} messages, oldest first`
             : (last?.fromName ?? last?.fromEmail ?? ''),
+          customInstructions: aiCustomInstructions,
           signal: abort.signal,
         },
         pushSummary,
       );
+      if (!abort.signal.aborted) replaceSummary(final);
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') return;
       const m = err instanceof Error ? err.message : String(err);
@@ -277,7 +285,7 @@ export default function ThreadView({
     } finally {
       setSummarizing(false);
     }
-  }, [threadMessages, aiModel, message, pushSummary, resetSummary]);
+  }, [threadMessages, aiModel, aiCustomInstructions, message, pushSummary, resetSummary, replaceSummary]);
 
   const closeSummary = useCallback(() => {
     summaryAbortRef.current?.abort();

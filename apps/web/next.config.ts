@@ -35,6 +35,13 @@ const AI_REMOTE_ORIGIN = (() => {
   }
 })();
 
+// Plain-HTTP deployments (test VMs with no TLS terminator in front) must not
+// force https: `upgrade-insecure-requests` rewrites every asset/API request
+// to https and breaks the whole page, and HSTS poisons the host for future
+// visits. Set HTTP_DEPLOY=1 at build time for such environments; TLS deploys
+// (the default) keep both protections.
+const HTTP_DEPLOY = process.env.HTTP_DEPLOY === '1';
+
 // Script-src is kept permissive for dev (unsafe-inline for Next's hydration
 // runtime). In production we still allow unsafe-inline because Next injects
 // inline bootstrap scripts; tighten this once nonces are wired through.
@@ -51,12 +58,14 @@ const csp = [
   `form-action 'self'`,
   `object-src 'none'`,
   `worker-src 'self' blob:`,
-  `upgrade-insecure-requests`,
+  ...(HTTP_DEPLOY ? [] : [`upgrade-insecure-requests`]),
 ].join('; ');
 
 const securityHeaders = [
   { key: 'Content-Security-Policy', value: csp },
-  { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
+  ...(HTTP_DEPLOY
+    ? []
+    : [{ key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' }]),
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

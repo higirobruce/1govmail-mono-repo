@@ -1,4 +1,5 @@
 import { JwtService } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
@@ -40,6 +41,39 @@ describe('AuthService.login', () => {
         expiresAt: expect.any(Date),
         userAgent: 'Vitest/1.0',
         ipAddress: '10.0.0.1',
+      },
+    });
+  });
+
+  it('does not fail login when a duplicate token collides on the unique Session.token constraint', async () => {
+    const { service, prisma, zimbra } = makeService();
+    zimbra.authenticate.mockResolvedValue({
+      twoFactorRequired: false,
+      authToken: 'zimbra-tok',
+      csrfToken: 'csrf',
+      lifetime: 3_600_000,
+      displayName: 'Test User',
+      refer: undefined,
+    });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u1', email: 'u1@example.com', displayName: 'Test User', zimbraHost: 'mail.example.com',
+    });
+    prisma.session.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`token`)', {
+        code: 'P2002',
+        clientVersion: 'test',
+      }),
+    );
+
+    await expect(
+      service.login('u1@example.com', 'pw', 'mail.example.com', { ip: '10.0.0.1', userAgent: 'Vitest/1.0' }),
+    ).resolves.toEqual({
+      accessToken: 'signed.jwt.token',
+      user: {
+        id: 'u1',
+        email: 'u1@example.com',
+        displayName: 'Test User',
+        zimbraHost: 'mail.example.com',
       },
     });
   });

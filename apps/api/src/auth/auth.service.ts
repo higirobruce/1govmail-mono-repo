@@ -1,5 +1,6 @@
 import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -128,15 +129,29 @@ export class AuthService {
 
     const accessToken = this.jwt.sign({ sub: user.id, email: user.email });
 
-    await this.prisma.session.create({
-      data: {
-        userId: user.id,
-        token: accessToken,
-        expiresAt: tokenExpiry,
-        userAgent: ctx.userAgent ?? null,
-        ipAddress: ctx.ip ?? null,
-      },
-    });
+    try {
+      await this.prisma.session.create({
+        data: {
+          userId: user.id,
+          token: accessToken,
+          expiresAt: tokenExpiry,
+          userAgent: ctx.userAgent ?? null,
+          ipAddress: ctx.ip ?? null,
+        },
+      });
+    } catch (err) {
+      // Two logins for the same user within the same JWT `iat` second (e.g. a
+      // double-submitted form, or two tabs racing) can sign byte-identical
+      // tokens, colliding on Session.token's unique constraint. The session
+      // for this token already exists — treat it as already recorded rather
+      // than failing an otherwise-successful login. Any other failure (e.g. a
+      // bad userId foreign key) should still propagate.
+      const isDuplicateToken =
+        err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+      if (!isDuplicateToken) {
+        throw err;
+      }
+    }
 
     await this.audit.record('LOGIN_SUCCESS', {
       userId: user.id,

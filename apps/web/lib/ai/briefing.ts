@@ -40,12 +40,18 @@ function formatSize(bytes: number): string {
 }
 
 function toSource(raw: unknown, direction: 'received' | 'sent'): BriefingSourceMessage | null {
-  const m = raw as Record<string, any>;
+  const m = raw as Record<string, unknown>;
   if (!m || typeof m.id !== 'string' || typeof m.receivedAt !== 'string') return null;
   const attachments = Array.isArray(m.attachments)
     ? m.attachments
-        .filter((a: any) => a && typeof a.filename === 'string')
-        .map((a: any) => `${a.filename}${formatSize(a.size) ? ` (${formatSize(a.size)})` : ''}`)
+        .map((a) => a as { filename?: unknown; size?: unknown })
+        .filter((a) => a && typeof a.filename === 'string')
+        .map((a) => {
+          const filename = a.filename as string;
+          const size = typeof a.size === 'number' ? a.size : NaN;
+          const sizeStr = formatSize(size);
+          return `${filename}${sizeStr ? ` (${sizeStr})` : ''}`;
+        })
     : [];
   return {
     id: m.id,
@@ -55,9 +61,9 @@ function toSource(raw: unknown, direction: 'received' | 'sent'): BriefingSourceM
     fromName: typeof m.fromName === 'string' ? m.fromName : null,
     subject: typeof m.subject === 'string' ? m.subject : null,
     receivedAt: m.receivedAt,
-    bodyText: m.bodyText ?? null,
-    bodyHtml: m.bodyHtml ?? null,
-    snippet: m.snippet ?? null,
+    bodyText: typeof m.bodyText === 'string' ? m.bodyText : null,
+    bodyHtml: typeof m.bodyHtml === 'string' ? m.bodyHtml : null,
+    snippet: typeof m.snippet === 'string' ? m.snippet : null,
     attachments,
   };
 }
@@ -214,11 +220,13 @@ export function buildReduceInput(cards: BriefingCard[]): string {
 function toItems(v: unknown, known: Set<string>, suspicious: Set<string>): BriefItem[] {
   if (!Array.isArray(v)) return [];
   return v
-    .filter((it: any) => it && typeof it.text === 'string' && it.text.trim())
-    .map((it: any) => {
+    .map((raw) => raw as { text?: unknown; messageIds?: unknown })
+    .filter((it) => it && typeof it.text === 'string' && it.text.trim())
+    .map((it) => {
+      const text = it.text as string;
       const ids = (Array.isArray(it.messageIds) ? it.messageIds : [])
         .filter((id: unknown): id is string => typeof id === 'string' && known.has(id));
-      return { text: it.text.slice(0, 400), messageIds: ids, flagged: ids.some((id: string) => suspicious.has(id)) };
+      return { text: text.slice(0, 400), messageIds: ids, flagged: ids.some((id: string) => suspicious.has(id)) };
     })
     .slice(0, 10);
 }
@@ -269,9 +277,9 @@ export interface BriefingResult {
   generatedAt: string;
 }
 export interface BriefingMailApi {
-  getFolders(): Promise<any[]>;
-  getMessages(folderId: string, limit?: number, offset?: number): Promise<any>;
-  getMessage(messageId: string): Promise<any>;
+  getFolders(): Promise<unknown[]>;
+  getMessages(folderId: string, limit?: number, offset?: number): Promise<unknown>;
+  getMessage(messageId: string): Promise<unknown>;
 }
 
 import { getCachedCard, putCachedCard } from './briefingCache';
@@ -283,15 +291,16 @@ const MAX_PAGES = 4;
 
 async function fetchFolderWindow(
   mail: BriefingMailApi, folderId: string, startMs: number, signal?: AbortSignal,
-): Promise<any[]> {
-  const out: any[] = [];
+): Promise<unknown[]> {
+  const out: unknown[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     if (signal?.aborted) break;
-    const data = await mail.getMessages(folderId, PAGE_SIZE, page * PAGE_SIZE);
-    const messages: any[] = data?.messages ?? [];
+    const raw = await mail.getMessages(folderId, PAGE_SIZE, page * PAGE_SIZE);
+    const data = raw as { messages?: unknown[]; hasMore?: boolean } | undefined;
+    const messages: unknown[] = data?.messages ?? [];
     out.push(...messages);
-    const oldest = messages[messages.length - 1];
-    const oldestMs = oldest ? Date.parse(oldest.receivedAt) : NaN;
+    const oldest = messages[messages.length - 1] as { receivedAt?: unknown } | undefined;
+    const oldestMs = oldest && typeof oldest.receivedAt === 'string' ? Date.parse(oldest.receivedAt) : NaN;
     if (!data?.hasMore || messages.length === 0 || (Number.isFinite(oldestMs) && oldestMs < startMs)) break;
   }
   return out;
@@ -323,11 +332,13 @@ export async function generateBriefing(
 
   onProgress?.({ phase: 'fetch', done: 0, total: 1 });
   const folders = await mail.getFolders();
-  const inboxFolder = folders.find((f: any) => f?.path === '/Inbox');
-  const sentFolder = folders.find((f: any) => f?.path === '/Sent');
+  const folderPath = (f: unknown): unknown => (f as { path?: unknown } | null)?.path;
+  const folderId = (f: unknown): unknown => (f as { id?: unknown } | null)?.id;
+  const inboxFolder = folders.find((f) => folderPath(f) === '/Inbox');
+  const sentFolder = folders.find((f) => folderPath(f) === '/Sent');
   const [inbox, sent] = await Promise.all([
-    inboxFolder ? fetchFolderWindow(mail, inboxFolder.id, startMs, signal) : Promise.resolve([]),
-    sentFolder ? fetchFolderWindow(mail, sentFolder.id, startMs, signal) : Promise.resolve([]),
+    inboxFolder ? fetchFolderWindow(mail, folderId(inboxFolder) as string, startMs, signal) : Promise.resolve([]),
+    sentFolder ? fetchFolderWindow(mail, folderId(sentFolder) as string, startMs, signal) : Promise.resolve([]),
   ]);
   const { selected, totalInWindow } = selectWindowMessages(inbox, sent, window, now);
   if (selected.length === 0) throw new Error('No messages in this time window — nothing to brief.');
@@ -336,9 +347,10 @@ export async function generateBriefing(
   await mapWithConcurrency(selected, HYDRATE_CONCURRENCY, async (m) => {
     if (m.bodyText || m.bodyHtml || signal?.aborted) return;
     try {
-      const full = await mail.getMessage(m.id);
-      m.bodyText = full?.bodyText ?? null;
-      m.bodyHtml = full?.bodyHtml ?? null;
+      const raw = await mail.getMessage(m.id);
+      const full = raw as { bodyText?: unknown; bodyHtml?: unknown } | null;
+      m.bodyText = (typeof full?.bodyText === 'string' ? full.bodyText : null);
+      m.bodyHtml = (typeof full?.bodyHtml === 'string' ? full.bodyHtml : null);
     } catch { /* card falls back to snippet, or fails and is counted */ }
   });
 

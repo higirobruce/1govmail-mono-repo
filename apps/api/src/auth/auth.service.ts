@@ -106,7 +106,19 @@ export class AuthService {
     ctx: AuthContext,
   ) {
     const effectiveHost = zimbraResult.refer ?? originalHost;
-    const tokenExpiry = new Date(Date.now() + zimbraResult.lifetime);
+    // Guard against a misconfigured/omitted Zimbra `lifetime`: if it were
+    // falsy, NaN, or unreasonably small, tokenExpiry would land at or before
+    // "now" — the very next request would fail JwtStrategy's expiresAt check,
+    // bounce back to login, which would succeed and immediately fail again:
+    // an infinite login loop with no way out. Floor it to a sane minimum and
+    // fall back to a conservative default when the value isn't usable.
+    const MIN_SESSION_LIFETIME_MS = 60_000; // 60s
+    const DEFAULT_SESSION_LIFETIME_MS = 60 * 60 * 1000; // 1h
+    const lifetimeMs =
+      Number.isFinite(zimbraResult.lifetime) && zimbraResult.lifetime >= MIN_SESSION_LIFETIME_MS
+        ? zimbraResult.lifetime
+        : DEFAULT_SESSION_LIFETIME_MS;
+    const tokenExpiry = new Date(Date.now() + lifetimeMs);
 
     const user = await this.prisma.user.upsert({
       where: { email },
@@ -200,7 +212,10 @@ export class AuthService {
 
   async getSessions(userId: string, currentSessionId: string) {
     const sessions = await this.prisma.session.findMany({
-      where: { userId },
+      // JwtStrategy already rejects expired sessions, so a row surviving past
+      // its expiresAt is unusable dead weight — exclude it here too, or the
+      // Settings panel (and revokeOtherSessions' count) would treat it as live.
+      where: { userId, expiresAt: { gt: new Date() } },
       orderBy: { lastSeenAt: 'desc' },
     });
     return sessions.map((s) => ({

@@ -34,10 +34,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Session expired or signed out. Please log in again.');
     }
 
-    await this.prisma.session.update({
-      where: { id: session.id },
-      data: { lastSeenAt: new Date() },
-    });
+    // This write is bookkeeping, not part of the auth decision (auth already
+    // succeeded above), so: (1) only touch the row when the existing value is
+    // stale, since this runs on every authenticated request — the hottest
+    // path in the app; (2) don't block the request on it, and swallow any
+    // error — a concurrent revocation between the read above and this write
+    // would otherwise throw an unhandled Prisma error for a request that
+    // should still succeed.
+    if (Date.now() - session.lastSeenAt.getTime() > 60_000) {
+      void this.prisma.session
+        .update({ where: { id: session.id }, data: { lastSeenAt: new Date() } })
+        .catch(() => {});
+    }
 
     return { sub: payload.sub, email: payload.email, sessionId: session.id };
   }

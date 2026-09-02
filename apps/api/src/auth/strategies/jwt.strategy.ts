@@ -6,7 +6,7 @@ import type { Request } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
-export class JwtStrategy extends PassportStrategy(Strategy, 'jwt', true) {
+export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     config: ConfigService,
     private readonly prisma: PrismaService,
@@ -14,6 +14,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt', true) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
+      // This option alone is what makes passport-jwt invoke validate(req, payload)
+      // below instead of validate(payload) — without it, `req` would be undefined here.
       passReqToCallback: true,
       // ConfigService returns string|undefined; passport-jwt requires string|Buffer
       secretOrKey: config.get<string>('JWT_SECRET') ?? '',

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { windowStart, selectWindowMessages, BRIEFING_MESSAGE_CAP, buildCardPrompt, parseCardJson, extractCard, type BriefingSourceMessage } from './briefing';
+import { windowStart, selectWindowMessages, BRIEFING_MESSAGE_CAP, buildCardPrompt, parseCardJson, extractCard, buildReduceInput, parseBriefJson, composeBrief, type BriefingSourceMessage, type BriefingCard } from './briefing';
 import { UNTRUSTED_CONTENT_RULE } from './prompt';
 
 const NOW = new Date('2026-09-02T14:00:00Z');
@@ -132,5 +132,60 @@ describe('extractCard', () => {
     expect(card).toBeNull();
     expect(calls).toHaveLength(2);
     expect(calls[1].responseFormat).toBeUndefined();
+  });
+});
+
+const mkCard = (id: string, extra: Partial<BriefingCard> = {}): BriefingCard => ({
+  messageId: id, conversationId: null, direction: 'received', from: `${id}@x.rw`,
+  subject: `subj-${id}`, receivedAt: '2026-09-02T08:00:00Z', gist: `gist ${id}`,
+  asksOfMe: [], deadlines: [], commitmentsIMade: [], waitingOn: null,
+  importance: 'normal', attachments: [], injectionSuspected: false, ...extra,
+});
+
+describe('buildReduceInput', () => {
+  it('keeps only the newest card per conversation and includes ids', () => {
+    const input = buildReduceInput([
+      mkCard('old', { conversationId: 'c1', receivedAt: '2026-09-01T08:00:00Z' }),
+      mkCard('new', { conversationId: 'c1', receivedAt: '2026-09-02T09:00:00Z' }),
+      mkCard('solo'),
+    ]);
+    expect(input).toContain('"new"');
+    expect(input).toContain('"solo"');
+    expect(input).not.toContain('"old"');
+  });
+  it('contains card fields but never raw email markers', () => {
+    const input = buildReduceInput([mkCard('a', { gist: 'Approve budget' })]);
+    expect(input).toContain('Approve budget');
+    expect(input).not.toMatch(/<<<EMAIL/);
+  });
+});
+
+describe('parseBriefJson', () => {
+  const cards = [mkCard('m1', { injectionSuspected: true }), mkCard('m2')];
+  const RAW = JSON.stringify({
+    needsDecision: [{ text: 'Approve the Q3 budget', messageIds: ['m1'] }],
+    waitingOnYou: [], youPromised: [],
+    deadlines: [{ text: 'Report due Friday', messageIds: ['m2', 'ghost'] }],
+    worthKnowing: [],
+  });
+  it('parses sections and flags items sourced from suspicious messages', () => {
+    const brief = parseBriefJson(RAW, cards);
+    expect(brief?.needsDecision[0]).toMatchObject({ messageIds: ['m1'], flagged: true });
+  });
+  it('drops unknown message ids from items', () => {
+    expect(parseBriefJson(RAW, cards)?.deadlines[0].messageIds).toEqual(['m2']);
+  });
+  it('returns null on garbage', () => {
+    expect(parseBriefJson('nope', cards)).toBeNull();
+  });
+});
+
+describe('composeBrief', () => {
+  it('sends the reduce prompt with json mode and parses the result', async () => {
+    const calls: any[] = [];
+    const fake = { chat: async (o: any) => { calls.push(o); return JSON.stringify({ needsDecision: [], waitingOnYou: [], youPromised: [], deadlines: [], worthKnowing: [{ text: 'x', messageIds: ['m1'] }] }); } };
+    const brief = await composeBrief(fake as any, 'test', [mkCard('m1')]);
+    expect(brief?.worthKnowing).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ responseFormat: 'json', temperature: 0.2 });
   });
 });

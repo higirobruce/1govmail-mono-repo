@@ -1,4 +1,4 @@
-import { BadGatewayException } from '@nestjs/common';
+import { BadGatewayException, ValidationPipe } from '@nestjs/common';
 import { AiService } from './ai.service';
 import { ChatRequestDto } from './dto/chat.dto';
 
@@ -67,5 +67,33 @@ describe('AiService.upstream', () => {
     );
 
     expect(sentBody()).toMatchObject({ response_format: { type: 'json_object' } });
+  });
+});
+
+describe('ChatRequestDto validation', () => {
+  it('keeps response_format and strips unknown fields through the whitelist pipe', async () => {
+    const pipe = new ValidationPipe({ whitelist: true, transform: true });
+    const result = (await pipe.transform(
+      {
+        model: 'm',
+        messages: [{ role: 'user', content: 'hi' }],
+        response_format: { type: 'json_object' },
+        bogus_field: 'x',
+      },
+      { type: 'body', metatype: ChatRequestDto },
+    )) as ChatRequestDto;
+
+    expect(result.response_format).toEqual({ type: 'json_object' });
+    expect((result as unknown as Record<string, unknown>).bogus_field).toBeUndefined();
+  });
+
+  it('rejects an invalid response_format type', async () => {
+    const pipe = new ValidationPipe({ whitelist: true, transform: true });
+    await expect(
+      pipe.transform(
+        { model: 'm', messages: [{ role: 'user', content: 'hi' }], response_format: { type: 'yaml' } },
+        { type: 'body', metatype: ChatRequestDto },
+      ),
+    ).rejects.toThrow();
   });
 });

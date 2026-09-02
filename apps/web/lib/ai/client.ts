@@ -25,11 +25,20 @@ export interface ChatOptions {
   signal?: AbortSignal;
 }
 
+/** HTTP failure from the AI proxy, carrying the status so callers can react
+ *  to throttling (429) differently from hard failures. */
+export class AIHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'AIHttpError';
+  }
+}
+
 export class AIClient {
   /** Model names actually installed on the API host, so the UI can offer real choices. */
   async listModels(signal?: AbortSignal): Promise<string[]> {
     const res = await authedFetch('/ai/models', { method: 'GET', signal });
-    if (!res.ok) throw new Error(await errorText(res));
+    if (!res.ok) throw new AIHttpError(await errorText(res), res.status);
     const json = await res.json();
     const models: unknown = json?.models;
     if (!Array.isArray(models)) return [];
@@ -52,7 +61,7 @@ export class AIClient {
       }),
       signal: opts.signal,
     });
-    if (!res.ok) throw new Error(await errorText(res));
+    if (!res.ok) throw new AIHttpError(await errorText(res), res.status);
     const json = await res.json();
     return json?.choices?.[0]?.message?.content ?? '';
   }
@@ -74,7 +83,7 @@ export class AIClient {
       }),
       signal: opts.signal,
     });
-    if (!res.ok || !res.body) throw new Error(await errorText(res));
+    if (!res.ok || !res.body) throw new AIHttpError(await errorText(res), res.status);
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();

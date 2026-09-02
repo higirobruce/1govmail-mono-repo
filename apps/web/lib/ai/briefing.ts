@@ -5,7 +5,40 @@
 
 import { extractEmailText } from './extract';
 import { UNTRUSTED_CONTENT_RULE, detectInjectionAttempt, fenceUntrusted, neutralizeMarkers } from './prompt';
-import type { AIClient } from './client';
+import type { AIClient, ChatOptions } from './client';
+
+// ── Throttle resilience ────────────────────────────────────────────────────
+// The API rate-limits /ai/chat per user. A briefing legally fires dozens of
+// card calls plus a reduce call, so a 429 means "wait for the next window",
+// never "the backend is broken". Each attempt waits out up to three windows
+// with growing backoff before giving up.
+const THROTTLE_RETRIES = 3;
+const THROTTLE_BACKOFF_MS = 15_000;
+
+function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal?.removeEventListener('abort', done);
+      clearTimeout(timer);
+      resolve();
+    }
+    signal?.addEventListener('abort', done);
+  });
+}
+
+async function chatThrottleAware(client: Pick<AIClient, 'chat'>, opts: ChatOptions): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await client.chat(opts);
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if (status !== 429 || attempt >= THROTTLE_RETRIES) throw err;
+      await sleepAbortable(THROTTLE_BACKOFF_MS * (attempt + 1), opts.signal);
+      if (opts.signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+    }
+  }
+}
 
 export type BriefingWindow = 'today' | '24h' | 'week';
 export const BRIEFING_MESSAGE_CAP = 50;
@@ -196,7 +229,7 @@ export async function extractCard(
   for (const responseFormat of ['json', undefined] as const) {
     if (signal?.aborted) return null;
     try {
-      const raw = await client.chat({ model, messages, temperature: 0, maxTokens: 220, signal, ...(responseFormat ? { responseFormat } : {}) });
+      const raw = await chatThrottleAware(client, { model, messages, temperature: 0, maxTokens: 220, signal, ...(responseFormat ? { responseFormat } : {}) });
       const card = parseCardJson(raw, msg, body);
       if (card) return card;
     } catch (err) {
@@ -289,7 +322,7 @@ export async function composeBrief(
   for (const responseFormat of ['json', undefined] as const) {
     if (signal?.aborted) return null;
     try {
-      const raw = await client.chat({ model, messages, temperature: 0.2, maxTokens: 900, signal, ...(responseFormat ? { responseFormat } : {}) });
+      const raw = await chatThrottleAware(client, { model, messages, temperature: 0.2, maxTokens: 900, signal, ...(responseFormat ? { responseFormat } : {}) });
       const brief = parseBriefJson(raw, cards);
       if (brief) return brief;
     } catch (err) {

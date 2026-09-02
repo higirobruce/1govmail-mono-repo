@@ -20,9 +20,14 @@ import { ChatRequestDto } from './dto/chat.dto';
  *
  * AI calls can be expensive (many tokens, model warmup). Stricter throttle
  * than the global default to keep one user from hogging the GPU/CPU.
+ *
+ * Sized for the executive-briefing pipeline: one brief legally fires up to
+ * ~50 per-message card calls plus a reduce call within a couple of minutes
+ * (the web client also backs off and retries on 429, so bursts degrade to
+ * slower briefs rather than failed ones).
  */
 @UseGuards(JwtAuthGuard)
-@Throttle({ default: { limit: 30, ttl: 60_000 } })
+@Throttle({ default: { limit: 120, ttl: 60_000 } })
 @Controller('ai')
 export class AiController {
   constructor(private readonly aiService: AiService) {}

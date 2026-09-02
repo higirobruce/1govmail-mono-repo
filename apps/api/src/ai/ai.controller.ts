@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Post,
   Req,
   Res,
@@ -25,6 +26,11 @@ import { ChatRequestDto } from './dto/chat.dto';
 @Controller('ai')
 export class AiController {
   constructor(private readonly aiService: AiService) {}
+
+  @Get('models')
+  async models(): Promise<{ models: { id: string }[] }> {
+    return { models: await this.aiService.listModels() };
+  }
 
   @Post('chat')
   async chat(

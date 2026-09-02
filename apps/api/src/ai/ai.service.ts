@@ -52,4 +52,49 @@ export class AiService {
 
     return res;
   }
+
+  /**
+   * Models actually pulled on the API host. The web app defaults to a model
+   * name that may not be installed, which surfaces as an opaque 502 on the
+   * first AI action — this lets the UI show what is really available.
+   */
+  async listModels(signal?: AbortSignal): Promise<{ id: string }[]> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/models`, {
+        headers: { accept: 'application/json' },
+        signal,
+      });
+    } catch (err) {
+      if (signal?.aborted || (err as Error).name === 'AbortError') {
+        throw err;
+      }
+      this.logger.error(`Ollama unreachable at ${this.baseUrl}: ${(err as Error).message}`);
+      throw new ServiceUnavailableException(
+        'AI backend unreachable. Make sure Ollama is running on the API host.',
+      );
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      this.logger.warn(`Ollama returned ${res.status}: ${text.slice(0, 200)}`);
+      throw new BadGatewayException(
+        `AI backend error (${res.status}): ${text.slice(0, 200) || res.statusText}`,
+      );
+    }
+
+    // Shape is OpenAI's `{ data: [{ id, ... }] }`. Anything else means we are
+    // not talking to what we think we are — report nothing rather than crash.
+    const json = (await res.json().catch(() => null)) as { data?: unknown } | null;
+    if (!json || !Array.isArray(json.data)) {
+      this.logger.warn(`Unexpected /models payload from ${this.baseUrl}`);
+      return [];
+    }
+
+    return json.data
+      .map((entry) => (entry as { id?: unknown })?.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      .sort((a, b) => a.localeCompare(b))
+      .map((id) => ({ id }));
+  }
 }

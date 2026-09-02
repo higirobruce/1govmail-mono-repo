@@ -24,6 +24,18 @@ export interface ChatOptions {
 }
 
 export class AIClient {
+  /** Model names actually installed on the API host, so the UI can offer real choices. */
+  async listModels(signal?: AbortSignal): Promise<string[]> {
+    const res = await authedFetch('/ai/models', { method: 'GET', signal });
+    if (!res.ok) throw new Error(await errorText(res));
+    const json = await res.json();
+    const models: unknown = json?.models;
+    if (!Array.isArray(models)) return [];
+    return models
+      .map((m) => (typeof m === 'string' ? m : (m as { id?: unknown })?.id))
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  }
+
   /** Non-streaming completion — returns the full assistant text. */
   async chat(opts: ChatOptions): Promise<string> {
     const res = await authedFetch('/ai/chat', {

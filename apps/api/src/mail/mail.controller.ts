@@ -30,6 +30,7 @@ import { ScheduleMessageDto } from './dto/schedule-message.dto';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { CreateRuleDto } from './dto/create-rule.dto';
 import { CreateSenderRuleDto } from './dto/create-sender-rule.dto';
+import { UpdateCommitmentDto } from './dto/update-commitment.dto';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 
 @UseGuards(JwtAuthGuard)
@@ -380,5 +381,30 @@ export class MailController {
       throw new BadRequestException('ids: maximum of 100 per request');
     }
     return this.mailService.getCardsByIds(req.user.sub, ids);
+  }
+
+  // ── Commitments ledger ────────────────────────────────────────────────────────
+  // Literal (non-parameterized) top-level paths, same reasoning as `cards` above —
+  // no collision with the `messages/:messageId`-style routes regardless of order.
+
+  @Get('commitments')
+  getCommitments(@Req() req: AuthenticatedRequest, @Query('status') status?: string) {
+    return this.mailService.getCommitments(req.user.sub, status ?? 'open');
+  }
+
+  @Patch('commitments/:id')
+  @HttpCode(HttpStatus.OK)
+  updateCommitment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateCommitmentDto,
+  ) {
+    return this.mailService.updateCommitment(req.user.sub, id, dto.status);
+  }
+
+  @Post('commitments/:id/promote')
+  @HttpCode(HttpStatus.OK)
+  promoteCommitment(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.mailService.promoteCommitment(req.user.sub, id);
   }
 }

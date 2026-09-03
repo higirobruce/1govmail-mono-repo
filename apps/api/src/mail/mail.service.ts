@@ -3,6 +3,7 @@ import { deriveLabel, formatAttachments, type ExtractedCard, type TriageLabel } 
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { TasksService } from '../tasks/tasks.service';
 import { matchSenderRule, type SenderRuleLike } from './sender-rule-matcher';
 
 const CARD_WINDOWS = ['today', '24h', 'week'] as const;
@@ -10,6 +11,31 @@ type CardWindow = (typeof CARD_WINDOWS)[number];
 const CARD_FOLDER_PATHS = ['/Inbox', '/Sent'];
 const MAX_CARD_IDS = 100;
 const MAX_WINDOW_CARDS = 50;
+const MAX_COMMITMENTS = 200;
+const COMMITMENT_STATUS_FILTERS = ['open', 'archived'] as const;
+type CommitmentStatusFilter = (typeof COMMITMENT_STATUS_FILTERS)[number];
+const COMMITMENT_UPDATE_STATUSES = ['done', 'dismissed', 'open'] as const;
+type CommitmentUpdateStatus = (typeof COMMITMENT_UPDATE_STATUSES)[number];
+
+interface CommitmentRow {
+  id: string;
+  conversationId: string | null;
+  messageId: string;
+  type: string;
+  text: string;
+  dueHint: string | null;
+  status: string;
+  suggestResolve: boolean;
+  hintMessageId: string | null;
+  taskId: string | null;
+  extractedAt: Date;
+  lastActivityAt: Date;
+  resolvedAt: Date | null;
+}
+
+export interface CommitmentDto extends CommitmentRow {
+  counterparty: string | null;
+}
 
 interface WindowCardRow {
   messageId: string;
@@ -44,6 +70,7 @@ export class MailService {
     private readonly prisma: PrismaService,
     private readonly zimbra: ZimbraService,
     private readonly notifications: NotificationsService,
+    private readonly tasksService: TasksService,
   ) {}
 
   private async getUser(userId: string) {
@@ -1666,5 +1693,102 @@ export class MailService {
     })) as unknown as WindowCardRow[];
 
     return { cards: rows.map((row) => this.toExtractedCard(row)) };
+  }
+
+  // ── Commitments ledger ──────────────────────────────────────────────────────
+
+  /** Batch-resolve from-labels for a set of source message ids. Missing rows map to null. */
+  private async counterpartiesFor(messageIds: string[]): Promise<Map<string, string>> {
+    if (messageIds.length === 0) return new Map();
+    const messages = await this.prisma.message.findMany({
+      where: { id: { in: messageIds } },
+      select: { id: true, fromName: true, fromEmail: true },
+    });
+    const map = new Map<string, string>();
+    for (const m of messages as any[]) {
+      map.set(m.id, m.fromName ? `${m.fromName} <${m.fromEmail}>` : m.fromEmail);
+    }
+    return map;
+  }
+
+  /** Grouped, user-scoped commitment ledger. `openCount` always reflects status='open'. */
+  async getCommitments(
+    userId: string,
+    status: string,
+  ): Promise<{ promised: CommitmentDto[]; waiting: CommitmentDto[]; openCount: number }> {
+    if (!(COMMITMENT_STATUS_FILTERS as readonly string[]).includes(status)) {
+      throw new BadRequestException(`Invalid status (expected one of ${COMMITMENT_STATUS_FILTERS.join(', ')})`);
+    }
+
+    const where =
+      (status as CommitmentStatusFilter) === 'open'
+        ? { userId, status: 'open' }
+        : { userId, status: { not: 'open' } };
+
+    const [rows, openCount] = await Promise.all([
+      this.prisma.commitment.findMany({
+        where,
+        orderBy: { lastActivityAt: 'desc' },
+        take: MAX_COMMITMENTS,
+      }),
+      this.prisma.commitment.count({ where: { userId, status: 'open' } }),
+    ]);
+
+    const counterparties = await this.counterpartiesFor([...new Set((rows as any[]).map((r) => r.messageId))]);
+
+    const toDto = (row: any): CommitmentDto => {
+      const { userId: _userId, textHash: _textHash, ...rest } = row;
+      return { ...rest, counterparty: counterparties.get(row.messageId) ?? null };
+    };
+
+    const promised = (rows as any[]).filter((r) => r.type === 'promised').map(toDto);
+    const waiting = (rows as any[]).filter((r) => r.type === 'waiting').map(toDto);
+
+    return { promised, waiting, openCount };
+  }
+
+  /** Human resolution/reopen. Always clears `suggestResolve`; sets/nulls `resolvedAt`. */
+  async updateCommitment(userId: string, id: string, status: string): Promise<void> {
+    if (!(COMMITMENT_UPDATE_STATUSES as readonly string[]).includes(status)) {
+      throw new BadRequestException(`Invalid status (expected one of ${COMMITMENT_UPDATE_STATUSES.join(', ')})`);
+    }
+
+    const commitment = await this.prisma.commitment.findUnique({ where: { id } });
+    if (!commitment || commitment.userId !== userId) throw new NotFoundException('Commitment not found');
+
+    await this.prisma.commitment.update({
+      where: { id },
+      data: {
+        status,
+        resolvedAt: (status as CommitmentUpdateStatus) === 'open' ? null : new Date(),
+        suggestResolve: false,
+      },
+    });
+  }
+
+  /** Promotes an open commitment to a real Task; the ledger row is then a historical pointer. */
+  async promoteCommitment(userId: string, id: string): Promise<{ taskId: string }> {
+    const commitment = await this.prisma.commitment.findUnique({ where: { id } });
+    if (!commitment || commitment.userId !== userId) throw new NotFoundException('Commitment not found');
+    if (commitment.status !== 'open') throw new ConflictException('Only an open commitment can be promoted');
+
+    const sourceMessage = await this.prisma.message.findUnique({
+      where: { id: commitment.messageId },
+      select: { subject: true },
+    });
+
+    const task = await this.tasksService.create(userId, {
+      title: commitment.text,
+      description: `${commitment.dueHint ? `Due hint: ${commitment.dueHint}. ` : ''}Extracted from email.`,
+      linkedMessageId: commitment.messageId,
+      linkedSubject: sourceMessage?.subject ?? undefined,
+    });
+
+    await this.prisma.commitment.update({
+      where: { id },
+      data: { status: 'promoted', taskId: task.id, resolvedAt: new Date() },
+    });
+
+    return { taskId: task.id };
   }
 }

@@ -1,8 +1,9 @@
-import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailService } from './mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { TasksService } from '../tasks/tasks.service';
 
 function makeService() {
   const prisma = {
@@ -11,7 +12,8 @@ function makeService() {
   } as unknown as PrismaService;
   const zimbra = {} as ZimbraService;
   const notifications = {} as NotificationsService;
-  const service = new MailService(prisma, zimbra, notifications);
+  const tasksService = { create: jest.fn() } as unknown as TasksService;
+  const service = new MailService(prisma, zimbra, notifications, tasksService);
   return { service, prisma: prisma as any };
 }
 
@@ -85,7 +87,8 @@ describe('MailService.enforceSenderRules', () => {
     } as unknown as PrismaService;
     const zimbra = { moveMessage: jest.fn() } as unknown as ZimbraService;
     const notifications = {} as NotificationsService;
-    const service = new MailService(prisma, zimbra, notifications);
+    const tasksService = { create: jest.fn() } as unknown as TasksService;
+    const service = new MailService(prisma, zimbra, notifications, tasksService);
     return { service: service as any, prisma: prisma as any, zimbra: zimbra as any };
   }
 
@@ -192,7 +195,8 @@ describe('MailService.getMessages sender rule enforcement resilience', () => {
       moveMessage: jest.fn(),
     } as unknown as ZimbraService;
     const notifications = {} as NotificationsService;
-    const service = new MailService(prisma, zimbra, notifications);
+    const tasksService = { create: jest.fn() } as unknown as TasksService;
+    const service = new MailService(prisma, zimbra, notifications, tasksService);
     return { service: service as any, prisma: prisma as any, zimbra: zimbra as any };
   }
 
@@ -287,7 +291,8 @@ describe('MailService.getCardsByIds', () => {
     } as unknown as PrismaService;
     const zimbra = {} as ZimbraService;
     const notifications = {} as NotificationsService;
-    const service = new MailService(prisma, zimbra, notifications);
+    const tasksService = { create: jest.fn() } as unknown as TasksService;
+    const service = new MailService(prisma, zimbra, notifications, tasksService);
     return { service: service as any, prisma: prisma as any };
   }
 
@@ -374,7 +379,8 @@ describe('MailService.getWindowCards', () => {
     } as unknown as PrismaService;
     const zimbra = {} as ZimbraService;
     const notifications = {} as NotificationsService;
-    const service = new MailService(prisma, zimbra, notifications);
+    const tasksService = { create: jest.fn() } as unknown as TasksService;
+    const service = new MailService(prisma, zimbra, notifications, tasksService);
     return { service: service as any, prisma: prisma as any };
   }
 
@@ -515,5 +521,319 @@ describe('MailService.getWindowCards', () => {
     const { service } = makeService();
 
     await expect(service.getWindowCards('u1', 'bogus' as any)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('MailService.getCommitments', () => {
+  function makeService() {
+    const prisma = {
+      commitment: { findMany: jest.fn(), count: jest.fn() },
+      message: { findMany: jest.fn() },
+    } as unknown as PrismaService;
+    const zimbra = {} as ZimbraService;
+    const notifications = {} as NotificationsService;
+    const tasksService = { create: jest.fn() } as unknown as TasksService;
+    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    return { service: service as any, prisma: prisma as any };
+  }
+
+  const promisedRow = {
+    id: 'c1',
+    userId: 'u1',
+    conversationId: 'conv1',
+    messageId: 'm1',
+    type: 'promised',
+    text: 'Send the report',
+    dueHint: 'Friday',
+    status: 'open',
+    suggestResolve: false,
+    hintMessageId: null,
+    taskId: null,
+    textHash: 'hash1',
+    extractedAt: new Date('2026-09-01T00:00:00.000Z'),
+    lastActivityAt: new Date('2026-09-02T00:00:00.000Z'),
+    resolvedAt: null,
+  };
+  const waitingRow = {
+    id: 'c2',
+    userId: 'u1',
+    conversationId: 'conv2',
+    messageId: 'm2',
+    type: 'waiting',
+    text: 'Their sign-off',
+    dueHint: null,
+    status: 'open',
+    suggestResolve: true,
+    hintMessageId: 'm3',
+    taskId: null,
+    textHash: 'hash2',
+    extractedAt: new Date('2026-09-01T00:00:00.000Z'),
+    lastActivityAt: new Date('2026-09-03T00:00:00.000Z'),
+    resolvedAt: null,
+  };
+
+  it('groups rows by type and strips userId/textHash from each DTO', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findMany.mockResolvedValue([waitingRow, promisedRow]);
+    prisma.commitment.count.mockResolvedValue(2);
+    prisma.message.findMany.mockResolvedValue([]);
+
+    const result = await service.getCommitments('u1', 'open');
+
+    const { userId: _u1, textHash: _t1, ...promisedRest } = promisedRow;
+    const { userId: _u2, textHash: _t2, ...waitingRest } = waitingRow;
+    expect(result.promised).toEqual([{ ...promisedRest, counterparty: null }]);
+    expect(result.waiting).toEqual([{ ...waitingRest, counterparty: null }]);
+    expect(result.promised[0]).not.toHaveProperty('userId');
+    expect(result.promised[0]).not.toHaveProperty('textHash');
+  });
+
+  it('scopes rows to the caller via the where clause', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findMany.mockResolvedValue([]);
+    prisma.commitment.count.mockResolvedValue(0);
+
+    await service.getCommitments('u1', 'open');
+
+    expect(prisma.commitment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'u1', status: 'open' } }),
+    );
+    expect(prisma.commitment.count).toHaveBeenCalledWith({ where: { userId: 'u1', status: 'open' } });
+  });
+
+  it('filters to non-open statuses for the archived view', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findMany.mockResolvedValue([]);
+    prisma.commitment.count.mockResolvedValue(0);
+
+    await service.getCommitments('u1', 'archived');
+
+    expect(prisma.commitment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'u1', status: { not: 'open' } } }),
+    );
+  });
+
+  it('orders by lastActivityAt desc and caps at 200', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findMany.mockResolvedValue([]);
+    prisma.commitment.count.mockResolvedValue(0);
+
+    await service.getCommitments('u1', 'open');
+
+    expect(prisma.commitment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { lastActivityAt: 'desc' }, take: 200 }),
+    );
+  });
+
+  it('openCount always reflects status=open regardless of the status filter', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findMany.mockResolvedValue([]);
+    prisma.commitment.count.mockResolvedValue(7);
+
+    const result = await service.getCommitments('u1', 'archived');
+
+    expect(prisma.commitment.count).toHaveBeenCalledWith({ where: { userId: 'u1', status: 'open' } });
+    expect(result.openCount).toBe(7);
+  });
+
+  it('resolves counterparty as a from-label via one batched message.findMany', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findMany.mockResolvedValue([promisedRow, waitingRow]);
+    prisma.commitment.count.mockResolvedValue(2);
+    prisma.message.findMany.mockResolvedValue([
+      { id: 'm1', fromName: 'Jane Doe', fromEmail: 'jane@example.com' },
+      { id: 'm2', fromName: null, fromEmail: 'bare@example.com' },
+    ]);
+
+    const result = await service.getCommitments('u1', 'open');
+
+    expect(prisma.message.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.message.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['m1', 'm2'] } },
+      select: { id: true, fromName: true, fromEmail: true },
+    });
+    expect(result.promised[0].counterparty).toBe('Jane Doe <jane@example.com>');
+    expect(result.waiting[0].counterparty).toBe('bare@example.com');
+  });
+
+  it('sets counterparty null when the source message row is gone', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findMany.mockResolvedValue([promisedRow]);
+    prisma.commitment.count.mockResolvedValue(1);
+    prisma.message.findMany.mockResolvedValue([]);
+
+    const result = await service.getCommitments('u1', 'open');
+
+    expect(result.promised[0].counterparty).toBeNull();
+  });
+
+  it('rejects an invalid status value', async () => {
+    const { service } = makeService();
+
+    await expect(service.getCommitments('u1', 'bogus')).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('MailService.updateCommitment', () => {
+  function makeService() {
+    const prisma = {
+      commitment: { findUnique: jest.fn(), update: jest.fn() },
+    } as unknown as PrismaService;
+    const zimbra = {} as ZimbraService;
+    const notifications = {} as NotificationsService;
+    const tasksService = { create: jest.fn() } as unknown as TasksService;
+    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    return { service: service as any, prisma: prisma as any };
+  }
+
+  it('throws NotFoundException when the commitment does not exist', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue(null);
+
+    await expect(service.updateCommitment('u1', 'missing', 'done')).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.commitment.update).not.toHaveBeenCalled();
+  });
+
+  it('throws NotFoundException when the commitment belongs to another user', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue({ id: 'c1', userId: 'other-user' });
+
+    await expect(service.updateCommitment('u1', 'c1', 'done')).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.commitment.update).not.toHaveBeenCalled();
+  });
+
+  it('sets resolvedAt and clears suggestResolve when marking done', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue({ id: 'c1', userId: 'u1' });
+    prisma.commitment.update.mockResolvedValue({});
+
+    await service.updateCommitment('u1', 'c1', 'done');
+
+    expect(prisma.commitment.update).toHaveBeenCalledWith({
+      where: { id: 'c1' },
+      data: { status: 'done', resolvedAt: expect.any(Date), suggestResolve: false },
+    });
+  });
+
+  it('sets resolvedAt and clears suggestResolve when dismissing', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue({ id: 'c1', userId: 'u1' });
+    prisma.commitment.update.mockResolvedValue({});
+
+    await service.updateCommitment('u1', 'c1', 'dismissed');
+
+    expect(prisma.commitment.update).toHaveBeenCalledWith({
+      where: { id: 'c1' },
+      data: { status: 'dismissed', resolvedAt: expect.any(Date), suggestResolve: false },
+    });
+  });
+
+  it('nulls resolvedAt and clears suggestResolve when reopening', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue({ id: 'c1', userId: 'u1' });
+    prisma.commitment.update.mockResolvedValue({});
+
+    await service.updateCommitment('u1', 'c1', 'open');
+
+    expect(prisma.commitment.update).toHaveBeenCalledWith({
+      where: { id: 'c1' },
+      data: { status: 'open', resolvedAt: null, suggestResolve: false },
+    });
+  });
+
+  it('rejects an invalid status value', async () => {
+    const { service, prisma } = makeService();
+
+    await expect(service.updateCommitment('u1', 'c1', 'bogus')).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.commitment.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('MailService.promoteCommitment', () => {
+  function makeService() {
+    const prisma = {
+      commitment: { findUnique: jest.fn(), update: jest.fn() },
+      message: { findUnique: jest.fn() },
+    } as unknown as PrismaService;
+    const zimbra = {} as ZimbraService;
+    const notifications = {} as NotificationsService;
+    const tasksService = { create: jest.fn() } as unknown as TasksService;
+    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    return { service: service as any, prisma: prisma as any, tasksService: tasksService as any };
+  }
+
+  const openCommitment = {
+    id: 'c1',
+    userId: 'u1',
+    messageId: 'm1',
+    text: 'Send the report',
+    dueHint: 'Friday',
+    status: 'open',
+  };
+
+  it('throws NotFoundException when the commitment does not exist', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue(null);
+
+    await expect(service.promoteCommitment('u1', 'missing')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('throws NotFoundException when the commitment belongs to another user', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue({ ...openCommitment, userId: 'other-user' });
+
+    await expect(service.promoteCommitment('u1', 'c1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('creates a Task with title/dueHint/linkedMessageId/linkedSubject, then marks the commitment promoted', async () => {
+    const { service, prisma, tasksService } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue(openCommitment);
+    prisma.message.findUnique.mockResolvedValue({ subject: 'Q3 report thread' });
+    tasksService.create.mockResolvedValue({ id: 'task-1' });
+    prisma.commitment.update.mockResolvedValue({});
+
+    const result = await service.promoteCommitment('u1', 'c1');
+
+    expect(prisma.message.findUnique).toHaveBeenCalledWith({
+      where: { id: 'm1' },
+      select: { subject: true },
+    });
+    expect(tasksService.create).toHaveBeenCalledWith('u1', {
+      title: 'Send the report',
+      description: 'Due hint: Friday. Extracted from email.',
+      linkedMessageId: 'm1',
+      linkedSubject: 'Q3 report thread',
+    });
+    expect(prisma.commitment.update).toHaveBeenCalledWith({
+      where: { id: 'c1' },
+      data: { status: 'promoted', taskId: 'task-1', resolvedAt: expect.any(Date) },
+    });
+    expect(result).toEqual({ taskId: 'task-1' });
+  });
+
+  it('omits the due-hint prefix and falls back to no linkedSubject when the source message is gone', async () => {
+    const { service, prisma, tasksService } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue({ ...openCommitment, dueHint: null });
+    prisma.message.findUnique.mockResolvedValue(null);
+    tasksService.create.mockResolvedValue({ id: 'task-2' });
+    prisma.commitment.update.mockResolvedValue({});
+
+    await service.promoteCommitment('u1', 'c1');
+
+    expect(tasksService.create).toHaveBeenCalledWith('u1', {
+      title: 'Send the report',
+      description: 'Extracted from email.',
+      linkedMessageId: 'm1',
+      linkedSubject: undefined,
+    });
+  });
+
+  it('rejects promoting a non-open commitment with ConflictException', async () => {
+    const { service, prisma, tasksService } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue({ ...openCommitment, status: 'done' });
+
+    await expect(service.promoteCommitment('u1', 'c1')).rejects.toBeInstanceOf(ConflictException);
+    expect(tasksService.create).not.toHaveBeenCalled();
+    expect(prisma.commitment.update).not.toHaveBeenCalled();
   });
 });

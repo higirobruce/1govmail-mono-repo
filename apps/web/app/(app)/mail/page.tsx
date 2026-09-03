@@ -17,12 +17,13 @@ import ThreadView from '@/components/mail/ThreadView';
 import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
 import BriefingPanel from '@/components/mail/BriefingPanel';
 import CommitmentsPanel from '@/components/mail/CommitmentsPanel';
+import AskInboxPanel from '@/components/mail/AskInboxPanel';
 import TaskModal from '@/components/tasks/TaskModal';
 import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Input } from '@/components/ui/input';
-import { Search, RefreshCw, Sparkles, ClipboardCheck, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
+import { Search, RefreshCw, Sparkles, ClipboardCheck, MessageCircleQuestion, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOffline } from '@/lib/offline/provider';
 import { toast } from 'sonner';
@@ -248,6 +249,11 @@ export default function MailPage() {
   // ── Create-task-from-email state ───────────────────────────────────────────
   const [createTaskPrefill, setCreateTaskPrefill] = useState<{ linkedMessageId: string; linkedSubject: string } | null>(null);
 
+  // ── Ask your inbox state (declared here so the ?ask= deep-link effect below
+  //    can set it — panel toggle/prefill only, no async data of its own) ─────
+  const [askOpen, setAskOpen] = useState(false);
+  const [askPrefill, setAskPrefill] = useState<string | null>(null);
+
   // ── Deep-link: open specific message via ?open=<messageId> ────────────────
   useEffect(() => {
     if (!hydrated || !isAuthenticated || !activeFolderId) return;
@@ -258,6 +264,18 @@ export default function MailPage() {
     window.history.replaceState({}, '', window.location.pathname);
     openMessage(openId);
   }, [hydrated, isAuthenticated, activeFolderId]); // eslint-disable-line
+
+  // ── Deep-link: prefill Ask your inbox via ?ask=<question> (used by GlobalSearch) ─
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated) return;
+    const params = new URLSearchParams(window.location.search);
+    const ask = params.get('ask');
+    if (!ask) return;
+    // Clean up the URL without navigating
+    window.history.replaceState({}, '', window.location.pathname);
+    setAskPrefill(ask);
+    setAskOpen(true);
+  }, [hydrated, isAuthenticated]); // eslint-disable-line
 
   // ── Compose state ──────────────────────────────────────────────────────────
   const [composeOpen, setComposeOpen] = useState(false);
@@ -681,6 +699,18 @@ export default function MailPage() {
     },
     [],
   );
+
+  /** Called from AskInboxPanel's per-source Reply button — fetches the full
+   *  message (the panel only holds a snippet) then opens compose in reply
+   *  mode against it, falling back to just opening the message on failure. */
+  const openReplyTo = useCallback(async (messageId: string) => {
+    try {
+      const full = await api.mail.getMessage(messageId);
+      openComposeWith('reply', full);
+    } catch {
+      void openMessage(messageId); // fall back to just opening it
+    }
+  }, [openComposeWith, openMessage]);
 
   /** Called from ThreadView's Quick Reply (AI) button. Opens compose in
    *  reply mode and tells ComposeModal to auto-run the suggestReply task. */
@@ -1119,6 +1149,15 @@ export default function MailPage() {
                       )}
                     </button>
                   )}
+                  {aiEnabled && (
+                    <button
+                      onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); setAskOpen(true); }}
+                      title="Ask your inbox"
+                      className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
+                    >
+                      <MessageCircleQuestion className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={() => refetchMessages()}
                     disabled={loadingMessages}
@@ -1373,6 +1412,15 @@ export default function MailPage() {
         data={commitmentsData}
         isLoading={commitmentsLoading}
         onMutated={() => queryClient.invalidateQueries({ queryKey: ['commitments'] })}
+      />
+
+      <AskInboxPanel
+        open={askOpen}
+        onClose={() => { setAskOpen(false); setAskPrefill(null); }}
+        onOpenMessage={(id) => void openMessage(id)}
+        onReplyToMessage={(id) => void openReplyTo(id)}
+        prefill={askPrefill}
+        openCommitments={(commitmentsData ? [...commitmentsData.promised, ...commitmentsData.waiting] : []).map((c) => ({ id: c.id, messageId: c.messageId, text: c.text }))}
       />
     </div>
   );

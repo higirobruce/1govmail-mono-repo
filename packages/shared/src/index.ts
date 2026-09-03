@@ -4,3 +4,4 @@ export * from './types/auth';
 export * from './ai/extract';
 export * from './ai/promptCore';
 export * from './ai/cards';
+export * from './ai/chunk';

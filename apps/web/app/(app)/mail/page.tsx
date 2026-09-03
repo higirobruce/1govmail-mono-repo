@@ -1171,6 +1171,16 @@ export default function MailPage() {
                     {chip.label} ({triageLabelCounts[chip.id] ?? 0})
                   </button>
                 ))}
+                {triageLabelFilter && hasNextPage && (
+                  <button
+                    onClick={() => { if (!loadingMore) fetchNextPage(); }}
+                    disabled={loadingMore}
+                    className="shrink-0 ml-auto text-[11px] px-2 py-0.5 rounded-full border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 transition-colors"
+                    title="Filters only search loaded mail — fetch another page of older messages"
+                  >
+                    {loadingMore ? 'Loading…' : 'Search older mail'}
+                  </button>
+                )}
               </div>
             )}
             <MailList
@@ -1180,8 +1190,16 @@ export default function MailPage() {
               loading={loadingMessages && messages.length === 0}
               loadingMore={loadingMore}
               onSelect={openMessage}
-              onLoadMore={() => { if (!loadingMore && hasNextPage) fetchNextPage(); }}
-              hasMore={!!hasNextPage}
+              onLoadMore={() => {
+                // With a triage filter active, most fetched rows are filtered
+                // out client-side, so the load-more sentinel never leaves the
+                // viewport and auto-fetch cascades through the entire mailbox
+                // (page after page, re-rendering each time — the "blinking").
+                // Filtered mode paginates only via the explicit button above.
+                if (triageLabelFilter) return;
+                if (!loadingMore && hasNextPage) fetchNextPage();
+              }}
+              hasMore={!!hasNextPage && !triageLabelFilter}
               onContextAction={handleContextAction}
               onBulkAction={handleBulkAction}
               filterTagNames={selectedLabelNames}

@@ -189,35 +189,60 @@ export class CardWorkerService {
         if (card) {
           classified++;
 
-          // Ledger projection: promises made / things awaited, deduped by content hash.
-          for (const row of commitmentRowsFromCard(card)) {
-            await this.prisma.commitment.upsert({
-              where: { userId_type_textHash: { userId: m.userId, type: row.type, textHash: row.textHash } },
-              create: {
-                userId: m.userId,
-                conversationId: m.conversationId,
-                messageId: m.id,
-                type: row.type,
-                text: row.text,
-                dueHint: row.dueHint,
-                textHash: row.textHash,
-              },
-              update: { lastActivityAt: new Date() }, // never touches status
-            });
-          }
-          // Reply hint: an open commitment in this conversation, older than this message,
-          // may have been resolved by it — flag for human review, never auto-close.
-          if (m.conversationId) {
-            await this.prisma.commitment.updateMany({
-              where: {
-                userId: m.userId,
-                conversationId: m.conversationId,
-                status: 'open',
-                extractedAt: { lt: m.receivedAt },
-                messageId: { not: m.id },
-              },
-              data: { suggestResolve: true, hintMessageId: m.id, lastActivityAt: new Date() },
-            });
+          // Projection failures are isolated from the card write above: the card
+          // already exists (so the message won't be re-selected next tick) and a
+          // throw here is a ledger-write problem, not a hydration/extraction one —
+          // it must not count as a skip or retry, just get logged and moved past.
+          try {
+            // Ledger projection: promises made / things awaited, deduped by content hash.
+            for (const row of commitmentRowsFromCard(card)) {
+              await this.prisma.commitment.upsert({
+                where: { userId_type_textHash: { userId: m.userId, type: row.type, textHash: row.textHash } },
+                create: {
+                  userId: m.userId,
+                  conversationId: m.conversationId,
+                  messageId: m.id,
+                  type: row.type,
+                  text: row.text,
+                  dueHint: row.dueHint,
+                  textHash: row.textHash,
+                  // Anchor to the *source message's* receivedAt, not extraction wall-clock
+                  // time, so the hint comparison below (`extractedAt: { lt: m.receivedAt }`)
+                  // means "source message older than this reply" as intended — the newest-
+                  // first backfill classifies replies before their older promises, and a
+                  // wall-clock extractedAt would always be >= every later-processed promise's
+                  // receivedAt, silently defeating every hint from that ordering.
+                  extractedAt: m.receivedAt,
+                },
+                update: { lastActivityAt: new Date() }, // never touches status
+              });
+            }
+            // Reply hint: an open commitment in this conversation, older than this message,
+            // may have been resolved by it — flag for human review, never auto-close.
+            //
+            // Note: this only fires for commitments whose row already exists at the
+            // time this reply is processed. If a reply is classified before its own
+            // (older) promise's card is extracted, the promise row doesn't exist yet,
+            // so this updateMany finds nothing — the promise created later doesn't
+            // retroactively receive a hint from that already-processed reply. Hints
+            // reflect replies processed after the promise row exists; a reply
+            // classified before its promise is extracted does not retro-stamp. This
+            // is accepted: the extractedAt fix above repairs the common steady-state
+            // and same-tick orderings, which cover the vast majority of cases.
+            if (m.conversationId) {
+              await this.prisma.commitment.updateMany({
+                where: {
+                  userId: m.userId,
+                  conversationId: m.conversationId,
+                  status: 'open',
+                  extractedAt: { lt: m.receivedAt },
+                  messageId: { not: m.id },
+                },
+                data: { suggestResolve: true, hintMessageId: m.id, lastActivityAt: new Date() },
+              });
+            }
+          } catch (err: any) {
+            this.logger.warn(`commitment projection failed for ${m.id}: ${err?.message}`);
           }
         } else {
           failed++;

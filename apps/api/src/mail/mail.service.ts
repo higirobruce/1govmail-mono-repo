@@ -17,7 +17,7 @@ type CommitmentStatusFilter = (typeof COMMITMENT_STATUS_FILTERS)[number];
 const COMMITMENT_UPDATE_STATUSES = ['done', 'dismissed', 'open'] as const;
 type CommitmentUpdateStatus = (typeof COMMITMENT_UPDATE_STATUSES)[number];
 
-interface CommitmentRow {
+export interface CommitmentRow {
   id: string;
   conversationId: string | null;
   messageId: string;
@@ -1698,10 +1698,10 @@ export class MailService {
   // ── Commitments ledger ──────────────────────────────────────────────────────
 
   /** Batch-resolve from-labels for a set of source message ids. Missing rows map to null. */
-  private async counterpartiesFor(messageIds: string[]): Promise<Map<string, string>> {
+  private async counterpartiesFor(userId: string, messageIds: string[]): Promise<Map<string, string>> {
     if (messageIds.length === 0) return new Map();
     const messages = await this.prisma.message.findMany({
-      where: { id: { in: messageIds } },
+      where: { id: { in: messageIds }, userId },
       select: { id: true, fromName: true, fromEmail: true },
     });
     const map = new Map<string, string>();
@@ -1734,7 +1734,7 @@ export class MailService {
       this.prisma.commitment.count({ where: { userId, status: 'open' } }),
     ]);
 
-    const counterparties = await this.counterpartiesFor([...new Set((rows as any[]).map((r) => r.messageId))]);
+    const counterparties = await this.counterpartiesFor(userId, [...new Set((rows as any[]).map((r) => r.messageId))]);
 
     const toDto = (row: any): CommitmentDto => {
       const { userId: _userId, textHash: _textHash, ...rest } = row;
@@ -1747,8 +1747,12 @@ export class MailService {
     return { promised, waiting, openCount };
   }
 
-  /** Human resolution/reopen. Always clears `suggestResolve`; sets/nulls `resolvedAt`. */
-  async updateCommitment(userId: string, id: string, status: string): Promise<void> {
+  /** Human resolution/reopen. Always clears `suggestResolve`; sets/nulls `resolvedAt`.
+   * Returns the updated row (minus userId/textHash) — the web `request<T>` helper
+   * calls `res.json()` unconditionally, which rejects on an empty body, so the
+   * PATCH response must carry something even though callers currently ignore it.
+   */
+  async updateCommitment(userId: string, id: string, status: string): Promise<CommitmentRow> {
     if (!(COMMITMENT_UPDATE_STATUSES as readonly string[]).includes(status)) {
       throw new BadRequestException(`Invalid status (expected one of ${COMMITMENT_UPDATE_STATUSES.join(', ')})`);
     }
@@ -1762,7 +1766,7 @@ export class MailService {
       throw new ConflictException('A promoted commitment cannot be resolved or reopened here');
     }
 
-    await this.prisma.commitment.update({
+    const updated = await this.prisma.commitment.update({
       where: { id },
       data: {
         status,
@@ -1770,6 +1774,9 @@ export class MailService {
         suggestResolve: false,
       },
     });
+
+    const { userId: _userId, textHash: _textHash, ...rest } = updated as any;
+    return rest;
   }
 
   /** Promotes an open commitment to a real Task; the ledger row is then a historical pointer. */
@@ -1778,8 +1785,8 @@ export class MailService {
     if (!commitment || commitment.userId !== userId) throw new NotFoundException('Commitment not found');
     if (commitment.status !== 'open') throw new ConflictException('Only an open commitment can be promoted');
 
-    const sourceMessage = await this.prisma.message.findUnique({
-      where: { id: commitment.messageId },
+    const sourceMessage = await this.prisma.message.findFirst({
+      where: { id: commitment.messageId, userId },
       select: { subject: true },
     });
 

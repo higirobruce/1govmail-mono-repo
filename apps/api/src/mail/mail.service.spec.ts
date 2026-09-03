@@ -649,7 +649,7 @@ describe('MailService.getCommitments', () => {
 
     expect(prisma.message.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.message.findMany).toHaveBeenCalledWith({
-      where: { id: { in: ['m1', 'm2'] } },
+      where: { id: { in: ['m1', 'm2'] }, userId: 'u1' },
       select: { id: true, fromName: true, fromEmail: true },
     });
     expect(result.promised[0].counterparty).toBe('Jane Doe <jane@example.com>');
@@ -702,43 +702,68 @@ describe('MailService.updateCommitment', () => {
     expect(prisma.commitment.update).not.toHaveBeenCalled();
   });
 
-  it('sets resolvedAt and clears suggestResolve when marking done', async () => {
+  it('sets resolvedAt and clears suggestResolve when marking done, and returns the updated row', async () => {
     const { service, prisma } = makeService();
     prisma.commitment.findUnique.mockResolvedValue({ id: 'c1', userId: 'u1' });
-    prisma.commitment.update.mockResolvedValue({});
+    prisma.commitment.update.mockResolvedValue({
+      id: 'c1',
+      userId: 'u1',
+      textHash: 'hash',
+      status: 'done',
+      resolvedAt: new Date(),
+    });
 
-    await service.updateCommitment('u1', 'c1', 'done');
+    const result = await service.updateCommitment('u1', 'c1', 'done');
 
     expect(prisma.commitment.update).toHaveBeenCalledWith({
       where: { id: 'c1' },
       data: { status: 'done', resolvedAt: expect.any(Date), suggestResolve: false },
     });
+    // Pins the "PATCH returns a body" contract — the web `request<T>` helper's
+    // unconditional `res.json()` rejects on an empty response.
+    expect(result).toMatchObject({ id: 'c1', status: 'done' });
+    expect(result).not.toHaveProperty('userId');
+    expect(result).not.toHaveProperty('textHash');
   });
 
-  it('sets resolvedAt and clears suggestResolve when dismissing', async () => {
+  it('sets resolvedAt and clears suggestResolve when dismissing, and returns the updated row', async () => {
     const { service, prisma } = makeService();
     prisma.commitment.findUnique.mockResolvedValue({ id: 'c1', userId: 'u1' });
-    prisma.commitment.update.mockResolvedValue({});
+    prisma.commitment.update.mockResolvedValue({
+      id: 'c1',
+      userId: 'u1',
+      textHash: 'hash',
+      status: 'dismissed',
+      resolvedAt: new Date(),
+    });
 
-    await service.updateCommitment('u1', 'c1', 'dismissed');
+    const result = await service.updateCommitment('u1', 'c1', 'dismissed');
 
     expect(prisma.commitment.update).toHaveBeenCalledWith({
       where: { id: 'c1' },
       data: { status: 'dismissed', resolvedAt: expect.any(Date), suggestResolve: false },
     });
+    expect(result).toMatchObject({ id: 'c1', status: 'dismissed' });
   });
 
-  it('nulls resolvedAt and clears suggestResolve when reopening', async () => {
+  it('nulls resolvedAt and clears suggestResolve when reopening, and returns the updated row', async () => {
     const { service, prisma } = makeService();
     prisma.commitment.findUnique.mockResolvedValue({ id: 'c1', userId: 'u1' });
-    prisma.commitment.update.mockResolvedValue({});
+    prisma.commitment.update.mockResolvedValue({
+      id: 'c1',
+      userId: 'u1',
+      textHash: 'hash',
+      status: 'open',
+      resolvedAt: null,
+    });
 
-    await service.updateCommitment('u1', 'c1', 'open');
+    const result = await service.updateCommitment('u1', 'c1', 'open');
 
     expect(prisma.commitment.update).toHaveBeenCalledWith({
       where: { id: 'c1' },
       data: { status: 'open', resolvedAt: null, suggestResolve: false },
     });
+    expect(result).toMatchObject({ id: 'c1', status: 'open' });
   });
 
   it('rejects an invalid status value', async () => {
@@ -761,7 +786,7 @@ describe('MailService.promoteCommitment', () => {
   function makeService() {
     const prisma = {
       commitment: { findUnique: jest.fn(), update: jest.fn() },
-      message: { findUnique: jest.fn() },
+      message: { findFirst: jest.fn() },
       task: { delete: jest.fn() },
     } as unknown as PrismaService;
     const zimbra = {} as ZimbraService;
@@ -797,14 +822,14 @@ describe('MailService.promoteCommitment', () => {
   it('creates a Task with title/dueHint/linkedMessageId/linkedSubject, then marks the commitment promoted', async () => {
     const { service, prisma, tasksService } = makeService();
     prisma.commitment.findUnique.mockResolvedValue(openCommitment);
-    prisma.message.findUnique.mockResolvedValue({ subject: 'Q3 report thread' });
+    prisma.message.findFirst.mockResolvedValue({ subject: 'Q3 report thread' });
     tasksService.create.mockResolvedValue({ id: 'task-1' });
     prisma.commitment.update.mockResolvedValue({});
 
     const result = await service.promoteCommitment('u1', 'c1');
 
-    expect(prisma.message.findUnique).toHaveBeenCalledWith({
-      where: { id: 'm1' },
+    expect(prisma.message.findFirst).toHaveBeenCalledWith({
+      where: { id: 'm1', userId: 'u1' },
       select: { subject: true },
     });
     expect(tasksService.create).toHaveBeenCalledWith('u1', {
@@ -823,7 +848,7 @@ describe('MailService.promoteCommitment', () => {
   it('omits the due-hint prefix and falls back to no linkedSubject when the source message is gone', async () => {
     const { service, prisma, tasksService } = makeService();
     prisma.commitment.findUnique.mockResolvedValue({ ...openCommitment, dueHint: null });
-    prisma.message.findUnique.mockResolvedValue(null);
+    prisma.message.findFirst.mockResolvedValue(null);
     tasksService.create.mockResolvedValue({ id: 'task-2' });
     prisma.commitment.update.mockResolvedValue({});
 
@@ -849,7 +874,7 @@ describe('MailService.promoteCommitment', () => {
   it('compensates by deleting the just-created Task when the commitment update fails, then rethrows (saga)', async () => {
     const { service, prisma, tasksService } = makeService();
     prisma.commitment.findUnique.mockResolvedValue(openCommitment);
-    prisma.message.findUnique.mockResolvedValue({ subject: 'Q3 report thread' });
+    prisma.message.findFirst.mockResolvedValue({ subject: 'Q3 report thread' });
     tasksService.create.mockResolvedValue({ id: 'task-1' });
     const dbError = new Error('connection dropped');
     prisma.commitment.update.mockRejectedValue(dbError);
@@ -863,7 +888,7 @@ describe('MailService.promoteCommitment', () => {
   it('swallows a failed compensation delete but still surfaces the original error', async () => {
     const { service, prisma, tasksService } = makeService();
     prisma.commitment.findUnique.mockResolvedValue(openCommitment);
-    prisma.message.findUnique.mockResolvedValue({ subject: 'Q3 report thread' });
+    prisma.message.findFirst.mockResolvedValue({ subject: 'Q3 report thread' });
     tasksService.create.mockResolvedValue({ id: 'task-1' });
     const dbError = new Error('connection dropped');
     prisma.commitment.update.mockRejectedValue(dbError);

@@ -87,7 +87,8 @@ export default function CommitmentsPanel({
       role="complementary"
       aria-label="Commitments"
       className={cn(
-        'fixed inset-y-0 right-0 z-40 w-full max-w-[420px]',
+        // z-[41]: above the briefing drawer when both are open — explicit, not mount-order luck.
+        'fixed inset-y-0 right-0 z-[41] w-full max-w-[420px]',
         'border-l border-border/40 bg-card shadow-xl',
         'flex flex-col overflow-hidden',
       )}

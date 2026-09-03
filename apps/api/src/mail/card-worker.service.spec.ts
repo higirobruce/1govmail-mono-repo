@@ -411,6 +411,9 @@ describe('processTick commitment projection', () => {
         text: 'Send the revised scope by Thursday',
         dueHint: 'Thursday',
         textHash,
+        // Anchored to the source message's receivedAt (not extraction wall-clock
+        // time) so the hint comparison means "source message older than the reply".
+        extractedAt: candidate.receivedAt,
       }),
       update: { lastActivityAt: expect.any(Date) },
     });
@@ -435,6 +438,96 @@ describe('processTick commitment projection', () => {
       }),
       data: { suggestResolve: true, hintMessageId: 'm1', lastActivityAt: expect.any(Date) },
     });
+  });
+
+  it('anchors a projected commitment\'s extractedAt to the source message\'s receivedAt, so a later-processed reply in the same conversation still stamps it', async () => {
+    // Steady-state / same-tick ordering the extractedAt fix repairs: the promise's
+    // own message is chronologically OLDER (10 days ago) than the reply that
+    // should hint it (3 days ago), but its card happens to be extracted in the
+    // same tick, sequentially before that reply — a naive `extractedAt: now()`
+    // would then be "now" (extraction wall-clock time), which is NEWER than the
+    // reply's receivedAt and would silently defeat the `extractedAt: { lt }` hint
+    // comparison. A first, even-newer reply is also processed before the promise
+    // even exists, to document the accepted residual: a reply processed before
+    // its promise's row exists cannot retro-stamp it.
+    const { prisma, mailService, extractor } = makeFakes();
+    const earlyReply = { ...mkCandidate('r1', 'userA', 5), conversationId: 'c1' };
+    const promiseMsg = { ...mkCandidate('p1', 'userA', 10), conversationId: 'c1' };
+    const laterReply = { ...mkCandidate('r2', 'userA', 3), conversationId: 'c1' };
+    prisma.message.findMany.mockResolvedValue([earlyReply, promiseMsg, laterReply]);
+
+    const promiseCard: ExtractedCard = { ...baseCard, direction: 'received', waitingOn: 'Signed authorization' };
+    const replyCard: ExtractedCard = { ...baseCard, direction: 'received', waitingOn: null };
+    extractor.extract.mockImplementation(async (source: any) =>
+      source.id === 'p1' ? promiseCard : replyCard,
+    );
+
+    const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
+    await svc.processTick();
+
+    // The fix: create uses the promise's own receivedAt, not extraction time.
+    expect(prisma.commitment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ extractedAt: promiseMsg.receivedAt }),
+      }),
+    );
+
+    // earlyReply is processed before the promise row exists — its hint
+    // updateMany still fires (it can't know that), but nothing exists yet to
+    // match. This is the accepted, documented residual.
+    expect(prisma.commitment.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        userId: 'userA',
+        conversationId: 'c1',
+        status: 'open',
+        extractedAt: { lt: earlyReply.receivedAt },
+        messageId: { not: 'r1' },
+      }),
+      data: { suggestResolve: true, hintMessageId: 'r1', lastActivityAt: expect.any(Date) },
+    });
+
+    // laterReply is processed after the promise row exists, and the promise's
+    // source-time extractedAt (10 days ago) is before laterReply's receivedAt
+    // (3 days ago) — this is the call that, against a real DB, stamps the hint.
+    expect(promiseMsg.receivedAt.getTime()).toBeLessThan(laterReply.receivedAt.getTime());
+    expect(prisma.commitment.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        userId: 'userA',
+        conversationId: 'c1',
+        status: 'open',
+        extractedAt: { lt: laterReply.receivedAt },
+        messageId: { not: 'r2' },
+      }),
+      data: { suggestResolve: true, hintMessageId: 'r2', lastActivityAt: expect.any(Date) },
+    });
+  });
+
+  it('isolates a commitment projection failure from card classification: the card still counts as classified, the failure is logged, and there is no hydration-failure/retry bookkeeping', async () => {
+    const { prisma, mailService, extractor } = makeFakes();
+    const candidate = mkCandidate('m1', 'userA', 1, '/Sent');
+    prisma.message.findMany.mockResolvedValue([candidate]);
+    const card: ExtractedCard = {
+      ...SAMPLE_CARD,
+      direction: 'sent',
+      commitmentsIMade: ['Send the revised scope by Thursday'],
+      deadlines: ['Thursday'],
+    };
+    extractor.extract.mockResolvedValue(card);
+    prisma.commitment.upsert.mockRejectedValue(new Error('db write failed'));
+
+    const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
+    const warnSpy = jest.spyOn((svc as any).logger, 'warn').mockImplementation(() => undefined);
+
+    const result = await svc.processTick();
+
+    expect(prisma.commitment.upsert).toHaveBeenCalled();
+    // The card write already succeeded before the projection ran — a projection
+    // throw must not turn a classified message into a skip/failure.
+    expect(result.classified).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('commitment projection failed for m1'));
+    expect((svc as any).hydrationFailures.has('m1')).toBe(false);
+    expect(prisma.messageCard.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { messageId: 'm1' } }));
   });
 
   it('does not project from tombstoned cards', async () => {

@@ -601,7 +601,7 @@ describe('MailService.getCommitments', () => {
     expect(prisma.commitment.count).toHaveBeenCalledWith({ where: { userId: 'u1', status: 'open' } });
   });
 
-  it('filters to non-open statuses for the archived view', async () => {
+  it('filters to the literal archived status for the archived view (the 30-day-idle bucket)', async () => {
     const { service, prisma } = makeService();
     prisma.commitment.findMany.mockResolvedValue([]);
     prisma.commitment.count.mockResolvedValue(0);
@@ -609,7 +609,7 @@ describe('MailService.getCommitments', () => {
     await service.getCommitments('u1', 'archived');
 
     expect(prisma.commitment.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 'u1', status: { not: 'open' } } }),
+      expect.objectContaining({ where: { userId: 'u1', status: 'archived' } }),
     );
   });
 
@@ -747,6 +747,14 @@ describe('MailService.updateCommitment', () => {
     await expect(service.updateCommitment('u1', 'c1', 'bogus')).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.commitment.findUnique).not.toHaveBeenCalled();
   });
+
+  it('rejects transitioning a promoted commitment with ConflictException (stale taskId / re-promotion guard)', async () => {
+    const { service, prisma } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue({ id: 'c1', userId: 'u1', status: 'promoted', taskId: 'task-1' });
+
+    await expect(service.updateCommitment('u1', 'c1', 'open')).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.commitment.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('MailService.promoteCommitment', () => {
@@ -754,6 +762,7 @@ describe('MailService.promoteCommitment', () => {
     const prisma = {
       commitment: { findUnique: jest.fn(), update: jest.fn() },
       message: { findUnique: jest.fn() },
+      task: { delete: jest.fn() },
     } as unknown as PrismaService;
     const zimbra = {} as ZimbraService;
     const notifications = {} as NotificationsService;
@@ -835,5 +844,32 @@ describe('MailService.promoteCommitment', () => {
     await expect(service.promoteCommitment('u1', 'c1')).rejects.toBeInstanceOf(ConflictException);
     expect(tasksService.create).not.toHaveBeenCalled();
     expect(prisma.commitment.update).not.toHaveBeenCalled();
+  });
+
+  it('compensates by deleting the just-created Task when the commitment update fails, then rethrows (saga)', async () => {
+    const { service, prisma, tasksService } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue(openCommitment);
+    prisma.message.findUnique.mockResolvedValue({ subject: 'Q3 report thread' });
+    tasksService.create.mockResolvedValue({ id: 'task-1' });
+    const dbError = new Error('connection dropped');
+    prisma.commitment.update.mockRejectedValue(dbError);
+    prisma.task.delete.mockResolvedValue({});
+
+    await expect(service.promoteCommitment('u1', 'c1')).rejects.toBe(dbError);
+
+    expect(prisma.task.delete).toHaveBeenCalledWith({ where: { id: 'task-1' } });
+  });
+
+  it('swallows a failed compensation delete but still surfaces the original error', async () => {
+    const { service, prisma, tasksService } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue(openCommitment);
+    prisma.message.findUnique.mockResolvedValue({ subject: 'Q3 report thread' });
+    tasksService.create.mockResolvedValue({ id: 'task-1' });
+    const dbError = new Error('connection dropped');
+    prisma.commitment.update.mockRejectedValue(dbError);
+    prisma.task.delete.mockRejectedValue(new Error('task already gone'));
+
+    await expect(service.promoteCommitment('u1', 'c1')).rejects.toBe(dbError);
+    expect(prisma.task.delete).toHaveBeenCalledWith({ where: { id: 'task-1' } });
   });
 });

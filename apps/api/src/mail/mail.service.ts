@@ -1723,7 +1723,7 @@ export class MailService {
     const where =
       (status as CommitmentStatusFilter) === 'open'
         ? { userId, status: 'open' }
-        : { userId, status: { not: 'open' } };
+        : { userId, status: 'archived' };
 
     const [rows, openCount] = await Promise.all([
       this.prisma.commitment.findMany({
@@ -1755,6 +1755,12 @@ export class MailService {
 
     const commitment = await this.prisma.commitment.findUnique({ where: { id } });
     if (!commitment || commitment.userId !== userId) throw new NotFoundException('Commitment not found');
+    // Promoted rows are terminal in the ledger — the linked Task is now authoritative.
+    // Allowing a transition here would leave a stale taskId and enable re-promotion
+    // (duplicate Task) via a second POST .../promote call.
+    if (commitment.status === 'promoted') {
+      throw new ConflictException('A promoted commitment cannot be resolved or reopened here');
+    }
 
     await this.prisma.commitment.update({
       where: { id },
@@ -1784,10 +1790,20 @@ export class MailService {
       linkedSubject: sourceMessage?.subject ?? undefined,
     });
 
-    await this.prisma.commitment.update({
-      where: { id },
-      data: { status: 'promoted', taskId: task.id, resolvedAt: new Date() },
-    });
+    try {
+      await this.prisma.commitment.update({
+        where: { id },
+        data: { status: 'promoted', taskId: task.id, resolvedAt: new Date() },
+      });
+    } catch (err) {
+      // Saga-style compensation: the Task was already created, but the ledger
+      // write that records it failed. Leaving the Task orphaned would let a
+      // retry of this endpoint create a second, duplicate Task for the same
+      // commitment — best-effort delete it, then rethrow so the caller still
+      // sees the failure.
+      await this.prisma.task.delete({ where: { id: task.id } }).catch(() => {});
+      throw err;
+    }
 
     return { taskId: task.id };
   }

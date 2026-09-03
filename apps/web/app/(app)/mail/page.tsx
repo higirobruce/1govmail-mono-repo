@@ -100,24 +100,60 @@ export default function MailPage() {
   const messages: any[] = messagesData?.pages.flatMap((p: any) => p.messages) ?? [];
 
   // ── Triage cards (Task 6 persisted extraction) ─────────────────────────────
-  // Fetches labels for the currently loaded page of messages, chunked at 100
-  // ids per request. Keyed on a stable id-list hash so it refetches only when
-  // the loaded set actually changes; staleTime matches the worker's ~1min cadence.
-  const cardMessageIds = useMemo(() => messages.map((m) => m.id), [messages]);
+  // The worker only classifies the last 14 days, so only that slice of the
+  // loaded list is ever asked about — deep scrolling through months of mail
+  // must not grow the request. The query key still changes as pages load, but
+  // each refetch (a) keeps showing the previous map via placeholderData, so
+  // badges/chips never flash out, and (b) fetches ONLY ids we have no card for
+  // and haven't asked about in the last minute — one small request per new
+  // page instead of re-fetching every loaded id (which, at deep scroll, was a
+  // 40+-request burst that tripped the API's global rate limit and blanked
+  // the whole message list).
+  const CARD_WINDOW_MS = 14 * 24 * 3_600_000;
+  const cardMessageIds = useMemo(() => {
+    const cutoff = Date.now() - CARD_WINDOW_MS;
+    return messages
+      .filter((m) => {
+        const t = Date.parse(m.receivedAt);
+        return Number.isFinite(t) && t >= cutoff;
+      })
+      .map((m) => m.id as string);
+    // `messages` is a fresh array each render, so this recomputes per render —
+    // but the derived KEY string below is value-stable, so the query is not
+    // re-triggered unless the id set genuinely changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
   const cardMessageIdsKey = useMemo(() => cardMessageIds.join(','), [cardMessageIds]);
+
+  type CardsMap = Record<string, { label: TriageLabel; importance: string; injectionSuspected: boolean }>;
+  const askedCardIdsRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    askedCardIdsRef.current.clear();
+  }, [activeFolderId]);
 
   const { data: cardsById = {} } = useQuery({
     queryKey: ['cards', activeFolderId, cardMessageIdsKey],
     queryFn: async () => {
+      const previous = (queryClient
+        .getQueriesData({ queryKey: ['cards', activeFolderId] })
+        .map(([, data]) => data)
+        .filter(Boolean)
+        .pop() ?? {}) as CardsMap;
+      const now = Date.now();
+      const missing = cardMessageIds.filter(
+        (id) => !(id in previous) && now - (askedCardIdsRef.current.get(id) ?? 0) > 60_000,
+      );
       const chunks: string[][] = [];
-      for (let i = 0; i < cardMessageIds.length; i += 100) chunks.push(cardMessageIds.slice(i, i + 100));
+      for (let i = 0; i < missing.length; i += 100) chunks.push(missing.slice(i, i + 100));
       const results = await Promise.all(chunks.map((chunk) => api.mail.getCards(chunk)));
-      const merged: Record<string, { label: TriageLabel; importance: string; injectionSuspected: boolean }> = {};
+      for (const id of missing) askedCardIdsRef.current.set(id, now);
+      const merged: CardsMap = { ...previous };
       for (const r of results) Object.assign(merged, r?.cards ?? {});
       return merged;
     },
     enabled: cardMessageIds.length > 0,
     staleTime: 60_000,
+    placeholderData: (prev) => prev,
   });
 
   // Counts for the chip row, computed over the loaded (unfiltered) messages.

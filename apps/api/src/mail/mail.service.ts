@@ -1,8 +1,35 @@
-import { Injectable, NotFoundException, Logger, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Logger, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { deriveLabel, formatAttachments, type ExtractedCard, type TriageLabel } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { matchSenderRule, type SenderRuleLike } from './sender-rule-matcher';
+
+const CARD_WINDOWS = ['today', '24h', 'week'] as const;
+type CardWindow = (typeof CARD_WINDOWS)[number];
+const CARD_FOLDER_PATHS = ['/Inbox', '/Sent'];
+const MAX_CARD_IDS = 100;
+const MAX_WINDOW_CARDS = 50;
+
+interface WindowCardRow {
+  messageId: string;
+  gist: string;
+  asksOfMe: unknown;
+  deadlines: unknown;
+  commitmentsIMade: unknown;
+  waitingOn: string | null;
+  importance: string;
+  injectionSuspected: boolean;
+  message: {
+    conversationId: string | null;
+    subject: string | null;
+    fromEmail: string;
+    fromName: string | null;
+    receivedAt: Date;
+    attachments: unknown;
+    folder: { path: string };
+  };
+}
 
 // Different Zimbra deployments report the spam folder under either path —
 // this app's own Sidebar (apps/web/components/layout/Sidebar.tsx) already
@@ -1553,5 +1580,91 @@ export class MailService {
       } catch { results.push({ id: messageId, success: false }); }
     }
     return { results };
+  }
+
+  // ── Triage cards (read paths) ─────────────────────────────────────────────
+
+  /** Batch label lookup for a set of message ids, scoped to the caller and excluding tombstones. */
+  async getCardsByIds(
+    userId: string,
+    ids: string[],
+  ): Promise<{ cards: Record<string, { label: TriageLabel; importance: string; injectionSuspected: boolean }> }> {
+    if (ids.length > MAX_CARD_IDS) {
+      throw new BadRequestException(`Too many ids (max ${MAX_CARD_IDS})`);
+    }
+    if (ids.length === 0) return { cards: {} };
+
+    const rows = await this.prisma.messageCard.findMany({
+      where: { userId, messageId: { in: ids }, failed: false },
+    });
+
+    const cards: Record<string, { label: TriageLabel; importance: string; injectionSuspected: boolean }> = {};
+    for (const row of rows as any[]) {
+      cards[row.messageId] = {
+        label: deriveLabel({
+          asksOfMe: row.asksOfMe as string[],
+          waitingOn: row.waitingOn,
+          deadlines: row.deadlines as string[],
+        }),
+        importance: row.importance,
+        injectionSuspected: row.injectionSuspected,
+      };
+    }
+    return { cards };
+  }
+
+  private windowCutoff(window: CardWindow): Date {
+    if (window === 'today') {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+    if (window === '24h') return new Date(Date.now() - 24 * 60 * 60 * 1000);
+    return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  }
+
+  private toExtractedCard(row: WindowCardRow): ExtractedCard {
+    const msg = row.message;
+    return {
+      messageId: row.messageId,
+      conversationId: msg.conversationId,
+      direction: msg.folder?.path === '/Sent' ? 'sent' : 'received',
+      from: msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail,
+      subject: msg.subject,
+      receivedAt: msg.receivedAt.toISOString(),
+      gist: row.gist,
+      asksOfMe: row.asksOfMe as string[],
+      deadlines: row.deadlines as string[],
+      commitmentsIMade: row.commitmentsIMade as string[],
+      waitingOn: row.waitingOn,
+      importance: row.importance as ExtractedCard['importance'],
+      attachments: formatAttachments(msg.attachments),
+      injectionSuspected: row.injectionSuspected,
+    };
+  }
+
+  /** Full cards for the caller's Inbox+Sent within a time window, newest first, capped, tombstones excluded. */
+  async getWindowCards(userId: string, window: string): Promise<{ cards: ExtractedCard[] }> {
+    if (!(CARD_WINDOWS as readonly string[]).includes(window)) {
+      throw new BadRequestException(`Invalid window (expected one of ${CARD_WINDOWS.join(', ')})`);
+    }
+
+    const gte = this.windowCutoff(window as CardWindow);
+
+    const rows = (await this.prisma.messageCard.findMany({
+      where: {
+        userId,
+        failed: false,
+        message: {
+          receivedAt: { gte },
+          folder: { path: { in: CARD_FOLDER_PATHS } },
+        },
+      },
+      include: { message: { include: { folder: true } } },
+      orderBy: { message: { receivedAt: 'desc' } },
+      take: MAX_WINDOW_CARDS,
+    })) as unknown as WindowCardRow[];
+
+    return { cards: rows.map((row) => this.toExtractedCard(row)) };
   }
 }

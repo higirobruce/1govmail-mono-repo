@@ -1,4 +1,4 @@
-import { NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailService } from './mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
@@ -277,5 +277,243 @@ describe('MailService.getMessages sender rule enforcement resilience', () => {
     expect(prisma.senderRule.findMany).not.toHaveBeenCalled();
     expect(zimbra.moveMessage).not.toHaveBeenCalled();
     expect(result.messages).toEqual([upserted]);
+  });
+});
+
+describe('MailService.getCardsByIds', () => {
+  function makeService() {
+    const prisma = {
+      messageCard: { findMany: jest.fn() },
+    } as unknown as PrismaService;
+    const zimbra = {} as ZimbraService;
+    const notifications = {} as NotificationsService;
+    const service = new MailService(prisma, zimbra, notifications);
+    return { service: service as any, prisma: prisma as any };
+  }
+
+  it('returns a label/importance/injectionSuspected map keyed by messageId', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([
+      {
+        messageId: 'm1',
+        asksOfMe: ['Please approve the budget'],
+        deadlines: [],
+        waitingOn: null,
+        importance: 'high',
+        injectionSuspected: false,
+      },
+      {
+        messageId: 'm2',
+        asksOfMe: [],
+        deadlines: [],
+        waitingOn: 'their reply',
+        importance: 'normal',
+        injectionSuspected: true,
+      },
+    ]);
+
+    const result = await service.getCardsByIds('u1', ['m1', 'm2']);
+
+    expect(prisma.messageCard.findMany).toHaveBeenCalledWith({
+      where: { userId: 'u1', messageId: { in: ['m1', 'm2'] }, failed: false },
+    });
+    expect(result).toEqual({
+      cards: {
+        m1: { label: 'needsDecision', importance: 'high', injectionSuspected: false },
+        m2: { label: 'waitingOnYou', importance: 'normal', injectionSuspected: true },
+      },
+    });
+  });
+
+  it('omits a card belonging to another user (scoped by the where clause)', async () => {
+    const { service, prisma } = makeService();
+    // The `where: { userId }` clause is what actually enforces scoping — a
+    // real DB would never return another user's row here, so the mock
+    // reflects that by returning nothing for ids that aren't u1's.
+    prisma.messageCard.findMany.mockResolvedValue([]);
+
+    const result = await service.getCardsByIds('u1', ['other-users-message']);
+
+    expect(prisma.messageCard.findMany).toHaveBeenCalledWith({
+      where: { userId: 'u1', messageId: { in: ['other-users-message'] }, failed: false },
+    });
+    expect(result).toEqual({ cards: {} });
+  });
+
+  it('excludes tombstoned cards via the failed:false filter', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([]);
+
+    await service.getCardsByIds('u1', ['m1']);
+
+    expect(prisma.messageCard.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ failed: false }) }),
+    );
+  });
+
+  it('rejects more than 100 ids with BadRequestException', async () => {
+    const { service } = makeService();
+    const ids = Array.from({ length: 101 }, (_, i) => `m${i}`);
+
+    await expect(service.getCardsByIds('u1', ids)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('accepts exactly 100 ids', async () => {
+    const { service, prisma } = makeService();
+    const ids = Array.from({ length: 100 }, (_, i) => `m${i}`);
+    prisma.messageCard.findMany.mockResolvedValue([]);
+
+    await expect(service.getCardsByIds('u1', ids)).resolves.toEqual({ cards: {} });
+  });
+});
+
+describe('MailService.getWindowCards', () => {
+  function makeService() {
+    const prisma = {
+      messageCard: { findMany: jest.fn() },
+    } as unknown as PrismaService;
+    const zimbra = {} as ZimbraService;
+    const notifications = {} as NotificationsService;
+    const service = new MailService(prisma, zimbra, notifications);
+    return { service: service as any, prisma: prisma as any };
+  }
+
+  const row = {
+    messageId: 'm1',
+    gist: 'Budget approval needed',
+    asksOfMe: ['Approve the budget'],
+    deadlines: ['Friday'],
+    commitmentsIMade: [],
+    waitingOn: null,
+    importance: 'high',
+    injectionSuspected: false,
+    message: {
+      conversationId: 'c1',
+      subject: 'Budget',
+      fromEmail: 'boss@example.com',
+      fromName: 'The Boss',
+      receivedAt: new Date('2026-09-02T10:00:00.000Z'),
+      attachments: [],
+      folder: { path: '/Inbox' },
+    },
+  };
+
+  it('assembles ExtractedCard rows from the message card + its message, deriving direction from folder path', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([row]);
+
+    const result = await service.getWindowCards('u1', 'today');
+
+    expect(result.cards).toEqual([
+      {
+        messageId: 'm1',
+        conversationId: 'c1',
+        direction: 'received',
+        from: 'The Boss <boss@example.com>',
+        subject: 'Budget',
+        receivedAt: '2026-09-02T10:00:00.000Z',
+        gist: 'Budget approval needed',
+        asksOfMe: ['Approve the budget'],
+        deadlines: ['Friday'],
+        commitmentsIMade: [],
+        waitingOn: null,
+        importance: 'high',
+        attachments: [],
+        injectionSuspected: false,
+      },
+    ]);
+  });
+
+  it('derives a "sent" direction for messages filed under /Sent', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([
+      { ...row, message: { ...row.message, folder: { path: '/Sent' } } },
+    ]);
+
+    const result = await service.getWindowCards('u1', 'today');
+
+    expect(result.cards[0].direction).toBe('sent');
+  });
+
+  it('formats "from" as bare email when the message has no fromName', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([
+      { ...row, message: { ...row.message, fromName: null } },
+    ]);
+
+    const result = await service.getWindowCards('u1', 'today');
+
+    expect(result.cards[0].from).toBe('boss@example.com');
+  });
+
+  it('scopes "today" to server midnight', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([]);
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+
+    await service.getWindowCards('u1', 'today');
+
+    const call = prisma.messageCard.findMany.mock.calls[0][0];
+    expect(call.where.userId).toBe('u1');
+    expect(call.where.failed).toBe(false);
+    expect(call.where.message.receivedAt.gte.getTime()).toBe(midnight.getTime());
+    expect(call.where.message.folder.path).toEqual({ in: ['/Inbox', '/Sent'] });
+  });
+
+  it('scopes "24h" to now minus 24 hours', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([]);
+    const before = Date.now() - 24 * 60 * 60 * 1000;
+
+    await service.getWindowCards('u1', '24h');
+
+    const call = prisma.messageCard.findMany.mock.calls[0][0];
+    const gte = call.where.message.receivedAt.gte.getTime();
+    const after = Date.now() - 24 * 60 * 60 * 1000;
+    expect(gte).toBeGreaterThanOrEqual(before - 1000);
+    expect(gte).toBeLessThanOrEqual(after + 1000);
+  });
+
+  it('scopes "week" to now minus 7 days', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([]);
+    const before = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    await service.getWindowCards('u1', 'week');
+
+    const call = prisma.messageCard.findMany.mock.calls[0][0];
+    const gte = call.where.message.receivedAt.gte.getTime();
+    const after = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    expect(gte).toBeGreaterThanOrEqual(before - 1000);
+    expect(gte).toBeLessThanOrEqual(after + 1000);
+  });
+
+  it('caps results at 50 via take', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([]);
+
+    await service.getWindowCards('u1', 'today');
+
+    expect(prisma.messageCard.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 50 }),
+    );
+  });
+
+  it('orders results newest-first by message.receivedAt', async () => {
+    const { service, prisma } = makeService();
+    prisma.messageCard.findMany.mockResolvedValue([]);
+
+    await service.getWindowCards('u1', 'today');
+
+    expect(prisma.messageCard.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { message: { receivedAt: 'desc' } } }),
+    );
+  });
+
+  it('rejects an invalid window value', async () => {
+    const { service } = makeService();
+
+    await expect(service.getWindowCards('u1', 'bogus' as any)).rejects.toBeInstanceOf(BadRequestException);
   });
 });

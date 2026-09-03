@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -355,5 +356,29 @@ export class MailController {
     @Body('folderId') folderId: string,
   ) {
     return this.mailService.bulkMove(req.user.sub, messageIds, folderId);
+  }
+
+  // ── Triage cards ─────────────────────────────────────────────────────────────
+  // Both are literal (non-parameterized) paths, so they cannot collide with the
+  // `messages/:messageId`-style routes above regardless of declaration order.
+
+  @Get('cards/window')
+  getCardsWindow(@Req() req: AuthenticatedRequest, @Query('window') window?: string) {
+    if (!window || !['today', '24h', 'week'].includes(window)) {
+      throw new BadRequestException('window must be one of: today, 24h, week');
+    }
+    return this.mailService.getWindowCards(req.user.sub, window);
+  }
+
+  @Get('cards')
+  getCards(@Req() req: AuthenticatedRequest, @Query('ids') idsParam?: string) {
+    const ids = (idsParam ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (ids.length > 100) {
+      throw new BadRequestException('ids: maximum of 100 per request');
+    }
+    return this.mailService.getCardsByIds(req.user.sub, ids);
   }
 }

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "concurrently \"pnpm --filter web dev\" \"pnpm --filter api start:dev\"",
-    "build": "pnpm --filter web build && pnpm --filter api build",
+    "build": "pnpm --filter @email-client/shared build && pnpm --filter web build && pnpm --filter api build",
     "lint": "pnpm --filter web lint && pnpm --filter api lint",
     "dev:desktop": "concurrently \"pnpm --filter web dev\" \"pnpm --filter api start:dev\" \"pnpm --filter desktop dev:electron\"",
     "build:desktop": "NEXT_PUBLIC_API_URL=http://127.0.0.1:3457/api NODE_ENV=production pnpm --filter web build && pnpm --filter desktop build",

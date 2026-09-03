@@ -82,6 +82,8 @@ const nextConfig: NextConfig = {
    */
   output: 'standalone',
 
+  transpilePackages: ['@email-client/shared'],
+
   turbopack: {
     root: path.resolve(__dirname, '../..'),
   },

@@ -292,7 +292,7 @@ async function runSpotCheck() {
             latency: `${latency}ms`,
           };
         } else {
-          row[model] = { error: 'parse failed', latency: `${Date.now()}ms` };
+          row[model] = { error: 'parse failed', latency: `${latency}ms` };
         }
       } catch (err) {
         row[model] = { error: err.message };

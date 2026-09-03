@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { formatAttachments, type CardSource, type ExtractedCard } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -76,11 +76,27 @@ function cardRow(m: CardCandidate, card: ExtractedCard | null, model: string) {
 export class CardWorkerService {
   private readonly logger = new Logger(CardWorkerService.name);
 
+  /** Purge (a full-table scan by receivedAt) only needs to run hourly, not every tick. */
+  private lastPurgeAt = 0;
+  protected purgeIntervalMs = 3_600_000;
+
+  /**
+   * Consecutive per-message hydration/extraction failure counts, in-memory only.
+   * A worker restart resets these to zero — acceptable: it just means a message
+   * that was close to being tombstoned gets a few more retries after a restart,
+   * which is harmless and far simpler than persisting failure counts.
+   */
+  private hydrationFailures = new Map<string, number>();
+  private readonly HYDRATION_FAILURE_LIMIT = 3;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
     private readonly extractor: CardExtractorService,
-  ) {}
+    @Optional() purgeIntervalMs?: number,
+  ) {
+    if (purgeIntervalMs !== undefined) this.purgeIntervalMs = purgeIntervalMs;
+  }
 
   /** Every minute: classify pending messages into MessageCards, then purge stale ones. */
   @Cron(CronExpression.EVERY_MINUTE, { waitForCompletion: true })
@@ -134,7 +150,7 @@ export class CardWorkerService {
           fromName: m.fromName,
           subject: m.subject,
           receivedAt: m.receivedAt.toISOString(),
-          attachments: formatAttachments(m.attachments),
+          attachments: formatAttachments((full as Record<string, unknown> | null)?.attachments ?? m.attachments),
         };
         const card = await this.extractor.extract(source, full?.bodyText ?? null, full?.bodyHtml ?? null);
 
@@ -144,18 +160,39 @@ export class CardWorkerService {
           update: cardRow(m, card, this.extractor.model),
         });
 
+        this.hydrationFailures.delete(m.id);
         if (card) classified++;
         else failed++;
-      } catch {
-        // Network/backend failure — leave unclassified so it's retried next tick.
-        skipped++;
+      } catch (err: any) {
+        // Network/backend failure — leave unclassified so it's retried next tick,
+        // up to HYDRATION_FAILURE_LIMIT consecutive failures, then tombstone it
+        // so it stops being selected forever.
+        this.logger.warn(`card skip ${m.id}: ${err?.message}`);
+        const attempts = (this.hydrationFailures.get(m.id) ?? 0) + 1;
+        if (attempts >= this.HYDRATION_FAILURE_LIMIT) {
+          await this.prisma.messageCard.upsert({
+            where: { messageId: m.id },
+            create: cardRow(m, null, this.extractor.model),
+            update: cardRow(m, null, this.extractor.model),
+          });
+          this.hydrationFailures.delete(m.id);
+          failed++;
+        } else {
+          this.hydrationFailures.set(m.id, attempts);
+          skipped++;
+        }
       }
     }
 
-    const retentionCutoff = new Date(Date.now() - CARD_RETENTION_DAYS * DAY_MS);
-    const { count: purged } = await this.prisma.messageCard.deleteMany({
-      where: { message: { receivedAt: { lt: retentionCutoff } } },
-    });
+    let purged = 0;
+    if (Date.now() - this.lastPurgeAt >= this.purgeIntervalMs) {
+      const retentionCutoff = new Date(Date.now() - CARD_RETENTION_DAYS * DAY_MS);
+      const result = await this.prisma.messageCard.deleteMany({
+        where: { message: { receivedAt: { lt: retentionCutoff } } },
+      });
+      purged = result.count;
+      this.lastPurgeAt = Date.now();
+    }
 
     if (classified || failed || purged || skipped) {
       this.logger.log(`cards: +${classified} tombstoned ${failed} purged ${purged} skipped ${skipped}`);

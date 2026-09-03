@@ -107,13 +107,24 @@ describe('CardWorkerService', () => {
     const { prisma, mailService, extractor } = makeFakes();
     const candidate = mkCandidate('m1', 'userA', 1);
     prisma.message.findMany.mockResolvedValue([candidate]);
-    mailService.getMessage.mockResolvedValue({ bodyText: 'hello world', bodyHtml: null });
+    mailService.getMessage.mockResolvedValue({
+      bodyText: 'hello world',
+      bodyHtml: null,
+      attachments: [{ filename: 'budget.xlsx', size: 1024 }],
+    });
     extractor.extract.mockResolvedValue(SAMPLE_CARD);
 
     const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
     const result = await svc.processTick();
 
     expect(mailService.getMessage).toHaveBeenCalledWith('userA', 'm1');
+    // Prompt attachments should come from the hydrated detail (`full`), not the
+    // stale listing-row `attachments` on the candidate.
+    expect(extractor.extract).toHaveBeenCalledWith(
+      expect.objectContaining({ attachments: ['budget.xlsx (1KB)'] }),
+      'hello world',
+      null,
+    );
     expect(prisma.messageCard.upsert).toHaveBeenCalledWith({
       where: { messageId: 'm1' },
       create: expect.objectContaining({
@@ -202,6 +213,102 @@ describe('CardWorkerService', () => {
     expect(actualCutoff.getTime()).toBeGreaterThanOrEqual(beforeCutoff.getTime() - 1000);
     expect(actualCutoff.getTime()).toBeLessThanOrEqual(afterCutoff.getTime() + 1000);
     expect(result.purged).toBe(4);
+  });
+
+  describe('hourly purge scheduling', () => {
+    it('purges on the first tick', async () => {
+      const { prisma, mailService, extractor } = makeFakes();
+      prisma.message.findMany.mockResolvedValue([]);
+      prisma.messageCard.deleteMany.mockResolvedValue({ count: 2 });
+
+      const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any, 3_600_000);
+      const result = await svc.processTick();
+
+      expect(prisma.messageCard.deleteMany).toHaveBeenCalledTimes(1);
+      expect(result.purged).toBe(2);
+    });
+
+    it('does not purge again on an immediate second tick within the interval', async () => {
+      const { prisma, mailService, extractor } = makeFakes();
+      prisma.message.findMany.mockResolvedValue([]);
+      prisma.messageCard.deleteMany.mockResolvedValue({ count: 2 });
+
+      const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any, 3_600_000);
+      await svc.processTick();
+      const second = await svc.processTick();
+
+      expect(prisma.messageCard.deleteMany).toHaveBeenCalledTimes(1);
+      expect(second.purged).toBe(0);
+    });
+
+    it('purges again once the interval has elapsed', async () => {
+      const { prisma, mailService, extractor } = makeFakes();
+      prisma.message.findMany.mockResolvedValue([]);
+      prisma.messageCard.deleteMany.mockResolvedValue({ count: 2 });
+
+      const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any, 3_600_000);
+      await svc.processTick();
+      // Force lastPurgeAt back past the interval, as if an hour had elapsed.
+      (svc as any).lastPurgeAt = Date.now() - 3_600_001;
+      const third = await svc.processTick();
+
+      expect(prisma.messageCard.deleteMany).toHaveBeenCalledTimes(2);
+      expect(third.purged).toBe(2);
+    });
+  });
+
+  describe('hydration failure cap', () => {
+    it('does not upsert while failures are below the limit, and grows the counter', async () => {
+      const { prisma, mailService, extractor } = makeFakes();
+      const candidate = mkCandidate('m1', 'userA', 1);
+      prisma.message.findMany.mockResolvedValue([candidate]);
+      mailService.getMessage.mockRejectedValue(new Error('zimbra down'));
+
+      const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
+      await svc.processTick();
+      await svc.processTick();
+
+      expect(prisma.messageCard.upsert).not.toHaveBeenCalled();
+      expect((svc as any).hydrationFailures.get('m1')).toBe(2);
+    });
+
+    it('tombstones the message once failures reach the limit, and clears the counter', async () => {
+      const { prisma, mailService, extractor } = makeFakes();
+      const candidate = mkCandidate('m1', 'userA', 1);
+      prisma.message.findMany.mockResolvedValue([candidate]);
+      mailService.getMessage.mockRejectedValue(new Error('zimbra down'));
+
+      const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
+      await svc.processTick();
+      await svc.processTick();
+      const result = await svc.processTick();
+
+      expect(prisma.messageCard.upsert).toHaveBeenCalledTimes(1);
+      expect(prisma.messageCard.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { messageId: 'm1' },
+          create: expect.objectContaining({ failed: true }),
+        }),
+      );
+      expect(result.failed).toBe(1);
+      expect((svc as any).hydrationFailures.has('m1')).toBe(false);
+    });
+
+    it('clears the failure counter on a subsequent success', async () => {
+      const { prisma, mailService, extractor } = makeFakes();
+      const candidate = mkCandidate('m1', 'userA', 1);
+      prisma.message.findMany.mockResolvedValue([candidate]);
+      extractor.extract.mockResolvedValue(SAMPLE_CARD);
+
+      const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
+      mailService.getMessage.mockRejectedValueOnce(new Error('zimbra down'));
+      await svc.processTick();
+      expect((svc as any).hydrationFailures.get('m1')).toBe(1);
+
+      mailService.getMessage.mockResolvedValue({ bodyText: 'hello', bodyHtml: null });
+      await svc.processTick();
+      expect((svc as any).hydrationFailures.has('m1')).toBe(false);
+    });
   });
 
   it("re-selects messages whose card model differs from CARD_MODEL", async () => {

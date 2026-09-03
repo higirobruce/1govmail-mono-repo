@@ -96,12 +96,20 @@ describe('chunkForEmbedding', () => {
 
   it('splits on paragraph boundaries and respects the max chunk size', () => {
     const para = 'x'.repeat(900);
-    const body = [para, para, para].join('\n\n'); // 2702 chars — needs 2 chunks
+    // Three 900-char paragraphs: no two fit together under 1500, so each
+    // paragraph becomes its own chunk — never split mid-paragraph.
+    const body = [para, para, para].join('\n\n');
     const chunks = chunkForEmbedding({ bodyText: body, bodyHtml: null }, null);
-    expect(chunks.length).toBe(2);
+    expect(chunks.length).toBe(3);
     for (const c of chunks) expect(c.length).toBeLessThanOrEqual(EMBED_CHUNK_MAX_CHARS);
-    // paragraphs are not split mid-way when they fit
-    expect(chunks[0]).toBe(`${para}\n\n${para}`.slice(0, EMBED_CHUNK_MAX_CHARS));
+    expect(chunks[0]).toBe(para); // paragraphs that fit are kept whole
+  });
+
+  it('packs consecutive paragraphs into one chunk while they fit', () => {
+    const a = 'a'.repeat(400);
+    const b = 'b'.repeat(400);
+    const chunks = chunkForEmbedding({ bodyText: `${a}\n\n${b}`, bodyHtml: null }, null);
+    expect(chunks).toEqual([`${a}\n\n${b}`]);
   });
 
   it('hard-splits a single paragraph longer than the chunk size', () => {

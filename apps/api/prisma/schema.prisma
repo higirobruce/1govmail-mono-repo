@@ -158,9 +158,9 @@ model Message {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  card   MessageCard?
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder     Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  card       MessageCard?
   embeddings MessageEmbedding[]
 
   @@unique([userId, zimbraId])
@@ -192,6 +192,12 @@ model MessageCard {
   @@map("message_cards")
 }
 
+// The `embedding` column has a hand-written HNSW index (see migration
+// 20260903211047_add_message_embeddings) that Prisma cannot represent on an
+// Unsupported() column. Running `prisma migrate dev` again will therefore
+// offer a migration that DROPS "message_embeddings_embedding_hnsw_idx" —
+// always decline that offer; it is spurious drift detection, not a real
+// schema change.
 model MessageEmbedding {
   id          String                       @id @default(cuid())
   messageId   String

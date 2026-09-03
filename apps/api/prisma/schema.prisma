@@ -45,6 +45,7 @@ model User {
   docVersionsCreated     DocVersion[]
   docActivity            DocActivity[]
   auditLogs              AuditLog[]
+  messageCards           MessageCard[]
 
   @@map("users")
 }
@@ -157,11 +158,34 @@ model Message {
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  card   MessageCard?
 
   @@unique([userId, zimbraId])
   @@index([userId, folderId])
   @@index([userId, conversationId])
   @@map("messages")
+}
+
+model MessageCard {
+  id                 String   @id @default(cuid())
+  messageId          String   @unique
+  userId             String
+  model              String
+  gist               String
+  asksOfMe           Json     @default("[]")
+  deadlines          Json     @default("[]")
+  commitmentsIMade   Json     @default("[]")
+  waitingOn          String?
+  importance         String   // 'high' | 'normal' | 'low'
+  injectionSuspected Boolean  @default(false)
+  failed             Boolean  @default(false) // tombstone: extraction gave up; invisible to reads
+  extractedAt        DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, extractedAt])
+  @@map("message_cards")
 }
 
 // ─── Contacts ────────────────────────────────────────────────────────────────

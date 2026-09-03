@@ -144,7 +144,11 @@ export function GlobalSearch({ open, onClose, initialQuery }: Props) {
     filteredContacts.length > 0 || filteredTasks.length > 0 || filteredEvents.length > 0;
 
   return (
-    <CommandDialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <CommandDialog
+      open={open}
+      onOpenChange={(v) => { if (!v) onClose(); }}
+      shouldFilter={false}
+    >
       <CommandInput
         placeholder="Search messages, contacts, tasks, events…"
         value={query}

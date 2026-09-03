@@ -5,3 +5,4 @@ export * from './ai/extract';
 export * from './ai/promptCore';
 export * from './ai/cards';
 export * from './ai/chunk';
+export * from './ai/language';

@@ -293,7 +293,11 @@ export default function MailPage() {
 
   // ── Executive briefing panel ────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
+  // Briefing drawer: `briefingOpen` = mounted (set once, kept — the generated
+  // brief must survive collapses without re-analysis); `briefingExpanded`
+  // toggles drawer vs floating pill.
   const [briefingOpen, setBriefingOpen] = useState(false);
+  const [briefingExpanded, setBriefingExpanded] = useState(false);
 
   // ── Electron background polling ────────────────────────────────────────────
   // Tracks the last known inbox unread count so we can detect new arrivals.
@@ -1081,7 +1085,7 @@ export default function MailPage() {
                 <>
                   {aiEnabled && (
                     <button
-                      onClick={() => setBriefingOpen(true)}
+                      onClick={() => { setBriefingOpen(true); setBriefingExpanded((e) => !e); }}
                       title="Brief me"
                       className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
                     >
@@ -1328,8 +1332,9 @@ export default function MailPage() {
 
       <BriefingPanel
         open={briefingOpen}
-        onClose={() => setBriefingOpen(false)}
-        onOpenMessage={(id) => { setBriefingOpen(false); void openMessage(id); }}
+        expanded={briefingExpanded}
+        onToggleExpanded={setBriefingExpanded}
+        onOpenMessage={(id) => void openMessage(id)}
       />
     </div>
   );

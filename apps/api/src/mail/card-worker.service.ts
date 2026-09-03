@@ -37,12 +37,9 @@ export function pickFairBatch<T extends { userId: string }>(
 ): T[] {
   const byUser = new Map<string, T[]>();
   for (const c of candidates) {
-    const list = byUser.get(c.userId);
-    if (list) {
-      if (list.length < perUser) list.push(c);
-    } else {
-      byUser.set(c.userId, [c]);
-    }
+    const list = byUser.get(c.userId) ?? [];
+    if (list.length < perUser) list.push(c);
+    byUser.set(c.userId, list);
   }
 
   const users = [...byUser.keys()];
@@ -71,6 +68,7 @@ function cardRow(m: CardCandidate, card: ExtractedCard | null, model: string) {
     importance: card?.importance ?? 'normal',
     injectionSuspected: card?.injectionSuspected ?? false,
     failed: !card,
+    extractedAt: new Date(),
   };
 }
 

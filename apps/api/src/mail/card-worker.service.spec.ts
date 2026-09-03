@@ -60,6 +60,11 @@ describe('pickFairBatch', () => {
     const result = pickFairBatch([...a, ...b, ...c], 3, 4);
     expect(result).toHaveLength(4);
   });
+
+  it('returns nothing when perUser is 0', () => {
+    const candidates = [1, 2, 3].map((n) => ({ userId: 'A', id: `a${n}` }));
+    expect(pickFairBatch(candidates, 0, 8)).toEqual([]);
+  });
 });
 
 describe('CardWorkerService', () => {
@@ -87,6 +92,8 @@ describe('CardWorkerService', () => {
           }),
           OR: [{ card: null }, { card: { model: { not: extractor.model } } }],
         }),
+        orderBy: { receivedAt: 'desc' },
+        take: 32, // CARD_BATCH_PER_TICK * 4
       }),
     );
 
@@ -121,8 +128,9 @@ describe('CardWorkerService', () => {
         importance: SAMPLE_CARD.importance,
         injectionSuspected: SAMPLE_CARD.injectionSuspected,
         failed: false,
+        extractedAt: expect.any(Date),
       }),
-      update: expect.objectContaining({ failed: false }),
+      update: expect.objectContaining({ failed: false, extractedAt: expect.any(Date) }),
     });
     expect(result.classified).toBe(1);
     expect(result.failed).toBe(0);
@@ -148,8 +156,9 @@ describe('CardWorkerService', () => {
         importance: 'normal',
         injectionSuspected: false,
         failed: true,
+        extractedAt: expect.any(Date),
       }),
-      update: expect.objectContaining({ failed: true }),
+      update: expect.objectContaining({ failed: true, extractedAt: expect.any(Date) }),
     });
     expect(result.failed).toBe(1);
     expect(result.classified).toBe(0);

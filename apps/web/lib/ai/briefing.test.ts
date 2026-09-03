@@ -201,15 +201,21 @@ const mkCard = (id: string, extra: Partial<BriefingCard> = {}): BriefingCard => 
 });
 
 describe('buildReduceInput', () => {
-  it('keeps only the newest card per conversation and includes ids', () => {
+  it('keeps only the newest card per conversation, cited via short aliases — never raw ids', () => {
     const input = buildReduceInput([
-      mkCard('old', { conversationId: 'c1', receivedAt: '2026-09-01T08:00:00Z' }),
-      mkCard('new', { conversationId: 'c1', receivedAt: '2026-09-02T09:00:00Z' }),
-      mkCard('solo'),
+      mkCard('old', { conversationId: 'c1', receivedAt: '2026-09-01T08:00:00Z', gist: 'stale position' }),
+      mkCard('new', { conversationId: 'c1', receivedAt: '2026-09-02T09:00:00Z', gist: 'latest position' }),
+      mkCard('solo', { gist: 'solo topic' }),
     ]);
-    expect(input).toContain('"new"');
-    expect(input).toContain('"solo"');
-    expect(input).not.toContain('"old"');
+    expect(input).toContain('latest position');
+    expect(input).toContain('solo topic');
+    expect(input).not.toContain('stale position');
+    // Raw message ids must never reach the model — it would have to transcribe
+    // them into citations, and garbled/swapped ids open the wrong email.
+    expect(input).not.toContain('"new"');
+    expect(input).not.toContain('"solo"');
+    expect(input).toContain('"id":"s1"');
+    expect(input).toContain('"id":"s2"');
   });
   it('contains card fields but never raw email markers', () => {
     const input = buildReduceInput([mkCard('a', { gist: 'Approve budget' })]);
@@ -229,18 +235,26 @@ describe('buildReduceInput', () => {
 
 describe('parseBriefJson', () => {
   const cards = [mkCard('m1', { injectionSuspected: true }), mkCard('m2')];
+  // The model cites the short aliases from buildReduceInput: s1 → m1, s2 → m2.
   const RAW = JSON.stringify({
-    needsDecision: [{ text: 'Approve the Q3 budget', messageIds: ['m1'] }],
+    needsDecision: [{ text: 'Approve the Q3 budget', messageIds: ['s1'] }],
     waitingOnYou: [], youPromised: [],
-    deadlines: [{ text: 'Report due Friday', messageIds: ['m2', 'ghost'] }],
+    deadlines: [{ text: 'Report due Friday', messageIds: ['s2', 's9'] }],
     worthKnowing: [],
   });
-  it('parses sections and flags items sourced from suspicious messages', () => {
+  it('maps alias citations to real message ids and flags suspicious sources', () => {
     const brief = parseBriefJson(RAW, cards);
     expect(brief?.needsDecision[0]).toMatchObject({ messageIds: ['m1'], flagged: true });
   });
-  it('drops unknown message ids from items', () => {
+  it('drops citations of unknown aliases', () => {
     expect(parseBriefJson(RAW, cards)?.deadlines[0].messageIds).toEqual(['m2']);
+  });
+  it('still accepts a raw known message id as a citation fallback', () => {
+    const raw = JSON.stringify({
+      needsDecision: [{ text: 'x', messageIds: ['m2', 'ghost'] }],
+      waitingOnYou: [], youPromised: [], deadlines: [], worthKnowing: [],
+    });
+    expect(parseBriefJson(raw, cards)?.needsDecision[0].messageIds).toEqual(['m2']);
   });
   it('returns null on garbage', () => {
     expect(parseBriefJson('nope', cards)).toBeNull();

@@ -263,6 +263,11 @@ export const api = {
       if (USE_MOCK) return delay({ messages: MOCK_MESSAGES.filter(m => JSON.stringify(m).toLowerCase().includes(query.toLowerCase())), total: 0, offset: 0, limit: 50, hasMore: false });
       return request<any>(`/mail/search?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`);
     },
+    /** Semantic (vector) mail search — phase 4. Same response shape as `search`. */
+    semanticSearch: (query: string, limit = 5, opts?: { signal?: AbortSignal }) => {
+      if (USE_MOCK) return delay({ messages: [], total: 0, offset: 0, limit, hasMore: false });
+      return request<any>(`/mail/search/semantic?q=${encodeURIComponent(query)}&limit=${limit}`, { signal: opts?.signal });
+    },
     send: (payload: any) => {
       if (USE_MOCK) return delay({ success: true });
       return request<any>('/mail/send', { method: 'POST', body: JSON.stringify(payload) });

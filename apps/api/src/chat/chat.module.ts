@@ -5,10 +5,11 @@ import { AiModule } from '../ai/ai.module';
 import { RetrievalService } from './retrieval.service';
 import { InboxChatService } from './inbox-chat.service';
 import { ChatController } from './chat.controller';
+import { SemanticSearchController } from './semantic-search.controller';
 
 @Module({
   imports: [PrismaModule, MailModule, AiModule],
   providers: [RetrievalService, InboxChatService],
-  controllers: [ChatController],
+  controllers: [ChatController, SemanticSearchController],
 })
 export class ChatModule {}

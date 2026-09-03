@@ -399,13 +399,13 @@ describe('generateBriefing', () => {
   });
 
   describe('persisted-card fast path', () => {
-    it('skips card-extraction calls for messages already covered by a stored card', async () => {
+    it('skips card-extraction calls and hydration for messages already covered by a stored card', async () => {
       const chatCalls: any[] = [];
       const client = { chat: async (o: any) => { chatCalls.push(o); return o.messages[1].content.startsWith('CARDS:') ? jsonBrief : jsonCard; } };
       const stored = [mkCard('a'), mkCard('b')];
-      const mail = fakeMail([msg('a', 1), msg('b', 2), msg('c', 3)], [], {}, {
-        getWindowCards: async () => ({ cards: stored }),
-      });
+      const base = fakeMail([msg('a', 1), msg('b', 2), msg('c', 3)], []);
+      const getMessage = vi.fn(base.getMessage);
+      const mail = { ...base, getMessage, getWindowCards: async () => ({ cards: stored }) };
       const result = await generateBriefing(
         { client: client as any, mail: mail as any, model: 'test' },
         { window: '24h', now: NOW },
@@ -415,6 +415,10 @@ describe('generateBriefing', () => {
       expect(cardCalls).toHaveLength(1);
       expect(chatCalls).toHaveLength(2);
       expect(result.coveredCount).toBe(3);
+      // Hydration (getMessage) must be skipped entirely for the stored ids —
+      // only the straggler 'c' should ever hit it.
+      expect(getMessage).toHaveBeenCalledTimes(1);
+      expect(getMessage).toHaveBeenCalledWith('c', expect.anything());
     });
 
     it('feeds stored cards into the reduce input', async () => {

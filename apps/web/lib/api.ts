@@ -485,9 +485,9 @@ export const api = {
       if (USE_MOCK) return delay({ cards: {} });
       return request<any>(`/mail/cards?ids=${encodeURIComponent(ids.join(','))}`);
     },
-    getWindowCards: (window: string) => {
+    getWindowCards: (window: string, opts?: { signal?: AbortSignal }) => {
       if (USE_MOCK) return delay({ cards: [] });
-      return request<any>(`/mail/cards/window?window=${window}`);
+      return request<any>(`/mail/cards/window?window=${window}`, { signal: opts?.signal });
     },
   },
 

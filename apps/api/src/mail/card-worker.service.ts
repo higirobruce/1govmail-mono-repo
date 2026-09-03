@@ -27,6 +27,8 @@ export function commitmentRowsFromCard(card: ExtractedCard): Array<{
 }> {
   const dueHint = card.deadlines.length > 0 ? neutralizeMarkers(card.deadlines[0]) : null;
   const mk = (type: 'promised' | 'waiting', raw: string) => {
+    // Redundant with parseCardJson's own laundering — intentional defense-in-depth
+    // for fence shapes reaching stored commitment text. Do not simplify away.
     const text = neutralizeMarkers(raw).trim();
     return { type, text, dueHint, textHash: commitmentTextHash(text) };
   };

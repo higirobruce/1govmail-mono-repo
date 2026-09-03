@@ -439,7 +439,11 @@ describe('processTick commitment projection', () => {
 
   it('does not project from tombstoned cards', async () => {
     const { prisma, mailService, extractor } = makeFakes();
-    const candidate = mkCandidate('m1', 'userA', 1);
+    // Non-null conversationId so the hint updateMany would fire here too if
+    // hint-stamping weren't gated on a real (non-tombstone) card — a candidate
+    // with conversationId: null would pass this test for the wrong reason
+    // (the `if (m.conversationId)` guard, not the tombstone gate).
+    const candidate = { ...mkCandidate('m1', 'userA', 1), conversationId: 'c1' };
     prisma.message.findMany.mockResolvedValue([candidate]);
     extractor.extract.mockResolvedValue(null);
 
@@ -448,10 +452,13 @@ describe('processTick commitment projection', () => {
 
     expect(prisma.commitment.upsert).not.toHaveBeenCalled();
     // The hourly archive sweep still fires on this (first) tick regardless of
-    // the tombstone — only the per-message hint stamping is gated on `card`.
-    expect(prisma.commitment.updateMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ suggestResolve: true }) }),
+    // the tombstone (its updateMany carries `data: { status: 'archived' }`) —
+    // only the per-message hint-stamping updateMany (`data.suggestResolve`) is
+    // gated on `card`, so distinguish the two by payload, not call count.
+    const hintCalls = prisma.commitment.updateMany.mock.calls.filter(
+      ([args]: any) => args?.data?.suggestResolve !== undefined,
     );
+    expect(hintCalls).toHaveLength(0);
   });
 
   it('archives open commitments idle past 30 days in the hourly block', async () => {

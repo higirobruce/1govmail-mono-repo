@@ -14,6 +14,7 @@ import { TasksModule } from './tasks/tasks.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { DocsModule } from './docs/docs.module';
 import { AiModule } from './ai/ai.module';
+import { ChatModule } from './chat/chat.module';
 import { AuditModule } from './common/audit/audit.module';
 
 @Module({
@@ -37,6 +38,7 @@ import { AuditModule } from './common/audit/audit.module';
     NotificationsModule,
     DocsModule,
     AiModule,
+    ChatModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

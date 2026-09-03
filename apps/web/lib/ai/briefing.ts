@@ -248,6 +248,10 @@ export interface BriefingMailApi {
   getFolders(opts?: { signal?: AbortSignal }): Promise<unknown[]>;
   getMessages(folderId: string, limit?: number, offset?: number, opts?: { signal?: AbortSignal }): Promise<unknown>;
   getMessage(messageId: string, opts?: { signal?: AbortSignal }): Promise<unknown>;
+  /** Persisted server-side triage cards for a window — lets a repeat brief
+   *  skip hydrate+extract for messages already covered. Optional so existing
+   *  fakes/mocks keep compiling and behaving unchanged. */
+  getWindowCards?(window: BriefingWindow, opts?: { signal?: AbortSignal }): Promise<{ cards: ExtractedCard[] }>;
 }
 
 import { getCachedCard, putCachedCard } from './briefingCache';
@@ -322,10 +326,29 @@ export async function generateBriefing(
   const { selected, totalInWindow } = selectWindowMessages(inboxResult.rows, sentResult.rows, window, now);
   if (selected.length === 0) throw new Error('No messages in this time window — nothing to brief.');
 
+  // Fast path: consume persisted server-side cards for messages already
+  // covered — a repeat brief over the same window can skip hydrate+extract
+  // for them entirely. The server may return cards for messages beyond the
+  // client's selected set (e.g. past the cap); only cards for messages we
+  // actually selected count. Endpoint absence/failure degrades silently to
+  // the full client-side path below.
+  const selectedIds = new Set(selected.map((m) => m.id));
+  const stored = new Map<string, BriefingCard>();
+  try {
+    const res = await mail.getWindowCards?.(window, { signal });
+    for (const c of res?.cards ?? []) {
+      if (c && typeof c.messageId === 'string' && selectedIds.has(c.messageId)) {
+        stored.set(c.messageId, c);
+      }
+    }
+  } catch { /* fall back to full client-side path */ }
+
+  const toAnalyze = selected.filter((m) => !stored.has(m.id));
+
   // Hydrate bodies (and attachments, when the listing didn't include any —
   // the real listing endpoint only returns `hasAttachments`) where the
-  // listing gave none.
-  await mapWithConcurrency(selected, HYDRATE_CONCURRENCY, async (m) => {
+  // listing gave none. Messages with a stored card need no body at all.
+  await mapWithConcurrency(toAnalyze, HYDRATE_CONCURRENCY, async (m) => {
     if (m.bodyText || m.bodyHtml || signal?.aborted) return;
     try {
       const raw = await mail.getMessage(m.id, { signal });
@@ -336,9 +359,11 @@ export async function generateBriefing(
     } catch { /* card falls back to snippet, or fails and is counted */ }
   });
 
-  // Map: one card per message, cache-first.
-  let done = 0;
-  const cards = await mapWithConcurrency(selected, MAP_CONCURRENCY, async (m) => {
+  // Map: one card per remaining message, cache-first. Stored cards already
+  // count as done for progress purposes.
+  let done = stored.size;
+  if (stored.size > 0) onProgress?.({ phase: 'analyze', done, total: selected.length });
+  const freshCards = await mapWithConcurrency(toAnalyze, MAP_CONCURRENCY, async (m) => {
     const cached = getCachedCard(m.id, model);
     const card = cached ?? (await extractCard(client, model, m, signal));
     if (card && !cached) putCachedCard(m.id, model, card);
@@ -347,7 +372,7 @@ export async function generateBriefing(
   });
   if (signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
 
-  const good = cards.filter((c): c is BriefingCard => c !== null);
+  const good = [...stored.values(), ...freshCards.filter((c): c is BriefingCard => c !== null)];
   if (good.length === 0) throw new Error('Could not analyze any messages — the AI backend may be unavailable.');
 
   onProgress?.({ phase: 'compose', done: 0, total: 1 });

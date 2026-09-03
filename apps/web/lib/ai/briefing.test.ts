@@ -280,7 +280,7 @@ describe('composeBrief', () => {
 
 import { generateBriefing } from './briefing';
 
-function fakeMail(inbox: any[], sent: any[], details: Record<string, any> = {}) {
+function fakeMail(inbox: any[], sent: any[], details: Record<string, any> = {}, overrides: Record<string, any> = {}) {
   return {
     getFolders: async () => [
       { id: 'f-in', path: '/Inbox' }, { id: 'f-sent', path: '/Sent' }, { id: 'f-junk', path: '/Junk' },
@@ -290,6 +290,7 @@ function fakeMail(inbox: any[], sent: any[], details: Record<string, any> = {}) 
       hasMore: false,
     }),
     getMessage: async (id: string) => details[id] ?? { ...inbox.concat(sent).find((m) => m.id === id), bodyText: `full body of ${id}` },
+    ...overrides,
   };
 }
 const jsonCard = '{"gist":"g","asksOfMe":["decide"],"importance":"high"}';
@@ -395,5 +396,88 @@ describe('generateBriefing', () => {
       { window: '24h', now: NOW },
     );
     expect(result.totalIsLowerBound).toBe(false);
+  });
+
+  describe('persisted-card fast path', () => {
+    it('skips card-extraction calls for messages already covered by a stored card', async () => {
+      const chatCalls: any[] = [];
+      const client = { chat: async (o: any) => { chatCalls.push(o); return o.messages[1].content.startsWith('CARDS:') ? jsonBrief : jsonCard; } };
+      const stored = [mkCard('a'), mkCard('b')];
+      const mail = fakeMail([msg('a', 1), msg('b', 2), msg('c', 3)], [], {}, {
+        getWindowCards: async () => ({ cards: stored }),
+      });
+      const result = await generateBriefing(
+        { client: client as any, mail: mail as any, model: 'test' },
+        { window: '24h', now: NOW },
+      );
+      // Only 'c' needs a card-extraction call; plus 1 reduce call.
+      const cardCalls = chatCalls.filter((c) => !c.messages[1].content.startsWith('CARDS:'));
+      expect(cardCalls).toHaveLength(1);
+      expect(chatCalls).toHaveLength(2);
+      expect(result.coveredCount).toBe(3);
+    });
+
+    it('feeds stored cards into the reduce input', async () => {
+      const chatCalls: any[] = [];
+      const client = { chat: async (o: any) => { chatCalls.push(o); return o.messages[1].content.startsWith('CARDS:') ? jsonBrief : jsonCard; } };
+      const stored = [mkCard('a', { gist: 'Stored gist about the annex' })];
+      const mail = fakeMail([msg('a', 1)], [], {}, {
+        getWindowCards: async () => ({ cards: stored }),
+      });
+      await generateBriefing(
+        { client: client as any, mail: mail as any, model: 'test' },
+        { window: '24h', now: NOW },
+      );
+      const reduceCall = chatCalls.find((c) => c.messages[1].content.startsWith('CARDS:'));
+      expect(reduceCall.messages[1].content).toContain('Stored gist about the annex');
+    });
+
+    it('ignores stored cards for messages outside the selected set', async () => {
+      const chatCalls: any[] = [];
+      const client = { chat: async (o: any) => { chatCalls.push(o); return o.messages[1].content.startsWith('CARDS:') ? jsonBrief : jsonCard; } };
+      const stored = [mkCard('a'), mkCard('not-selected')];
+      const mail = fakeMail([msg('a', 1)], [], {}, {
+        getWindowCards: async () => ({ cards: stored }),
+      });
+      const result = await generateBriefing(
+        { client: client as any, mail: mail as any, model: 'test' },
+        { window: '24h', now: NOW },
+      );
+      // Only the one selected message counts toward coverage; the stray
+      // stored card for a message outside the window/cap is ignored.
+      expect(result.coveredCount).toBe(1);
+    });
+
+    it('degrades silently to the full client-side path when getWindowCards throws', async () => {
+      const chatCalls: any[] = [];
+      const client = { chat: async (o: any) => { chatCalls.push(o); return o.messages[1].content.startsWith('CARDS:') ? jsonBrief : jsonCard; } };
+      const mail = fakeMail([msg('a', 1)], [], {}, {
+        getWindowCards: async () => { throw new Error('endpoint unavailable'); },
+      });
+      const result = await generateBriefing(
+        { client: client as any, mail: mail as any, model: 'test' },
+        { window: '24h', now: NOW },
+      );
+      expect(result.coveredCount).toBe(1);
+      expect(chatCalls).toHaveLength(2); // 1 card + 1 reduce
+    });
+
+    it('regression: a deps.mail without getWindowCards behaves exactly as today', async () => {
+      const chatCalls: any[] = [];
+      const client = { chat: async (o: any) => { chatCalls.push(o); return o.messages[1].content.startsWith('CARDS:') ? jsonBrief : jsonCard; } };
+      const progress: any[] = [];
+      const result = await generateBriefing(
+        { client: client as any, mail: fakeMail([msg('a', 1), msg('b', 2)], [msg('s', 3)]) as any, model: 'test' },
+        { window: '24h', now: NOW },
+        (p) => progress.push(p),
+      );
+      expect(result.coveredCount).toBe(3);
+      expect(result.totalInWindow).toBe(3);
+      expect(result.failedCount).toBe(0);
+      expect(result.brief.needsDecision).toHaveLength(1);
+      expect(progress.some((p) => p.phase === 'analyze')).toBe(true);
+      // 3 card calls + 1 reduce call — unchanged from before this feature.
+      expect(chatCalls).toHaveLength(4);
+    });
   });
 });

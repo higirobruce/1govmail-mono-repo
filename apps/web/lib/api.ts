@@ -489,6 +489,23 @@ export const api = {
       if (USE_MOCK) return delay({ cards: [] });
       return request<any>(`/mail/cards/window?window=${window}`, { signal: opts?.signal });
     },
+
+    // ── Commitments ledger ──────────────────────────────────────────────────
+    getCommitments: (status: 'open' | 'archived', opts?: { signal?: AbortSignal }) => {
+      if (USE_MOCK) return delay<CommitmentsResponse>({ promised: [], waiting: [], openCount: 0 });
+      return request<CommitmentsResponse>(`/mail/commitments?status=${status}`, { signal: opts?.signal });
+    },
+    updateCommitment: (id: string, status: 'done' | 'dismissed' | 'open') => {
+      if (USE_MOCK) return delay(undefined);
+      return request<void>(`/mail/commitments/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+    },
+    promoteCommitment: (id: string) => {
+      if (USE_MOCK) return delay({ taskId: `mock-task-${Date.now()}` });
+      return request<{ taskId: string }>(`/mail/commitments/${id}/promote`, { method: 'POST' });
+    },
   },
 
   settings: {
@@ -796,6 +813,29 @@ export const api = {
       request<Doc>(`/docs/shared/${token}`, { method: 'PATCH', body: JSON.stringify(data) }),
   },
 };
+
+export interface Commitment {
+  id: string;
+  conversationId: string | null;
+  messageId: string;
+  type: 'promised' | 'waiting';
+  text: string;
+  dueHint: string | null;
+  status: 'open' | 'done' | 'dismissed' | 'archived' | 'promoted';
+  suggestResolve: boolean;
+  hintMessageId: string | null;
+  taskId: string | null;
+  extractedAt: string;
+  lastActivityAt: string;
+  resolvedAt: string | null;
+  counterparty: string | null;
+}
+
+export interface CommitmentsResponse {
+  promised: Commitment[];
+  waiting: Commitment[];
+  openCount: number;
+}
 
 export interface Doc {
   id: string;

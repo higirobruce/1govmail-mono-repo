@@ -32,12 +32,17 @@ function phaseLabel(p: BriefingProgress): string {
  * result yet, the user presses Regenerate, or the time window changes; an
  * in-flight run keeps going while collapsed (the pill shows its progress).
  */
-export default function BriefingPanel({ open, expanded, onToggleExpanded, onOpenMessage }: {
+export default function BriefingPanel({
+  open, expanded, onToggleExpanded, onOpenMessage, openCommitmentsCount, onOpenCommitments,
+}: {
   /** Mounted — the page sets this true on first use and keeps it true. */
   open: boolean;
   expanded: boolean;
   onToggleExpanded: (expanded: boolean) => void;
   onOpenMessage: (messageId: string) => void;
+  /** Count from the same React Query the commitments badge uses — passed in rather than double-fetched. */
+  openCommitmentsCount?: number;
+  onOpenCommitments?: () => void;
 }) {
   const model = useAIStore((s) => s.model);
   const [window_, setWindow] = useState<BriefingWindow>('24h');
@@ -260,6 +265,15 @@ export default function BriefingPanel({ open, expanded, onToggleExpanded, onOpen
 
       {/* Footer */}
       <div className="shrink-0 space-y-1 border-t border-border/30 px-4 py-2.5">
+        {!!openCommitmentsCount && openCommitmentsCount > 0 && onOpenCommitments && (
+          <button
+            type="button"
+            onClick={() => { onToggleExpanded(false); onOpenCommitments(); }}
+            className="text-[11px] font-medium text-primary hover:underline"
+          >
+            {openCommitmentsCount} open commitment{openCommitmentsCount === 1 ? '' : 's'} →
+          </button>
+        )}
         {result && (
           <p className="text-[11px] text-muted-foreground/60">
             Covered {result.coveredCount} of {result.totalInWindow}{result.totalIsLowerBound ? '+' : ''} messages

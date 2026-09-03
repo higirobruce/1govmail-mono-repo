@@ -16,12 +16,13 @@ import MailDetail from '@/components/mail/MailDetail';
 import ThreadView from '@/components/mail/ThreadView';
 import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
 import BriefingPanel from '@/components/mail/BriefingPanel';
+import CommitmentsPanel from '@/components/mail/CommitmentsPanel';
 import TaskModal from '@/components/tasks/TaskModal';
 import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Input } from '@/components/ui/input';
-import { Search, RefreshCw, Sparkles, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
+import { Search, RefreshCw, Sparkles, ClipboardCheck, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOffline } from '@/lib/offline/provider';
 import { toast } from 'sonner';
@@ -298,6 +299,18 @@ export default function MailPage() {
   // toggles drawer vs floating pill.
   const [briefingOpen, setBriefingOpen] = useState(false);
   const [briefingExpanded, setBriefingExpanded] = useState(false);
+
+  // ── Commitments ledger ──────────────────────────────────────────────────────
+  // Always-mounted 'open' query — its data feeds both the toolbar badge and
+  // the panel's initial list; row mutations invalidate the ['commitments']
+  // prefix so this refetches along with the panel's on-demand archived view.
+  const { data: commitmentsData, isLoading: commitmentsLoading } = useQuery({
+    queryKey: ['commitments', 'open'],
+    queryFn: () => api.mail.getCommitments('open'),
+    staleTime: 60_000,
+    enabled: aiEnabled,
+  });
+  const [commitmentsOpen, setCommitmentsOpen] = useState(false);
 
   // ── Electron background polling ────────────────────────────────────────────
   // Tracks the last known inbox unread count so we can detect new arrivals.
@@ -1092,6 +1105,20 @@ export default function MailPage() {
                       <Sparkles className="w-3.5 h-3.5" />
                     </button>
                   )}
+                  {aiEnabled && (
+                    <button
+                      onClick={() => setCommitmentsOpen(true)}
+                      title="Commitments"
+                      className="relative p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
+                    >
+                      <ClipboardCheck className="w-3.5 h-3.5" />
+                      {!!commitmentsData?.openCount && commitmentsData.openCount > 0 && (
+                        <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold leading-none text-primary-foreground tabular-nums">
+                          {commitmentsData.openCount > 99 ? '99+' : commitmentsData.openCount}
+                        </span>
+                      )}
+                    </button>
+                  )}
                   <button
                     onClick={() => refetchMessages()}
                     disabled={loadingMessages}
@@ -1335,6 +1362,17 @@ export default function MailPage() {
         expanded={briefingExpanded}
         onToggleExpanded={setBriefingExpanded}
         onOpenMessage={(id) => void openMessage(id)}
+        openCommitmentsCount={commitmentsData?.openCount}
+        onOpenCommitments={() => setCommitmentsOpen(true)}
+      />
+
+      <CommitmentsPanel
+        open={commitmentsOpen}
+        onClose={() => setCommitmentsOpen(false)}
+        onOpenMessage={(id) => void openMessage(id)}
+        data={commitmentsData}
+        isLoading={commitmentsLoading}
+        onMutated={() => queryClient.invalidateQueries({ queryKey: ['commitments'] })}
       />
     </div>
   );

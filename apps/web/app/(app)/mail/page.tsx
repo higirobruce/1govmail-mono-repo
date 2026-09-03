@@ -1394,6 +1394,8 @@ export default function MailPage() {
       <GlobalSearch
         open={globalSearchOpen}
         onClose={() => setGlobalSearchOpen(false)}
+        onAsk={(q) => { setCommitmentsOpen(false); setBriefingOpen(false); setAskPrefill(q); setAskOpen(true); }}
+        onOpenMessage={(id) => void openMessage(id)}
       />
 
       <BriefingPanel

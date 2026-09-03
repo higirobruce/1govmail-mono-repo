@@ -70,6 +70,11 @@ export class ChatController {
     try {
       upstream = await this.aiService.upstream(prepared.upstreamBody, ac.signal);
     } catch (err: any) {
+      if (ac.signal.aborted) {
+        // Client disconnected — nothing to deliver, don't write an error delta.
+        res.end();
+        return;
+      }
       // Headers are already out — deliver the failure as a readable delta.
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `⚠ ${err?.message ?? 'AI backend error'}` } }] })}\n\n`);
       res.write('data: [DONE]\n\n');

@@ -118,6 +118,8 @@ Pre-deploy checklist (VM):
 
 **Standalone desktop variant:** runs SQLite, which cannot host pgvector. Phase 4 features are gated on a Postgres datasource — the worker doesn't start and the panel/endpoints are hidden. No keyword-only fallback in v1.
 
+Amendment (2026-09-04, final review): no runtime Postgres-datasource gate was added — the desktop-standalone api bundle predates phases 1–3 entirely, so it contains none of this code and the gate is vacuously satisfied. If that bundle is ever regenerated from the current API, this gate must be revisited: the embed worker and chat module assume Postgres/pgvector and will fail at the migration step on SQLite.
+
 ## Testing
 
 - **Shared:** `chunkForEmbedding` (boundaries, subject prefix, max-chunk cap); chat prompt builder (fencing applied to every source, language rule named, alias format); citation-parsing regex.

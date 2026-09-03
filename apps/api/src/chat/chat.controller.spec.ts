@@ -67,6 +67,33 @@ describe('ChatController.inboxChat', () => {
     expect(res.end).toHaveBeenCalled();
   });
 
+  it('does not write an error delta when the upstream failure is the client\'s own abort', async () => {
+    const prepared = {
+      sources: [{ alias: 's1', messageId: 'm1' }],
+      degraded: { vector: false, keyword: false },
+      upstreamBody: { model: 'x', messages: [], stream: true },
+      noSourcesReply: null,
+    };
+    const inboxChat = { prepare: jest.fn().mockResolvedValue(prepared), chatModel: 'x' };
+    let closeCb: (() => void) | undefined;
+    const aiService = {
+      upstream: jest.fn(async () => {
+        closeCb?.(); // simulate the client disconnecting, which aborts the controller's signal
+        throw new Error('The operation was aborted');
+      }),
+    };
+    const controller = new ChatController(inboxChat as any, aiService as any);
+    const { res, writes } = fakeRes();
+    res.on = jest.fn((event: string, cb: () => void) => { if (event === 'close') closeCb = cb; });
+
+    await controller.inboxChat(req, res, { messages: [{ role: 'user', content: 'q' }] } as any);
+
+    const all = writes.join('');
+    expect(all).not.toContain('AI backend error');
+    expect(all).not.toContain('⚠');
+    expect(res.end).toHaveBeenCalled();
+  });
+
   it('emits the canned no-sources reply as a delta and [DONE] without calling the model', async () => {
     const prepared = {
       sources: [], degraded: { vector: false, keyword: false },

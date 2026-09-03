@@ -93,6 +93,19 @@ describe('EmbedWorkerService', () => {
     expect(result.failed).toBe(1);
   });
 
+  it('clears stale other-model rows for the message before writing the tombstone', async () => {
+    const { prisma, mailService, embedder } = makeFakes();
+    prisma.message.findMany.mockResolvedValue([mkCandidate('m1', 'userA', 1)]);
+    mailService.getMessage.mockResolvedValue({ bodyText: '', bodyHtml: null });
+
+    const svc = new EmbedWorkerService(prisma as any, mailService as any, embedder as any);
+    await svc.processTick();
+
+    expect(prisma.messageEmbedding.deleteMany).toHaveBeenCalledWith({
+      where: { messageId: 'm1', model: { not: 'bge-m3:latest' } },
+    });
+  });
+
   it('retries a network failure up to 3 consecutive ticks, then tombstones', async () => {
     const { prisma, mailService, embedder } = makeFakes();
     prisma.message.findMany.mockResolvedValue([mkCandidate('m1', 'userA', 1)]);

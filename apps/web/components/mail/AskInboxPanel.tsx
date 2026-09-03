@@ -30,6 +30,13 @@ interface LinkedCommitment { id: string; messageId: string; text: string }
 
 function DegradedNotice({ degraded }: { degraded: InboxChatDegraded }) {
   if (!degraded.vector && !degraded.keyword) return null;
+  if (degraded.vector && degraded.keyword) {
+    return (
+      <p className="text-[10.5px] italic text-muted-foreground/60">
+        Search backends unavailable — the answer may be incomplete.
+      </p>
+    );
+  }
   return (
     <p className="text-[10.5px] italic text-muted-foreground/60">
       {degraded.keyword
@@ -181,11 +188,13 @@ export default function AskInboxPanel({
     if (!q || streaming) return;
     setError(null);
     setInput('');
-    const history: InboxChatTurn[] = [...turns.map((t) => ({ role: t.role, content: t.content })), { role: 'user', content: q }]
+    const history: InboxChatTurn[] = [...turns.map((t) => ({ role: t.role, content: t.content.slice(0, 4000) })), { role: 'user', content: q }]
       .slice(-MAX_SENT_TURNS) as InboxChatTurn[];
     setTurns((prev) => [...prev, { role: 'user', content: q }]);
     setStreaming(true);
     setPendingSources([]);
+    setPendingDegraded({ vector: false, keyword: false });
+    pendingDegradedRef.current = { vector: false, keyword: false };
     stream.reset();
     const ac = new AbortController();
     abortRef.current = ac;

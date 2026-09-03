@@ -104,7 +104,7 @@ export class RetrievalService {
              (e."embedding" <=> ${vecText}::vector) AS distance
       FROM "message_embeddings" e
       JOIN "messages" m ON m."id" = e."messageId"
-      WHERE e."userId" = ${userId} AND e."failed" = false AND e."embedding" IS NOT NULL
+      WHERE e."userId" = ${userId} AND e."failed" = false AND e."embedding" IS NOT NULL AND e."model" = ${this.embedder.model}
       ORDER BY e."embedding" <=> ${vecText}::vector
       LIMIT ${limit}`;
   }

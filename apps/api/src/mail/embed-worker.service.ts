@@ -134,6 +134,12 @@ export class EmbedWorkerService {
   }
 
   private async tombstone(m: EmbedCandidate): Promise<void> {
+    // A model switch plus a 3-strike failure could otherwise leave stale
+    // other-model rows behind for this message — clear them before upserting
+    // the current-model tombstone.
+    await this.prisma.messageEmbedding.deleteMany({
+      where: { messageId: m.id, model: { not: this.embedder.model } },
+    });
     await this.prisma.messageEmbedding.upsert({
       where: { messageId_chunkIndex_model: { messageId: m.id, chunkIndex: 0, model: this.embedder.model } },
       create: { messageId: m.id, userId: m.userId, chunkIndex: 0, model: this.embedder.model, chunkText: '', failed: true },

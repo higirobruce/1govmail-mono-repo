@@ -20,9 +20,13 @@ interface Props {
   onClose: () => void;
   /** If provided, the search is pre-populated */
   initialQuery?: string;
+  /** If provided, "Ask your inbox" opens the panel in-place instead of pushing ?ask= */
+  onAsk?: (question: string) => void;
+  /** If provided, mail/semantic rows open the message in-place instead of pushing ?messageId= */
+  onOpenMessage?: (messageId: string) => void;
 }
 
-export function GlobalSearch({ open, onClose, initialQuery }: Props) {
+export function GlobalSearch({ open, onClose, initialQuery, onAsk, onOpenMessage }: Props) {
   const router = useRouter();
   const aiEnabled = useAIStore((s) => s.enabled);
   const [query, setQuery] = useState(initialQuery ?? '');
@@ -125,7 +129,11 @@ export function GlobalSearch({ open, onClose, initialQuery }: Props) {
   const handleSelect = useCallback((type: string, item: any) => {
     onClose();
     if (type === 'mail') {
-      router.push(`/mail?messageId=${item.id}`);
+      if (onOpenMessage) {
+        onOpenMessage(item.id);
+      } else {
+        router.push(`/mail?messageId=${item.id}`);
+      }
     } else if (type === 'contact') {
       router.push('/contacts');
     } else if (type === 'task') {
@@ -133,12 +141,16 @@ export function GlobalSearch({ open, onClose, initialQuery }: Props) {
     } else if (type === 'event') {
       router.push('/calendar');
     }
-  }, [router, onClose]);
+  }, [router, onClose, onOpenMessage]);
 
   const handleAskSelect = useCallback(() => {
     onClose();
-    router.push('/mail?ask=' + encodeURIComponent(query.trim()));
-  }, [router, onClose, query]);
+    if (onAsk) {
+      onAsk(query.trim());
+    } else {
+      router.push('/mail?ask=' + encodeURIComponent(query.trim()));
+    }
+  }, [router, onClose, query, onAsk]);
 
   const hasResults = showAskRow || mailResults.length > 0 || dedupedSemanticResults.length > 0 ||
     filteredContacts.length > 0 || filteredTasks.length > 0 || filteredEvents.length > 0;

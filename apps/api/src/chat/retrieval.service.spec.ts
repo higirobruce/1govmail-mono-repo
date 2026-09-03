@@ -37,6 +37,21 @@ describe('RetrievalService.retrieve', () => {
     expect(result.degraded).toEqual({ vector: false, keyword: false });
   });
 
+  it('scopes the vector query to the embedder\'s current model, excluding stale other-model rows', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    prisma.$queryRaw.mockResolvedValue([vecRow('m1')]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    await svc.retrieve('user1', 'budget');
+
+    const [strings, ...values] = prisma.$queryRaw.mock.calls[0];
+    // Tagged-template call: strings has an interpolation slot right after
+    // "embedding IS NOT NULL AND e.\"model\" =" and the current model is one
+    // of the interpolated values.
+    expect(strings.join('')).toContain('e."model" =');
+    expect(values).toContain(embedder.model);
+  });
+
   it('sends extracted keywords (not the raw question) to the Zimbra leg, scoped to 90 days', async () => {
     const { prisma, embedder, mailService } = makeFakes();
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);

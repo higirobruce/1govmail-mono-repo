@@ -46,6 +46,7 @@ model User {
   docActivity            DocActivity[]
   auditLogs              AuditLog[]
   messageCards           MessageCard[]
+  commitments            Commitment[]
 
   @@map("users")
 }
@@ -187,6 +188,30 @@ model MessageCard {
 
   @@index([userId, extractedAt])
   @@map("message_cards")
+}
+
+model Commitment {
+  id             String    @id @default(cuid())
+  userId         String
+  conversationId String?
+  messageId      String    // source message (kept even after its card purges)
+  type           String    // 'promised' | 'waiting'
+  text           String
+  dueHint        String?   // fuzzy, as stated in the mail ("by Friday")
+  status         String    @default("open") // open | done | dismissed | archived | promoted
+  suggestResolve Boolean   @default(false)
+  hintMessageId  String?   // newest conversation message that triggered the hint
+  taskId         String?   // set when promoted to a Task
+  textHash       String    // sha256 of normalized text — dedupe key
+  extractedAt    DateTime  @default(now())
+  lastActivityAt DateTime  @default(now())
+  resolvedAt     DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, textHash])
+  @@index([userId, status, lastActivityAt])
+  @@map("commitments")
 }
 
 // ─── Contacts ────────────────────────────────────────────────────────────────

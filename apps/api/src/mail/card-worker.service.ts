@@ -1,6 +1,7 @@
+import { createHash } from 'crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { formatAttachments, type CardSource, type ExtractedCard } from '@email-client/shared';
+import { formatAttachments, neutralizeMarkers, type CardSource, type ExtractedCard } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail.service';
 import { CardExtractorService } from './card-extractor.service';
@@ -10,6 +11,28 @@ const CARD_RETENTION_DAYS = 90;
 const CARD_BATCH_PER_TICK = 8;
 const CARD_PER_USER_PER_TICK = 3;
 const DAY_MS = 86_400_000;
+export const COMMITMENT_IDLE_ARCHIVE_DAYS = 30;
+
+/** sha256 hex of normalized (lowercased, whitespace-collapsed) text — dedupe key. */
+export function commitmentTextHash(text: string): string {
+  return createHash('sha256').update(text.toLowerCase().replace(/\s+/g, ' ').trim()).digest('hex');
+}
+
+/** Rows to project from one card: [] for tombstones/received-without-waitingOn etc. */
+export function commitmentRowsFromCard(card: ExtractedCard): Array<{
+  type: 'promised' | 'waiting';
+  text: string;
+  dueHint: string | null;
+  textHash: string;
+}> {
+  const dueHint = card.deadlines.length > 0 ? neutralizeMarkers(card.deadlines[0]) : null;
+  const mk = (type: 'promised' | 'waiting', raw: string) => {
+    const text = neutralizeMarkers(raw).trim();
+    return { type, text, dueHint, textHash: commitmentTextHash(text) };
+  };
+  if (card.direction === 'sent') return card.commitmentsIMade.filter(Boolean).map((t) => mk('promised', t));
+  return card.waitingOn ? [mk('waiting', card.waitingOn)] : [];
+}
 
 interface CardCandidate {
   id: string;
@@ -161,8 +184,42 @@ export class CardWorkerService {
         });
 
         this.hydrationFailures.delete(m.id);
-        if (card) classified++;
-        else failed++;
+        if (card) {
+          classified++;
+
+          // Ledger projection: promises made / things awaited, deduped by content hash.
+          for (const row of commitmentRowsFromCard(card)) {
+            await this.prisma.commitment.upsert({
+              where: { userId_type_textHash: { userId: m.userId, type: row.type, textHash: row.textHash } },
+              create: {
+                userId: m.userId,
+                conversationId: m.conversationId,
+                messageId: m.id,
+                type: row.type,
+                text: row.text,
+                dueHint: row.dueHint,
+                textHash: row.textHash,
+              },
+              update: { lastActivityAt: new Date() }, // never touches status
+            });
+          }
+          // Reply hint: an open commitment in this conversation, older than this message,
+          // may have been resolved by it — flag for human review, never auto-close.
+          if (m.conversationId) {
+            await this.prisma.commitment.updateMany({
+              where: {
+                userId: m.userId,
+                conversationId: m.conversationId,
+                status: 'open',
+                extractedAt: { lt: m.receivedAt },
+                messageId: { not: m.id },
+              },
+              data: { suggestResolve: true, hintMessageId: m.id, lastActivityAt: new Date() },
+            });
+          }
+        } else {
+          failed++;
+        }
       } catch (err: any) {
         // Network/backend failure — leave unclassified so it's retried next tick,
         // up to HYDRATION_FAILURE_LIMIT consecutive failures, then tombstone it
@@ -191,6 +248,12 @@ export class CardWorkerService {
         where: { message: { receivedAt: { lt: retentionCutoff } } },
       });
       purged = result.count;
+
+      await this.prisma.commitment.updateMany({
+        where: { status: 'open', lastActivityAt: { lt: new Date(Date.now() - COMMITMENT_IDLE_ARCHIVE_DAYS * DAY_MS) } },
+        data: { status: 'archived' },
+      });
+
       this.lastPurgeAt = Date.now();
     }
 

@@ -1,4 +1,10 @@
-import { CardWorkerService, pickFairBatch } from './card-worker.service';
+import {
+  CardWorkerService,
+  pickFairBatch,
+  commitmentRowsFromCard,
+  commitmentTextHash,
+  COMMITMENT_IDLE_ARCHIVE_DAYS,
+} from './card-worker.service';
 import type { ExtractedCard } from '@email-client/shared';
 
 const now = Date.now();
@@ -22,6 +28,7 @@ function makeFakes() {
   const prisma = {
     message: { findMany: jest.fn() },
     messageCard: { upsert: jest.fn(), deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    commitment: { upsert: jest.fn(), updateMany: jest.fn() },
   };
   const mailService = { getMessage: jest.fn().mockResolvedValue({ bodyText: 'body text', bodyHtml: null }) };
   const extractor = { model: 'test-model:latest', extract: jest.fn() };
@@ -41,6 +48,23 @@ const SAMPLE_CARD: ExtractedCard = {
   commitmentsIMade: [],
   waitingOn: null,
   importance: 'high',
+  attachments: [],
+  injectionSuspected: false,
+};
+
+const baseCard: ExtractedCard = {
+  messageId: 'ignored',
+  conversationId: null,
+  direction: 'received',
+  from: 'sender@example.com',
+  subject: 'subject',
+  receivedAt: new Date(now).toISOString(),
+  gist: 'a gist',
+  asksOfMe: [],
+  deadlines: [],
+  commitmentsIMade: [],
+  waitingOn: null,
+  importance: 'normal',
   attachments: [],
   injectionSuspected: false,
 };
@@ -320,5 +344,131 @@ describe('CardWorkerService', () => {
 
     const where = prisma.message.findMany.mock.calls[0][0].where;
     expect(where.OR).toEqual([{ card: null }, { card: { model: { not: extractor.model } } }]);
+  });
+});
+
+describe('commitmentRowsFromCard', () => {
+  it('maps sent-card commitments to promised rows with the first deadline as dueHint', () => {
+    const rows = commitmentRowsFromCard({
+      ...baseCard,
+      direction: 'sent',
+      commitmentsIMade: ['Send the revised scope by Thursday'],
+      deadlines: ['Thursday'],
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        type: 'promised',
+        text: 'Send the revised scope by Thursday',
+        dueHint: 'Thursday',
+      }),
+    ]);
+    expect(rows[0].textHash).toBe(commitmentTextHash('Send the revised scope by Thursday'));
+  });
+
+  it('maps received-card waitingOn to a waiting row', () => {
+    const rows = commitmentRowsFromCard({ ...baseCard, direction: 'received', waitingOn: 'Signed authorization' });
+    expect(rows).toEqual([expect.objectContaining({ type: 'waiting', text: 'Signed authorization', dueHint: null })]);
+  });
+
+  it('projects nothing from a received card without waitingOn, and never commitments from received cards', () => {
+    expect(commitmentRowsFromCard({ ...baseCard, direction: 'received', commitmentsIMade: ['x'] })).toEqual([]);
+  });
+
+  it('launders fence shapes out of stored text', () => {
+    const rows = commitmentRowsFromCard({ ...baseCard, direction: 'received', waitingOn: '<<<EMAIL:abc123 send it' });
+    expect(rows[0].text).not.toMatch(/<<</);
+  });
+
+  it('normalizes whitespace/case for the hash only — text keeps its casing', () => {
+    expect(commitmentTextHash('Send  IT by Friday')).toBe(commitmentTextHash('send it by  friday'));
+  });
+});
+
+describe('processTick commitment projection', () => {
+  it("upserts projected rows keyed on userId+type+textHash and leaves existing rows' status alone", async () => {
+    const { prisma, mailService, extractor } = makeFakes();
+    const candidate = mkCandidate('m1', 'userA', 1, '/Sent');
+    prisma.message.findMany.mockResolvedValue([candidate]);
+    const card: ExtractedCard = {
+      ...SAMPLE_CARD,
+      direction: 'sent',
+      commitmentsIMade: ['Send the revised scope by Thursday'],
+      deadlines: ['Thursday'],
+    };
+    extractor.extract.mockResolvedValue(card);
+
+    const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
+    await svc.processTick();
+
+    const textHash = commitmentTextHash('Send the revised scope by Thursday');
+    expect(prisma.commitment.upsert).toHaveBeenCalledWith({
+      where: { userId_type_textHash: { userId: 'userA', type: 'promised', textHash } },
+      create: expect.objectContaining({
+        userId: 'userA',
+        conversationId: candidate.conversationId,
+        messageId: 'm1',
+        type: 'promised',
+        text: 'Send the revised scope by Thursday',
+        dueHint: 'Thursday',
+        textHash,
+      }),
+      update: { lastActivityAt: expect.any(Date) },
+    });
+  });
+
+  it('stamps reply hints on open commitments in the same conversation from a newer message', async () => {
+    const { prisma, mailService, extractor } = makeFakes();
+    const candidate = { ...mkCandidate('m1', 'userA', 1), conversationId: 'c1' };
+    prisma.message.findMany.mockResolvedValue([candidate]);
+    extractor.extract.mockResolvedValue(SAMPLE_CARD);
+
+    const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
+    await svc.processTick();
+
+    expect(prisma.commitment.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        userId: 'userA',
+        conversationId: 'c1',
+        status: 'open',
+        extractedAt: { lt: candidate.receivedAt },
+        messageId: { not: 'm1' },
+      }),
+      data: { suggestResolve: true, hintMessageId: 'm1', lastActivityAt: expect.any(Date) },
+    });
+  });
+
+  it('does not project from tombstoned cards', async () => {
+    const { prisma, mailService, extractor } = makeFakes();
+    const candidate = mkCandidate('m1', 'userA', 1);
+    prisma.message.findMany.mockResolvedValue([candidate]);
+    extractor.extract.mockResolvedValue(null);
+
+    const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
+    await svc.processTick();
+
+    expect(prisma.commitment.upsert).not.toHaveBeenCalled();
+    // The hourly archive sweep still fires on this (first) tick regardless of
+    // the tombstone — only the per-message hint stamping is gated on `card`.
+    expect(prisma.commitment.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ suggestResolve: true }) }),
+    );
+  });
+
+  it('archives open commitments idle past 30 days in the hourly block', async () => {
+    const { prisma, mailService, extractor } = makeFakes();
+    prisma.message.findMany.mockResolvedValue([]);
+
+    const svc = new CardWorkerService(prisma as any, mailService as any, extractor as any);
+    const beforeCutoff = new Date(Date.now() - COMMITMENT_IDLE_ARCHIVE_DAYS * day);
+    await svc.processTick();
+    const afterCutoff = new Date(Date.now() - COMMITMENT_IDLE_ARCHIVE_DAYS * day);
+
+    expect(prisma.commitment.updateMany).toHaveBeenCalledWith({
+      where: { status: 'open', lastActivityAt: { lt: expect.any(Date) } },
+      data: { status: 'archived' },
+    });
+    const actualCutoff = prisma.commitment.updateMany.mock.calls[0][0].where.lastActivityAt.lt as Date;
+    expect(actualCutoff.getTime()).toBeGreaterThanOrEqual(beforeCutoff.getTime() - 1000);
+    expect(actualCutoff.getTime()).toBeLessThanOrEqual(afterCutoff.getTime() + 1000);
   });
 });

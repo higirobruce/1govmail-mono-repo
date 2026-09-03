@@ -47,6 +47,7 @@ model User {
   auditLogs              AuditLog[]
   messageCards           MessageCard[]
   commitments            Commitment[]
+  messageEmbeddings      MessageEmbedding[]
 
   @@map("users")
 }
@@ -160,6 +161,7 @@ model Message {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
   card   MessageCard?
+  embeddings MessageEmbedding[]
 
   @@unique([userId, zimbraId])
   @@index([userId, folderId])
@@ -188,6 +190,25 @@ model MessageCard {
 
   @@index([userId, extractedAt])
   @@map("message_cards")
+}
+
+model MessageEmbedding {
+  id          String                       @id @default(cuid())
+  messageId   String
+  userId      String
+  chunkIndex  Int                          // 0-based; <= 4 chunks per message
+  model       String                       // embed-model tag; model change => re-embed
+  chunkText   String                       // the embedded text — prompt context + snippet
+  embedding   Unsupported("vector(1024)")? // null on tombstone rows; written via $executeRaw
+  failed      Boolean  @default(false)     // tombstone: embedding gave up; invisible to reads
+  extractedAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, chunkIndex, model])
+  @@index([userId, extractedAt])
+  @@map("message_embeddings")
 }
 
 model Commitment {

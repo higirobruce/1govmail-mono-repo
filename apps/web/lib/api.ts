@@ -478,6 +478,17 @@ export const api = {
       if (USE_MOCK) return delay({ results: messageIds.map((id) => ({ id, success: true })) });
       return request<any>('/mail/bulk/move', { method: 'POST', body: JSON.stringify({ messageIds, folderId }) });
     },
+
+    // ── Triage cards ──────────────────────────────────────────────────────────
+    /** Fetch persisted triage cards for the given message ids (max ~100 per call). */
+    getCards: (ids: string[]) => {
+      if (USE_MOCK) return delay({ cards: {} });
+      return request<any>(`/mail/cards?ids=${encodeURIComponent(ids.join(','))}`);
+    },
+    getWindowCards: (window: string) => {
+      if (USE_MOCK) return delay({ cards: [] });
+      return request<any>(`/mail/cards/window?window=${window}`);
+    },
   },
 
   settings: {

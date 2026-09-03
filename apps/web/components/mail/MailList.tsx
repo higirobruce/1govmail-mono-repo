@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { formatDistanceToNowStrict, parseISO, startOfDay, subDays } from 'date-fns';
-import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip } from 'lucide-react';
+import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MailAvatar } from './MailAvatar';
 import { ClassificationChip } from './ClassificationChip';
@@ -26,6 +26,18 @@ interface FolderItem {
   path: string;
   type?: string;
 }
+
+export interface TriageCard {
+  label: string;
+  injectionSuspected: boolean;
+}
+
+const TRIAGE_LABEL_META: Record<string, { text: string; textClass: string; dotClass: string }> = {
+  needsDecision: { text: 'Needs decision', textClass: 'text-destructive', dotClass: 'bg-destructive' },
+  waitingOnYou: { text: 'Waiting on you', textClass: 'text-amber-600 dark:text-amber-400', dotClass: 'bg-amber-500' },
+  deadline: { text: 'Deadline', textClass: 'text-blue-600 dark:text-blue-400', dotClass: 'bg-blue-500' },
+  // fyi intentionally renders nothing — not high-signal enough to warrant a badge.
+};
 
 export interface ContextAction {
   type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'createEvent' | 'snooze' | 'mute' | 'print';
@@ -55,6 +67,8 @@ interface MailListProps {
   emptyState?: React.ReactNode;
   /** When non-empty, only messages whose `tags` array intersects this set are shown. */
   filterTagNames?: Set<string>;
+  /** Persisted triage cards keyed by message id — drives the row label badge. */
+  cardsById?: Record<string, TriageCard>;
 }
 
 type Tab = 'all' | 'unread' | 'starred';
@@ -264,6 +278,7 @@ function MailRow({
   onContextMenu,
   selected,
   onSelect,
+  card,
 }: {
   message: Message;
   active: boolean;
@@ -271,8 +286,10 @@ function MailRow({
   onContextMenu: (e: React.MouseEvent) => void;
   selected?: boolean;
   onSelect?: () => void;
+  card?: TriageCard;
 }) {
   const classification = useMemo(() => pickClassificationFromTags(message.tags), [message.tags]);
+  const labelMeta = card ? TRIAGE_LABEL_META[card.label] : undefined;
 
   return (
     <div className="px-2 pt-1 first:pt-2 last:pb-2">
@@ -364,8 +381,8 @@ function MailRow({
                 {message.snippet}
               </p>
 
-              {/* Chip strip — attachment + classification */}
-              {(message.hasAttachments || classification) && (
+              {/* Chip strip — attachment + classification + triage label */}
+              {(message.hasAttachments || classification || labelMeta || card?.injectionSuspected) && (
                 <div className="flex items-center gap-1.5 mt-1.5">
                   {message.hasAttachments && (
                     <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/80 bg-muted/60 rounded-full px-1.5 py-0.5">
@@ -374,6 +391,20 @@ function MailRow({
                     </span>
                   )}
                   {classification && <ClassificationChip value={classification} size="xs" />}
+                  {labelMeta && (
+                    <span className={cn('inline-flex items-center gap-1 text-[10px] font-medium', labelMeta.textClass)}>
+                      <span className={cn('w-1.5 h-1.5 rounded-full', labelMeta.dotClass)} aria-hidden />
+                      {labelMeta.text}
+                    </span>
+                  )}
+                  {card?.injectionSuspected && (
+                    <span title="This message contains text addressed to an AI — verify carefully">
+                      <AlertTriangle
+                        className="w-3 h-3 text-amber-500"
+                        aria-label="This message contains text addressed to an AI — verify carefully"
+                      />
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -414,6 +445,7 @@ export default function MailList({
   mutedConversationIds = [],
   emptyState,
   filterTagNames,
+  cardsById,
 }: MailListProps) {
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
@@ -613,6 +645,7 @@ export default function MailList({
                   onContextMenu={(e) => handleContextMenu(e, msg)}
                   selected={selectedIds.has(msg.id)}
                   onSelect={() => toggleSelect(msg.id)}
+                  card={cardsById?.[msg.id]}
                 />
               ))}
             </div>

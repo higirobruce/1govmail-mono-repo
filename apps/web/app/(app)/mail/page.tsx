@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
 import { api } from '@/lib/api';
+import type { TriageLabel } from '@email-client/shared';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import MailList, { type ContextAction, type BulkAction } from '@/components/mail/MailList';
@@ -24,6 +25,13 @@ import { Search, RefreshCw, Sparkles, X as XIcon, Menu, ChevronLeft } from 'luci
 import { cn } from '@/lib/utils';
 import { useOffline } from '@/lib/offline/provider';
 import { toast } from 'sonner';
+
+const TRIAGE_CHIPS: { id: TriageLabel; label: string }[] = [
+  { id: 'needsDecision', label: 'Needs decision' },
+  { id: 'waitingOnYou', label: 'Waiting on you' },
+  { id: 'deadline', label: 'Deadline' },
+  // fyi intentionally has no chip — not actionable enough to filter on.
+];
 
 export default function MailPage() {
   const router = useRouter();
@@ -91,6 +99,38 @@ export default function MailPage() {
   // Flatten paginated pages into a single messages array
   const messages: any[] = messagesData?.pages.flatMap((p: any) => p.messages) ?? [];
 
+  // ── Triage cards (Task 6 persisted extraction) ─────────────────────────────
+  // Fetches labels for the currently loaded page of messages, chunked at 100
+  // ids per request. Keyed on a stable id-list hash so it refetches only when
+  // the loaded set actually changes; staleTime matches the worker's ~1min cadence.
+  const cardMessageIds = useMemo(() => messages.map((m) => m.id), [messages]);
+  const cardMessageIdsKey = useMemo(() => cardMessageIds.join(','), [cardMessageIds]);
+
+  const { data: cardsById = {} } = useQuery({
+    queryKey: ['cards', activeFolderId, cardMessageIdsKey],
+    queryFn: async () => {
+      const chunks: string[][] = [];
+      for (let i = 0; i < cardMessageIds.length; i += 100) chunks.push(cardMessageIds.slice(i, i + 100));
+      const results = await Promise.all(chunks.map((chunk) => api.mail.getCards(chunk)));
+      const merged: Record<string, { label: TriageLabel; importance: string; injectionSuspected: boolean }> = {};
+      for (const r of results) Object.assign(merged, r?.cards ?? {});
+      return merged;
+    },
+    enabled: cardMessageIds.length > 0,
+    staleTime: 60_000,
+  });
+
+  // Counts for the chip row, computed over the loaded (unfiltered) messages.
+  const triageLabelCounts = useMemo(() => {
+    const counts: Partial<Record<TriageLabel, number>> = {};
+    for (const m of messages) {
+      const label = cardsById[m.id]?.label;
+      if (label) counts[label] = (counts[label] ?? 0) + 1;
+    }
+    return counts;
+  }, [messages, cardsById]);
+  const hasAnyTriageCard = messages.some((m) => cardsById[m.id]);
+
   /** Invalidate the current folder cache (e.g. after send/delete/move) */
   const invalidateMessages = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['messages', activeFolderId] });
@@ -141,6 +181,23 @@ export default function MailPage() {
   const clearLabelFilter = useCallback(() => setSelectedLabelNames(new Set()), []);
   // Reset filter when navigating to a different folder.
   useEffect(() => { setSelectedLabelNames(new Set()); }, [activeFolderId]);
+
+  // ── Triage label filter state ─────────────────────────────────────────────
+  // Sibling to the tag filter above, but single-select and driven by the
+  // persisted triage card's `label` rather than a message's `tags`. Clicking
+  // an active chip clears the filter; rows without a card are hidden while
+  // a chip is active.
+  const [triageLabelFilter, setTriageLabelFilter] = useState<TriageLabel | null>(null);
+  const toggleTriageLabelFilter = useCallback((label: TriageLabel) => {
+    setTriageLabelFilter((prev) => (prev === label ? null : label));
+  }, []);
+  // Reset filter when navigating to a different folder.
+  useEffect(() => { setTriageLabelFilter(null); }, [activeFolderId]);
+  // Rows without a card are filtered OUT while a chip is active.
+  const triageFilteredMessages = useMemo(() => {
+    if (!triageLabelFilter) return messages;
+    return messages.filter((m) => cardsById[m.id]?.label === triageLabelFilter);
+  }, [messages, triageLabelFilter, cardsById]);
 
   // ── Mute state ─────────────────────────────────────────────────────────────
   const [mutedConversationIds, setMutedConversationIds] = useState<string[]>([]);
@@ -1061,24 +1118,45 @@ export default function MailPage() {
             filterTagNames={selectedLabelNames}
           />
         ) : (
-          <MailList
-            key="regular"
-            messages={messages}
-            activeMessageId={activeMessageId}
-            loading={loadingMessages && messages.length === 0}
-            loadingMore={loadingMore}
-            onSelect={openMessage}
-            onLoadMore={() => { if (!loadingMore && hasNextPage) fetchNextPage(); }}
-            hasMore={!!hasNextPage}
-            onContextAction={handleContextAction}
-            onBulkAction={handleBulkAction}
-            filterTagNames={selectedLabelNames}
-            folders={folders}
-            mutedConversationIds={mutedConversationIds}
-            emptyState={showInboxZeroEmptyState ? (
-              <InboxZero celebrate={pendingInboxZero} onCelebrated={handleInboxZeroCelebrated} />
-            ) : undefined}
-          />
+          <>
+            {hasAnyTriageCard && (
+              <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border/25 shrink-0 overflow-x-auto">
+                {TRIAGE_CHIPS.map((chip) => (
+                  <button
+                    key={chip.id}
+                    onClick={() => toggleTriageLabelFilter(chip.id)}
+                    className={cn(
+                      'shrink-0 text-[11px] px-2 py-0.5 rounded-full border transition-colors',
+                      triageLabelFilter === chip.id
+                        ? 'border-primary/50 bg-primary/10 text-primary'
+                        : 'border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                    )}
+                  >
+                    {chip.label} ({triageLabelCounts[chip.id] ?? 0})
+                  </button>
+                ))}
+              </div>
+            )}
+            <MailList
+              key="regular"
+              messages={triageFilteredMessages}
+              activeMessageId={activeMessageId}
+              loading={loadingMessages && messages.length === 0}
+              loadingMore={loadingMore}
+              onSelect={openMessage}
+              onLoadMore={() => { if (!loadingMore && hasNextPage) fetchNextPage(); }}
+              hasMore={!!hasNextPage}
+              onContextAction={handleContextAction}
+              onBulkAction={handleBulkAction}
+              filterTagNames={selectedLabelNames}
+              folders={folders}
+              mutedConversationIds={mutedConversationIds}
+              cardsById={cardsById}
+              emptyState={showInboxZeroEmptyState ? (
+                <InboxZero celebrate={pendingInboxZero} onCelebrated={handleInboxZeroCelebrated} />
+              ) : undefined}
+            />
+          </>
         )}
       </div>
 

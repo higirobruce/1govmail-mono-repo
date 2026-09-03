@@ -35,10 +35,21 @@ describe('chunkForEmbedding', () => {
     expect(chunks).toEqual([`${a}\n\n${b}`]);
   });
 
-  it('hard-splits a single paragraph longer than the chunk size', () => {
-    const chunks = chunkForEmbedding({ bodyText: 'y'.repeat(2000), bodyHtml: null }, null);
-    expect(chunks.length).toBeGreaterThanOrEqual(1);
-    expect(chunks[0].length).toBeLessThanOrEqual(EMBED_CHUNK_MAX_CHARS);
+  it('hard-splits a single paragraph longer than the chunk size into multiple chunks, respecting the cap', () => {
+    // 2000 chars: should produce 2 chunks (1500 + 500)
+    const chunks2k = chunkForEmbedding({ bodyText: 'y'.repeat(2000), bodyHtml: null }, null);
+    expect(chunks2k.length).toBe(2);
+    expect(chunks2k[0].length).toBe(EMBED_CHUNK_MAX_CHARS);
+    expect(chunks2k[1].length).toBe(500);
+    expect(chunks2k.join('')).toBe('y'.repeat(2000));
+
+    // Exactly 6000 chars (no spaces): should produce exactly 4 chunks of 1500 each
+    const chunks6k = chunkForEmbedding({ bodyText: 'x'.repeat(6000), bodyHtml: null }, null);
+    expect(chunks6k.length).toBe(EMBED_MAX_CHUNKS);
+    for (let i = 0; i < EMBED_MAX_CHUNKS; i++) {
+      expect(chunks6k[i].length).toBe(EMBED_CHUNK_MAX_CHARS);
+    }
+    expect(chunks6k.join('')).toBe('x'.repeat(6000));
   });
 
   it(`never returns more than ${EMBED_MAX_CHUNKS} chunks`, () => {

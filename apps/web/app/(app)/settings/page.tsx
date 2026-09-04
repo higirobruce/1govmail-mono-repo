@@ -21,7 +21,7 @@ import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import {
   User, Pen, Shield, Mail, Loader2, Plus, Trash2,
-  Check, ChevronRight, RotateCcw, FileSignature,
+  Check, ChevronRight, ArrowLeft, RotateCcw, FileSignature,
   Palmtree, Settings2, Sparkles, AlertTriangle, Ban,
   Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
   Monitor, LogOut,
@@ -136,7 +136,8 @@ function NavItem({ icon: Icon, label, active, onClick }: {
     <button
       onClick={onClick}
       className={cn(
-        'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-sm transition-colors',
+        // Chip in the mobile horizontal tab bar; full-width row in the md+ rail.
+        'shrink-0 whitespace-nowrap md:w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-sm transition-colors',
         active
           ? 'bg-primary/10 text-primary font-medium'
           : 'text-muted-foreground/70 hover:bg-muted/50 hover:text-foreground',
@@ -144,7 +145,7 @@ function NavItem({ icon: Icon, label, active, onClick }: {
     >
       <Icon className="w-4 h-4 shrink-0" />
       {label}
-      {active && <ChevronRight className="w-3.5 h-3.5 ml-auto opacity-50" />}
+      {active && <ChevronRight className="hidden md:block w-3.5 h-3.5 ml-auto opacity-50" />}
     </button>
   );
 }
@@ -445,7 +446,7 @@ export default function SettingsPage() {
   if (!hydrated) return null;
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="flex flex-col md:flex-row h-screen bg-background overflow-hidden">
       <Sidebar
         folders={[]}
         activeFolderId=""
@@ -453,9 +454,21 @@ export default function SettingsPage() {
         onCompose={() => router.push('/mail')}
       />
 
-      {/* ── Settings nav ── */}
-      <div className="w-56 shrink-0 flex flex-col border-r border-border/50 h-full bg-card/50 py-4 px-3 gap-1">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/40 px-2 mb-2">
+      {/* ── Settings nav — side rail from md up, horizontal scrollable tab bar on phones ── */}
+      <div className={cn(
+        'shrink-0 bg-card/50',
+        'flex flex-row items-center gap-1 overflow-x-auto border-b border-border/50 px-2 py-2',
+        'md:w-56 md:h-full md:flex-col md:items-stretch md:overflow-x-visible md:border-b-0 md:border-r md:px-3 md:py-4',
+      )}>
+        {/* The app sidebar is hidden below lg, so this is the only way back to mail on phones/tablets */}
+        <button
+          onClick={() => router.push('/mail')}
+          className="lg:hidden shrink-0 whitespace-nowrap md:w-full flex items-center gap-2 px-3 py-2 md:mb-1 rounded-lg text-sm text-muted-foreground/70 hover:bg-muted/50 hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4 shrink-0" />
+          Mail
+        </button>
+        <p className="hidden md:block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/40 px-2 mb-2">
           Settings
         </p>
         <NavItem icon={User}          label="Profile"       active={section === 'profile'}     onClick={() => setSection('profile')} />
@@ -468,8 +481,8 @@ export default function SettingsPage() {
       </div>
 
       {/* ── Main content ── */}
-      <ScrollArea className="flex-1 min-w-0 h-full">
-        <div className="max-w-2xl mx-auto px-8 py-8">
+      <ScrollArea className="flex-1 min-w-0 min-h-0 md:h-full">
+        <div className="max-w-2xl mx-auto px-4 py-6 sm:px-6 md:px-8 md:py-8">
           {loading ? (
             <div className="flex items-center justify-center py-24">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/40" />
@@ -861,7 +874,7 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
 
       {enabled && (
         <div className="mt-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Away from</Label>
               <DateTimePicker

@@ -1010,14 +1010,18 @@ export default function ThreadView({
         <aside
           aria-hidden={!summaryOpen}
           className={cn(
-            'absolute top-3 right-3 w-[340px] xl:w-[380px] max-h-[55vh] z-20',
+            // Below lg the floating top-right card has no room — render as a
+            // fixed bottom sheet instead so tapping Summarize on a phone shows
+            // the stream rather than spending tokens into an invisible panel.
+            // z-[45]: above the AI drawers (z-40/41), below compose (z-50).
+            'fixed inset-x-2 bottom-2 z-[45] max-h-[55vh]',
+            'lg:absolute lg:inset-x-auto lg:bottom-auto lg:top-3 lg:right-3 lg:w-[340px] xl:w-[380px] lg:z-20',
             'rounded-xl border border-border/40 bg-card shadow-xl',
             'flex flex-col overflow-hidden',
             'transition-all duration-200 ease-out',
-            'hidden lg:flex',
             summaryOpen
-              ? 'translate-x-0 opacity-100 scale-100'
-              : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
+              ? 'translate-y-0 lg:translate-x-0 opacity-100 scale-100'
+              : 'translate-y-[130%] lg:translate-y-0 lg:translate-x-[120%] opacity-0 scale-95 pointer-events-none',
           )}
         >
           <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">

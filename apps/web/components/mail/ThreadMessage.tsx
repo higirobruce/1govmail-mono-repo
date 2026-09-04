@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { format, parseISO } from 'date-fns';
 import {
   ChevronDown,
@@ -15,8 +15,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
-import { fetchBodyCached } from '@/lib/mailBodyCache';
-import { sanitizeEmailHtml } from '@/lib/sanitize';
+import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
+import { prepareEmailHtml } from '@/lib/emailRender';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MailAvatar } from './MailAvatar';
 import { AttachmentTile } from './AttachmentTile';
@@ -202,15 +202,6 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
   return { main: tmp.innerHTML, quoted: quotedDiv.innerHTML };
 }
 
-function extractBodyContent(html: string): string {
-  const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  if (match) return match[1];
-  return html
-    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
-    .replace(/<\/?(html|body)[^>]*>/gi, '')
-    .trim();
-}
-
 function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | null; text: string | null; stripQuotes?: boolean }) {
   const normalizeStyles =
     typeof window !== 'undefined'
@@ -219,20 +210,30 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
 
   const mainRef  = useRef<HTMLIFrameElement>(null);
   const quotedRef = useRef<HTMLIFrameElement>(null);
-  const [mainHeight,   setMainHeight]   = useState(200);
-  const [quotedHeight, setQuotedHeight] = useState(200);
   const [showQuoted, setShowQuoted] = useState(false);
 
+  // Heights are written straight to the iframe elements instead of held in
+  // React state: every image load fires a resize, and a state update here
+  // would re-render (and re-sanitize + re-split) a body that can hold
+  // multi-megabyte base64 images.
   const resizeMain = useCallback(() => {
-    const doc = mainRef.current?.contentDocument;
-    if (!doc) return;
-    requestAnimationFrame(() => setMainHeight(Math.max(doc.documentElement.scrollHeight, 100)));
+    const frame = mainRef.current;
+    const doc = frame?.contentDocument;
+    if (!frame || !doc) return;
+    requestAnimationFrame(() => {
+      if (!mainRef.current?.contentDocument) return;
+      frame.style.height = `${Math.max(doc.documentElement.scrollHeight, 100)}px`;
+    });
   }, []);
 
   const resizeQuoted = useCallback(() => {
-    const doc = quotedRef.current?.contentDocument;
-    if (!doc) return;
-    requestAnimationFrame(() => setQuotedHeight(Math.max(doc.documentElement.scrollHeight, 100)));
+    const frame = quotedRef.current;
+    const doc = frame?.contentDocument;
+    if (!frame || !doc) return;
+    requestAnimationFrame(() => {
+      if (!quotedRef.current?.contentDocument) return;
+      frame.style.height = `${Math.max(doc.documentElement.scrollHeight, 100)}px`;
+    });
   }, []);
 
   // handleLoad for the main iframe.
@@ -298,7 +299,25 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
     });
   }, [resizeQuoted]);
 
-  if (!html) {
+  // Preprocess once per body (memoized here and in prepareEmailHtml): fix
+  // Zimbra deferred images and malformed data URIs, sanitize (defense-in-depth
+  // — the iframe is also sandboxed), split out the quoted history, and build
+  // the srcDoc strings. Hooks run before the no-html early return to keep the
+  // hook order stable.
+  const docs = useMemo(() => {
+    if (!html) return null;
+    const body = prepareEmailHtml(html);
+    const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
+    const mkSrcDoc = (content: string, hideQuotes = false) =>
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${hideQuotes ? HIDE_QUOTES_CSS : ''}</style></head><body>${content}</body></html>`;
+    if (!stripQuotes) {
+      const split = splitEmailBody(body);
+      return { main: mkSrcDoc(split.main), quoted: split.quoted ? mkSrcDoc(split.quoted) : null };
+    }
+    return { main: mkSrcDoc(body, true), quoted: null };
+  }, [html, normalizeStyles, stripQuotes]);
+
+  if (!docs) {
     return (
       <pre className="whitespace-pre-wrap font-sans text-[13px] text-foreground/80 leading-relaxed p-4">
         {text ?? 'No content'}
@@ -306,35 +325,20 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
     );
   }
 
-  // Preprocess: fix Zimbra deferred images and malformed data URIs, then
-  // sanitize to strip scripts, event handlers, and other XSS vectors before
-  // the HTML reaches the iframe srcDoc. The iframe is still sandboxed but
-  // sanitization is defense-in-depth.
-  const body = sanitizeEmailHtml(
-    extractBodyContent(html)
-      .replace(/\bdfsrc=/gi, 'src=')
-      .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;'),
-  );
-  const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
-  const mkSrcDoc = (content: string, hideQuotes = false) =>
-    `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${hideQuotes ? HIDE_QUOTES_CSS : ''}</style></head><body>${content}</body></html>`;
-
   // ── stripQuotes=false: split body into main + quoted, render two iframes ──
   if (!stripQuotes) {
-    const split = splitEmailBody(body);
-
     return (
       <div>
         <iframe
           ref={mainRef}
-          srcDoc={mkSrcDoc(split.main)}
+          srcDoc={docs.main}
           onLoad={handleMainLoad}
           className="w-full border-0 block"
-          style={{ height: mainHeight }}
+          style={{ height: 200 }}
           sandbox="allow-same-origin"
           title="Email message"
         />
-        {split.quoted && (
+        {docs.quoted && (
           <div className="border-t border-border/10">
             <div className="px-4 py-2">
               <button
@@ -348,10 +352,10 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
             {showQuoted && (
               <iframe
                 ref={quotedRef}
-                srcDoc={mkSrcDoc(split.quoted)}
+                srcDoc={docs.quoted}
                 onLoad={handleQuotedLoad}
                 className="w-full border-0 block"
-                style={{ height: quotedHeight }}
+                style={{ height: 200 }}
                 sandbox="allow-same-origin"
                 title="Quoted message"
               />
@@ -366,10 +370,10 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
   return (
     <iframe
       ref={mainRef}
-      srcDoc={mkSrcDoc(body, true)}
+      srcDoc={docs.main}
       onLoad={handleMainLoad}
       className="w-full border-0 block"
-      style={{ height: mainHeight }}
+      style={{ height: 200 }}
       sandbox="allow-same-origin"
       title="Email message"
     />
@@ -491,7 +495,17 @@ export default function ThreadMessage({
     // (the common case — the newest message auto-expands on open), this resolves
     // from the shared body cache instead of re-downloading the body + images.
     fetchBodyCached(message.id, api.mail.getMessage)
-      .then((data) => { if (!cancelled) setFullMessage(data); })
+      .then((data) => {
+        if (cancelled) return;
+        setFullMessage(data);
+        // Inline images still embedding server-side — poll for the final body
+        // and swap it in when it lands (shares one poll loop with the detail pane).
+        if ((data as { embedPending?: boolean })?.embedPending) {
+          watchPendingBody(message.id, api.mail.getMessage, (fresh) => {
+            if (!cancelled) setFullMessage(fresh);
+          });
+        }
+      })
       .catch(() => { if (!cancelled) setBodyError(true); })
       .finally(() => { if (!cancelled) setLoadingBody(false); });
     return () => { cancelled = true; };

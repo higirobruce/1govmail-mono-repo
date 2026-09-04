@@ -11,9 +11,9 @@ import {
   Sparkles, X as XIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
-import { sanitizeEmailHtml } from '@/lib/sanitize';
+import { prepareEmailHtml } from '@/lib/emailRender';
 import { toast } from 'sonner';
 import { QuickReplyBar } from '@/components/mail/QuickReplyBar';
 import { AttachmentLightbox } from '@/components/mail/AttachmentLightbox';
@@ -126,20 +126,6 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function extractBodyContent(html: string): string {
-  // Greedy match so that an early stray </body> inside the email body doesn't
-  // truncate the content (common in newsletter templates / old Outlook HTML).
-  const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  if (match) return match[1];
-  // No <body> tag at all — strip <head> and any stray html/body open/close tags,
-  // then return the rest verbatim (preserves content from old plaintext-to-HTML
-  // converters that omit the body element).
-  return html
-    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
-    .replace(/<\/?(html|body)[^>]*>/gi, '')
-    .trim();
-}
-
 const EMAIL_CSS = `*,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;overflow-x:hidden;word-wrap:break-word}
 a{color:#2563eb;text-decoration:underline}
@@ -203,16 +189,20 @@ function EmailBody({
       ? localStorage.getItem('1gov_normalize_email_styles') !== 'false'
       : true;
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(400);
 
   // Re-measure iframe height, deferred one animation frame so the browser has
   // finished reflowing (needed when called from an image's load event).
+  // Written straight to the element style instead of React state: every image
+  // load fires a resize, and a state update here would re-render (and re-build
+  // the srcDoc for) a body that can hold multi-megabyte base64 images.
   const resizeFrame = useCallback(() => {
-    const doc = iframeRef.current?.contentDocument;
-    if (!doc) return;
-    requestAnimationFrame(() =>
-      setHeight(Math.max(doc.documentElement.scrollHeight, 200)),
-    );
+    const frame = iframeRef.current;
+    const doc = frame?.contentDocument;
+    if (!frame || !doc) return;
+    requestAnimationFrame(() => {
+      if (!iframeRef.current?.contentDocument) return;
+      frame.style.height = `${Math.max(doc.documentElement.scrollHeight, 200)}px`;
+    });
   }, []);
 
   const handleLoad = useCallback(() => {
@@ -229,7 +219,22 @@ function EmailBody({
     });
   }, [resizeFrame]);
 
-  if (!html) {
+  // Prepare (dfsrc fix, data-URI fix, sanitize — memoized in prepareEmailHtml)
+  // and build the srcDoc once per body; the hook runs before the no-html early
+  // return to keep the hook order stable.
+  // upgrade-insecure-requests: silently upgrades http:// image/resource URLs to
+  // https:// so external email images are not blocked by mixed-content policy on
+  // HTTPS deployments.
+  // NORMALIZE_CSS is appended after EMAIL_CSS so its !important rules override
+  // any inline styles the sender embedded in the email HTML.
+  const srcDoc = useMemo(() => {
+    if (!html) return null;
+    const body = prepareEmailHtml(html);
+    const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${body}</body></html>`;
+  }, [html, normalizeStyles]);
+
+  if (!srcDoc) {
     return (
       <pre className="whitespace-pre-wrap font-sans text-[13px] text-foreground/80 leading-relaxed">
         {text ?? 'No content'}
@@ -237,31 +242,13 @@ function EmailBody({
     );
   }
 
-  // Zimbra uses `dfsrc` instead of `src` on images (deferred loading). Convert
-  // them to standard `src` so the browser renders them correctly.
-  // Also strip the non-standard `name=` parameter from data URIs — e.g.
-  // `data:image/gif; name="foo.gif";base64,...` — whose unescaped inner quotes
-  // break HTML attribute parsing and cause the image to render as broken.
-  const body = sanitizeEmailHtml(
-    extractBodyContent(html)
-      .replace(/\bdfsrc=/gi, 'src=')
-      .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;'),
-  );
-  // upgrade-insecure-requests: silently upgrades http:// image/resource URLs to
-  // https:// so external email images are not blocked by mixed-content policy on
-  // HTTPS deployments.
-  // NORMALIZE_CSS is appended after EMAIL_CSS so its !important rules override
-  // any inline styles the sender embedded in the email HTML.
-  const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
-  const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${body}</body></html>`;
-
   return (
     <iframe
       ref={iframeRef}
       srcDoc={srcDoc}
       onLoad={handleLoad}
       className="w-full border-0 block"
-      style={{ height }}
+      style={{ height: 400 }}
       sandbox="allow-same-origin"
       title="Email message"
     />
@@ -424,11 +411,7 @@ export default function MailDetail({
       .meta span{margin-right:16px}`;
     // Same sanitize pipeline as EmailBody — never inject raw email HTML.
     const body = message.bodyHtml
-      ? sanitizeEmailHtml(
-          extractBodyContent(message.bodyHtml)
-            .replace(/\bdfsrc=/gi, 'src=')
-            .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;'),
-        )
+      ? prepareEmailHtml(message.bodyHtml)
       : `<pre style="white-space:pre-wrap">${escapeHtml(message.bodyText ?? '')}</pre>`;
     const fromStr = message.fromName
       ? `${escapeHtml(message.fromName)} &lt;${escapeHtml(message.fromEmail)}&gt;`
@@ -951,14 +934,18 @@ export default function MailDetail({
         <aside
           aria-hidden={!summaryOpen}
           className={cn(
-            'absolute top-3 right-3 w-[340px] xl:w-[380px] max-h-[55vh] z-20',
+            // Below lg the floating top-right card has no room — render as a
+            // fixed bottom sheet instead so tapping Summarize on a phone shows
+            // the stream rather than spending tokens into an invisible panel.
+            // z-[45]: above the AI drawers (z-40/41), below compose (z-50).
+            'fixed inset-x-2 bottom-2 z-[45] max-h-[55vh]',
+            'lg:absolute lg:inset-x-auto lg:bottom-auto lg:top-3 lg:right-3 lg:w-[340px] xl:w-[380px] lg:z-20',
             'rounded-xl border border-border/40 bg-card shadow-xl',
             'flex flex-col overflow-hidden',
             'transition-all duration-200 ease-out',
-            'hidden lg:flex',
             summaryOpen
-              ? 'translate-x-0 opacity-100 scale-100'
-              : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
+              ? 'translate-y-0 lg:translate-x-0 opacity-100 scale-100'
+              : 'translate-y-[130%] lg:translate-y-0 lg:translate-x-[120%] opacity-0 scale-95 pointer-events-none',
           )}
         >
           <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">

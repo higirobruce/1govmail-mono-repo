@@ -62,9 +62,21 @@ interface WindowCardRow {
 // treats both as "the spam folder", so enforcement must match both too.
 const SPAM_FOLDER_PATHS = ['/Junk', '/Spam'];
 
+// Browsers cannot load cid: URLs — replace with src="" so the image is skipped
+// silently instead of rendering a broken-image icon. Applied to embedPending
+// responses only; the DB keeps the raw cid-bearing body until the embed lands.
+function stripCidRefs(html: string): string {
+  return html.replace(/src=["']cid:[^"']*["']/gi, 'src=""');
+}
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
+
+  // Background inline-image embeds still running, keyed `${userId}:${zimbraId}`.
+  // getMessage checks this to serve polls from the cached raw body instead of
+  // spawning a duplicate Zimbra fetch + embed per poll.
+  private readonly inflightEmbeds = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -350,6 +362,18 @@ export class MailService {
       return cached;
     }
 
+    // A background embed for this message is still running (the previous open
+    // returned early with embedPending). Serve the cached raw body again instead
+    // of firing a duplicate Zimbra fetch + embed — the poller will get the final
+    // version once the in-flight embed lands in the DB.
+    if (cached && this.inflightEmbeds.has(`${userId}:${cached.zimbraId}`)) {
+      return {
+        ...cached,
+        bodyHtml: cached.bodyHtml == null ? cached.bodyHtml : stripCidRefs(cached.bodyHtml),
+        embedPending: true,
+      };
+    }
+
     const m = await this.zimbra.getMessage(
       user.zimbraHost,
       user.authToken!,
@@ -371,14 +395,15 @@ export class MailService {
       .filter((e) => e.t === 'b')
       .map((e) => ({ email: e.a, name: e.d ?? null }));
 
-    // Embed inline images with a time budget.
-    // - If Zimbra responds quickly (< 5 s): return fully embedded HTML immediately.
-    // - If slow: return raw HTML now and finish embedding in the background so the
-    //   next open returns the cached, fully embedded version instantly.
-    // 5 s (up from 2 s) because on-premise Zimbra servers regularly take 3–7 s to
-    // serve attachment buffers over an internal network.
-    const EMBED_BUDGET_MS = 5_000;
+    // Embed inline images with a short time budget.
+    // - If Zimbra responds quickly: return fully embedded HTML immediately.
+    // - If slow: return the raw HTML now flagged `embedPending` (cid refs stripped
+    //   for display) and finish embedding in the background — the client polls
+    //   getMessage until the pending flag clears, so slow Zimbra attachment
+    //   fetches never hold the open behind a spinner.
+    const EMBED_BUDGET_MS = Number(process.env.EMBED_BUDGET_MS ?? 1_500);
     let bodyHtml = rawBodyHtml;
+    let embedPending = false;
 
     // Detect any src attribute pointing to the Zimbra host — covers
     // /service/home/ (inline attachments), /service/proxy/ (image proxy for
@@ -404,7 +429,11 @@ export class MailService {
         // Timed out — warm the cache in the background; next open will be instant.
         // Use updateMany keyed on zimbraId so this works whether the DB record was
         // pre-existing (folder-listed message) or newly upserted below (search result).
-        void embedTask
+        // Register the task in inflightEmbeds so polls for this message reuse the
+        // cached raw body instead of spawning duplicate Zimbra fetches.
+        embedPending = true;
+        const embedKey = `${userId}:${String(m.id)}`;
+        const background = embedTask
           .then((embeddedHtml) =>
             this.prisma.message.updateMany({
               where: { userId, zimbraId: String(m.id) },
@@ -413,7 +442,9 @@ export class MailService {
           )
           .catch((err: any) =>
             this.logger.error(`[getMessage] background embed failed: ${err?.message}`),
-          );
+          )
+          .finally(() => this.inflightEmbeds.delete(embedKey));
+        this.inflightEmbeds.set(embedKey, background);
       }
     }
 
@@ -473,6 +504,16 @@ export class MailService {
       }
     }
 
+    if (embedPending) {
+      // DB keeps the raw cid-bearing body (so the cache guard above keeps treating
+      // it as not-final); the response gets a display-safe copy with cid refs
+      // stripped so the client never renders broken-image icons.
+      return {
+        ...result,
+        bodyHtml: result.bodyHtml == null ? result.bodyHtml : stripCidRefs(result.bodyHtml),
+        embedPending: true,
+      };
+    }
     return result;
   }
 
@@ -1087,8 +1128,12 @@ export class MailService {
   ): Array<{ id: string; filename: string; mimeType: string; size: number }> {
     const result: Array<{ id: string; filename: string; mimeType: string; size: number }> = [];
     for (const part of parts) {
-      // A part is an attachment when it has a filename and is not the inline body
-      if (part.filename && !part.body) {
+      // A part is an attachment when it has a filename and is not the inline body.
+      // CID-referenced inline images (signature logos, tracking pixels) carry a
+      // filename too but belong to the body — surfacing them as attachments
+      // pollutes attachment counts and the "has attachment" filter.
+      const isInlineImage = part.ci && part.ct?.startsWith('image/');
+      if (part.filename && !part.body && !isInlineImage) {
         result.push({
           id:       String(part.part),
           filename: part.filename,

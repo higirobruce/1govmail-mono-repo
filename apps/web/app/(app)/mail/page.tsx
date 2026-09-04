@@ -6,7 +6,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
 import { api } from '@/lib/api';
-import { getCachedBody, setCachedBody, fetchBodyCached } from '@/lib/mailBodyCache';
+import { getCachedBody, setCachedBody, fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import type { TriageLabel } from '@email-client/shared';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
@@ -558,6 +558,15 @@ export default function MailPage() {
       } else {
         setCachedBody(messageId, data);
         setActiveMessage(data);
+        // Server is still embedding inline images (embedPending) — poll until
+        // the final body lands, then swap it in if this message is still open.
+        // setCachedBody above is a no-op for pending bodies, so the cache only
+        // ever holds the final version.
+        if (data?.embedPending) {
+          watchPendingBody<any>(messageId, (id) => api.mail.getMessage(id), (fresh) => {
+            setActiveMessage((prev: any) => (prev && prev.id === messageId ? fresh : prev));
+          });
+        }
         // Persist read status to server (fire-and-forget, don't block UI)
         if (wasUnread) {
           api.mail.markRead(messageId, true).catch(() => {});

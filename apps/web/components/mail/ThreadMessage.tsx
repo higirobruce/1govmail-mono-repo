@@ -20,6 +20,7 @@ import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { prepareEmailHtml } from '@/lib/emailRender';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Button } from '@/components/ui/button';
 import { MailAvatar, getInitials } from './MailAvatar';
 import { AttachmentTile } from './AttachmentTile';
 import { AttachmentLightbox } from './AttachmentLightbox';
@@ -318,7 +319,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
 
   if (!docs) {
     return (
-      <pre className="whitespace-pre-wrap font-sans text-[0.8125rem] text-foreground/80 leading-relaxed p-4">
+      <pre className="whitespace-pre-wrap font-sans text-ui text-ink-2 leading-relaxed p-4">
         {text ?? 'No content'}
       </pre>
     );
@@ -338,11 +339,11 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
           title="Email message"
         />
         {docs.quoted && (
-          <div className="border-t border-border/10">
+          <div className="border-t border-border-faint">
             <div className="px-4 py-2">
               <button
                 onClick={() => setShowQuoted((v) => !v)}
-                className="flex items-center gap-1 text-[0.75rem] text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-1 text-ui text-ink-2 hover:text-foreground transition-colors"
               >
                 {showQuoted ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                 {showQuoted ? 'Hide quoted message' : 'Show quoted message'}
@@ -544,7 +545,7 @@ export default function ThreadMessage({
         className={cn(
           'relative flex items-center gap-2.5 px-4 py-2 cursor-pointer transition-colors hover:bg-muted/25',
           !message.isRead && !message.isDraft && 'bg-primary/[0.02]',
-          message.isDraft && 'bg-amber-50/40 dark:bg-amber-900/10',
+          message.isDraft && 'bg-warning/5',
         )}
         role="button"
         tabIndex={0}
@@ -555,7 +556,7 @@ export default function ThreadMessage({
       >
         {/* Avatar node — ring punches through spine line */}
         {message.isDraft ? (
-          <div className="w-7 h-7 rounded-full text-[0.6875rem] font-semibold flex items-center justify-center shrink-0 relative z-10 ring-2 ring-background bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+          <div className="w-7 h-7 rounded-full text-micro font-semibold flex items-center justify-center shrink-0 relative z-10 ring-2 ring-background bg-warning/15 text-warning-strong">
             {initials}
           </div>
         ) : (
@@ -569,40 +570,40 @@ export default function ThreadMessage({
 
         {/* Sender name */}
         <span className={cn(
-          'text-[0.8125rem] shrink-0',
-          !message.isRead && !message.isDraft ? 'text-foreground font-semibold' : 'text-foreground/75',
+          'text-ui shrink-0',
+          !message.isRead && !message.isDraft ? 'text-foreground font-semibold' : 'text-ink-2',
         )}>
           {displayName}
         </span>
 
         {/* Draft badge */}
         {message.isDraft && (
-          <span className="shrink-0 px-1.5 py-0.5 rounded text-[0.625rem] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+          <span className="shrink-0 px-1.5 py-0.5 rounded text-micro leading-none font-semibold bg-warning/15 text-warning-strong">
             DRAFT
           </span>
         )}
 
         {/* Snippet — takes remaining space */}
-        <span className="text-[0.75rem] text-muted-foreground/50 truncate flex-1 min-w-0">
+        <span className="text-ui text-ink-3 truncate flex-1 min-w-0">
           {message.snippet ?? ''}
         </span>
 
         {/* Right: attachment icon + time + action */}
         <div className="flex items-center gap-1.5 shrink-0">
           {message.hasAttachments && (
-            <Paperclip className="w-3 h-3 text-muted-foreground/40" />
+            <Paperclip className="w-3 h-3 text-ink-4" />
           )}
-          <span className="text-[0.6875rem] text-muted-foreground/40">{timeStr}</span>
+          <span className="text-micro text-ink-4">{timeStr}</span>
           {message.isDraft ? (
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              className="p-0.5 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
+              className="p-0.5 rounded text-ink-4 hover:text-destructive hover:bg-destructive/10 transition-colors"
               title="Delete draft"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           ) : (
-            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/35" />
+            <ChevronDown className="w-3.5 h-3.5 text-ink-4" />
           )}
         </div>
       </div>
@@ -627,7 +628,7 @@ export default function ThreadMessage({
       />
 
       {/* Card */}
-      <div className="flex-1 min-w-0 rounded-xl border border-border/30 bg-card shadow-sm overflow-hidden mb-2">
+      <div className="flex-1 min-w-0 rounded-xl border border-border-faint bg-card shadow-sm overflow-hidden mb-2">
         {/* Header — click to collapse */}
         <div
           className="flex items-start px-4 pt-3 pb-2 cursor-pointer select-none hover:bg-muted/20 transition-colors"
@@ -639,18 +640,18 @@ export default function ThreadMessage({
         >
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[0.8125rem] text-foreground font-semibold">{displayName}</span>
+              <span className="text-ui text-foreground font-semibold">{displayName}</span>
               <div className="flex items-center gap-1.5 shrink-0">
                 {message.hasAttachments && (
-                  <Paperclip className="w-3 h-3 text-muted-foreground/50" />
+                  <Paperclip className="w-3 h-3 text-ink-3" />
                 )}
-                <span className="text-[0.6875rem] text-muted-foreground/50">{timeStr}</span>
-                <ChevronUp className="w-3.5 h-3.5 text-muted-foreground/35" />
+                <span className="text-micro text-ink-3">{timeStr}</span>
+                <ChevronUp className="w-3.5 h-3.5 text-ink-4" />
               </div>
             </div>
             {/* Recipient summary */}
-            <div className="flex flex-wrap gap-x-3 text-[0.6875rem] text-muted-foreground/50 mt-0.5">
-              <span className="text-muted-foreground/65">{`<${message.fromEmail}>`}</span>
+            <div className="flex flex-wrap gap-x-3 text-micro text-ink-3 mt-0.5">
+              <span className="text-ink-3">{`<${message.fromEmail}>`}</span>
               {message.toRecipients.length > 0 && (
                 <span>
                   To:{' '}
@@ -679,10 +680,10 @@ export default function ThreadMessage({
         <div>
           {loadingBody ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40" />
+              <Loader2 className="w-4 h-4 animate-spin text-ink-4" />
             </div>
           ) : bodyError ? (
-            <div className="px-4 py-4 text-[0.8125rem] text-destructive/60">
+            <div className="px-4 py-4 text-ui text-destructive/60">
               Could not load message.{' '}
               <button
                 onClick={() => { setBodyError(false); setLoadingBody(true); api.mail.getMessage(message.id).then(setFullMessage).catch(() => setBodyError(true)).finally(() => setLoadingBody(false)); }}
@@ -692,22 +693,22 @@ export default function ThreadMessage({
               </button>
             </div>
           ) : fullMessage ? (
-            <div className="border-t border-border/10">
+            <div className="border-t border-border-faint">
               <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} stripQuotes={!isOnlyMessage} />
             </div>
           ) : (
-            <div className="px-4 py-4 text-[0.8125rem] text-muted-foreground/50">
+            <div className="px-4 py-4 text-ui text-ink-3">
               {message.snippet ?? 'No content'}
             </div>
           )}
 
           {/* Attachments */}
           {(fullMessage?.attachments?.length ?? 0) > 0 && (
-            <div className="px-4 pt-3 pb-3 border-t border-border/10">
+            <div className="px-4 pt-3 pb-3 border-t border-border-faint">
               <div className="flex items-center gap-1.5 mb-2.5">
-                <Paperclip className="w-3.5 h-3.5 text-muted-foreground/55" />
-                <span className="text-[0.719rem] font-semibold text-foreground/85">Attachments</span>
-                <span className="text-[0.6875rem] text-muted-foreground/55">
+                <Paperclip className="w-3.5 h-3.5 text-ink-3" />
+                <span className="text-ui font-semibold text-foreground">Attachments</span>
+                <span className="text-micro text-ink-3">
                   ({fullMessage.attachments.length})
                 </span>
               </div>
@@ -744,42 +745,49 @@ export default function ThreadMessage({
         </div>
 
         {/* Action bar */}
-        <div className="flex items-center gap-0.5 px-4 pb-3 pt-1 border-t border-border/10">
-          <button
+        <div className="flex items-center gap-0.5 px-4 pb-3 pt-1 border-t border-border-faint">
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => onReply(detail)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[0.75rem] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="text-ink-2 hover:text-foreground"
           >
             <Reply className="w-3.5 h-3.5" />
             Reply
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => onReplyAll(detail)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[0.75rem] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="text-ink-2 hover:text-foreground"
           >
             <ReplyAll className="w-3.5 h-3.5" />
             Reply All
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => onForward(detail)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[0.75rem] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="text-ink-2 hover:text-foreground"
           >
             <Forward className="w-3.5 h-3.5" />
             Forward
-          </button>
+          </Button>
           <div className="flex-1" />
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 onClick={onToggleStar}
                 className={cn(
-                  'p-1.5 rounded-md transition-colors',
                   message.isStarred
-                    ? 'text-amber-400 hover:bg-muted'
-                    : 'text-muted-foreground/40 hover:text-foreground hover:bg-muted',
+                    ? 'text-warning-strong hover:bg-muted'
+                    : 'text-ink-4 hover:text-foreground hover:bg-muted',
                 )}
               >
-                <Star className={cn('w-4 h-4', message.isStarred && 'fill-amber-400')} />
-              </button>
+                <Star className={cn('w-4 h-4', message.isStarred && 'fill-warning-strong')} />
+              </Button>
             </TooltipTrigger>
             <TooltipContent side="top" className="text-xs">
               {message.isStarred ? 'Unstar' : 'Star'}
@@ -787,12 +795,9 @@ export default function ThreadMessage({
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
-                onClick={onDelete}
-                className="p-1.5 rounded-md text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors"
-              >
+              <Button variant="destructive-ghost" size="icon-sm" onClick={onDelete}>
                 <Trash2 className="w-4 h-4" />
-              </button>
+              </Button>
             </TooltipTrigger>
             <TooltipContent side="top" className="text-xs">Delete</TooltipContent>
           </Tooltip>

@@ -11,6 +11,7 @@ import {
   Sparkles, X as XIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
 import { prepareEmailHtml } from '@/lib/emailRender';
@@ -100,19 +101,16 @@ function ActionBtn({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
+        <Button
+          variant={danger ? 'destructive-ghost' : 'ghost'}
+          size="icon-sm"
           onClick={onClick}
           className={cn(
-            'p-1.5 rounded-md transition-colors',
-            danger
-              ? 'text-muted-foreground/45 hover:text-destructive hover:bg-destructive/10'
-              : highlight
-              ? 'text-amber-400 hover:bg-muted'
-              : 'text-muted-foreground/45 hover:text-foreground hover:bg-muted',
+            !danger && (highlight ? 'text-warning-strong hover:bg-muted' : 'text-ink-3 hover:text-foreground hover:bg-muted'),
           )}
         >
-          <Icon className={cn('w-4 h-4', highlight && 'fill-amber-400')} />
-        </button>
+          <Icon className={cn('w-4 h-4', highlight && 'fill-warning-strong')} />
+        </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="text-xs">{label}</TooltipContent>
     </Tooltip>
@@ -238,7 +236,7 @@ function EmailBody({
 
   if (!srcDoc) {
     return (
-      <pre className="whitespace-pre-wrap font-sans text-[0.8125rem] text-foreground/80 leading-relaxed">
+      <pre className="whitespace-pre-wrap font-sans text-ui text-ink-2 leading-relaxed">
         {text ?? 'No content'}
       </pre>
     );
@@ -265,10 +263,10 @@ function MetaRow({ icon: Icon, label, children }: {
   return (
     <div className="flex items-start gap-3 py-2">
       <div className="flex items-center gap-2 w-20 shrink-0 mt-0.5">
-        <Icon className="w-3.5 h-3.5 text-muted-foreground/35 shrink-0" />
-        <span className="text-[0.75rem] text-muted-foreground/50">{label}</span>
+        <Icon className="w-3.5 h-3.5 text-ink-4 shrink-0" />
+        <span className="text-ui text-ink-3">{label}</span>
       </div>
-      <div className="flex-1 min-w-0 text-[0.8125rem] text-foreground">
+      <div className="flex-1 min-w-0 text-ui text-foreground">
         {children}
       </div>
     </div>
@@ -467,13 +465,13 @@ export default function MailDetail({
   if (loading) {
     return (
       <div className="flex flex-col h-full bg-background">
-        <div className="h-11 border-b border-border/35 animate-pulse bg-muted/10" />
-        <div className="h-9 border-b border-border/25 animate-pulse bg-muted/5" />
+        <div className="h-11 border-b border-border-faint animate-pulse bg-muted/10" />
+        <div className="h-9 border-b border-border-faint animate-pulse bg-muted/5" />
         <div className="flex-1 p-5 animate-pulse space-y-4">
-          <div className="bg-card border border-border/40 rounded-xl p-5 space-y-3">
+          <div className="bg-card border border-border rounded-xl p-5 space-y-3">
             <div className="h-5 w-2/3 bg-muted rounded" />
             {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="flex gap-3 py-2 border-b border-border/20">
+              <div key={i} className="flex gap-3 py-2 border-b border-border-faint">
                 <div className="h-3 w-20 bg-muted/60 rounded" />
                 <div className="h-3 w-40 bg-muted/40 rounded" />
               </div>
@@ -489,10 +487,10 @@ export default function MailDetail({
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-8 bg-background">
         <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
-          <Mail className="w-6 h-6 text-muted-foreground/30" />
+          <Mail className="w-6 h-6 text-ink-4" />
         </div>
-        <p className="text-sm font-medium text-muted-foreground/55">Select a message to read</p>
-        <p className="text-xs text-muted-foreground/35 mt-1">Your email will appear here</p>
+        <p className="text-body font-medium text-ink-3">Select a message to read</p>
+        <p className="text-ui text-ink-4 mt-1">Your email will appear here</p>
       </div>
     );
   }
@@ -521,19 +519,21 @@ export default function MailDetail({
     <div className="flex flex-col h-full bg-background overflow-hidden relative">
 
       {/* ── Navigation header ─────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1 px-3 py-2 border-b border-border/35 shrink-0">
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-border-faint shrink-0">
         {onClose && (
-          <button
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={onClose}
             aria-label="Back"
-            className="p-1.5 rounded-md text-muted-foreground/55 hover:text-foreground hover:bg-muted transition-colors"
+            className="text-ink-3 hover:text-foreground"
           >
             <ChevronLeft className="w-4 h-4" />
-          </button>
+          </Button>
         )}
 
         {/* Subject as breadcrumb */}
-        <h2 className="flex-1 min-w-0 px-1.5 text-[0.8125rem] font-semibold text-foreground truncate">
+        <h2 className="flex-1 min-w-0 px-1.5 text-ui font-semibold text-foreground truncate">
           {message.subject ?? '(no subject)'}
         </h2>
 
@@ -548,7 +548,7 @@ export default function MailDetail({
             <ActionBtn icon={AlarmClock} label="Snooze" onClick={onSnooze} />
           )}
 
-          <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
+          <span className="mx-1 h-4 w-px bg-border-faint" aria-hidden />
 
           {/* Reply group */}
           <ActionBtn icon={Reply}     label="Reply"     onClick={onReply} />
@@ -557,7 +557,7 @@ export default function MailDetail({
 
           {aiEnabled && (
             <>
-              <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
+              <span className="mx-1 h-4 w-px bg-border-faint" aria-hidden />
               <ActionBtn
                 icon={Sparkles}
                 label="Summarize"
@@ -567,7 +567,7 @@ export default function MailDetail({
             </>
           )}
 
-          <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
+          <span className="mx-1 h-4 w-px bg-border-faint" aria-hidden />
 
           {/* Secondary group */}
           <ActionBtn
@@ -583,24 +583,26 @@ export default function MailDetail({
             <div ref={folderDropdownRef} className="relative">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
                     onClick={() => setFolderDropdownOpen((v) => !v)}
-                    className="p-1.5 rounded-md transition-colors text-muted-foreground/45 hover:text-foreground hover:bg-muted"
+                    className="text-ink-3 hover:text-foreground"
                   >
                     <Tag className="w-4 h-4" />
-                  </button>
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">Move to folder</TooltipContent>
               </Tooltip>
               {folderDropdownOpen && (
-                <div className="absolute right-0 top-full mt-1 bg-card border border-border/50 rounded-xl shadow-lg p-1.5 min-w-[160px] z-50">
+                <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded-xl shadow-lg p-1.5 min-w-[160px] z-50">
                   {labelFolders.map((folder) => (
                     <button
                       key={folder.id}
                       onClick={() => { setFolderDropdownOpen(false); onMoveToFolder(folder.id); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.8125rem] rounded-md text-foreground/80 hover:bg-muted hover:text-foreground transition-colors"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-ui rounded-md text-ink-2 hover:bg-muted hover:text-foreground transition-colors"
                     >
-                      <FolderOpen className="w-3.5 h-3.5 shrink-0 text-muted-foreground/50" />
+                      <FolderOpen className="w-3.5 h-3.5 shrink-0 text-ink-3" />
                       {folder.name}
                     </button>
                   ))}
@@ -619,16 +621,16 @@ export default function MailDetail({
       </div>
 
       {/* ── Tab bar ───────────────────────────────────────────────────────── */}
-      <div className="flex items-end gap-0 px-4 border-b border-border/25 shrink-0 bg-background">
+      <div className="flex items-end gap-0 px-4 border-b border-border-faint shrink-0 bg-background">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              'px-4 py-2.5 text-[0.8125rem] font-medium transition-all border-b-2 -mb-px',
+              'px-4 py-2.5 text-ui font-medium transition-all border-b-2 -mb-px',
               activeTab === tab.id
                 ? 'text-primary border-primary'
-                : 'text-muted-foreground/55 border-transparent hover:text-foreground hover:border-border/50',
+                : 'text-ink-3 border-transparent hover:text-foreground hover:border-border',
             )}
           >
             {tab.label}
@@ -649,7 +651,7 @@ export default function MailDetail({
                 {message.subject ?? '(no subject)'}
               </h1>
               <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-[0.8125rem] text-muted-foreground/65">
+                <p className="text-ui text-ink-3">
                   {message.fromName ?? message.fromEmail}
                 </p>
                 {classification && <ClassificationChip value={classification.label} size="sm" withIcon />}
@@ -657,20 +659,20 @@ export default function MailDetail({
             </div>
 
             {/* Detail card */}
-            <div className="bg-card border border-border/40 rounded-2xl overflow-hidden">
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
 
               {/* Sender strip */}
-              <div className="flex items-center gap-3 px-5 py-4 border-b border-border/25">
+              <div className="flex items-center gap-3 px-5 py-4 border-b border-border-faint">
                 <MailAvatar
                   name={message.fromName}
                   email={message.fromEmail}
                   size="md"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[0.8125rem] font-semibold text-foreground leading-none mb-0.5">
+                  <p className="text-ui font-semibold text-foreground leading-none mb-0.5">
                     {message.fromName ?? message.fromEmail}
                   </p>
-                  <p className="text-[0.6875rem] text-muted-foreground/55">{formattedDate}</p>
+                  <p className="text-micro text-ink-3">{formattedDate}</p>
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
                   <ActionBtn icon={MoreHorizontal} label="More" />
@@ -683,7 +685,7 @@ export default function MailDetail({
                   <div className="flex items-center gap-2 flex-wrap">
                     <span>{message.fromName ?? message.fromEmail}</span>
                     {message.fromName && (
-                      <span className="text-[0.6875rem] text-muted-foreground/40">
+                      <span className="text-micro text-ink-4">
                         &lt;{message.fromEmail}&gt;
                       </span>
                     )}
@@ -709,20 +711,20 @@ export default function MailDetail({
                 <MetaRow icon={Tag} label="Status">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={cn(
-                      'inline-flex items-center px-2 py-0.5 rounded-md text-[0.6875rem] font-medium',
+                      'inline-flex items-center px-2 py-0.5 rounded-md text-micro font-medium',
                       message.isRead
-                        ? 'bg-muted text-muted-foreground'
+                        ? 'bg-muted text-ink-2'
                         : 'bg-primary/10 text-primary',
                     )}>
                       {message.isRead ? 'Read' : 'Unread'}
                     </span>
                     {message.isStarred && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[0.6875rem] font-medium bg-amber-400/15 text-amber-600">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-micro font-medium bg-warning/15 text-warning-strong">
                         Starred
                       </span>
                     )}
                     {message.hasAttachments && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[0.6875rem] font-medium bg-muted text-muted-foreground">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-micro font-medium bg-muted text-ink-2">
                         <Paperclip className="w-2.5 h-2.5" /> Attachments
                       </span>
                     )}
@@ -733,14 +735,14 @@ export default function MailDetail({
 
               {/* Description section */}
               {(message.bodyText || message.bodyHtml) && (
-                <div className="px-5 pt-4 pb-5 border-t border-border/25">
-                  <h4 className="text-[0.875rem] font-semibold text-foreground mb-3">Description</h4>
-                  <p className="text-[0.8125rem] text-foreground/65 leading-relaxed">
+                <div className="px-5 pt-4 pb-5 border-t border-border-faint">
+                  <h4 className="text-body font-semibold text-foreground mb-3">Description</h4>
+                  <p className="text-ui text-ink-3 leading-relaxed">
                     {message.bodyText?.trim().slice(0, 600) ?? 'View the full message in the Message tab.'}
                   </p>
                   <button
                     onClick={() => setActiveTab('message')}
-                    className="mt-4 text-[0.75rem] text-muted-foreground/50 hover:text-foreground font-medium transition-colors"
+                    className="mt-4 text-ui text-ink-3 hover:text-foreground font-medium transition-colors"
                   >
                     Read full message →
                   </button>
@@ -754,20 +756,20 @@ export default function MailDetail({
         {activeTab === 'message' && (
           <div className="flex flex-col h-full">
             {/* Sender strip */}
-            <div className="flex items-center gap-3 px-6 pt-5 pb-4 border-b border-border/25 shrink-0">
+            <div className="flex items-center gap-3 px-6 pt-5 pb-4 border-b border-border-faint shrink-0">
               <MailAvatar name={message.fromName} email={message.fromEmail} size="md" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-[0.8125rem] font-semibold text-foreground">
+                  <span className="text-ui font-semibold text-foreground">
                     {message.fromName ?? message.fromEmail}
                   </span>
                   {message.fromName && (
-                    <span className="text-[0.6875rem] text-muted-foreground/55">
+                    <span className="text-micro text-ink-3">
                       &lt;{message.fromEmail}&gt;
                     </span>
                   )}
                 </div>
-                <p className="text-[0.6875rem] text-muted-foreground/55 mt-0.5">{formattedDate}</p>
+                <p className="text-micro text-ink-3 mt-0.5">{formattedDate}</p>
               </div>
               {classification && <ClassificationChip value={classification.label} size="sm" withIcon />}
             </div>
@@ -784,13 +786,13 @@ export default function MailDetail({
             {/* Inline attachments bar — shown below the email body so the user
                 can see which files are attached without switching tabs. */}
             {message.attachments.length > 0 && (
-              <div className="px-6 py-4 border-t border-border/20 shrink-0">
+              <div className="px-6 py-4 border-t border-border-faint shrink-0">
                 <div className="flex items-center gap-1.5 mb-3">
-                  <Paperclip className="w-3.5 h-3.5 text-muted-foreground/55" />
-                  <span className="text-[0.75rem] font-semibold text-foreground/85">
+                  <Paperclip className="w-3.5 h-3.5 text-ink-3" />
+                  <span className="text-ui font-semibold text-foreground">
                     Attachments
                   </span>
-                  <span className="text-[0.6875rem] text-muted-foreground/55">
+                  <span className="text-micro text-ink-3">
                     ({message.attachments.length})
                   </span>
                 </div>
@@ -831,7 +833,7 @@ export default function MailDetail({
         {/* Attachments tab */}
         {activeTab === 'attachments' && (
           <div className="p-5">
-            <p className="text-[0.6875rem] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-4">
+            <p className="text-micro font-semibold text-ink-3 uppercase tracking-[0.06em] mb-4">
               {message.attachments.length} attachment{message.attachments.length !== 1 ? 's' : ''}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -845,39 +847,43 @@ export default function MailDetail({
                 return (
                   <div
                     key={att.id}
-                    className="flex items-center gap-2.5 p-3 bg-card border border-border/45 rounded-xl group hover:bg-muted/30 transition-colors"
+                    className="flex items-center gap-2.5 p-3 bg-card border border-border rounded-xl group hover:bg-muted/30 transition-colors"
                   >
                     <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center shrink-0', style.bgTint)}>
-                      <span className={cn('text-[0.625rem] font-bold tracking-wide', style.color)}>
+                      <span className={cn('text-micro leading-none font-bold tracking-[0.06em]', style.color)}>
                         {style.label}
                       </span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[0.75rem] font-medium text-foreground truncate">{att.filename}</p>
-                      <p className="text-[0.6875rem] text-muted-foreground/55">{formatBytes(att.size)}</p>
+                      <p className="text-ui font-medium text-foreground truncate">{att.filename}</p>
+                      <p className="text-micro text-ink-3">{formatBytes(att.size)}</p>
                     </div>
-                    <div className="flex items-center gap-0.5 shrink-0">
+                    <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                       {isPreviewable && (
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
                           onClick={() => { setLightboxSelectedId(att.id); setLightboxOpen(true); }}
                           disabled={!!downloadingId}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-muted-foreground/45 hover:text-foreground disabled:opacity-30"
+                          className="text-ink-3 hover:text-foreground disabled:opacity-30"
                           title="Open lightbox"
                         >
                           <Eye className="w-3.5 h-3.5" />
-                        </button>
+                        </Button>
                       )}
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
                         onClick={() => handleDownload(att)}
                         disabled={!!downloadingId}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/45 hover:text-foreground disabled:opacity-30 p-1 rounded"
+                        className="text-ink-3 hover:text-foreground disabled:opacity-30"
                         title="Download"
                       >
                         {downloadingId === att.id
                           ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                           : <Download className="w-3.5 h-3.5" />
                         }
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 );
@@ -889,10 +895,10 @@ export default function MailDetail({
       </div>
 
       {/* Reply bar */}
-      <div className="px-4 py-2.5 border-t border-border/35 shrink-0 flex items-center gap-2">
+      <div className="px-4 py-2.5 border-t border-border-faint shrink-0 flex items-center gap-2">
         <button
           onClick={onReply}
-          className="flex-1 text-left px-4 py-2 bg-muted/40 hover:bg-muted border border-border/40 rounded-xl text-[0.8125rem] text-muted-foreground/50 hover:text-muted-foreground transition-all"
+          className="flex-1 text-left px-4 py-2 bg-muted/40 hover:bg-muted border border-border rounded-xl text-ui text-ink-3 hover:text-ink-2 transition-all"
         >
           <span className="flex items-center gap-2">
             <Reply className="w-3.5 h-3.5 shrink-0" />
@@ -901,14 +907,14 @@ export default function MailDetail({
         </button>
         <button
           onClick={onReplyAll}
-          className="p-2 bg-muted/40 hover:bg-muted border border-border/40 rounded-xl text-muted-foreground/45 hover:text-muted-foreground transition-all"
+          className="p-2 bg-muted/40 hover:bg-muted border border-border rounded-xl text-ink-3 hover:text-ink-2 transition-all"
           title="Reply All"
         >
           <ReplyAll className="w-3.5 h-3.5" />
         </button>
         <button
           onClick={onForward}
-          className="p-2 bg-muted/40 hover:bg-muted border border-border/40 rounded-xl text-muted-foreground/45 hover:text-muted-foreground transition-all"
+          className="p-2 bg-muted/40 hover:bg-muted border border-border rounded-xl text-ink-3 hover:text-ink-2 transition-all"
           title="Forward"
         >
           <Forward className="w-3.5 h-3.5" />
@@ -936,7 +942,7 @@ export default function MailDetail({
             // z-[45]: above the AI drawers (z-40/41), below compose (z-50).
             'fixed inset-x-2 bottom-2 z-[45] max-h-[55vh]',
             'lg:absolute lg:inset-x-auto lg:bottom-auto lg:top-3 lg:right-3 lg:w-[340px] xl:w-[380px] lg:z-20',
-            'rounded-xl border border-border/40 bg-card shadow-xl',
+            'rounded-xl border border-border bg-card shadow-xl',
             'flex flex-col overflow-hidden',
             'transition-all duration-200 ease-out',
             summaryOpen
@@ -944,15 +950,15 @@ export default function MailDetail({
               : 'translate-y-[130%] lg:translate-y-0 lg:translate-x-[120%] opacity-0 scale-95 pointer-events-none',
           )}
         >
-          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
+          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border-faint shrink-0">
             <Sparkles className="w-3.5 h-3.5 text-primary" />
-            <span className="text-[0.75rem] font-semibold text-foreground">Summary</span>
+            <span className="text-ui font-semibold text-foreground">Summary</span>
             {summarizing && (
-              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
+              <Loader2 className="w-3 h-3 animate-spin text-ink-3" />
             )}
             <button
               onClick={closeSummary}
-              className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
+              className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
               aria-label="Close summary"
             >
               <XIcon className="w-3.5 h-3.5" />
@@ -960,14 +966,14 @@ export default function MailDetail({
           </div>
           <div className="flex-1 overflow-y-auto px-3.5 py-3">
             {summaryError ? (
-              <div className="text-[0.75rem] text-destructive">
+              <div className="text-ui text-destructive">
                 {summaryError}{' '}
                 <button onClick={handleSummarize} className="underline ml-1">
                   Retry
                 </button>
               </div>
             ) : (
-              <p className="text-[0.781rem] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+              <p className="text-ui text-ink-2 leading-relaxed whitespace-pre-wrap">
                 {streamedSummary || (summarizing ? 'Thinking…' : '')}
               </p>
             )}

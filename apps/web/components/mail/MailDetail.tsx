@@ -737,7 +737,7 @@ export default function MailDetail({
               {(message.bodyText || message.bodyHtml) && (
                 <div className="px-5 pt-4 pb-5 border-t border-border-faint">
                   <h4 className="text-body font-semibold text-foreground mb-3">Description</h4>
-                  <p className="text-ui text-ink-3 leading-relaxed">
+                  <p className="text-ui text-ink-2 leading-relaxed">
                     {message.bodyText?.trim().slice(0, 600) ?? 'View the full message in the Message tab.'}
                   </p>
                   <button

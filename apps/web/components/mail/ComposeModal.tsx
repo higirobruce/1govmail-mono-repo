@@ -13,6 +13,7 @@ import TiptapImage from '@tiptap/extension-image';
 import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
@@ -119,7 +120,7 @@ function ToolbarBtn({ title, onClick, active, children }: {
   return (
     <button type="button" title={title} onMouseDown={(e) => { e.preventDefault(); onClick(); }}
       className={cn(
-        'p-1.5 rounded text-muted-foreground/55 hover:text-foreground hover:bg-muted/60 transition-colors',
+        'p-1.5 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors',
         active && 'bg-muted/60 text-foreground',
       )}>
       {children}
@@ -1052,24 +1053,24 @@ export default function ComposeModal({
     )}>
       {/* ── Header ── */}
       <div
-        className="px-4 py-3 border-b border-border/60 shrink-0 flex items-center justify-between select-none"
+        className="px-4 py-3 border-b border-border shrink-0 flex items-center justify-between select-none"
         style={{ cursor: minimised ? 'pointer' : 'default' }}
         onClick={() => { if (minimised) setMinimised(false); }}
       >
-        <span className="text-sm font-semibold text-foreground">{TITLE[mode]}</span>
+        <span className="text-ui font-semibold text-foreground">{TITLE[mode]}</span>
         <div className="flex items-center gap-1">
-          <span className="text-[0.6875rem] text-muted-foreground/40 flex items-center gap-1 mr-1">
+          <span className="text-micro font-normal text-ink-4 flex items-center gap-1 mr-1">
             {draftStatus === 'saving' && <><Loader2 className="w-2.5 h-2.5 animate-spin" /> Saving…</>}
             {draftStatus === 'saved' && 'Draft saved'}
           </span>
           {!inline && (
             <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setMinimised((m) => !m); }}
-              className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title={minimised ? 'Restore' : 'Minimise'}>
+              className="h-6 w-6 p-0 text-ink-3 hover:text-foreground" title={minimised ? 'Restore' : 'Minimise'}>
               {minimised ? <ChevronDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
             </Button>
           )}
           <Button variant="ghost" size="sm" onClick={onClose} disabled={sending}
-            className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title="Close">
+            className="h-6 w-6 p-0 text-ink-3 hover:text-foreground" title="Close">
             <X className="w-3.5 h-3.5" />
           </Button>
         </div>
@@ -1079,17 +1080,17 @@ export default function ComposeModal({
       {!minimised && (
         <div className="flex flex-col flex-1 min-h-0">
           {/* ── Address + subject fields ── */}
-          <div className="px-5 py-3 space-y-2.5 shrink-0 border-b border-border/40">
+          <div className="px-5 py-3 space-y-2.5 shrink-0 border-b border-border">
             <div className="flex items-center gap-2 h-9">
-              <Label className="text-xs font-medium text-muted-foreground/60 uppercase tracking-wider shrink-0 w-14 text-right">From</Label>
-              <span className="text-sm text-muted-foreground/70 px-1">
+              <Label className="text-ui font-medium text-ink-3 uppercase tracking-[0.06em] shrink-0 w-14 text-right">From</Label>
+              <span className="text-body text-ink-2 px-1">
                 {user?.displayName ? `${user.displayName} <${user.email}>` : user?.email}
               </span>
             </div>
             <EmailChipInput label="To" value={to} onChange={setTo} placeholder="recipients@example.com" autoFocus={mode === 'forward'} />
             {!showCcBcc ? (
               <button type="button" onClick={() => setShowCcBcc(true)}
-                className="ml-16 text-xs text-muted-foreground/50 hover:text-primary transition-colors flex items-center gap-1">
+                className="ml-16 text-ui text-ink-3 hover:text-primary transition-colors flex items-center gap-1">
                 <ChevronDown className="w-3 h-3" /> Add Cc / Bcc
               </button>
             ) : (
@@ -1097,44 +1098,44 @@ export default function ComposeModal({
                 <EmailChipInput label="Cc" value={cc} onChange={setCc} placeholder="cc@example.com" />
                 <EmailChipInput label="Bcc" value={bcc} onChange={setBcc} placeholder="bcc@example.com" />
                 <button type="button" onClick={() => { setShowCcBcc(false); setCc([]); setBcc([]); }}
-                  className="ml-16 text-xs text-muted-foreground/50 hover:text-primary transition-colors flex items-center gap-1">
+                  className="ml-16 text-ui text-ink-3 hover:text-primary transition-colors flex items-center gap-1">
                   <ChevronUp className="w-3 h-3" /> Hide Cc / Bcc
                 </button>
               </>
             )}
             <div className="flex items-center gap-2">
-              <Label className="text-xs font-medium text-muted-foreground/60 uppercase tracking-wider shrink-0 w-14 text-right">Subject</Label>
+              <Label className="text-ui font-medium text-ink-3 uppercase tracking-[0.06em] shrink-0 w-14 text-right">Subject</Label>
               <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject"
-                className="flex-1 h-8 bg-muted/30 border-border/50 focus-visible:border-primary/50 focus-visible:ring-primary/20 text-sm" />
+                className="flex-1 h-8 bg-muted/30 border-border focus-visible:border-primary/50 focus-visible:ring-primary/20 text-body" />
             </div>
           </div>
 
           {/* ── Attachment pills ── */}
           {(attachments.length > 0 || forwardedAttachments.length > 0) && (
-            <div className="flex flex-wrap gap-1.5 px-5 py-2 border-b border-border/30 bg-muted/10">
+            <div className="flex flex-wrap gap-1.5 px-5 py-2 border-b border-border-faint bg-muted/10">
               {/* Forwarded attachments from original message */}
               {forwardedAttachments.map((att, i) => (
-                <span key={`fwd-${i}`} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-primary/10 border border-primary/30 text-xs rounded-full max-w-[200px]">
+                <Badge key={`fwd-${i}`} variant="secondary" className="gap-1.5 px-2 py-0.5 bg-primary/10 border-primary/30 text-micro max-w-[200px]">
                   <Paperclip className="w-3 h-3 text-primary/60 shrink-0" />
                   <span className="truncate">{att.filename}</span>
-                  {att.size > 0 && <span className="text-muted-foreground/40 shrink-0">({formatFileSize(att.size)})</span>}
+                  {att.size > 0 && <span className="text-ink-4 shrink-0">({formatFileSize(att.size)})</span>}
                   <button type="button" onClick={() => setForwardedAttachments((prev) => prev.filter((_, j) => j !== i))}
-                    className="text-muted-foreground/60 hover:text-destructive leading-none shrink-0">
+                    className="text-ink-3 hover:text-destructive leading-none shrink-0">
                     <X className="w-3 h-3" />
                   </button>
-                </span>
+                </Badge>
               ))}
               {/* Newly added attachments */}
               {attachments.map((file, i) => (
-                <span key={`new-${i}`} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-muted/50 border border-border/50 text-xs rounded-full max-w-[200px]">
-                  <Paperclip className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                <Badge key={`new-${i}`} variant="secondary" className="gap-1.5 px-2 py-0.5 bg-muted/50 border-border text-micro max-w-[200px]">
+                  <Paperclip className="w-3 h-3 text-ink-3 shrink-0" />
                   <span className="truncate">{file.name}</span>
-                  <span className="text-muted-foreground/40 shrink-0">({formatFileSize(file.size)})</span>
+                  <span className="text-ink-4 shrink-0">({formatFileSize(file.size)})</span>
                   <button type="button" onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                    className="text-muted-foreground/60 hover:text-destructive leading-none shrink-0">
+                    className="text-ink-3 hover:text-destructive leading-none shrink-0">
                     <X className="w-3 h-3" />
                   </button>
-                </span>
+                </Badge>
               ))}
             </div>
           )}
@@ -1144,7 +1145,7 @@ export default function ComposeModal({
             <div className="px-5 py-4 flex flex-col">
 
               {/* Rich-text toolbar */}
-              <div className="flex items-center gap-0.5 pb-2 mb-2 border-b border-border/30 flex-wrap">
+              <div className="flex items-center gap-0.5 pb-2 mb-2 border-b border-border-faint flex-wrap">
 
                 {/* Font family */}
                 <select
@@ -1153,7 +1154,7 @@ export default function ComposeModal({
                     if (e.target.value) editor?.chain().focus().setFontFamily(e.target.value).run();
                     else editor?.chain().focus().unsetFontFamily().run();
                   }}
-                  className="h-6 text-[0.6875rem] bg-muted/30 border border-border/50 rounded px-1 text-foreground/80 focus:outline-none focus:border-primary/50 mr-0.5"
+                  className="h-6 text-micro font-normal bg-muted/30 border border-border rounded px-1 text-foreground focus:outline-none focus:border-primary/50 mr-0.5"
                   title="Font family"
                 >
                   {FONT_FAMILIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1166,7 +1167,7 @@ export default function ComposeModal({
                     const val = e.target.value;
                     if (val) editor?.chain().focus().setMark('textStyle', { fontSize: `${val}px` }).run();
                   }}
-                  className="h-6 text-[0.6875rem] bg-muted/30 border border-border/50 rounded px-1 text-foreground/80 focus:outline-none focus:border-primary/50 w-14 mr-0.5"
+                  className="h-6 text-micro font-normal bg-muted/30 border border-border rounded px-1 text-foreground focus:outline-none focus:border-primary/50 w-14 mr-0.5"
                   title="Font size"
                 >
                   {FONT_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1179,7 +1180,7 @@ export default function ComposeModal({
                   onMouseDown={(e) => { e.preventDefault(); colorInputRef.current?.click(); }}
                   className="relative p-1.5 rounded hover:bg-muted/60 transition-colors"
                 >
-                  <span className="text-[0.6875rem] font-bold leading-none" style={{ color: currentColor ?? 'currentColor' }}>A</span>
+                  <span className="text-micro font-bold leading-none" style={{ color: currentColor ?? 'currentColor' }}>A</span>
                   <span className="block h-[3px] w-4 rounded-sm mt-0.5" style={{ backgroundColor: currentColor ?? 'var(--foreground)' }} />
                 </button>
                 <input
@@ -1190,7 +1191,7 @@ export default function ComposeModal({
                   onChange={(e) => editor?.chain().focus().setColor(e.target.value).run()}
                 />
 
-                <div className="w-px h-4 bg-border/50 mx-1 shrink-0" />
+                <div className="w-px h-4 bg-border-faint mx-1 shrink-0" />
 
                 {/* Formatting */}
                 <ToolbarBtn title="Bold (⌘B)" onClick={() => editor?.chain().focus().toggleBold().run()} active={editor?.isActive('bold')}>
@@ -1206,7 +1207,7 @@ export default function ComposeModal({
                   <Strikethrough className="w-3.5 h-3.5" />
                 </ToolbarBtn>
 
-                <div className="w-px h-4 bg-border/50 mx-1 shrink-0" />
+                <div className="w-px h-4 bg-border-faint mx-1 shrink-0" />
 
                 <ToolbarBtn title="Ordered list" onClick={() => editor?.chain().focus().toggleOrderedList().run()} active={editor?.isActive('orderedList')}>
                   <ListOrdered className="w-3.5 h-3.5" />
@@ -1215,7 +1216,7 @@ export default function ComposeModal({
                   <List className="w-3.5 h-3.5" />
                 </ToolbarBtn>
 
-                <div className="w-px h-4 bg-border/50 mx-1 shrink-0" />
+                <div className="w-px h-4 bg-border-faint mx-1 shrink-0" />
 
                 <ToolbarBtn
                   title={editor?.isActive('link') ? 'Remove link' : 'Insert link'}
@@ -1232,7 +1233,7 @@ export default function ComposeModal({
                   <Link2 className="w-3.5 h-3.5" />
                 </ToolbarBtn>
 
-                <div className="w-px h-4 bg-border/50 mx-1 shrink-0" />
+                <div className="w-px h-4 bg-border-faint mx-1 shrink-0" />
 
                 {/* File attach */}
                 <ToolbarBtn title="Attach file" onClick={() => fileInputRef.current?.click()}>
@@ -1262,8 +1263,8 @@ export default function ComposeModal({
                       <FileText className="w-3.5 h-3.5" />
                     </ToolbarBtn>
                     {showTemplates && (
-                      <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[200px]">
-                        <p className="px-3 py-1.5 text-[0.625rem] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                      <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border rounded-xl shadow-lg overflow-hidden min-w-[200px]">
+                        <p className="px-3 py-1.5 text-micro font-semibold text-ink-3 uppercase tracking-[0.06em] border-b border-border-faint">
                           Templates
                         </p>
                         <ul className="py-1 max-h-52 overflow-y-auto">
@@ -1277,7 +1278,7 @@ export default function ComposeModal({
                                   editor?.chain().focus().insertContent(t.body).run();
                                   setShowTemplates(false);
                                 }}
-                                className="w-full text-left px-3 py-2 text-[0.75rem] hover:bg-muted/60 text-foreground transition-colors"
+                                className="w-full text-left px-3 py-2 text-ui hover:bg-muted/60 text-foreground transition-colors"
                               >
                                 {t.name}
                               </button>
@@ -1298,7 +1299,7 @@ export default function ComposeModal({
                       title="Rewrite with AI"
                       onMouseDown={(e) => { e.preventDefault(); setShowRewrite((v) => !v); }}
                       className={cn(
-                        'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-[0.75rem] font-medium transition-colors',
+                        'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-ui font-medium transition-colors',
                         showRewrite || rewriteOpen
                           ? 'bg-primary/15 text-primary'
                           : 'bg-primary/10 text-primary hover:bg-primary/20',
@@ -1308,13 +1309,13 @@ export default function ComposeModal({
                       AI
                     </button>
                     {showRewrite && (
-                      <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[200px]">
+                      <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border rounded-xl shadow-lg overflow-hidden min-w-[200px]">
                         {originalMessage && (
                           <>
-                            <p className="px-3 py-1.5 text-[0.625rem] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                            <p className="px-3 py-1.5 text-micro font-semibold text-ink-3 uppercase tracking-[0.06em] border-b border-border-faint">
                               Reply
                             </p>
-                            <ul className="py-1 border-b border-border/30">
+                            <ul className="py-1 border-b border-border-faint">
                               <li>
                                 <button
                                   type="button"
@@ -1322,7 +1323,7 @@ export default function ComposeModal({
                                     e.preventDefault();
                                     void handleSuggestReply();
                                   }}
-                                  className="w-full text-left px-3 py-2 text-[0.75rem] hover:bg-muted/60 text-foreground transition-colors"
+                                  className="w-full text-left px-3 py-2 text-ui hover:bg-muted/60 text-foreground transition-colors"
                                 >
                                   Suggest reply
                                 </button>
@@ -1330,7 +1331,7 @@ export default function ComposeModal({
                             </ul>
                           </>
                         )}
-                        <p className="px-3 py-1.5 text-[0.625rem] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                        <p className="px-3 py-1.5 text-micro font-semibold text-ink-3 uppercase tracking-[0.06em] border-b border-border-faint">
                           Rewrite
                         </p>
                         <ul className="py-1">
@@ -1348,7 +1349,7 @@ export default function ComposeModal({
                                   e.preventDefault();
                                   void handleRewrite(opt.id);
                                 }}
-                                className="w-full text-left px-3 py-2 text-[0.75rem] hover:bg-muted/60 text-foreground transition-colors"
+                                className="w-full text-left px-3 py-2 text-ui hover:bg-muted/60 text-foreground transition-colors"
                               >
                                 {opt.label}
                               </button>
@@ -1364,7 +1365,7 @@ export default function ComposeModal({
               {/* TipTap editor */}
               <div className="relative">
                 {editor?.isEmpty && (
-                  <div className="absolute top-0 left-0 text-sm text-muted-foreground/40 pointer-events-none select-none">
+                  <div className="absolute top-0 left-0 text-body text-ink-4 pointer-events-none select-none">
                     {placeholder}
                   </div>
                 )}
@@ -1375,7 +1376,7 @@ export default function ComposeModal({
                     aria-hidden={!rewriteOpen}
                     className={cn(
                       'absolute top-2 right-2 w-[340px] max-h-[60vh] z-30',
-                      'rounded-xl border border-border/40 bg-card shadow-xl',
+                      'rounded-xl border border-border bg-card shadow-xl',
                       'flex flex-col overflow-hidden',
                       'transition-all duration-200 ease-out',
                       rewriteOpen
@@ -1383,20 +1384,20 @@ export default function ComposeModal({
                         : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
                     )}
                   >
-                    <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
+                    <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border-faint shrink-0">
                       <Sparkles className="w-3.5 h-3.5 text-primary" />
-                      <span className="text-[0.75rem] font-semibold text-foreground capitalize">
+                      <span className="text-ui font-semibold text-foreground capitalize">
                         {aiAction === 'suggest'
                           ? 'Reply suggestion'
                           : rewriteMode === 'grammar' ? 'Grammar fix' : rewriteMode}
                       </span>
                       {rewriting && (
-                        <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
+                        <Loader2 className="w-3 h-3 animate-spin text-ink-3" />
                       )}
                       <button
                         type="button"
                         onClick={closeRewrite}
-                        className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
+                        className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
                         aria-label="Close"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -1404,7 +1405,7 @@ export default function ComposeModal({
                     </div>
                     <div className="flex-1 overflow-y-auto px-3.5 py-3 space-y-3">
                       {injectionWarning && aiAction === 'suggest' && (
-                        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[0.719rem] leading-relaxed text-amber-800 dark:text-amber-300">
+                        <div className="rounded-md border border-warning/40 bg-warning/10 p-2.5 text-ui leading-relaxed text-warning-strong">
                           <span className="font-semibold">Check this draft carefully.</span> The
                           incoming email contains text written to instruct an AI assistant, which
                           can steer what is suggested here. Read every line before inserting it.
@@ -1413,7 +1414,7 @@ export default function ComposeModal({
                       {aiAction === 'suggest' && (
                         <div className="space-y-2">
                           <div>
-                            <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 mb-1">Respond with</p>
+                            <p className="text-micro font-normal uppercase tracking-[0.06em] text-ink-3 mb-1">Respond with</p>
                             <div className="flex flex-wrap gap-1">
                               {(
                                 [
@@ -1434,10 +1435,10 @@ export default function ComposeModal({
                                     void handleSuggestReply({ intent: value });
                                   }}
                                   className={cn(
-                                    'text-[0.6875rem] px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+                                    'text-micro font-normal px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
                                     replyIntent === value
                                       ? 'border-primary/50 bg-primary/10 text-primary'
-                                      : 'border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                                      : 'border-border text-ink-2 hover:text-foreground hover:bg-muted/60',
                                   )}
                                 >
                                   {label}
@@ -1446,7 +1447,7 @@ export default function ComposeModal({
                             </div>
                           </div>
                           <div className="flex items-center gap-1">
-                            <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 mr-1">Length</p>
+                            <p className="text-micro font-normal uppercase tracking-[0.06em] text-ink-3 mr-1">Length</p>
                             {(
                               [
                                 ['brief', 'Brief'],
@@ -1463,10 +1464,10 @@ export default function ComposeModal({
                                   void handleSuggestReply({ length: value });
                                 }}
                                 className={cn(
-                                  'text-[0.6875rem] px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+                                  'text-micro font-normal px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
                                   replyLength === value
                                     ? 'border-primary/50 bg-primary/10 text-primary'
-                                    : 'border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                                    : 'border-border text-ink-2 hover:text-foreground hover:bg-muted/60',
                                 )}
                               >
                                 {label}
@@ -1477,18 +1478,18 @@ export default function ComposeModal({
                       )}
                       {aiAction === 'rewrite' && (
                         <div>
-                          <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 mb-1">Original</p>
-                          <p className="text-[0.75rem] text-muted-foreground/80 leading-relaxed line-clamp-4 whitespace-pre-wrap">
+                          <p className="text-micro font-normal uppercase tracking-[0.06em] text-ink-3 mb-1">Original</p>
+                          <p className="text-ui text-ink-2 leading-relaxed line-clamp-4 whitespace-pre-wrap">
                             {rewriteOriginal}
                           </p>
                         </div>
                       )}
                       <div>
-                        <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 mb-1">
+                        <p className="text-micro font-normal uppercase tracking-[0.06em] text-ink-3 mb-1">
                           {aiAction === 'suggest' ? 'Suggested reply' : 'Rewrite'}
                         </p>
                         {rewriteError ? (
-                          <p className="text-[0.75rem] text-destructive">
+                          <p className="text-ui text-destructive">
                             {rewriteError}{' '}
                             <button
                               type="button"
@@ -1501,17 +1502,17 @@ export default function ComposeModal({
                             </button>
                           </p>
                         ) : (
-                          <p className="text-[0.781rem] text-foreground/90 leading-relaxed whitespace-pre-wrap">
+                          <p className="text-ui text-foreground leading-relaxed whitespace-pre-wrap">
                             {rewriteText_ || (rewriting ? 'Thinking…' : '')}
                           </p>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 px-3.5 py-2.5 border-t border-border/30 shrink-0 bg-muted/20">
+                    <div className="flex items-center gap-2 px-3.5 py-2.5 border-t border-border-faint shrink-0 bg-muted/20">
                       <button
                         type="button"
                         onClick={closeRewrite}
-                        className="text-[0.75rem] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                        className="text-ui px-2.5 py-1 rounded-md text-ink-2 hover:text-foreground hover:bg-muted/60 transition-colors"
                       >
                         Discard
                       </button>
@@ -1519,7 +1520,7 @@ export default function ComposeModal({
                         type="button"
                         onClick={regenerate}
                         disabled={rewriting}
-                        className="ml-auto text-[0.75rem] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        className="ml-auto text-ui px-2.5 py-1 rounded-md text-ink-2 hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         title="Generate a different version"
                       >
                         Try another
@@ -1528,7 +1529,7 @@ export default function ComposeModal({
                         type="button"
                         onClick={applyRewrite}
                         disabled={rewriting || !rewriteText_.trim() || !!rewriteError}
-                        className="text-[0.75rem] px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="text-ui px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         {aiAction === 'suggest' ? 'Insert' : 'Replace'}
                       </button>
@@ -1540,9 +1541,9 @@ export default function ComposeModal({
               {/* Quoted original */}
               {sanitizedQuoteHtml && (
                 <>
-                  <Separator className="my-4 bg-border/40" />
+                  <Separator className="my-4 bg-border-faint" />
                   <div
-                    className="text-xs prose prose-sm prose-invert max-w-none prose-a:text-primary opacity-60 pointer-events-none select-none"
+                    className="text-ui prose prose-sm prose-invert max-w-none prose-a:text-primary opacity-60 pointer-events-none select-none"
                     dangerouslySetInnerHTML={{ __html: sanitizedQuoteHtml }}
                   />
                 </>
@@ -1552,19 +1553,19 @@ export default function ComposeModal({
 
           {/* ── Schedule picker (shown when showSchedule is true) ── */}
           {showSchedule && (
-            <div className="px-5 py-3 border-t border-border/40 shrink-0 bg-muted/10">
-              <p className="text-[0.6875rem] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">Schedule send</p>
+            <div className="px-5 py-3 border-t border-border shrink-0 bg-muted/10">
+              <p className="text-micro font-semibold text-ink-3 uppercase tracking-[0.06em] mb-2">Schedule send</p>
               <div className="flex items-center gap-2">
                 <DateTimePicker
                   value={scheduleDateTime}
                   onChange={setScheduleDateTime}
-                  className="flex-1 h-8 text-[0.75rem]"
+                  className="flex-1 h-8 text-ui"
                 />
                 <Button size="sm" onClick={handleScheduledSend} disabled={!scheduleDateTime || to.length === 0}
                   className="h-8 px-3 gap-1.5 bg-primary/90 hover:bg-primary text-primary-foreground">
                   <Calendar className="w-3.5 h-3.5" /> Schedule
                 </Button>
-                <button onClick={() => setShowSchedule(false)} className="p-1 rounded text-muted-foreground/50 hover:text-foreground">
+                <button onClick={() => setShowSchedule(false)} className="p-1 rounded text-ink-3 hover:text-foreground">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -1572,11 +1573,11 @@ export default function ComposeModal({
           )}
 
           {/* ── Footer ── */}
-          <div className="px-5 py-3 border-t border-border/60 shrink-0 flex items-center justify-between">
+          <div className="px-5 py-3 border-t border-border shrink-0 flex items-center justify-between">
             <div className="flex-1">
-              {error && <p className="text-xs text-destructive">{error}</p>}
+              {error && <p className="text-ui text-destructive">{error}</p>}
               {!error && (
-                <p className="text-xs text-muted-foreground/30">
+                <p className="text-ui text-ink-4">
                   {typeof navigator !== 'undefined' && navigator?.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Enter to send · 5s undo window
                 </p>
               )}
@@ -1589,7 +1590,7 @@ export default function ComposeModal({
                 onClick={handleSaveDraft}
                 disabled={draftStatus === 'saving'}
                 title="Save draft"
-                className="h-8 px-3 text-muted-foreground/70 hover:text-foreground"
+                className="h-8 px-3 text-ink-2 hover:text-foreground"
               >
                 {draftStatus === 'saving' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Save draft'}
               </Button>
@@ -1598,7 +1599,7 @@ export default function ComposeModal({
                 size="sm"
                 onClick={() => { setShowSchedule((v) => !v); }}
                 title="Schedule send"
-                className="h-8 w-8 p-0 text-muted-foreground/50 hover:text-foreground"
+                className="h-8 w-8 p-0 text-ink-3 hover:text-foreground"
               >
                 <Clock className="w-3.5 h-3.5" />
               </Button>

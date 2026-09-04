@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
 import ThreadHeader, { type ThreadParticipant } from './ThreadHeader';
@@ -301,24 +302,22 @@ export default function ThreadView({
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
 
-  // Attachment preview
+  // Attachment preview — blob URLs come from the shared attachment cache
+  // (LRU-revoked), so toggling a preview closed and open again, or previewing
+  // then downloading, never re-downloads the file.
   const [previewState, setPreviewState] = useState<{ id: string; filename: string; mimeType: string; url: string } | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
-  const previewUrlRef = useRef<string | null>(null);
 
   const router = useRouter();
 
   const handleAttachmentPreview = useCallback(async (att: AttachmentWithSource) => {
     if (previewState?.id === att.id) {
-      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-      previewUrlRef.current = null;
       setPreviewState(null);
       return;
     }
     setPreviewLoadingId(att.id);
     try {
-      const url = await api.mail.downloadAttachment(att.messageId, att.id);
-      previewUrlRef.current = url;
+      const url = await getAttachmentUrl(att.messageId, att.id, () => api.mail.downloadAttachment(att.messageId, att.id));
       setPreviewState({ id: att.id, filename: att.filename, mimeType: att.mimeType, url });
     } catch {
       toast.error('Failed to load preview');
@@ -914,14 +913,12 @@ export default function ThreadView({
                                 )}
                                 <button
                                   onClick={() =>
-                                    api.mail
-                                      .downloadAttachment(att.messageId, att.id)
+                                    getAttachmentUrl(att.messageId, att.id, () => api.mail.downloadAttachment(att.messageId, att.id))
                                       .then((url) => {
                                         const a = document.createElement('a');
                                         a.href = url;
                                         a.download = att.filename;
                                         a.click();
-                                        setTimeout(() => URL.revokeObjectURL(url), 5_000);
                                       })
                                       .catch(() => toast.error('Download failed'))
                                   }
@@ -943,12 +940,11 @@ export default function ThreadView({
                                   <div className="flex items-center gap-1 shrink-0">
                                     <button
                                       onClick={() =>
-                                        api.mail.downloadAttachment(att.messageId, att.id).then((url) => {
+                                        getAttachmentUrl(att.messageId, att.id, () => api.mail.downloadAttachment(att.messageId, att.id)).then((url) => {
                                           const a = document.createElement('a');
                                           a.href = url;
                                           a.download = att.filename;
                                           a.click();
-                                          setTimeout(() => URL.revokeObjectURL(url), 5_000);
                                         })
                                       }
                                       className="p-1 rounded text-muted-foreground/45 hover:text-foreground transition-colors"
@@ -957,11 +953,7 @@ export default function ThreadView({
                                       <Download className="w-3.5 h-3.5" />
                                     </button>
                                     <button
-                                      onClick={() => {
-                                        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-                                        previewUrlRef.current = null;
-                                        setPreviewState(null);
-                                      }}
+                                      onClick={() => setPreviewState(null)}
                                       className="p-1 rounded text-muted-foreground/45 hover:text-foreground transition-colors"
                                       title="Close"
                                     >

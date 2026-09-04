@@ -185,6 +185,9 @@ export class MailController {
   /**
    * Stream an attachment from Zimbra back to the client.
    * :part is the Zimbra MIME part number (e.g. "2" or "2.1").
+   * `?disposition=inline` serves the file for in-browser preview (img/iframe)
+   * instead of forcing a download; nosniff stops the browser from second-
+   * guessing the declared content type on inline responses.
    */
   @Get('messages/:messageId/attachments/:part')
   async downloadAttachment(
@@ -192,15 +195,18 @@ export class MailController {
     @Res() res: Response,
     @Param('messageId') messageId: string,
     @Param('part') part: string,
+    @Query('disposition') disposition?: string,
   ) {
     const { stream, contentType, filename } =
       await this.mailService.downloadAttachment(req.user.sub, messageId, part);
 
     const safeName = encodeURIComponent(filename).replace(/%20/g, ' ');
+    const inline = disposition === 'inline';
     res.set({
       'Content-Type': contentType,
-      'Content-Disposition': `attachment; filename="${safeName}"`,
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`,
       'Cache-Control': 'private, max-age=3600',
+      ...(inline ? { 'X-Content-Type-Options': 'nosniff' } : {}),
     });
     stream.pipe(res);
   }

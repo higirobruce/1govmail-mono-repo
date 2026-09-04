@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
 import { prepareEmailHtml } from '@/lib/emailRender';
+import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { toast } from 'sonner';
 import { QuickReplyBar } from '@/components/mail/QuickReplyBar';
 import { AttachmentLightbox } from '@/components/mail/AttachmentLightbox';
@@ -127,7 +128,7 @@ function escapeHtml(s: string): string {
 }
 
 const EMAIL_CSS = `*,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;overflow-x:hidden;word-wrap:break-word}
+html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;overflow-x:auto;word-wrap:break-word}
 a{color:#2563eb;text-decoration:underline}
 a:hover{color:#1d4ed8}
 img{max-width:100%;height:auto;display:inline-block}
@@ -448,14 +449,16 @@ export default function MailDetail({
     if (!message || downloadingId) return;
     setDownloadingId(att.id);
     try {
-      const url = await api.mail.downloadAttachment(message.id, att.id);
+      // Shared blob cache: a preview-then-download (or repeat download) reuses
+      // the already-fetched blob instead of transferring the file again. The
+      // cache owns the URL lifecycle — no revoke here.
+      const url = await getAttachmentUrl(message.id, att.id, () => api.mail.downloadAttachment(message.id, att.id));
       const a = document.createElement('a');
       a.href = url;
       a.download = att.filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch (err: any) {
       toast.error('Download failed', { description: err?.message });
     } finally {
@@ -838,7 +841,7 @@ export default function MailDetail({
             <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-4">
               {message.attachments.length} attachment{message.attachments.length !== 1 ? 's' : ''}
             </p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {message.attachments.map((att) => {
                 const isPreviewable =
                   att.mimeType.startsWith('image/') ||

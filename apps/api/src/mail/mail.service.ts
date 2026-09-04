@@ -178,7 +178,9 @@ export class MailService {
   // every single message, which meant ~50 serialized Postgres queries (plus a
   // Zimbra SOAP call per match) added to every folder-open, for every user,
   // whether or not they use this feature at all.
-  private async enforceSenderRules(
+  // Public: called by SenderRuleSweepService, which owns rule enforcement now
+  // that it no longer runs inside the Inbox list GET.
+  async enforceSenderRules(
     userId: string,
     user: { zimbraHost: string; authToken: string; csrfToken?: string | null },
     message: { id: string; zimbraId: string; fromEmail: string; folderId: string },
@@ -297,45 +299,10 @@ export class MailService {
       }
     });
 
-    // Enforcement only runs for the Inbox listing — this is where new mail is
-    // first observed. Running it for every folder (Archive, Trash, Sent,
-    // custom folders, ...) would retroactively sweep a user's already-organized
-    // mail into Spam the next time they happen to open that folder, which is
-    // unrequested destructive data movement and not what this feature is for.
-    if (folder.path === '/Inbox') {
-      const rules = await this.prisma.senderRule.findMany({ where: { userId } });
-
-      // Skip the whole loop (including the Junk-folder lookup below) for the
-      // overwhelming majority of users who have never created a sender rule.
-      if (rules.length > 0) {
-        const junkFolder = await this.prisma.folder.findFirst({
-          where: { userId, path: { in: SPAM_FOLDER_PATHS } },
-        });
-
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            // `user.authToken` is typed `string | null` on the Prisma model, but
-            // `getUser()` above already throws UnauthorizedException when it's
-            // falsy — the `!` mirrors the same assertion this method already
-            // makes a few lines up when calling `this.zimbra.getMessages(...)`.
-            try {
-              await this.enforceSenderRules(
-                userId,
-                { zimbraHost: user.zimbraHost, authToken: user.authToken!, csrfToken: user.csrfToken },
-                result.value,
-                rules,
-                junkFolder,
-              );
-            } catch (err: any) {
-              // Enforcement is a best-effort side effect of the read-through cache —
-              // a failure here (e.g. a transient Zimbra error) must not prevent the
-              // already-fetched messages from reaching the client.
-              this.logger.error(`Failed to enforce sender rules for message id=${result.value.id}: ${err?.message}`);
-            }
-          }
-        }
-      }
-    }
+    // Sender-rule enforcement deliberately does NOT run here: a mutating SOAP
+    // call in a read path cost rule-owning users up to 50 serial Zimbra moves
+    // of latency per Inbox load. SenderRuleSweepService enforces the same
+    // rules each minute against the rows this read-through cache just synced.
 
     return {
       messages: saved,
@@ -565,49 +532,41 @@ export class MailService {
       });
       const folderByZimbraId = new Map(folders.map((f) => [f.zimbraId, f.id]));
 
-      for (const m of zimbraMsgs) {
+      // Collect the missing rows and insert them in ONE batched write — a
+      // 20-message thread used to cost 20 serial upsert round-trips inside the
+      // open-thread request. skipDuplicates covers the race where a row appears
+      // between the existing-ids read and this insert (the old upsert's only
+      // remaining job, since already-synced ids are filtered out above).
+      const rows = zimbraMsgs.flatMap((m) => {
         const zimbraId = String(m.id);
-        if (existingZimbraIds.has(zimbraId)) continue; // already synced
+        if (existingZimbraIds.has(zimbraId)) return []; // already synced
 
-        try {
-          const fromAddr    = m.e?.find((e) => e.t === 'f');
-          const toAddrs     = (m.e ?? []).filter((e) => e.t === 't').map((e) => ({ email: e.a, name: e.d ?? null }));
-          const ccAddrs     = (m.e ?? []).filter((e) => e.t === 'c').map((e) => ({ email: e.a, name: e.d ?? null }));
-          const flags       = m.f ?? '';
-          const folderId    = folderByZimbraId.get(String(m.l));
+        const folderId = folderByZimbraId.get(String(m.l));
+        if (!folderId) return []; // folder not yet synced — skip
 
-          if (!folderId) continue; // folder not yet synced — skip
+        const fromAddr = m.e?.find((e) => e.t === 'f');
+        const flags    = m.f ?? '';
+        return [{
+          userId,
+          folderId,
+          zimbraId,
+          conversationId: msg.conversationId,
+          subject:        m.su ?? null,
+          snippet:        m.fr ?? null,
+          fromEmail:      fromAddr?.a ?? '',
+          fromName:       fromAddr?.d ?? null,
+          toRecipients:   (m.e ?? []).filter((e) => e.t === 't').map((e) => ({ email: e.a, name: e.d ?? null })),
+          ccRecipients:   (m.e ?? []).filter((e) => e.t === 'c').map((e) => ({ email: e.a, name: e.d ?? null })),
+          isRead:         !flags.includes('u'),
+          isStarred:       flags.includes('f'),
+          isDraft:         flags.includes('d'),
+          hasAttachments:  flags.includes('a'),
+          receivedAt:      new Date(m.d),
+        }];
+      });
 
-          await this.prisma.message.upsert({
-            where:  { userId_zimbraId: { userId, zimbraId } },
-            create: {
-              userId,
-              folderId,
-              zimbraId,
-              conversationId: msg.conversationId,
-              subject:        m.su  ?? null,
-              snippet:        m.fr  ?? null,
-              fromEmail:      fromAddr?.a ?? '',
-              fromName:       fromAddr?.d ?? null,
-              toRecipients:   toAddrs,
-              ccRecipients:   ccAddrs,
-              isRead:         !flags.includes('u'),
-              isStarred:       flags.includes('f'),
-              isDraft:         flags.includes('d'),
-              hasAttachments:  flags.includes('a'),
-              receivedAt:      new Date(m.d),
-            },
-            update: {
-              conversationId: msg.conversationId,
-              isRead:    !flags.includes('u'),
-              isStarred:  flags.includes('f'),
-              isDraft:    flags.includes('d'),
-              syncedAt:   new Date(),
-            },
-          });
-        } catch (err: any) {
-          this.logger.warn(`[getConversation] failed to upsert zimbraId=${m.id}: ${err?.message}`);
-        }
+      if (rows.length > 0) {
+        await this.prisma.message.createMany({ data: rows, skipDuplicates: true });
       }
     } catch (err: any) {
       // Back-fill is best-effort — a Zimbra outage must not break the thread view

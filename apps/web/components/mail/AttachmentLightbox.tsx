@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { toast } from 'sonner';
 import {
   X, Download, ChevronLeft, ChevronRight,
@@ -31,13 +32,16 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
+/** Above this size, skip the inline preview and offer download instead —
+ *  a preview fully buffers the file into memory before showing anything. */
+const MAX_PREVIEW_BYTES = 10 * 1024 * 1024;
+
 export function AttachmentLightbox({ open, attachments, selectedId, messageId, onClose }: Props) {
   const [currentId, setCurrentId] = useState(selectedId);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [fitMode, setFitMode] = useState(true); // true = fit, false = actual size
-  const blobRef = useRef<string | null>(null);
 
   const current = attachments.find((a) => a.id === currentId) ?? attachments[0];
   const currentIndex = attachments.findIndex((a) => a.id === currentId);
@@ -45,21 +49,22 @@ export function AttachmentLightbox({ open, attachments, selectedId, messageId, o
   const isImage = current?.mimeType.startsWith('image/') ?? false;
   const isPdf = current?.mimeType === 'application/pdf' || current?.filename.toLowerCase().endsWith('.pdf');
   const isText = current?.mimeType.startsWith('text/') ?? false;
+  const tooLarge = (current?.size ?? 0) > MAX_PREVIEW_BYTES;
 
-  // Load blob URL when selection changes
+  // Load blob URL when selection changes — served from the shared blob cache,
+  // so paging next/back never re-downloads a file this session already fetched,
+  // and preview-then-download transfers the file once. The cache owns the URLs
+  // (LRU-revoked; per-message revocation happens when the reader moves on).
   useEffect(() => {
-    if (!open || !current) return;
+    if (!open || !current || tooLarge) return;
     let cancelled = false;
-    const prev = blobRef.current;
 
     setLoading(true);
     setBlobUrl(null);
-    if (prev) { URL.revokeObjectURL(prev); blobRef.current = null; }
 
-    api.mail.downloadAttachment(messageId, current.id)
+    getAttachmentUrl(messageId, current.id, () => api.mail.downloadAttachment(messageId, current.id))
       .then((url) => {
-        if (cancelled) { URL.revokeObjectURL(url); return; }
-        blobRef.current = url;
+        if (cancelled) return;
         setBlobUrl(url);
         setZoom(1);
         setFitMode(true);
@@ -68,12 +73,7 @@ export function AttachmentLightbox({ open, attachments, selectedId, messageId, o
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [open, current?.id, messageId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Revoke blob on unmount
-  useEffect(() => {
-    return () => { if (blobRef.current) URL.revokeObjectURL(blobRef.current); };
-  }, []);
+  }, [open, current?.id, messageId, tooLarge]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const goNext = useCallback(() => {
     if (currentIndex < attachments.length - 1) setCurrentId(attachments[currentIndex + 1].id);
@@ -86,7 +86,8 @@ export function AttachmentLightbox({ open, attachments, selectedId, messageId, o
   const handleDownload = async () => {
     if (!current) return;
     try {
-      const url = blobUrl ?? await api.mail.downloadAttachment(messageId, current.id);
+      const url = blobUrl
+        ?? await getAttachmentUrl(messageId, current.id, () => api.mail.downloadAttachment(messageId, current.id));
       const a = document.createElement('a');
       a.href = url;
       a.download = current.filename;
@@ -236,6 +237,22 @@ export function AttachmentLightbox({ open, attachments, selectedId, messageId, o
         {!loading && blobUrl && isText && (
           <div className="w-full h-full overflow-auto p-6">
             <TextPreviewLightbox url={blobUrl} />
+          </div>
+        )}
+
+        {!loading && tooLarge && (
+          <div className="flex flex-col items-center gap-3">
+            <FileIcon className="w-10 h-10 text-white/30" />
+            <p className="text-[13px] text-white/60">
+              Too large to preview ({formatBytes(current.size)})
+            </p>
+            <button
+              onClick={handleDownload}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-white/10 text-[13px] text-white/80 hover:bg-white/20 hover:text-white transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Download
+            </button>
           </div>
         )}
       </div>

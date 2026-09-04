@@ -331,6 +331,17 @@ export default function MailPage() {
   });
   const [commitmentsOpen, setCommitmentsOpen] = useState(false);
 
+  // Compose (z-50) covers the AI drawers (z-40/41) outright on small screens —
+  // collapse them when compose opens so nothing keeps streaming into a surface
+  // the user can no longer see. Desktop has room for both, so lg+ is left alone.
+  useEffect(() => {
+    if (!composeOpen) return;
+    if (typeof window === 'undefined' || window.innerWidth >= 1024) return;
+    setAskOpen(false);
+    setCommitmentsOpen(false);
+    setBriefingExpanded(false);
+  }, [composeOpen]);
+
   // ── Electron background polling ────────────────────────────────────────────
   // Tracks the last known inbox unread count so we can detect new arrivals.
   // The BrowserWindow is never destroyed when minimised to tray, so this
@@ -472,6 +483,10 @@ export default function MailPage() {
   // zero unread — otherwise "0 starred" on the starred tab would trigger it.
   const showInboxZeroEmptyState = isInboxActive && (activeFolder?.unreadCount ?? 0) === 0;
 
+  // Abort handle for the in-flight message open — a newer open (e.g. holding
+  // j/k past the debounce) cancels the previous fetch instead of racing it.
+  const openAbortRef = useRef<AbortController | null>(null);
+
   // Load full message
   const openMessage = useCallback(async (messageId: string) => {
     // Look in both messages list and search results
@@ -485,6 +500,20 @@ export default function MailPage() {
     const isDraft = activeFolder?.path === '/Drafts' || msg?.isDraft === true;
 
     setActiveMessageId(messageId);
+
+    // Keep the URL in step with the open message so the system/browser Back
+    // button returns to the list (critical on phones, where Android/iOS back
+    // used to exit the app). One entry per reader-open: the first open pushes,
+    // subsequent opens replace, so Back always goes list-ward, not through
+    // every message visited.
+    if (!isDraft && typeof window !== 'undefined') {
+      const url = `${window.location.pathname}?msg=${encodeURIComponent(messageId)}`;
+      if (window.history.state?.msg) {
+        window.history.replaceState({ msg: messageId }, '', url);
+      } else if (new URLSearchParams(window.location.search).get('msg') !== messageId) {
+        window.history.pushState({ msg: messageId }, '', url);
+      }
+    }
 
     // Optimistically mark as read in the list immediately (skip for drafts)
     if (wasUnread && !isDraft) {
@@ -506,6 +535,10 @@ export default function MailPage() {
       return;
     }
 
+    openAbortRef.current?.abort();
+    const abort = new AbortController();
+    openAbortRef.current = abort;
+
     setLoadingMessage(true);
     try {
       const onlineNow = typeof navigator === 'undefined' ? true : navigator.onLine;
@@ -524,9 +557,10 @@ export default function MailPage() {
         }
       } else {
         try {
-          data = await api.mail.getMessage(messageId);
+          data = await api.mail.getMessage(messageId, { signal: abort.signal });
           void offline.mail.setMessage(messageId, data);
         } catch (netErr) {
+          if (abort.signal.aborted) throw netErr; // superseded — don't mask with offline copy
           const cached = await offline.mail.getMessage(messageId);
           if (cached) {
             data = cached;
@@ -573,6 +607,16 @@ export default function MailPage() {
         }
       }
     } catch (err: any) {
+      // Superseded by a newer open (j/k navigation aborted this fetch): the new
+      // open owns the selection and spinner — just undo this message's
+      // optimistic read-mark and bow out quietly.
+      if (abort.signal.aborted) {
+        if (wasUnread && !isDraft) {
+          updateMessageInCache(activeFolderId, messageId, (m) => ({ ...m, isRead: false }));
+          updateFolderCounts(activeFolderId, +1);
+        }
+        return;
+      }
       toast.error('Failed to load message', { description: err?.message });
       setActiveMessageId(undefined);
       // Revert optimistic update on error
@@ -581,9 +625,47 @@ export default function MailPage() {
         updateFolderCounts(activeFolderId, +1);
       }
     } finally {
-      setLoadingMessage(false);
+      // Only the still-current open may clear the spinner — an aborted fetch
+      // finishing late must not hide the loading state of its successor.
+      if (openAbortRef.current === abort) setLoadingMessage(false);
     }
   }, [messages, searchResults, folders, activeFolderId, updateFolderCounts, updateMessageInCache, offline]);
+
+  // ── System back: popping the ?msg=<id> entry closes the reader; navigating
+  // forward to one re-opens it. Any programmatic close (delete, move, snooze…)
+  // strips the stale ?msg so a later Back can't resurrect a gone message.
+  useEffect(() => {
+    const onPop = () => {
+      const msg = new URLSearchParams(window.location.search).get('msg');
+      if (!msg) {
+        setActiveMessageId(undefined);
+        setActiveMessage(null);
+      } else {
+        void openMessage(msg);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [openMessage]);
+
+  useEffect(() => {
+    if (activeMessageId || typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).has('msg')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [activeMessageId]);
+
+  // Close the reader the history-aware way: if this open pushed a ?msg entry,
+  // go back so browser history stays truthful; otherwise (deep link, stale
+  // state) just clear the reader — the effect above strips the URL param.
+  const closeReader = useCallback(() => {
+    if (typeof window !== 'undefined' && window.history.state?.msg) {
+      window.history.back();
+      return;
+    }
+    setActiveMessageId(undefined);
+    setActiveMessage(null);
+  }, []);
 
   // Warm the body cache on hover so the subsequent click opens instantly. Silent
   // and de-duplicated (fetchBodyCached collapses hover+click into one request);
@@ -968,17 +1050,30 @@ export default function MailPage() {
   const displayedMessages = isSearchMode ? searchResults : messages;
   const currentIndex = displayedMessages.findIndex((m) => m.id === activeMessageId);
 
+  // j/k move the selection instantly but debounce the body fetch ~150ms, so
+  // holding a key skims the list without firing a fetch chain per keypress —
+  // only the row the user settles on is actually opened (and openMessage's
+  // AbortController cancels a slower predecessor if one is still in flight).
+  const navDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigateAdjacent = useCallback((delta: 1 | -1) => {
+    if (displayedMessages.length === 0) return;
+    const idx = displayedMessages.findIndex((m) => m.id === activeMessageId);
+    const target =
+      delta === 1
+        ? (idx < displayedMessages.length - 1 ? idx + 1 : 0)
+        : (idx > 0 ? idx - 1 : displayedMessages.length - 1);
+    const id = displayedMessages[target].id;
+    setActiveMessageId(id);
+    if (navDebounceRef.current) clearTimeout(navDebounceRef.current);
+    navDebounceRef.current = setTimeout(() => {
+      navDebounceRef.current = null;
+      void openMessage(id);
+    }, 150);
+  }, [displayedMessages, activeMessageId, openMessage]);
+
   useKeyboardShortcuts({
-    j: () => {
-      if (displayedMessages.length === 0) return;
-      const next = currentIndex < displayedMessages.length - 1 ? currentIndex + 1 : 0;
-      openMessage(displayedMessages[next].id);
-    },
-    k: () => {
-      if (displayedMessages.length === 0) return;
-      const prev = currentIndex > 0 ? currentIndex - 1 : displayedMessages.length - 1;
-      openMessage(displayedMessages[prev].id);
-    },
+    j: () => navigateAdjacent(1),
+    k: () => navigateAdjacent(-1),
     c: () => openCompose('new'),
     r: () => { if (activeMessage) openCompose('reply'); },
     a: () => { if (activeMessage) openCompose('replyAll'); },
@@ -1118,11 +1213,12 @@ export default function MailPage() {
         onClearLabelFilter={clearLabelFilter}
       />
 
-      {/* Mail list pane — full width on mobile, fixed 300px on desktop */}
+      {/* Mail list pane — full width on phones, fixed 300px beside the reader
+          from md (tablet portrait) up; the nav sidebar joins at lg. */}
       <div className={cn(
         'shrink-0 flex flex-col h-full border-r border-border/50',
-        'w-full lg:w-[300px]',
-        activeMessageId ? 'hidden lg:flex' : 'flex',
+        'w-full md:w-[300px]',
+        activeMessageId ? 'hidden md:flex' : 'flex',
       )}>
         {/* List header */}
         <div className="px-3 pt-3 pb-2.5 border-b border-border/25 shrink-0">
@@ -1319,12 +1415,13 @@ export default function MailPage() {
         )}
       </div>
 
-      {/* Detail pane — full width on mobile when message selected, always visible on desktop */}
-      <div className={cn('flex-1 min-w-0 h-full flex flex-col', !activeMessageId && 'hidden lg:flex')}>
-        {/* Mobile back button */}
-        <div className="lg:hidden flex items-center px-3 py-2 border-b border-border/25 shrink-0">
+      {/* Detail pane — full width on phones when a message is selected, beside
+          the list from md (tablet portrait) up */}
+      <div className={cn('flex-1 min-w-0 h-full flex flex-col', !activeMessageId && 'hidden md:flex')}>
+        {/* Mobile back button — phones only; from md the list stays visible */}
+        <div className="md:hidden flex items-center px-3 py-2 border-b border-border/25 shrink-0">
           <button
-            onClick={() => { setActiveMessageId(undefined); setActiveMessage(null); }}
+            onClick={closeReader}
             className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70 hover:text-foreground transition-colors"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -1335,7 +1432,7 @@ export default function MailPage() {
         <ThreadView
           message={activeMessage}
           loading={loadingMessage}
-          onClose={() => { setActiveMessageId(undefined); setActiveMessage(null); }}
+          onClose={closeReader}
           onComposeWith={openComposeWith}
           onQuickReply={openQuickReply}
           onDelete={deleteMessage}

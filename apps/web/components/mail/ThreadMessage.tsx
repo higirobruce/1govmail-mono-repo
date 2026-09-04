@@ -16,6 +16,7 @@ import {
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
+import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { prepareEmailHtml } from '@/lib/emailRender';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MailAvatar } from './MailAvatar';
@@ -35,7 +36,7 @@ function isPreviewableAttachment(att: { mimeType: string; filename: string }): b
 // ─── Email rendering (mirrors MailDetail.tsx constants) ─────────────────────
 
 const EMAIL_CSS = `*,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;overflow-x:hidden;word-wrap:break-word}
+html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;overflow-x:auto;word-wrap:break-word}
 a{color:#2563eb;text-decoration:underline}
 a:hover{color:#1d4ed8}
 img{max-width:100%;height:auto;display:inline-block}
@@ -470,12 +471,13 @@ export default function ThreadMessage({
     if (downloadingId) return;
     setDownloadingId(att.id);
     try {
-      const url = await api.mail.downloadAttachment(message.id, att.id);
+      // Shared blob cache — repeat/preview-then-download reuses the fetched
+      // blob; the cache owns the URL lifecycle (no revoke here).
+      const url = await getAttachmentUrl(message.id, att.id, () => api.mail.downloadAttachment(message.id, att.id));
       const a = document.createElement('a');
       a.href = url;
       a.download = att.filename;
       a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 5_000);
     } catch {
       /* non-critical — surfaced by the lightbox / retry paths elsewhere */
     } finally {

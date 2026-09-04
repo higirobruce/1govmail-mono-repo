@@ -174,7 +174,7 @@ describe('MailService.enforceSenderRules', () => {
   });
 });
 
-describe('MailService.getMessages sender rule enforcement resilience', () => {
+describe('MailService.getMessages stays a pure read (sender-rule enforcement lives in the sweep)', () => {
   const activeUser = {
     id: 'u1',
     zimbraHost: 'mail.example.com',
@@ -200,22 +200,10 @@ describe('MailService.getMessages sender rule enforcement resilience', () => {
     return { service: service as any, prisma: prisma as any, zimbra: zimbra as any };
   }
 
-  // folder.findFirst call order inside getMessages, once enforcement is wired
-  // in and gated on the Inbox: (1) the target-folder lookup for the requested
-  // folderId, (2) the hoisted Junk/Spam folder lookup (once per request, not
-  // per message), (3) enforceSenderRules' own per-message "already filed?"
-  // lookup.
-  function mockFolderLookups(prisma: any) {
-    prisma.folder.findFirst
-      .mockResolvedValueOnce({ id: 'inbox-id', zimbraId: 'zfolder', userId: 'u1', path: '/Inbox' }) // target folder lookup
-      .mockResolvedValueOnce({ id: 'junk-id', zimbraId: 'z-junk', path: '/Junk' }) // hoisted junk/spam folder lookup
-      .mockResolvedValueOnce({ id: 'inbox-id', path: '/Inbox' }); // enforceSenderRules: current folder lookup
-  }
-
-  it('proves enforcement actually ran, then does not let a moveMessage failure abort getMessages', async () => {
+  it('never runs enforcement inside the Inbox list GET, even with a blocked sender in the results', async () => {
     const { service, prisma, zimbra } = makeService();
     prisma.user.findUnique.mockResolvedValue(activeUser);
-    mockFolderLookups(prisma);
+    prisma.folder.findFirst.mockResolvedValueOnce({ id: 'inbox-id', zimbraId: 'zfolder', userId: 'u1', path: '/Inbox' });
     zimbra.getMessages.mockResolvedValue({
       messages: [{ id: 'z1', e: [{ t: 'f', a: 'spam@evil.com', d: 'Spam' }], f: '', su: 'Subj', fr: 'snippet', d: Date.now() }],
       total: 1,
@@ -223,61 +211,11 @@ describe('MailService.getMessages sender rule enforcement resilience', () => {
     });
     const upserted = { id: 'm1', userId: 'u1', folderId: 'inbox-id', zimbraId: 'z1', fromEmail: 'spam@evil.com' };
     prisma.message.upsert.mockResolvedValue(upserted);
-    prisma.senderRule.findMany.mockResolvedValue([{ type: 'BLOCK', address: '@evil.com' }]);
-    zimbra.moveMessage.mockRejectedValue(new Error('zimbra unavailable'));
 
     const result = await service.getMessages('u1', 'inbox-id');
 
-    // This is the crux of the fix: previously this test only checked the
-    // outcome of a swallowed failure, which would still pass even if the
-    // entire enforcement loop were deleted from getMessages. Asserting the
-    // call happened (with the args the wiring is supposed to pass through)
-    // proves the enforcement path actually ran before it's rejected.
-    expect(zimbra.moveMessage).toHaveBeenCalledWith('mail.example.com', 'tok', 'z1', 'z-junk', 'csrf');
-    expect(result.messages).toEqual([upserted]);
-    expect(prisma.message.update).not.toHaveBeenCalled();
-  });
-
-  it('files a blocked sender\'s message into Junk end-to-end through getMessages', async () => {
-    const { service, prisma, zimbra } = makeService();
-    prisma.user.findUnique.mockResolvedValue(activeUser);
-    mockFolderLookups(prisma);
-    zimbra.getMessages.mockResolvedValue({
-      messages: [{ id: 'z1', e: [{ t: 'f', a: 'spam@evil.com', d: 'Spam' }], f: '', su: 'Subj', fr: 'snippet', d: Date.now() }],
-      total: 1,
-      more: false,
-    });
-    const upserted = { id: 'm1', userId: 'u1', folderId: 'inbox-id', zimbraId: 'z1', fromEmail: 'spam@evil.com' };
-    prisma.message.upsert.mockResolvedValue(upserted);
-    prisma.senderRule.findMany.mockResolvedValue([{ type: 'BLOCK', address: '@evil.com' }]);
-    zimbra.moveMessage.mockResolvedValue(undefined);
-
-    const result = await service.getMessages('u1', 'inbox-id');
-
-    expect(zimbra.moveMessage).toHaveBeenCalledWith('mail.example.com', 'tok', 'z1', 'z-junk', 'csrf');
-    expect(prisma.message.update).toHaveBeenCalledWith({ where: { id: 'm1' }, data: { folderId: 'junk-id' } });
-    // getMessages' own return value still reflects the pre-enforcement upsert
-    // snapshot — enforcement is a side effect layered on top of the read-through
-    // cache, not something the caller has to wait on to get its response shape.
-    expect(result.messages).toEqual([upserted]);
-  });
-
-  it('does not run enforcement at all when listing a folder other than Inbox', async () => {
-    const { service, prisma, zimbra } = makeService();
-    prisma.user.findUnique.mockResolvedValue(activeUser);
-    prisma.folder.findFirst.mockResolvedValueOnce({ id: 'archive-id', zimbraId: 'zarchive', userId: 'u1', path: '/Archive' });
-    zimbra.getMessages.mockResolvedValue({
-      messages: [{ id: 'z1', e: [{ t: 'f', a: 'spam@evil.com', d: 'Spam' }], f: '', su: 'Subj', fr: 'snippet', d: Date.now() }],
-      total: 1,
-      more: false,
-    });
-    const upserted = { id: 'm1', userId: 'u1', folderId: 'archive-id', zimbraId: 'z1', fromEmail: 'spam@evil.com' };
-    prisma.message.upsert.mockResolvedValue(upserted);
-
-    const result = await service.getMessages('u1', 'archive-id');
-
-    // Archive is user-organized mail — a blocked-sender rule created today
-    // must not retroactively sweep it into Spam the next time it's opened.
+    // The mutating Zimbra call moved to SenderRuleSweepService — an Inbox
+    // load must never pay per-message SOAP latency or mutate mail state.
     expect(prisma.senderRule.findMany).not.toHaveBeenCalled();
     expect(zimbra.moveMessage).not.toHaveBeenCalled();
     expect(result.messages).toEqual([upserted]);
@@ -971,6 +909,91 @@ describe('MailService.getMessage attachment classification', () => {
 
     expect(result.attachments).toEqual([]);
     expect(result.hasAttachments).toBe(false);
+  });
+});
+
+describe('MailService.getConversation back-fill batching', () => {
+  const user = {
+    id: 'u1',
+    email: 'u@example.com',
+    zimbraHost: 'mail.example.com',
+    authToken: 'tok',
+    csrfToken: null,
+    tokenExpiry: new Date(Date.now() + 60_000),
+  };
+
+  it('inserts missing thread messages with one batched createMany instead of a per-message upsert loop', async () => {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      message: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'm1', conversationId: 'c1' }),
+        findMany: jest
+          .fn()
+          // 1st call: existing zimbraIds in this conversation
+          .mockResolvedValueOnce([{ zimbraId: 'z1' }])
+          // 2nd call: final ordered thread listing
+          .mockResolvedValueOnce([{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }]),
+        createMany: jest.fn().mockResolvedValue({ count: 2 }),
+        upsert: jest.fn(),
+      },
+      folder: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'f-inbox', zimbraId: '2' }]),
+      },
+    } as unknown as PrismaService;
+    const zimbra = {
+      searchMessages: jest.fn().mockResolvedValue({
+        messages: [
+          { id: 'z1', l: '2', su: 's', d: 1, f: '', e: [] }, // already synced — skipped
+          { id: 'z2', l: '2', su: 's', d: 2, f: 'u', e: [{ t: 'f', a: 'a@x', d: 'A' }] },
+          { id: 'z3', l: '2', su: 's', d: 3, f: '', e: [] },
+          { id: 'z4', l: '999', su: 's', d: 4, f: '', e: [] }, // folder not synced — skipped
+        ],
+      }),
+    } as unknown as ZimbraService;
+    const service = new MailService(prisma, zimbra, {} as NotificationsService, {} as TasksService);
+
+    const result = await service.getConversation('u1', 'm1');
+
+    expect((prisma as any).message.upsert).not.toHaveBeenCalled();
+    expect((prisma as any).message.createMany).toHaveBeenCalledTimes(1);
+    const arg = (prisma as any).message.createMany.mock.calls[0][0];
+    expect(arg.skipDuplicates).toBe(true);
+    expect(arg.data).toHaveLength(2);
+    expect(arg.data.map((r: any) => r.zimbraId)).toEqual(['z2', 'z3']);
+    expect(arg.data[0]).toMatchObject({
+      userId: 'u1',
+      folderId: 'f-inbox',
+      conversationId: 'c1',
+      fromEmail: 'a@x',
+      isRead: false,
+    });
+    expect(result.messages).toHaveLength(3);
+  });
+
+  it('skips the batch write entirely when every thread message is already synced', async () => {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      message: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'm1', conversationId: 'c1' }),
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([{ zimbraId: 'z1' }])
+          .mockResolvedValueOnce([{ id: 'm1' }]),
+        createMany: jest.fn(),
+        upsert: jest.fn(),
+      },
+      folder: { findMany: jest.fn().mockResolvedValue([{ id: 'f-inbox', zimbraId: '2' }]) },
+    } as unknown as PrismaService;
+    const zimbra = {
+      searchMessages: jest.fn().mockResolvedValue({
+        messages: [{ id: 'z1', l: '2', su: 's', d: 1, f: '', e: [] }],
+      }),
+    } as unknown as ZimbraService;
+    const service = new MailService(prisma, zimbra, {} as NotificationsService, {} as TasksService);
+
+    await service.getConversation('u1', 'm1');
+
+    expect((prisma as any).message.createMany).not.toHaveBeenCalled();
   });
 });
 

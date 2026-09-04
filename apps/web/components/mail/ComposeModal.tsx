@@ -1034,7 +1034,10 @@ export default function ComposeModal({
 
   return (
     <div className={cn(
-      'fixed bottom-4 right-4 z-50 flex flex-col w-[680px] bg-card rounded-2xl border border-border shadow-2xl overflow-hidden',
+      'fixed z-50 flex flex-col bg-card rounded-2xl border border-border shadow-2xl overflow-hidden',
+      // Mobile: full-bleed with small insets so nothing runs off-screen.
+      // ≥sm: anchored bottom-right at the fixed 680px compose width.
+      'inset-x-2 bottom-2 w-auto sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[680px]',
       minimised ? 'h-auto' : 'max-h-[calc(100vh-2rem)]',
     )}>
       {/* ── Header ── */}

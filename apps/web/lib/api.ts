@@ -4,6 +4,7 @@ import {
   MOCK_MESSAGE_DETAIL,
 } from './mock-data';
 import { clearCardCache } from './ai/briefingCache';
+import { clearBodyCache } from './mailBodyCache';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
@@ -51,6 +52,7 @@ async function request<T>(
       localStorage.removeItem('auth');
       localStorage.removeItem('access_token'); // legacy key, safe to clear
       clearCardCache(); // don't leak this user's briefing cards to the next login
+      clearBodyCache(); // …nor their message bodies
       window.location.replace('/login');
       throw new Error('Session expired — please log in again');
     }

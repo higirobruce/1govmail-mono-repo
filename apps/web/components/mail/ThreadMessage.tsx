@@ -15,10 +15,22 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { fetchBodyCached } from '@/lib/mailBodyCache';
 import { sanitizeEmailHtml } from '@/lib/sanitize';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MailAvatar } from './MailAvatar';
 import { AttachmentTile } from './AttachmentTile';
+import { AttachmentLightbox } from './AttachmentLightbox';
+
+/** Files we can render inline (image / PDF / text) rather than force-download. */
+function isPreviewableAttachment(att: { mimeType: string; filename: string }): boolean {
+  return (
+    att.mimeType.startsWith('image/') ||
+    att.mimeType === 'application/pdf' ||
+    att.mimeType.startsWith('text/') ||
+    att.filename.toLowerCase().endsWith('.pdf')
+  );
+}
 
 // ─── Email rendering (mirrors MailDetail.tsx constants) ─────────────────────
 
@@ -446,6 +458,26 @@ export default function ThreadMessage({
   const [fullMessage, setFullMessage] = useState<any>(null);
   const [loadingBody, setLoadingBody] = useState(false);
   const [bodyError, setBodyError] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxSelectedId, setLightboxSelectedId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  const handleDownloadAttachment = useCallback(async (att: { id: string; filename: string }) => {
+    if (downloadingId) return;
+    setDownloadingId(att.id);
+    try {
+      const url = await api.mail.downloadAttachment(message.id, att.id);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = att.filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5_000);
+    } catch {
+      /* non-critical — surfaced by the lightbox / retry paths elsewhere */
+    } finally {
+      setDownloadingId(null);
+    }
+  }, [downloadingId, message.id]);
 
   // Fetch the full message body whenever this message becomes expanded — this
   // covers both the user clicking to expand AND the default-expanded state set
@@ -455,7 +487,10 @@ export default function ThreadMessage({
     let cancelled = false;
     setLoadingBody(true);
     setBodyError(false);
-    api.mail.getMessage(message.id)
+    // Cache-first: when this is the message the detail pane already fetched
+    // (the common case — the newest message auto-expands on open), this resolves
+    // from the shared body cache instead of re-downloading the body + images.
+    fetchBodyCached(message.id, api.mail.getMessage)
       .then((data) => { if (!cancelled) setFullMessage(data); })
       .catch(() => { if (!cancelled) setBodyError(true); })
       .finally(() => { if (!cancelled) setLoadingBody(false); });
@@ -652,26 +687,34 @@ export default function ThreadMessage({
                 </span>
               </div>
               <div className="flex items-start gap-3 flex-wrap">
-                {fullMessage.attachments.map((att: any) => (
-                  <AttachmentTile
-                    key={att.id}
-                    attachment={att}
-                    onClick={() => {
-                      api.mail
-                        .downloadAttachment(message.id, att.id)
-                        .then((url) => {
-                          const a = document.createElement('a');
-                          a.href = url;
-                          a.download = att.filename;
-                          a.click();
-                          setTimeout(() => URL.revokeObjectURL(url), 5_000);
-                        })
-                        .catch(() => {});
-                    }}
-                  />
-                ))}
+                {fullMessage.attachments.map((att: any) => {
+                  const previewable = isPreviewableAttachment(att);
+                  const openPreview = () => { setLightboxSelectedId(att.id); setLightboxOpen(true); };
+                  return (
+                    <AttachmentTile
+                      key={att.id}
+                      attachment={att}
+                      // Click previews when we can render it inline; otherwise downloads.
+                      onClick={() => (previewable ? openPreview() : handleDownloadAttachment(att))}
+                      onPreview={previewable ? openPreview : undefined}
+                      onDownload={() => handleDownloadAttachment(att)}
+                      downloading={downloadingId === att.id}
+                    />
+                  );
+                })}
               </div>
             </div>
+          )}
+
+          {/* Attachment preview lightbox (image / PDF / text — before any download) */}
+          {lightboxOpen && lightboxSelectedId && (fullMessage?.attachments?.length ?? 0) > 0 && (
+            <AttachmentLightbox
+              open={lightboxOpen}
+              attachments={fullMessage.attachments}
+              selectedId={lightboxSelectedId}
+              messageId={message.id}
+              onClose={() => { setLightboxOpen(false); setLightboxSelectedId(null); }}
+            />
           )}
         </div>
 

@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
 import { clearCardCache } from '@/lib/ai/briefingCache';
+import { clearBodyCache } from '@/lib/mailBodyCache';
 
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
 
@@ -64,6 +65,7 @@ export const useAuthStore = create<AuthState>()(
         // Persist middleware will write the cleared state; also wipe legacy key.
         localStorage.removeItem('access_token');
         clearCardCache(); // don't leak this user's briefing cards to the next login
+        clearBodyCache(); // …nor their message bodies
       },
 
       setUser: (user) => set({ user }),

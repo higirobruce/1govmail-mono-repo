@@ -57,6 +57,8 @@ interface MailListProps {
   loading?: boolean;
   loadingMore?: boolean;
   onSelect: (messageId: string) => void;
+  /** Warm the message-body cache when a row is hovered, so the click opens instantly. */
+  onPrefetch?: (messageId: string) => void;
   onLoadMore?: () => void;
   hasMore?: boolean;
   onContextAction?: (action: ContextAction) => void;
@@ -275,6 +277,7 @@ function MailRow({
   message,
   active,
   onClick,
+  onHover,
   onContextMenu,
   selected,
   onSelect,
@@ -283,6 +286,7 @@ function MailRow({
   message: Message;
   active: boolean;
   onClick: () => void;
+  onHover?: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   selected?: boolean;
   onSelect?: () => void;
@@ -295,6 +299,7 @@ function MailRow({
     <div className="px-2 pt-1 first:pt-2 last:pb-2">
       <div
         draggable
+        onMouseEnter={onHover}
         onDragStart={(e) => {
           e.dataTransfer.setData('application/x-govmail-msg', JSON.stringify({
             id: message.id,
@@ -437,6 +442,7 @@ export default function MailList({
   loading,
   loadingMore,
   onSelect,
+  onPrefetch,
   onLoadMore,
   hasMore,
   onContextAction,
@@ -642,6 +648,7 @@ export default function MailList({
                   message={msg}
                   active={activeMessageId === msg.id}
                   onClick={() => onSelect(msg.id)}
+                  onHover={onPrefetch ? () => onPrefetch(msg.id) : undefined}
                   onContextMenu={(e) => handleContextMenu(e, msg)}
                   selected={selectedIds.has(msg.id)}
                   onSelect={() => toggleSelect(msg.id)}

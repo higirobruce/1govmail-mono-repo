@@ -6,6 +6,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
 import { api } from '@/lib/api';
+import { getCachedBody, setCachedBody, fetchBodyCached } from '@/lib/mailBodyCache';
 import type { TriageLabel } from '@email-client/shared';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
@@ -484,7 +485,6 @@ export default function MailPage() {
     const isDraft = activeFolder?.path === '/Drafts' || msg?.isDraft === true;
 
     setActiveMessageId(messageId);
-    setLoadingMessage(true);
 
     // Optimistically mark as read in the list immediately (skip for drafts)
     if (wasUnread && !isDraft) {
@@ -494,6 +494,19 @@ export default function MailPage() {
       );
       updateFolderCounts(activeFolderId, -1);
     }
+
+    // Instant path: body already hydrated this session (prefetched on hover, or
+    // opened before) — render it with no spinner and no refetch. Same object
+    // reference on re-open, so React bails out of a needless re-render.
+    const cachedBody = isDraft ? undefined : getCachedBody<any>(messageId);
+    if (cachedBody) {
+      setActiveMessage(cachedBody);
+      setLoadingMessage(false);
+      if (wasUnread) api.mail.markRead(messageId, true).catch(() => {});
+      return;
+    }
+
+    setLoadingMessage(true);
     try {
       const onlineNow = typeof navigator === 'undefined' ? true : navigator.onLine;
       let data: any;
@@ -543,6 +556,7 @@ export default function MailPage() {
         setActiveMessage(null);
         setActiveMessageId(undefined);
       } else {
+        setCachedBody(messageId, data);
         setActiveMessage(data);
         // Persist read status to server (fire-and-forget, don't block UI)
         if (wasUnread) {
@@ -561,6 +575,16 @@ export default function MailPage() {
       setLoadingMessage(false);
     }
   }, [messages, searchResults, folders, activeFolderId, updateFolderCounts, updateMessageInCache, offline]);
+
+  // Warm the body cache on hover so the subsequent click opens instantly. Silent
+  // and de-duplicated (fetchBodyCached collapses hover+click into one request);
+  // skipped for drafts, which open in compose rather than the reader.
+  const prefetchMessage = useCallback((messageId: string) => {
+    if (getCachedBody(messageId)) return;
+    const msg = messages.find((m) => m.id === messageId) ?? searchResults.find((m) => m.id === messageId);
+    if (msg?.isDraft) return;
+    void fetchBodyCached(messageId, (id) => api.mail.getMessage(id)).catch(() => {});
+  }, [messages, searchResults]);
 
   const handleMoveToFolder = useCallback(async (folderId: string) => {
     if (!activeMessageId) return;
@@ -1215,6 +1239,7 @@ export default function MailPage() {
             loading={loadingSearch && searchResults.length === 0}
             loadingMore={loadingMoreSearch}
             onSelect={openMessage}
+            onPrefetch={prefetchMessage}
             onLoadMore={() => { if (!loadingMoreSearch && searchHasMore) runSearch(searchQuery, false); }}
             hasMore={searchHasMore}
             onContextAction={handleContextAction}
@@ -1260,6 +1285,7 @@ export default function MailPage() {
               loading={loadingMessages && messages.length === 0}
               loadingMore={loadingMore}
               onSelect={openMessage}
+              onPrefetch={prefetchMessage}
               onLoadMore={() => {
                 // With a triage filter active, most fetched rows are filtered
                 // out client-side, so the load-more sentinel never leaves the

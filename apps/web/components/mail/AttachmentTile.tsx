@@ -179,7 +179,7 @@ export function AttachmentTile({
 
       {/* Hover actions */}
       {(onPreview || onDownload) && (
-        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
           {onPreview && (
             <button
               type="button"

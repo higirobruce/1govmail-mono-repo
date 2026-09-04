@@ -346,6 +346,13 @@ html[data-electron='true'] body {
   color: var(--muted-foreground);
 }
 
+/* Mini reply composer — compact editor, grows with content */
+.mini-composer-editor.ProseMirror {
+  min-height: 24px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 /* ── Code block (lowlight / highlight.js) ──────────────────────────────────── */
 .code-block-wrapper pre {
   background: #1e1e2e;

@@ -65,8 +65,8 @@ interface MailDetailProps {
   message?: MessageDetail | null;
   loading?: boolean;
   onClose?: () => void;
-  onReply?: () => void;
-  onReplyAll?: () => void;
+  onReply?: (initialBody?: string) => void;
+  onReplyAll?: (initialBody?: string) => void;
   onForward?: () => void;
   onDelete?: () => void;
   onToggleStar?: () => void;
@@ -852,7 +852,8 @@ export default function MailDetail({
             <QuickReplyBar
               message={message}
               onSent={() => {}}
-              onExpand={() => onReply?.()}
+              onExpand={(initialBody, mode) =>
+                mode === 'replyAll' ? onReplyAll?.(initialBody) : onReply?.(initialBody)}
             />
           </div>
         )}
@@ -924,7 +925,7 @@ export default function MailDetail({
       {/* Reply bar */}
       <div className="px-4 py-2.5 border-t border-border-faint shrink-0 flex items-center gap-2">
         <button
-          onClick={onReply}
+          onClick={() => onReply?.()}
           className="flex-1 text-left px-4 py-2 bg-muted/40 hover:bg-muted border border-border rounded-xl text-ui text-ink-3 hover:text-ink-2 transition-all"
         >
           <span className="flex items-center gap-2">
@@ -933,7 +934,7 @@ export default function MailDetail({
           </span>
         </button>
         <button
-          onClick={onReplyAll}
+          onClick={() => onReplyAll?.()}
           className="p-2 bg-muted/40 hover:bg-muted border border-border rounded-xl text-ink-3 hover:text-ink-2 transition-all"
           title="Reply All"
         >

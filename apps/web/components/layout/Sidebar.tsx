@@ -14,12 +14,14 @@ import {
   ListTodo, UsersRound, Newspaper, Sparkles,
   Sun, Moon, Monitor, BookOpen, ShieldAlert,
   MoreHorizontal, Pencil, CloudOff, Loader2,
+  PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { useOffline } from '@/lib/offline/provider';
 import { cn } from '@/lib/utils';
 import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
 import { AppTour } from '@/components/tour/AppTour';
 import { useThemeStore, type Theme } from '@/stores/theme.store';
+import { useUIStore } from '@/stores/ui.store';
 import { NotificationsBell } from '@/components/layout/NotificationsBell';
 import {
   Dialog,
@@ -215,8 +217,11 @@ function NavItem({
       data-tour={tourId}
       onClick={comingSoon ? undefined : onClick}
       disabled={comingSoon}
+      title={label}
       className={cn(
         'w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] transition-all duration-100 group relative',
+        // Icon rail mode (sidebar collapsed): center the icon, drop the text.
+        'group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0',
         active
           ? 'bg-primary/10 text-primary font-medium'
           : comingSoon
@@ -235,18 +240,22 @@ function NavItem({
           active ? 'text-primary' : comingSoon ? 'text-foreground/20' : 'text-muted-foreground/50 group-hover:text-foreground/70',
         )} />
       )}
-      <span className="flex-1 text-left truncate">{label}</span>
+      <span className="flex-1 text-left truncate group-data-[collapsed=true]/sidebar:hidden">{label}</span>
       {comingSoon ? (
-        <span className="text-[0.625rem] font-medium px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/35 tracking-wide">
+        <span className="text-[0.625rem] font-medium px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/35 tracking-wide group-data-[collapsed=true]/sidebar:hidden">
           Soon
         </span>
       ) : (!!unread && unread > 0 && (
-        <span className={cn(
-          'text-[0.6875rem] font-medium px-1.5 py-0.5 rounded-md tabular-nums',
-          active ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
-        )}>
-          {unread > 99 ? '99+' : unread}
-        </span>
+        <>
+          <span className={cn(
+            'text-[0.6875rem] font-medium px-1.5 py-0.5 rounded-md tabular-nums group-data-[collapsed=true]/sidebar:hidden',
+            active ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
+          )}>
+            {unread > 99 ? '99+' : unread}
+          </span>
+          {/* Icon-rail mode: unread shows as a dot on the icon's corner */}
+          <span className="hidden group-data-[collapsed=true]/sidebar:block absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" />
+        </>
       ))}
     </button>
   );
@@ -363,11 +372,12 @@ function OfflineStatusPill() {
       }
       className={cn(
         'flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.75rem]',
+        'group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0',
         tone,
       )}
     >
       <Icon className={cn('w-3.5 h-3.5 shrink-0', !offline && 'animate-spin')} />
-      <span className="flex-1 text-left truncate">{label}</span>
+      <span className="flex-1 text-left truncate group-data-[collapsed=true]/sidebar:hidden">{label}</span>
     </div>
   );
 }
@@ -535,6 +545,8 @@ export default function Sidebar({
   };
 
   const { theme, setTheme } = useThemeStore();
+  const collapsed = useUIStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const THEME_CYCLE: Theme[] = ['light', 'dark', 'system'];
   const ThemeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
   const nextTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
@@ -550,30 +562,50 @@ export default function Sidebar({
   const displayName = user?.displayName ?? user?.email ?? 'Mailbox';
 
   return (
-    <div className={cn('w-[220px] shrink-0 hidden lg:flex flex-col h-full bg-sidebar border-r border-sidebar-border/60', className)}>
+    <div
+      data-collapsed={collapsed}
+      className={cn(
+        'group/sidebar shrink-0 hidden lg:flex flex-col h-full bg-sidebar border-r border-sidebar-border/60 transition-[width] duration-150',
+        collapsed ? 'w-[60px]' : 'w-[220px]',
+        className,
+      )}
+    >
 
-      {/* User / org header */}
-      <div className="px-3 pt-4 pb-2">
-        <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg">
-          <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0">
+      {/* User / org header + collapse toggle */}
+      <div className={cn('pt-4 pb-2', collapsed ? 'px-2' : 'px-3')}>
+        <div className={cn('flex items-center gap-2.5 py-1.5 rounded-lg', collapsed ? 'flex-col px-0' : 'px-2')}>
+          <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0" title={displayName}>
             <span className="text-[0.6875rem] font-bold text-white leading-none">{initials}</span>
           </div>
-          <span className="flex-1 text-[0.8125rem] font-semibold text-foreground truncate">
-            {displayName}
-          </span>
-          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
+          {!collapsed && (
+            <span className="flex-1 text-[0.8125rem] font-semibold text-foreground truncate">
+              {displayName}
+            </span>
+          )}
+          <button
+            onClick={toggleSidebar}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="p-1 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-colors shrink-0"
+          >
+            {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+          </button>
         </div>
       </div>
 
       {/* Compose button */}
-      <div className="px-3 pb-3">
+      <div className={cn('pb-3', collapsed ? 'px-2' : 'px-3')}>
         <button
           data-tour="compose"
           onClick={() => { onCompose?.(); onClose?.(); }}
-          className="w-full flex items-center gap-2 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[0.8125rem] font-medium transition-all"
+          title="Compose"
+          className={cn(
+            'w-full flex items-center gap-2 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[0.8125rem] font-medium transition-all',
+            collapsed ? 'justify-center px-0' : 'px-3',
+          )}
         >
           <Plus className="w-3.5 h-3.5 shrink-0" />
-          Compose
+          {!collapsed && 'Compose'}
         </button>
       </div>
 
@@ -628,8 +660,8 @@ export default function Sidebar({
             );
           })}
 
-          {/* Custom / label folders */}
-          {(customFolders.length > 0 || onCreateFolder) && (
+          {/* Custom / label folders — labels need their names; hidden in icon-rail mode */}
+          {!collapsed && (customFolders.length > 0 || onCreateFolder) && (
             <div className="pt-3">
               <div className="flex items-center pr-1">
                 <button
@@ -782,17 +814,18 @@ export default function Sidebar({
         <button
           onClick={() => setTheme(nextTheme)}
           title={themeLabel}
-          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all"
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
         >
           <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
-          <span className="flex-1 text-left capitalize">Theme: {theme}</span>
+          <span className="flex-1 text-left capitalize group-data-[collapsed=true]/sidebar:hidden">Theme: {theme}</span>
         </button>
         <button
           onClick={() => setTourActive(true)}
-          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all"
+          title="Take a tour"
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
         >
           <Sparkles className="w-3.5 h-3.5 shrink-0" />
-          Take a tour
+          <span className="group-data-[collapsed=true]/sidebar:hidden">Take a tour</span>
         </button>
         <NavItem
           icon={LogOut}

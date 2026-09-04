@@ -64,14 +64,18 @@ export function NotificationsBell() {
     <div ref={ref} className="relative">
       <button
         onClick={handleOpen}
-        className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all relative"
+        title="Notifications"
+        className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all relative group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
       >
         <Bell className="w-3.5 h-3.5 shrink-0" />
-        <span className="flex-1 text-left">Notifications</span>
+        <span className="flex-1 text-left group-data-[collapsed=true]/sidebar:hidden">Notifications</span>
         {unread > 0 && (
-          <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[0.625rem] font-bold flex items-center justify-center shrink-0">
+          <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[0.625rem] font-bold flex items-center justify-center shrink-0 group-data-[collapsed=true]/sidebar:hidden">
             {unread > 9 ? '9+' : unread}
           </span>
+        )}
+        {unread > 0 && (
+          <span className="hidden group-data-[collapsed=true]/sidebar:block absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" />
         )}
       </button>
 

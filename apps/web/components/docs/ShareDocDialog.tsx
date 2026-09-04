@@ -165,7 +165,7 @@ export function ShareDocDialog({
               <div className="flex flex-col gap-2">
                 {/* Permission picker */}
                 <div className="flex flex-col gap-1">
-                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Anyone with the link</span>
+                  <span className="text-[0.6875rem] font-medium text-muted-foreground uppercase tracking-wider">Anyone with the link</span>
                   <div className="flex gap-1">
                     {([
                       { value: 'VIEW', label: 'Can view' },
@@ -213,7 +213,7 @@ export function ShareDocDialog({
             ) : null}
 
             {isShared && (
-              <p className="text-[11px] text-muted-foreground/60">
+              <p className="text-[0.6875rem] text-muted-foreground/60">
                 Disabling sharing will revoke access for everyone using this link.
               </p>
             )}

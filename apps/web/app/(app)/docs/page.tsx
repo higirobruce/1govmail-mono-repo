@@ -367,7 +367,7 @@ export default function DocsPage() {
                   type="button"
                   onClick={() => setActiveTagFilter(active ? null : t.label)}
                   className={cn(
-                    'text-[10px] px-1.5 py-0.5 rounded border transition-colors',
+                    'text-[0.625rem] px-1.5 py-0.5 rounded border transition-colors',
                     active ? t.cls : 'bg-transparent border-border/50 text-muted-foreground hover:border-muted-foreground/40',
                   )}
                 >
@@ -389,7 +389,7 @@ export default function DocsPage() {
                   <div className="py-1">
                     <div className="flex items-center gap-1 px-3 py-1">
                       <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400" />
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Favorites</span>
+                      <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Favorites</span>
                     </div>
                     {favoriteDocs.map((doc) => (
                       <div
@@ -419,7 +419,7 @@ export default function DocsPage() {
                   <div className="py-1">
                     {(searchQuery || activeTagFilter) && (
                       <div className="px-3 py-1">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Results</span>
+                        <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Results</span>
                       </div>
                     )}
                     <DocTree
@@ -441,7 +441,7 @@ export default function DocsPage() {
                   <div className="py-1">
                     <div className="mx-2 mb-1.5 border-t border-border" />
                     <div className="flex items-center gap-1 px-3 py-1">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Shared with me</span>
+                      <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">Shared with me</span>
                     </div>
                     {sharedWithMe.map((doc) => (
                       <div
@@ -457,7 +457,7 @@ export default function DocsPage() {
                         </span>
                         <span className="flex-1 truncate">{doc.title || 'Untitled'}</span>
                         <span className={cn(
-                          'text-[9px] px-1 py-0.5 rounded border shrink-0',
+                          'text-[0.5625rem] px-1 py-0.5 rounded border shrink-0',
                           doc._invite.role === 'VIEWER'
                             ? 'bg-muted/60 border-border/60 text-muted-foreground'
                             : 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400',
@@ -563,7 +563,7 @@ export default function DocsPage() {
                         <Tag className="w-3.5 h-3.5 mr-2 shrink-0" />
                         Tags
                         {(activeDocs.tags ?? []).length > 0 && (
-                          <span className="ml-auto text-[10px] text-muted-foreground">{activeDocs.tags.length}</span>
+                          <span className="ml-auto text-[0.625rem] text-muted-foreground">{activeDocs.tags.length}</span>
                         )}
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent>

@@ -205,7 +205,7 @@ function FontSizeSelector() {
     { value: 'lg',      label: 'Large',    hint: 'A' },
     { value: 'xl',      label: 'X-Large',  hint: 'A' },
   ];
-  const hintSizes = ['text-[11px]', 'text-[13px]', 'text-[15px]', 'text-[17px]'];
+  const hintSizes = ['text-[0.6875rem]', 'text-[0.8125rem]', 'text-[0.9375rem]', 'text-[1.0625rem]'];
   return (
     <div className="flex gap-2">
       {options.map((opt, i) => (
@@ -220,7 +220,7 @@ function FontSizeSelector() {
           )}
         >
           <span className={cn('font-semibold leading-none', hintSizes[i])}>{opt.hint}</span>
-          <span className="text-[10px] mt-0.5">{opt.label}</span>
+          <span className="text-[0.625rem] mt-0.5">{opt.label}</span>
         </button>
       ))}
     </div>
@@ -369,7 +369,7 @@ function SignatureEditor({
           </div>
           <EditorContent editor={editor} className="bg-background" />
         </div>
-        <p className="text-[11px] text-muted-foreground/40">
+        <p className="text-[0.6875rem] text-muted-foreground/40">
           Use the toolbar to format text and upload images (logo, photo, etc.).
         </p>
       </div>
@@ -468,7 +468,7 @@ export default function SettingsPage() {
           <ArrowLeft className="w-4 h-4 shrink-0" />
           Mail
         </button>
-        <p className="hidden md:block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/40 px-2 mb-2">
+        <p className="hidden md:block text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/40 px-2 mb-2">
           Settings
         </p>
         <NavItem icon={User}          label="Profile"       active={section === 'profile'}     onClick={() => setSection('profile')} />
@@ -793,7 +793,7 @@ function OooTemplateInserter({ onInsert }: { onInsert: (text: string) => void })
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="text-[11px] text-primary hover:text-primary/80 transition-colors"
+        className="text-[0.6875rem] text-primary hover:text-primary/80 transition-colors"
       >
         Insert template ▾
       </button>
@@ -804,7 +804,7 @@ function OooTemplateInserter({ onInsert }: { onInsert: (text: string) => void })
               key={t.label}
               type="button"
               onClick={() => { onInsert(t.text); setOpen(false); }}
-              className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/50 text-foreground transition-colors"
+              className="w-full text-left px-3 py-2 text-[0.75rem] hover:bg-muted/50 text-foreground transition-colors"
             >
               {t.label}
             </button>
@@ -866,7 +866,7 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
 
       {/* Past-date warning */}
       {isPastDate && (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[12px] text-amber-600 dark:text-amber-400">
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[0.75rem] text-amber-600 dark:text-amber-400">
           <span className="shrink-0 mt-0.5">⚠</span>
           Your out-of-office period may have already started or passed. Check the dates below.
         </div>
@@ -941,13 +941,13 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
             <button
               type="button"
               onClick={() => setShowPreview((o) => !o)}
-              className="w-full flex items-center justify-between px-4 py-2.5 bg-muted/20 hover:bg-muted/40 transition-colors text-[12px] font-medium text-muted-foreground"
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-muted/20 hover:bg-muted/40 transition-colors text-[0.75rem] font-medium text-muted-foreground"
             >
               <span>Preview auto-reply</span>
               <span>{showPreview ? '▲' : '▼'}</span>
             </button>
             {showPreview && (
-              <div className="p-4 bg-card space-y-2 text-[12px]">
+              <div className="p-4 bg-card space-y-2 text-[0.75rem]">
                 <div className="flex items-center gap-2 text-muted-foreground/60">
                   <span className="font-medium text-foreground/60">Subject:</span>
                   <span>Out of Office: Re: [your subject]</span>
@@ -957,7 +957,7 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
                   <span>{data.email}</span>
                 </div>
                 <Separator />
-                <pre className="whitespace-pre-wrap text-foreground/80 text-[12px] font-sans leading-relaxed">
+                <pre className="whitespace-pre-wrap text-foreground/80 text-[0.75rem] font-sans leading-relaxed">
                   {message || '(no message set)'}
                 </pre>
               </div>
@@ -1374,7 +1374,7 @@ function AISection() {
         <div>
           <Label className="text-xs text-muted-foreground">Model</Label>
           {installed === null ? (
-            <div className="mt-1 flex items-center gap-2 h-9 text-[12px] text-muted-foreground/70">
+            <div className="mt-1 flex items-center gap-2 h-9 text-[0.75rem] text-muted-foreground/70">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               Checking which models are installed…
             </div>
@@ -1396,15 +1396,15 @@ function AISection() {
             />
           )}
           {missing ? (
-            <p className="text-[11px] text-destructive mt-1">
+            <p className="text-[0.6875rem] text-destructive mt-1">
               <code className="font-mono">{draftModel}</code> is not installed on the API host. Pick an installed model, or ask your administrator to run <code className="font-mono">ollama pull {draftModel}</code>.
             </p>
           ) : loadError ? (
-            <p className="text-[11px] text-muted-foreground/70 mt-1">
+            <p className="text-[0.6875rem] text-muted-foreground/70 mt-1">
               Could not list installed models ({loadError}). Enter the model name manually.
             </p>
           ) : (
-            <p className="text-[11px] text-muted-foreground/70 mt-1">
+            <p className="text-[0.6875rem] text-muted-foreground/70 mt-1">
               Models installed on the API host. Ask your administrator to install more.
             </p>
           )}
@@ -1413,7 +1413,7 @@ function AISection() {
         <div>
           <div className="flex items-center justify-between">
             <Label className="text-xs text-muted-foreground">Custom instructions</Label>
-            <span className="text-[11px] text-muted-foreground/60 tabular-nums">
+            <span className="text-[0.6875rem] text-muted-foreground/60 tabular-nums">
               {draftInstructions.length}/{CUSTOM_INSTRUCTIONS_MAX_CHARS}
             </span>
           </div>
@@ -1425,7 +1425,7 @@ function AISection() {
             maxLength={CUSTOM_INSTRUCTIONS_MAX_CHARS}
             className="mt-1 w-full rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/20 focus:border-primary/30 resize-y"
           />
-          <p className="text-[11px] text-muted-foreground/70 mt-1">
+          <p className="text-[0.6875rem] text-muted-foreground/70 mt-1">
             Style preferences applied to every AI action (Summarize, Rewrite, Suggest Reply). They never override the built-in safety rules, and small models may follow them loosely.
           </p>
         </div>
@@ -1441,7 +1441,7 @@ function AISection() {
           {testResult && (
             <span
               className={cn(
-                'text-[12px]',
+                'text-[0.75rem]',
                 testResult.ok ? 'text-success' : 'text-destructive',
               )}
             >
@@ -1452,7 +1452,7 @@ function AISection() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex gap-2 text-[12px] text-amber-700 dark:text-amber-300">
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex gap-2 text-[0.75rem] text-amber-700 dark:text-amber-300">
         <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
         <div>
           <p className="font-medium">Privacy notice</p>

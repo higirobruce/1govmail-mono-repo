@@ -79,7 +79,7 @@ export function AttachmentPreview({ url, mimeType, filename, variant = 'inline' 
     if (rows.length === 0) return <FailureNote light={lightbox} label="Empty file" />;
     const [header, ...body] = rows;
     return (
-      <div className={cn('overflow-auto rounded-lg border text-[12px]', lightbox ? 'max-h-full border-white/15' : 'max-h-80 border-border/30')}>
+      <div className={cn('overflow-auto rounded-lg border text-[0.75rem]', lightbox ? 'max-h-full border-white/15' : 'max-h-80 border-border/30')}>
         <table className="w-full border-collapse">
           <thead>
             <tr className={lightbox ? 'bg-white/10' : 'bg-muted/50'}>
@@ -111,7 +111,7 @@ export function AttachmentPreview({ url, mimeType, filename, variant = 'inline' 
     if (text === null) return <Spinner light={lightbox} />;
     return (
       <pre className={cn(
-        'text-[12px] whitespace-pre-wrap font-mono overflow-auto rounded-lg p-3 leading-relaxed',
+        'text-[0.75rem] whitespace-pre-wrap font-mono overflow-auto rounded-lg p-3 leading-relaxed',
         lightbox ? 'text-white/80 max-h-full' : 'text-foreground/80 max-h-80 bg-muted/20',
       )}>
         {text}
@@ -143,7 +143,7 @@ export function AttachmentPreview({ url, mimeType, filename, variant = 'inline' 
 
 function FailureNote({ light, label = 'Failed to load file' }: { light: boolean; label?: string }) {
   return (
-    <p className={cn('text-[12px] text-center py-4', light ? 'text-white/50' : 'text-muted-foreground/60')}>
+    <p className={cn('text-[0.75rem] text-center py-4', light ? 'text-white/50' : 'text-muted-foreground/60')}>
       {label}
     </p>
   );

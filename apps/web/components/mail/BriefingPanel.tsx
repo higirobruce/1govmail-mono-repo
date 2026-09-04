@@ -107,7 +107,7 @@ export default function BriefingPanel({
         className={cn(
           'fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full',
           'border border-border/50 bg-card px-3.5 py-2 shadow-lg',
-          'text-[12px] font-medium text-foreground hover:bg-muted/60 transition-colors',
+          'text-[0.75rem] font-medium text-foreground hover:bg-muted/60 transition-colors',
         )}
         aria-label="Expand briefing"
       >
@@ -118,7 +118,7 @@ export default function BriefingPanel({
           {running ? (progress ? phaseLabel(progress) : 'Analyzing…') : 'Briefing'}
         </span>
         {!running && result && result.brief.needsDecision.length > 0 && (
-          <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+          <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[0.625rem] font-semibold text-destructive">
             {result.brief.needsDecision.length}
           </span>
         )}
@@ -141,7 +141,7 @@ export default function BriefingPanel({
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
         <Sparkles className="w-4 h-4 text-primary" />
-        <span className="text-[12px] font-semibold text-foreground">Executive briefing</span>
+        <span className="text-[0.75rem] font-semibold text-foreground">Executive briefing</span>
         <button
           type="button"
           onClick={() => onToggleExpanded(false)}
@@ -162,7 +162,7 @@ export default function BriefingPanel({
             disabled={running}
             onClick={() => { setWindow(w); void run(w); }}
             className={cn(
-              'px-2 py-1 rounded-md text-[11px] font-medium transition-colors',
+              'px-2 py-1 rounded-md text-[0.6875rem] font-medium transition-colors',
               w === window_
                 ? 'bg-primary/10 text-primary'
                 : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/60',
@@ -188,9 +188,9 @@ export default function BriefingPanel({
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[12px]">
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[0.75rem]">
         {running && (
-          <div className="flex items-center justify-center gap-2 py-6 text-[12px] text-muted-foreground/70">
+          <div className="flex items-center justify-center gap-2 py-6 text-[0.75rem] text-muted-foreground/70">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             <span>{progress ? phaseLabel(progress) : 'Starting…'}</span>
           </div>
@@ -198,13 +198,13 @@ export default function BriefingPanel({
 
         {!running && error && (
           <div className="space-y-2.5">
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11.5px] leading-relaxed text-amber-800 dark:text-amber-300">
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[0.719rem] leading-relaxed text-amber-800 dark:text-amber-300">
               {error}
             </div>
             <button
               type="button"
               onClick={() => void run(window_)}
-              className="text-[11.5px] font-medium text-primary hover:underline"
+              className="text-[0.719rem] font-medium text-primary hover:underline"
             >
               Retry
             </button>
@@ -212,7 +212,7 @@ export default function BriefingPanel({
         )}
 
         {!running && !error && result && allEmpty && (
-          <p className="py-6 text-center text-[12px] text-muted-foreground/60">
+          <p className="py-6 text-center text-[0.75rem] text-muted-foreground/60">
             Nothing needs your attention in this window.
           </p>
         )}
@@ -222,7 +222,7 @@ export default function BriefingPanel({
           if (items.length === 0) return null;
           return (
             <div key={key}>
-              <p className="mb-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/50">{label}</p>
+              <p className="mb-1.5 text-[0.625rem] uppercase tracking-wider text-muted-foreground/50">{label}</p>
               <ul className="space-y-1">
                 {items.map((item: BriefItem, i: number) => {
                   const clickable = item.messageIds.length > 0;
@@ -233,7 +233,7 @@ export default function BriefingPanel({
                         disabled={!clickable}
                         onClick={() => clickable && onOpenMessage(item.messageIds[0])}
                         className={cn(
-                          'flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left text-[12px] leading-snug transition-colors',
+                          'flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left text-[0.75rem] leading-snug transition-colors',
                           clickable
                             ? 'cursor-pointer text-foreground hover:bg-muted/60'
                             : 'cursor-default text-foreground/80',
@@ -249,7 +249,7 @@ export default function BriefingPanel({
                         )}
                         <span className="flex-1">{item.text}</span>
                         {item.messageIds.length > 1 && (
-                          <span className="shrink-0 rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground/50">
+                          <span className="shrink-0 rounded bg-muted/60 px-1 py-0.5 text-[0.625rem] text-muted-foreground/50">
                             {item.messageIds.length} sources
                           </span>
                         )}
@@ -269,20 +269,20 @@ export default function BriefingPanel({
           <button
             type="button"
             onClick={() => { onToggleExpanded(false); onOpenCommitments(); }}
-            className="text-[11px] font-medium text-primary hover:underline"
+            className="text-[0.6875rem] font-medium text-primary hover:underline"
           >
             {openCommitmentsCount} open commitment{openCommitmentsCount === 1 ? '' : 's'} →
           </button>
         )}
         {result && (
-          <p className="text-[11px] text-muted-foreground/60">
+          <p className="text-[0.6875rem] text-muted-foreground/60">
             Covered {result.coveredCount} of {result.totalInWindow}{result.totalIsLowerBound ? '+' : ''} messages
             {result.failedCount > 0 && ` · ${result.failedCount} could not be analyzed`}
             {' · '}
             {new Date(result.generatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
           </p>
         )}
-        <p className="text-[10px] text-muted-foreground/45">
+        <p className="text-[0.625rem] text-muted-foreground/45">
           AI-generated — verify against the linked messages.
         </p>
       </div>

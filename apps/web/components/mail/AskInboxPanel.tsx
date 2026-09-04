@@ -32,13 +32,13 @@ function DegradedNotice({ degraded }: { degraded: InboxChatDegraded }) {
   if (!degraded.vector && !degraded.keyword) return null;
   if (degraded.vector && degraded.keyword) {
     return (
-      <p className="text-[10.5px] italic text-muted-foreground/60">
+      <p className="text-[0.656rem] italic text-muted-foreground/60">
         Search backends unavailable — the answer may be incomplete.
       </p>
     );
   }
   return (
-    <p className="text-[10.5px] italic text-muted-foreground/60">
+    <p className="text-[0.656rem] italic text-muted-foreground/60">
       {degraded.keyword
         ? 'Keyword search unavailable — answered from semantic matches only.'
         : 'Semantic index unavailable — answered from keyword matches only.'}
@@ -49,7 +49,7 @@ function DegradedNotice({ degraded }: { degraded: InboxChatDegraded }) {
 function InjectionBanner({ sources }: { sources: InboxChatSource[] }) {
   if (!sources.some((s) => s.injectionSuspected)) return null;
   return (
-    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11.5px] leading-relaxed text-amber-800 dark:text-amber-300">
+    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[0.719rem] leading-relaxed text-amber-800 dark:text-amber-300">
       One of the emails used for this answer looks like it may be trying to manipulate the AI.
       Verify against the sources before acting.
     </div>
@@ -72,10 +72,10 @@ function SourcesRail({
         return (
           <li key={s.alias} className="rounded-md border border-border/30 p-2 space-y-1">
             <div className="flex items-center gap-1.5">
-              <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] font-semibold text-muted-foreground/80">
+              <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[0.625rem] font-semibold text-muted-foreground/80">
                 {s.alias}
               </span>
-              <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-foreground">
+              <span className="min-w-0 flex-1 truncate text-[0.719rem] font-medium text-foreground">
                 {s.fromName ?? s.fromEmail}
               </span>
               {s.injectionSuspected && (
@@ -85,27 +85,27 @@ function SourcesRail({
                 />
               )}
             </div>
-            {s.subject && <p className="truncate text-[11.5px] text-foreground/90">{s.subject}</p>}
-            <p className="line-clamp-2 text-[11px] text-muted-foreground/70">{s.snippet}</p>
+            {s.subject && <p className="truncate text-[0.719rem] text-foreground/90">{s.subject}</p>}
+            <p className="line-clamp-2 text-[0.6875rem] text-muted-foreground/70">{s.snippet}</p>
             <div className="flex items-center gap-2 pt-0.5">
               <button
                 type="button"
                 onClick={() => onOpenMessage(s.messageId)}
-                className="text-[10.5px] font-medium text-primary hover:underline"
+                className="text-[0.656rem] font-medium text-primary hover:underline"
               >
                 Open
               </button>
               <button
                 type="button"
                 onClick={() => onReplyToMessage(s.messageId)}
-                className="inline-flex items-center gap-0.5 text-[10.5px] font-medium text-primary hover:underline"
+                className="inline-flex items-center gap-0.5 text-[0.656rem] font-medium text-primary hover:underline"
               >
                 <CornerUpRight className="h-3 w-3" />
                 Reply
               </button>
             </div>
             {linked.map((c) => (
-              <p key={c.id} className="text-[10.5px] text-muted-foreground/60">
+              <p key={c.id} className="text-[0.656rem] text-muted-foreground/60">
                 Linked commitment: {c.text}
               </p>
             ))}
@@ -126,7 +126,7 @@ function AnswerBody({
   const validAliases = new Set(sources.map((s) => s.alias));
   const segments: AnswerSegment[] = splitByCitations(content, validAliases);
   return (
-    <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-foreground">
+    <p className="whitespace-pre-wrap text-[0.75rem] leading-relaxed text-foreground">
       {segments.map((seg, i) => {
         if (seg.kind === 'text') return <span key={i}>{seg.text}</span>;
         const source = sources.find((s) => s.alias === seg.alias);
@@ -137,7 +137,7 @@ function AnswerBody({
             type="button"
             title={source.subject ?? source.fromEmail}
             onClick={() => onOpenMessage(source.messageId)}
-            className="mx-0.5 inline-flex items-center rounded bg-primary/10 px-1 text-[10px] font-semibold text-primary hover:bg-primary/20 align-baseline"
+            className="mx-0.5 inline-flex items-center rounded bg-primary/10 px-1 text-[0.625rem] font-semibold text-primary hover:bg-primary/20 align-baseline"
           >
             {seg.alias}
           </button>
@@ -247,7 +247,7 @@ export default function AskInboxPanel({
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
         <MessageCircleQuestion className="w-4 h-4 text-primary" />
-        <span className="text-[12px] font-semibold text-foreground">Ask your inbox</span>
+        <span className="text-[0.75rem] font-semibold text-foreground">Ask your inbox</span>
         <button
           type="button"
           onClick={onClose}
@@ -260,10 +260,10 @@ export default function AskInboxPanel({
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[12px]">
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[0.75rem]">
         {turns.length === 0 && !streaming && (
           <div className="space-y-3 py-2">
-            <p className="text-[12px] leading-relaxed text-muted-foreground/70">
+            <p className="text-[0.75rem] leading-relaxed text-muted-foreground/70">
               Ask a question about your mailbox and get an answer grounded in your own messages,
               with clickable citations back to the source emails.
             </p>
@@ -273,7 +273,7 @@ export default function AskInboxPanel({
                   key={q}
                   type="button"
                   onClick={() => void ask(q)}
-                  className="rounded-full border border-border/40 px-2.5 py-1 text-[11px] text-muted-foreground/80 hover:text-foreground hover:bg-muted/60 transition-colors"
+                  className="rounded-full border border-border/40 px-2.5 py-1 text-[0.6875rem] text-muted-foreground/80 hover:text-foreground hover:bg-muted/60 transition-colors"
                 >
                   {q}
                 </button>
@@ -285,7 +285,7 @@ export default function AskInboxPanel({
         {turns.map((t, i) => {
           if (t.role === 'user') {
             return (
-              <div key={i} className="rounded-md bg-muted/50 px-2.5 py-1.5 text-[12px] text-foreground">
+              <div key={i} className="rounded-md bg-muted/50 px-2.5 py-1.5 text-[0.75rem] text-foreground">
                 {t.content}
               </div>
             );
@@ -308,7 +308,7 @@ export default function AskInboxPanel({
         {streaming && (
           <div className="space-y-2">
             <InjectionBanner sources={pendingSources} />
-            <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-foreground">
+            <p className="whitespace-pre-wrap text-[0.75rem] leading-relaxed text-foreground">
               {stream.text}
               <Loader2 className="ml-1 inline h-3 w-3 animate-spin align-middle text-muted-foreground/60" />
             </p>
@@ -324,7 +324,7 @@ export default function AskInboxPanel({
 
         {!streaming && error && (
           <div className="space-y-2.5">
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11.5px] leading-relaxed text-amber-800 dark:text-amber-300">
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[0.719rem] leading-relaxed text-amber-800 dark:text-amber-300">
               {error}
             </div>
           </div>
@@ -342,7 +342,7 @@ export default function AskInboxPanel({
             placeholder="Ask about your mail…"
             rows={2}
             className={cn(
-              'flex-1 resize-none rounded-md border border-border/40 bg-background px-2.5 py-1.5 text-[12px]',
+              'flex-1 resize-none rounded-md border border-border/40 bg-background px-2.5 py-1.5 text-[0.75rem]',
               'text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/40',
               streaming && 'opacity-60',
             )}
@@ -373,7 +373,7 @@ export default function AskInboxPanel({
             </button>
           )}
         </div>
-        <p className="text-[10px] text-muted-foreground/45">
+        <p className="text-[0.625rem] text-muted-foreground/45">
           Answers are AI-generated from your mail — check the cited sources.
         </p>
       </div>

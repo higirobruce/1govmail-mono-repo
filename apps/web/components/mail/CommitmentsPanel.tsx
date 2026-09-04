@@ -96,7 +96,7 @@ export default function CommitmentsPanel({
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
         <ClipboardCheck className="w-4 h-4 text-primary" />
-        <span className="text-[12px] font-semibold text-foreground">Commitments</span>
+        <span className="text-[0.75rem] font-semibold text-foreground">Commitments</span>
         <button
           type="button"
           onClick={onClose}
@@ -114,7 +114,7 @@ export default function CommitmentsPanel({
           type="button"
           onClick={() => setView('open')}
           className={cn(
-            'px-2 py-1 rounded-md text-[11px] font-medium transition-colors',
+            'px-2 py-1 rounded-md text-[0.6875rem] font-medium transition-colors',
             view === 'open'
               ? 'bg-primary/10 text-primary'
               : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/60',
@@ -126,7 +126,7 @@ export default function CommitmentsPanel({
           type="button"
           onClick={() => setView('archived')}
           className={cn(
-            'px-2 py-1 rounded-md text-[11px] font-medium transition-colors',
+            'px-2 py-1 rounded-md text-[0.6875rem] font-medium transition-colors',
             view === 'archived'
               ? 'bg-primary/10 text-primary'
               : 'text-muted-foreground/60 hover:text-foreground hover:bg-muted/60',
@@ -137,16 +137,16 @@ export default function CommitmentsPanel({
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[12px]">
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[0.75rem]">
         {activeLoading && (
-          <div className="flex items-center justify-center gap-2 py-6 text-[12px] text-muted-foreground/70">
+          <div className="flex items-center justify-center gap-2 py-6 text-[0.75rem] text-muted-foreground/70">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             <span>Loading…</span>
           </div>
         )}
 
         {!activeLoading && active && allEmpty && (
-          <p className="py-6 text-center text-[12px] text-muted-foreground/60">
+          <p className="py-6 text-center text-[0.75rem] text-muted-foreground/60">
             {view === 'archived' ? 'No archived commitments.' : 'No open commitments.'}
           </p>
         )}
@@ -156,7 +156,7 @@ export default function CommitmentsPanel({
           if (items.length === 0) return null;
           return (
             <div key={type}>
-              <p className="mb-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/50">{label}</p>
+              <p className="mb-1.5 text-[0.625rem] uppercase tracking-wider text-muted-foreground/50">{label}</p>
               <ul className="space-y-0.5">
                 {items.map((c) => {
                   const mutating = pendingId === c.id;
@@ -172,11 +172,11 @@ export default function CommitmentsPanel({
                           }}
                           className="flex-1 min-w-0 cursor-pointer text-left"
                         >
-                          <p className="text-[12px] leading-snug text-foreground">{c.text}</p>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10.5px] text-muted-foreground/60">
+                          <p className="text-[0.75rem] leading-snug text-foreground">{c.text}</p>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[0.656rem] text-muted-foreground/60">
                             <span>{daysAgoLabel(c)}</span>
                             {c.dueHint && (
-                              <span className="rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground/70">
+                              <span className="rounded bg-muted/60 px-1 py-0.5 text-[0.625rem] text-muted-foreground/70">
                                 {c.dueHint}
                               </span>
                             )}
@@ -188,7 +188,7 @@ export default function CommitmentsPanel({
                                 e.stopPropagation();
                                 onOpenMessage(c.hintMessageId!);
                               }}
-                              className="mt-1 inline-flex items-center rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
+                              className="mt-1 inline-flex items-center rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
                             >
                               reply received — review
                             </button>
@@ -266,7 +266,7 @@ export default function CommitmentsPanel({
 
       {/* Footer */}
       <div className="shrink-0 border-t border-border/30 px-4 py-2.5">
-        <p className="text-[10px] text-muted-foreground/45">
+        <p className="text-[0.625rem] text-muted-foreground/45">
           Extracted from your mail — resolve manually; nothing closes itself.
         </p>
       </div>

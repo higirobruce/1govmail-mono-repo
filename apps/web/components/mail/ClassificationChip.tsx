@@ -20,8 +20,8 @@ export function ClassificationChip({ value, tags, size = 'xs', withIcon = false,
   if (!def) return null;
 
   const sizeCls = size === 'sm'
-    ? 'text-[11px] px-2 py-0.5'
-    : 'text-[10px] px-1.5 py-0.5';
+    ? 'text-[0.6875rem] px-2 py-0.5'
+    : 'text-[0.625rem] px-1.5 py-0.5';
 
   const showLock = withIcon && def.severity >= 2;
 

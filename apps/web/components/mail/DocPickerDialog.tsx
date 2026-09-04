@@ -78,7 +78,7 @@ function DocRow({ node, depth, busyId, onPick }: DocRowProps) {
             <Button
               size="sm"
               variant="ghost"
-              className="h-6 px-2 text-[10px] gap-1 text-muted-foreground/70 hover:text-foreground"
+              className="h-6 px-2 text-[0.625rem] gap-1 text-muted-foreground/70 hover:text-foreground"
               onClick={() => onPick(node, 'pdf')}
               title="Attach as PDF"
             >
@@ -87,7 +87,7 @@ function DocRow({ node, depth, busyId, onPick }: DocRowProps) {
             <Button
               size="sm"
               variant="ghost"
-              className="h-6 px-2 text-[10px] gap-1 text-muted-foreground/70 hover:text-foreground"
+              className="h-6 px-2 text-[0.625rem] gap-1 text-muted-foreground/70 hover:text-foreground"
               onClick={() => onPick(node, 'link')}
               title="Insert share link"
             >
@@ -165,7 +165,7 @@ export function DocPickerDialog({ open, onClose, onPick }: DocPickerDialogProps)
             <>
               {!query && favorites.length > 0 && (
                 <>
-                  <p className="px-4 py-1 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider">
+                  <p className="px-4 py-1 text-[0.625rem] font-semibold text-muted-foreground/50 uppercase tracking-wider">
                     Favorites
                   </p>
                   {favorites.map((fav) => (
@@ -177,7 +177,7 @@ export function DocPickerDialog({ open, onClose, onPick }: DocPickerDialogProps)
                       onPick={handlePick}
                     />
                   ))}
-                  <p className="px-4 py-1 mt-2 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider">
+                  <p className="px-4 py-1 mt-2 text-[0.625rem] font-semibold text-muted-foreground/50 uppercase tracking-wider">
                     All documents
                   </p>
                 </>
@@ -190,7 +190,7 @@ export function DocPickerDialog({ open, onClose, onPick }: DocPickerDialogProps)
         </div>
 
         <div className="px-5 py-3 border-t border-border/40 flex items-center justify-between">
-          <p className="text-[11px] text-muted-foreground/50">
+          <p className="text-[0.6875rem] text-muted-foreground/50">
             PDF attaches the doc. Link inserts a share link into the body.
           </p>
           <Button variant="ghost" size="sm" onClick={onClose} className="h-8 text-muted-foreground/70">

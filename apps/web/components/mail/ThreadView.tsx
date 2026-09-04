@@ -467,7 +467,7 @@ export default function ThreadView({
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={cn(
-                  'px-3 py-2.5 text-[12px] font-medium border-b-2 transition-colors',
+                  'px-3 py-2.5 text-[0.75rem] font-medium border-b-2 transition-colors',
                   activeTab === tab
                     ? 'border-primary text-foreground'
                     : 'border-transparent text-muted-foreground/60 hover:text-foreground',
@@ -484,7 +484,7 @@ export default function ThreadView({
           <button
             onClick={handleExpandAll}
             title={expandAll ? 'Collapse all' : 'Expand all'}
-            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-muted-foreground/60 hover:text-foreground hover:bg-muted transition-colors"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[0.6875rem] text-muted-foreground/60 hover:text-foreground hover:bg-muted transition-colors"
           >
             {expandAll
               ? <><ChevronsDownUp className="w-3.5 h-3.5" /> Collapse all</>
@@ -510,8 +510,8 @@ export default function ThreadView({
               ].map(({ value, label }, i, arr) => (
                 <div key={label} className="flex items-center gap-3">
                   <div className="text-center">
-                    <p className="text-[22px] font-semibold text-foreground tabular-nums leading-none">{value}</p>
-                    <p className="text-[11px] text-muted-foreground/45 mt-0.5">{label}{value !== 1 ? 's' : ''}</p>
+                    <p className="text-[1.375rem] font-semibold text-foreground tabular-nums leading-none">{value}</p>
+                    <p className="text-[0.6875rem] text-muted-foreground/45 mt-0.5">{label}{value !== 1 ? 's' : ''}</p>
                   </div>
                   {i < arr.length - 1 && <div className="w-px h-8 bg-border/40" />}
                 </div>
@@ -520,7 +520,7 @@ export default function ThreadView({
 
             {/* Participants */}
             <div>
-              <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">
+              <p className="text-[0.6875rem] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">
                 Participants
               </p>
               <div className="flex flex-col gap-0.5">
@@ -528,15 +528,15 @@ export default function ThreadView({
                   const isMe = p.email === user?.email;
                   return (
                     <div key={p.email} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group">
-                      <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold shrink-0', pColor(p.email))}>
+                      <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[0.6875rem] font-semibold shrink-0', pColor(p.email))}>
                         {pInitials(p.name, p.email)}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-medium text-foreground truncate">
+                        <p className="text-[0.8125rem] font-medium text-foreground truncate">
                           {isMe ? 'You' : (p.name || p.email)}
                         </p>
                         {!isMe && p.name && (
-                          <p className="text-[11px] text-muted-foreground/50 truncate">{p.email}</p>
+                          <p className="text-[0.6875rem] text-muted-foreground/50 truncate">{p.email}</p>
                         )}
                       </div>
                       {!isMe && (
@@ -556,22 +556,22 @@ export default function ThreadView({
                   <>
                     <div className="flex items-center gap-2 my-1 px-2">
                       <div className="flex-1 h-px bg-border/30" />
-                      <span className="text-[10px] font-semibold text-muted-foreground/35 uppercase tracking-wider">CC</span>
+                      <span className="text-[0.625rem] font-semibold text-muted-foreground/35 uppercase tracking-wider">CC</span>
                       <div className="flex-1 h-px bg-border/30" />
                     </div>
                     {ccParticipants.map((p) => {
                       const isMe = p.email === user?.email;
                       return (
                         <div key={p.email} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group">
-                          <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold shrink-0 opacity-70', pColor(p.email))}>
+                          <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[0.6875rem] font-semibold shrink-0 opacity-70', pColor(p.email))}>
                             {pInitials(p.name, p.email)}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[13px] text-foreground/80 truncate">
+                            <p className="text-[0.8125rem] text-foreground/80 truncate">
                               {isMe ? 'You' : (p.name || p.email)}
                             </p>
                             {!isMe && p.name && (
-                              <p className="text-[11px] text-muted-foreground/50 truncate">{p.email}</p>
+                              <p className="text-[0.6875rem] text-muted-foreground/50 truncate">{p.email}</p>
                             )}
                           </div>
                           {!isMe && (
@@ -594,12 +594,12 @@ export default function ThreadView({
             {/* Linked Tasks */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider">
+                <p className="text-[0.6875rem] font-semibold text-muted-foreground/50 uppercase tracking-wider">
                   Linked Tasks
                 </p>
                 <button
                   onClick={() => setTaskModalOpen(true)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[0.75rem] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   New Task
@@ -613,7 +613,7 @@ export default function ThreadView({
               ) : linkedTasks.length === 0 ? (
                 <div className="flex items-center gap-2.5 px-3 py-3 rounded-xl border border-dashed border-border/40 text-muted-foreground/40">
                   <ListTodo className="w-4 h-4 shrink-0" />
-                  <span className="text-[12px]">No tasks linked —{' '}
+                  <span className="text-[0.75rem]">No tasks linked —{' '}
                     <button onClick={() => setTaskModalOpen(true)} className="text-primary hover:underline">create one</button>
                   </span>
                 </div>
@@ -631,11 +631,11 @@ export default function ThreadView({
                           done || cancelled ? 'bg-muted/20 border-border/20' : 'bg-card border-border/30',
                         )}
                       >
-                        <span className={cn('text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0', pri.cls)}>
+                        <span className={cn('text-[0.625rem] font-medium px-1.5 py-0.5 rounded-full shrink-0', pri.cls)}>
                           {pri.label}
                         </span>
                         <span className={cn(
-                          'flex-1 text-[13px] min-w-0 truncate',
+                          'flex-1 text-[0.8125rem] min-w-0 truncate',
                           done || cancelled ? 'line-through text-muted-foreground/50' : 'text-foreground',
                         )}>
                           {task.title}
@@ -656,27 +656,27 @@ export default function ThreadView({
 
             {/* Quick reply to thread */}
             <div>
-              <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">
+              <p className="text-[0.6875rem] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">
                 Actions
               </p>
               <div className="flex gap-2">
                 <button
                   onClick={() => onComposeWith('reply', lastMessage)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[12px] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[0.75rem] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
                   <Mail className="w-3.5 h-3.5" />
                   Reply
                 </button>
                 <button
                   onClick={() => onComposeWith('replyAll', lastMessage)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[12px] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[0.75rem] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
                   <MessageSquare className="w-3.5 h-3.5" />
                   Reply all
                 </button>
                 <button
                   onClick={() => onComposeWith('forward', lastMessage)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[12px] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[0.75rem] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   Forward
@@ -703,7 +703,7 @@ export default function ThreadView({
         {activeTab === 'messages' && (
           <>
             {hiddenCount > 0 && (
-              <div className="px-4 py-2.5 text-center text-[12px] text-muted-foreground/50 border-b border-border/20 bg-muted/10">
+              <div className="px-4 py-2.5 text-center text-[0.75rem] text-muted-foreground/50 border-b border-border/20 bg-muted/10">
                 Showing {MAX_VISIBLE} most recent messages —{' '}
                 <span className="font-medium">{hiddenCount}</span> earlier not shown
               </div>
@@ -796,7 +796,7 @@ export default function ThreadView({
             {allAttachments.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-2">
                 <Paperclip className="w-8 h-8 text-muted-foreground/20" />
-                <p className="text-[13px] text-muted-foreground/50">No attachments in this thread</p>
+                <p className="text-[0.8125rem] text-muted-foreground/50">No attachments in this thread</p>
               </div>
             ) : (
               <div className="flex flex-col gap-6">
@@ -805,10 +805,10 @@ export default function ThreadView({
                     {/* Group header */}
                     <div className="flex items-center gap-2 mb-2">
                       <GroupIcon group={group} />
-                      <span className="text-[12px] font-semibold text-foreground/70 uppercase tracking-wide">
+                      <span className="text-[0.75rem] font-semibold text-foreground/70 uppercase tracking-wide">
                         {group}
                       </span>
-                      <span className="text-[11px] text-muted-foreground/40">
+                      <span className="text-[0.6875rem] text-muted-foreground/40">
                         ({grouped[group]!.length})
                       </span>
                     </div>
@@ -828,8 +828,8 @@ export default function ThreadView({
                             >
                               <GroupIcon group={group} className="opacity-60" />
                               <div className="flex-1 min-w-0">
-                                <p className="text-[13px] text-foreground truncate">{att.filename}</p>
-                                <p className="text-[11px] text-muted-foreground/50 truncate">
+                                <p className="text-[0.8125rem] text-foreground truncate">{att.filename}</p>
+                                <p className="text-[0.6875rem] text-muted-foreground/50 truncate">
                                   {att.fromName ?? att.fromEmail}
                                   {att.size > 0 && ` · ${formatBytes(att.size)}`}
                                 </p>
@@ -875,7 +875,7 @@ export default function ThreadView({
                             {isActive && previewState && (
                               <div className="mt-1 mb-2 border border-border/40 rounded-xl overflow-hidden bg-card">
                                 <div className="flex items-center justify-between px-4 py-2 border-b border-border/30 bg-muted/20">
-                                  <span className="text-[12px] font-medium text-foreground/70 truncate flex-1 mr-3">
+                                  <span className="text-[0.75rem] font-medium text-foreground/70 truncate flex-1 mr-3">
                                     {previewState.filename}
                                   </span>
                                   <div className="flex items-center gap-1 shrink-0">
@@ -944,7 +944,7 @@ export default function ThreadView({
         >
           <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
             <Sparkles className="w-3.5 h-3.5 text-primary" />
-            <span className="text-[12px] font-semibold text-foreground">
+            <span className="text-[0.75rem] font-semibold text-foreground">
               {threadMessages.length > 1 ? 'Thread summary' : 'Summary'}
             </span>
             {summarizing && (
@@ -960,19 +960,19 @@ export default function ThreadView({
           </div>
           <div className="flex-1 overflow-y-auto px-3.5 py-3">
             {threadMessages.length > 1 && (
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1.5">
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 mb-1.5">
                 {threadMessages.length} messages
               </p>
             )}
             {summaryError ? (
-              <div className="text-[12px] text-destructive">
+              <div className="text-[0.75rem] text-destructive">
                 {summaryError}{' '}
                 <button onClick={handleSummarize} className="underline ml-1">
                   Retry
                 </button>
               </div>
             ) : (
-              <p className="text-[12.5px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+              <p className="text-[0.781rem] text-foreground/85 leading-relaxed whitespace-pre-wrap">
                 {streamedSummary || (summarizing ? 'Thinking…' : '')}
               </p>
             )}

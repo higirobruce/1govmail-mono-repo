@@ -1091,7 +1091,7 @@ export function DocsEditor({
           className="flex items-center gap-0.5 rounded-lg border border-border bg-popover shadow-lg p-1"
         >
           {/* Row actions */}
-          <span className="text-[10px] text-muted-foreground/50 px-1 font-medium select-none">Row</span>
+          <span className="text-[0.625rem] text-muted-foreground/50 px-1 font-medium select-none">Row</span>
           <button
             type="button"
             title="Add row above"
@@ -1120,7 +1120,7 @@ export function DocsEditor({
           <div className="w-px h-5 bg-border mx-0.5" />
 
           {/* Column actions */}
-          <span className="text-[10px] text-muted-foreground/50 px-1 font-medium select-none">Col</span>
+          <span className="text-[0.625rem] text-muted-foreground/50 px-1 font-medium select-none">Col</span>
           <button
             type="button"
             title="Add column before"
@@ -1195,9 +1195,9 @@ export function DocsEditor({
           >
             {summary ? (
               <>
-                <p className="text-[10px] font-semibold text-primary mb-0.5">{summary.authorName}</p>
+                <p className="text-[0.625rem] font-semibold text-primary mb-0.5">{summary.authorName}</p>
                 <p className="text-xs text-foreground line-clamp-3">{summary.content}</p>
-                <p className="text-[10px] text-muted-foreground mt-1">Click to open comments</p>
+                <p className="text-[0.625rem] text-muted-foreground mt-1">Click to open comments</p>
               </>
             ) : (
               <p className="text-xs text-muted-foreground">Click to open comments</p>

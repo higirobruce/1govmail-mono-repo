@@ -1048,7 +1048,7 @@ export default function ComposeModal({
       >
         <span className="text-sm font-semibold text-foreground">{TITLE[mode]}</span>
         <div className="flex items-center gap-1">
-          <span className="text-[11px] text-muted-foreground/40 flex items-center gap-1 mr-1">
+          <span className="text-[0.6875rem] text-muted-foreground/40 flex items-center gap-1 mr-1">
             {draftStatus === 'saving' && <><Loader2 className="w-2.5 h-2.5 animate-spin" /> Saving…</>}
             {draftStatus === 'saved' && 'Draft saved'}
           </span>
@@ -1141,7 +1141,7 @@ export default function ComposeModal({
                     if (e.target.value) editor?.chain().focus().setFontFamily(e.target.value).run();
                     else editor?.chain().focus().unsetFontFamily().run();
                   }}
-                  className="h-6 text-[11px] bg-muted/30 border border-border/50 rounded px-1 text-foreground/80 focus:outline-none focus:border-primary/50 mr-0.5"
+                  className="h-6 text-[0.6875rem] bg-muted/30 border border-border/50 rounded px-1 text-foreground/80 focus:outline-none focus:border-primary/50 mr-0.5"
                   title="Font family"
                 >
                   {FONT_FAMILIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1154,7 +1154,7 @@ export default function ComposeModal({
                     const val = e.target.value;
                     if (val) editor?.chain().focus().setMark('textStyle', { fontSize: `${val}px` }).run();
                   }}
-                  className="h-6 text-[11px] bg-muted/30 border border-border/50 rounded px-1 text-foreground/80 focus:outline-none focus:border-primary/50 w-14 mr-0.5"
+                  className="h-6 text-[0.6875rem] bg-muted/30 border border-border/50 rounded px-1 text-foreground/80 focus:outline-none focus:border-primary/50 w-14 mr-0.5"
                   title="Font size"
                 >
                   {FONT_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1167,7 +1167,7 @@ export default function ComposeModal({
                   onMouseDown={(e) => { e.preventDefault(); colorInputRef.current?.click(); }}
                   className="relative p-1.5 rounded hover:bg-muted/60 transition-colors"
                 >
-                  <span className="text-[11px] font-bold leading-none" style={{ color: currentColor ?? 'currentColor' }}>A</span>
+                  <span className="text-[0.6875rem] font-bold leading-none" style={{ color: currentColor ?? 'currentColor' }}>A</span>
                   <span className="block h-[3px] w-4 rounded-sm mt-0.5" style={{ backgroundColor: currentColor ?? 'hsl(var(--foreground))' }} />
                 </button>
                 <input
@@ -1251,7 +1251,7 @@ export default function ComposeModal({
                     </ToolbarBtn>
                     {showTemplates && (
                       <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[200px]">
-                        <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                        <p className="px-3 py-1.5 text-[0.625rem] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
                           Templates
                         </p>
                         <ul className="py-1 max-h-52 overflow-y-auto">
@@ -1265,7 +1265,7 @@ export default function ComposeModal({
                                   editor?.chain().focus().insertContent(t.body).run();
                                   setShowTemplates(false);
                                 }}
-                                className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/60 text-foreground transition-colors"
+                                className="w-full text-left px-3 py-2 text-[0.75rem] hover:bg-muted/60 text-foreground transition-colors"
                               >
                                 {t.name}
                               </button>
@@ -1291,7 +1291,7 @@ export default function ComposeModal({
                       <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[200px]">
                         {originalMessage && (
                           <>
-                            <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                            <p className="px-3 py-1.5 text-[0.625rem] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
                               Reply
                             </p>
                             <ul className="py-1 border-b border-border/30">
@@ -1302,7 +1302,7 @@ export default function ComposeModal({
                                     e.preventDefault();
                                     void handleSuggestReply();
                                   }}
-                                  className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/60 text-foreground transition-colors"
+                                  className="w-full text-left px-3 py-2 text-[0.75rem] hover:bg-muted/60 text-foreground transition-colors"
                                 >
                                   Suggest reply
                                 </button>
@@ -1310,7 +1310,7 @@ export default function ComposeModal({
                             </ul>
                           </>
                         )}
-                        <p className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
+                        <p className="px-3 py-1.5 text-[0.625rem] font-semibold text-muted-foreground/50 uppercase tracking-wider border-b border-border/30">
                           Rewrite
                         </p>
                         <ul className="py-1">
@@ -1328,7 +1328,7 @@ export default function ComposeModal({
                                   e.preventDefault();
                                   void handleRewrite(opt.id);
                                 }}
-                                className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/60 text-foreground transition-colors"
+                                className="w-full text-left px-3 py-2 text-[0.75rem] hover:bg-muted/60 text-foreground transition-colors"
                               >
                                 {opt.label}
                               </button>
@@ -1365,7 +1365,7 @@ export default function ComposeModal({
                   >
                     <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
                       <Sparkles className="w-3.5 h-3.5 text-primary" />
-                      <span className="text-[12px] font-semibold text-foreground capitalize">
+                      <span className="text-[0.75rem] font-semibold text-foreground capitalize">
                         {aiAction === 'suggest'
                           ? 'Reply suggestion'
                           : rewriteMode === 'grammar' ? 'Grammar fix' : rewriteMode}
@@ -1384,7 +1384,7 @@ export default function ComposeModal({
                     </div>
                     <div className="flex-1 overflow-y-auto px-3.5 py-3 space-y-3">
                       {injectionWarning && aiAction === 'suggest' && (
-                        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[11.5px] leading-relaxed text-amber-800 dark:text-amber-300">
+                        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[0.719rem] leading-relaxed text-amber-800 dark:text-amber-300">
                           <span className="font-semibold">Check this draft carefully.</span> The
                           incoming email contains text written to instruct an AI assistant, which
                           can steer what is suggested here. Read every line before inserting it.
@@ -1393,7 +1393,7 @@ export default function ComposeModal({
                       {aiAction === 'suggest' && (
                         <div className="space-y-2">
                           <div>
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Respond with</p>
+                            <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 mb-1">Respond with</p>
                             <div className="flex flex-wrap gap-1">
                               {(
                                 [
@@ -1414,7 +1414,7 @@ export default function ComposeModal({
                                     void handleSuggestReply({ intent: value });
                                   }}
                                   className={cn(
-                                    'text-[11px] px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+                                    'text-[0.6875rem] px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
                                     replyIntent === value
                                       ? 'border-primary/50 bg-primary/10 text-primary'
                                       : 'border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60',
@@ -1426,7 +1426,7 @@ export default function ComposeModal({
                             </div>
                           </div>
                           <div className="flex items-center gap-1">
-                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mr-1">Length</p>
+                            <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 mr-1">Length</p>
                             {(
                               [
                                 ['brief', 'Brief'],
@@ -1443,7 +1443,7 @@ export default function ComposeModal({
                                   void handleSuggestReply({ length: value });
                                 }}
                                 className={cn(
-                                  'text-[11px] px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
+                                  'text-[0.6875rem] px-2 py-0.5 rounded-full border transition-colors disabled:opacity-40 disabled:cursor-not-allowed',
                                   replyLength === value
                                     ? 'border-primary/50 bg-primary/10 text-primary'
                                     : 'border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60',
@@ -1457,18 +1457,18 @@ export default function ComposeModal({
                       )}
                       {aiAction === 'rewrite' && (
                         <div>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">Original</p>
-                          <p className="text-[12px] text-muted-foreground/80 leading-relaxed line-clamp-4 whitespace-pre-wrap">
+                          <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 mb-1">Original</p>
+                          <p className="text-[0.75rem] text-muted-foreground/80 leading-relaxed line-clamp-4 whitespace-pre-wrap">
                             {rewriteOriginal}
                           </p>
                         </div>
                       )}
                       <div>
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1">
+                        <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 mb-1">
                           {aiAction === 'suggest' ? 'Suggested reply' : 'Rewrite'}
                         </p>
                         {rewriteError ? (
-                          <p className="text-[12px] text-destructive">
+                          <p className="text-[0.75rem] text-destructive">
                             {rewriteError}{' '}
                             <button
                               type="button"
@@ -1481,7 +1481,7 @@ export default function ComposeModal({
                             </button>
                           </p>
                         ) : (
-                          <p className="text-[12.5px] text-foreground/90 leading-relaxed whitespace-pre-wrap">
+                          <p className="text-[0.781rem] text-foreground/90 leading-relaxed whitespace-pre-wrap">
                             {rewriteText_ || (rewriting ? 'Thinking…' : '')}
                           </p>
                         )}
@@ -1491,7 +1491,7 @@ export default function ComposeModal({
                       <button
                         type="button"
                         onClick={closeRewrite}
-                        className="text-[12px] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                        className="text-[0.75rem] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
                       >
                         Discard
                       </button>
@@ -1499,7 +1499,7 @@ export default function ComposeModal({
                         type="button"
                         onClick={regenerate}
                         disabled={rewriting}
-                        className="ml-auto text-[12px] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        className="ml-auto text-[0.75rem] px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         title="Generate a different version"
                       >
                         Try another
@@ -1508,7 +1508,7 @@ export default function ComposeModal({
                         type="button"
                         onClick={applyRewrite}
                         disabled={rewriting || !rewriteText_.trim() || !!rewriteError}
-                        className="text-[12px] px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="text-[0.75rem] px-3 py-1 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         {aiAction === 'suggest' ? 'Insert' : 'Replace'}
                       </button>
@@ -1533,12 +1533,12 @@ export default function ComposeModal({
           {/* ── Schedule picker (shown when showSchedule is true) ── */}
           {showSchedule && (
             <div className="px-5 py-3 border-t border-border/40 shrink-0 bg-muted/10">
-              <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">Schedule send</p>
+              <p className="text-[0.6875rem] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">Schedule send</p>
               <div className="flex items-center gap-2">
                 <DateTimePicker
                   value={scheduleDateTime}
                   onChange={setScheduleDateTime}
-                  className="flex-1 h-8 text-[12px]"
+                  className="flex-1 h-8 text-[0.75rem]"
                 />
                 <Button size="sm" onClick={handleScheduledSend} disabled={!scheduleDateTime || to.length === 0}
                   className="h-8 px-3 gap-1.5 bg-primary/90 hover:bg-primary text-primary-foreground">

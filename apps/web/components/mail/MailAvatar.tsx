@@ -33,10 +33,10 @@ function initials(name: string | null | undefined, email: string): string {
 }
 
 const SIZE_CLS = {
-  xs: 'w-6 h-6 text-[9px]',
-  sm: 'w-8 h-8 text-[11px]',
-  md: 'w-9 h-9 text-[12px]',
-  lg: 'w-11 h-11 text-[14px]',
+  xs: 'w-6 h-6 text-[0.5625rem]',
+  sm: 'w-8 h-8 text-[0.6875rem]',
+  md: 'w-9 h-9 text-[0.75rem]',
+  lg: 'w-11 h-11 text-[0.875rem]',
 } as const;
 
 const ICON_CLS = {

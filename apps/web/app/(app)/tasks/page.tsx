@@ -185,7 +185,7 @@ function TaskCard({
         {/* Meta chips */}
         <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           <span className={cn(
-            'text-[10px] font-medium px-1.5 py-0.5 rounded-full',
+            'text-[0.625rem] font-medium px-1.5 py-0.5 rounded-full',
             task.priority === 'LOW'    && 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
             task.priority === 'MEDIUM' && 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300',
             task.priority === 'HIGH'   && 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300',
@@ -196,7 +196,7 @@ function TaskCard({
 
           {due && (
             <span className={cn(
-              'text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full',
+              'text-[0.625rem] flex items-center gap-1 px-1.5 py-0.5 rounded-full',
               due.overdue && !done
                 ? 'bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400'
                 : 'bg-muted/60 text-muted-foreground/70',
@@ -207,7 +207,7 @@ function TaskCard({
           )}
 
           {task.assignees && task.assignees.length > 0 && (
-            <span className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 max-w-[140px]">
+            <span className="text-[0.625rem] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 max-w-[140px]">
               <User className="w-2.5 h-2.5 shrink-0" />
               <span className="truncate">
                 {task.assignees.length === 1
@@ -223,13 +223,13 @@ function TaskCard({
                 href={`/mail?open=${encodeURIComponent(task.linkedMessageId)}`}
                 title="Open linked email"
                 onClick={(e) => e.stopPropagation()}
-                className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 max-w-[160px] hover:bg-amber-200 dark:hover:bg-amber-800/50 transition-colors"
+                className="text-[0.625rem] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 max-w-[160px] hover:bg-amber-200 dark:hover:bg-amber-800/50 transition-colors"
               >
                 <Link className="w-2.5 h-2.5 shrink-0" />
                 <span className="truncate">{task.linkedSubject}</span>
               </a>
             ) : (
-              <span className="text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 max-w-[160px]">
+              <span className="text-[0.625rem] flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 max-w-[160px]">
                 <Link className="w-2.5 h-2.5 shrink-0" />
                 <span className="truncate">{task.linkedSubject}</span>
               </span>
@@ -237,7 +237,7 @@ function TaskCard({
           )}
 
           {subtasksTotal > 0 && (
-            <span className="text-[10px] text-muted-foreground/50 px-1.5 py-0.5">
+            <span className="text-[0.625rem] text-muted-foreground/50 px-1.5 py-0.5">
               {subtasksDone}/{subtasksTotal} subtasks
             </span>
           )}
@@ -572,7 +572,7 @@ export default function TasksPage() {
               >
                 {tab.label}
                 {tab.key === 'TODAY' && todayCount > 0 && (
-                  <span className="text-[10px] bg-primary/15 text-primary rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none">
+                  <span className="text-[0.625rem] bg-primary/15 text-primary rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none">
                     {todayCount}
                   </span>
                 )}
@@ -585,7 +585,7 @@ export default function TasksPage() {
         <div className="px-6 py-2 flex items-center gap-3 shrink-0 border-b border-border/20 bg-muted/10">
           {/* Sort */}
           <div className="flex items-center gap-1.5">
-            <span className="text-[11px] text-muted-foreground/50 uppercase tracking-wider">Sort</span>
+            <span className="text-[0.6875rem] text-muted-foreground/50 uppercase tracking-wider">Sort</span>
             <div className="relative">
               <select
                 value={sortKey}
@@ -604,7 +604,7 @@ export default function TasksPage() {
           <button
             onClick={() => setOverdueOnly((v) => !v)}
             className={cn(
-              'flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors',
+              'flex items-center gap-1 px-2.5 py-1 rounded-full text-[0.6875rem] font-medium border transition-colors',
               overdueOnly
                 ? 'bg-red-100 border-red-300 text-red-700 dark:bg-red-900/40 dark:border-red-700 dark:text-red-400'
                 : 'bg-transparent border-border/40 text-muted-foreground/50 hover:border-border/70 hover:text-foreground',
@@ -615,7 +615,7 @@ export default function TasksPage() {
           </button>
 
           <div className="flex-1" />
-          <span className="text-[11px] text-muted-foreground/40">
+          <span className="text-[0.6875rem] text-muted-foreground/40">
             {displayedTasks.length} task{displayedTasks.length !== 1 ? 's' : ''}
           </span>
         </div>
@@ -692,7 +692,7 @@ export default function TasksPage() {
                           <span className={cn('w-2 h-2 rounded-full shrink-0', col.dot)} />
                           <span className="text-xs font-semibold text-foreground/70">{col.label}</span>
                         </div>
-                        <span className="text-[11px] bg-muted/60 text-muted-foreground/60 rounded-full px-1.5 py-0.5 min-w-[20px] text-center tabular-nums">
+                        <span className="text-[0.6875rem] bg-muted/60 text-muted-foreground/60 rounded-full px-1.5 py-0.5 min-w-[20px] text-center tabular-nums">
                           {colTasks.length}
                         </span>
                       </div>
@@ -704,7 +704,7 @@ export default function TasksPage() {
                           {colTasks.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-8 text-muted-foreground/30">
                               <ListTodo className="w-6 h-6 mb-1" />
-                              <span className="text-[11px]">Drop tasks here</span>
+                              <span className="text-[0.6875rem]">Drop tasks here</span>
                             </div>
                           ) : (
                             <div className="flex flex-col gap-2 px-3 pb-1">

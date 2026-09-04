@@ -173,7 +173,7 @@ export function DocInvitePanel({ docId, isOwner }: DocInviteDialogProps) {
         </div>
       </div>
 
-      <p className="text-[11px] text-muted-foreground -mt-2">
+      <p className="text-[0.6875rem] text-muted-foreground -mt-2">
         An email notification will be sent via your Zimbra account. The invitee must have a 1Gov Mail account.
       </p>
 
@@ -186,13 +186,13 @@ export function DocInvitePanel({ docId, isOwner }: DocInviteDialogProps) {
         <p className="text-xs text-muted-foreground text-center py-3">No one has been invited yet.</p>
       ) : (
         <div className="flex flex-col gap-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <p className="text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
             {invites.length} {invites.length === 1 ? 'person' : 'people'} with access
           </p>
           {invites.map((invite) => (
             <div key={invite.id} className="flex items-center gap-2">
               {/* Avatar */}
-              <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-[10px] font-semibold text-primary shrink-0">
+              <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-[0.625rem] font-semibold text-primary shrink-0">
                 {getInitials(invite.invitedEmail)}
               </div>
               {/* Email */}

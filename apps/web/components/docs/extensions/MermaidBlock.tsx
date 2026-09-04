@@ -107,7 +107,7 @@ function MermaidView({ node, updateAttributes, selected }: any) {
                 href="https://mermaid.js.org/syntax/flowchart.html"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[10px] text-muted-foreground hover:underline"
+                className="text-[0.625rem] text-muted-foreground hover:underline"
               >
                 Mermaid syntax reference ↗
               </a>

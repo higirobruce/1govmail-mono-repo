@@ -205,8 +205,8 @@ export function AttachmentTile({
       )}
 
       {/* Filename pill */}
-      <div className="mt-1.5 inline-flex items-center gap-1 max-w-[112px] px-2 py-1 rounded-md bg-muted/60 text-[10.5px] text-foreground/80">
-        <span className={cn('text-[9px] font-bold tracking-wide shrink-0', style.color)}>
+      <div className="mt-1.5 inline-flex items-center gap-1 max-w-[112px] px-2 py-1 rounded-md bg-muted/60 text-[0.656rem] text-foreground/80">
+        <span className={cn('text-[0.5625rem] font-bold tracking-wide shrink-0', style.color)}>
           {style.label}
         </span>
         <span className="truncate">{attachment.filename}</span>

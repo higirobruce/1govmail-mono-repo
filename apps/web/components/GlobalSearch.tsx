@@ -182,7 +182,7 @@ export function GlobalSearch({ open, onClose, initialQuery, onAsk, onOpenMessage
               className="flex items-center gap-3"
             >
               <MessageCircleQuestion className="w-4 h-4 shrink-0 text-muted-foreground" />
-              <p className="text-[13px] font-medium truncate">
+              <p className="text-[0.8125rem] font-medium truncate">
                 Ask your inbox: &ldquo;{query.trim()}&rdquo;
               </p>
             </CommandItem>
@@ -200,8 +200,8 @@ export function GlobalSearch({ open, onClose, initialQuery, onAsk, onOpenMessage
               >
                 <Mail className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
                 <div className="min-w-0">
-                  <p className="text-[13px] font-medium truncate">{msg.subject || '(no subject)'}</p>
-                  <p className="text-[11px] text-muted-foreground truncate">
+                  <p className="text-[0.8125rem] font-medium truncate">{msg.subject || '(no subject)'}</p>
+                  <p className="text-[0.6875rem] text-muted-foreground truncate">
                     {msg.from?.email ?? msg.from} · {msg.snippet}
                   </p>
                 </div>
@@ -221,8 +221,8 @@ export function GlobalSearch({ open, onClose, initialQuery, onAsk, onOpenMessage
               >
                 <Mail className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
                 <div className="min-w-0">
-                  <p className="text-[13px] font-medium truncate">{msg.subject || '(no subject)'}</p>
-                  <p className="text-[11px] text-muted-foreground truncate">
+                  <p className="text-[0.8125rem] font-medium truncate">{msg.subject || '(no subject)'}</p>
+                  <p className="text-[0.6875rem] text-muted-foreground truncate">
                     {msg.from?.email ?? msg.from} · {msg.snippet}
                   </p>
                 </div>
@@ -242,8 +242,8 @@ export function GlobalSearch({ open, onClose, initialQuery, onAsk, onOpenMessage
               >
                 <Users className="w-4 h-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0">
-                  <p className="text-[13px] font-medium truncate">{c.fullName}</p>
-                  <p className="text-[11px] text-muted-foreground truncate">{c.email}</p>
+                  <p className="text-[0.8125rem] font-medium truncate">{c.fullName}</p>
+                  <p className="text-[0.6875rem] text-muted-foreground truncate">{c.email}</p>
                 </div>
               </CommandItem>
             ))}
@@ -261,8 +261,8 @@ export function GlobalSearch({ open, onClose, initialQuery, onAsk, onOpenMessage
               >
                 <ListTodo className="w-4 h-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0">
-                  <p className="text-[13px] font-medium truncate">{t.title}</p>
-                  <p className="text-[11px] text-muted-foreground truncate">{t.status}</p>
+                  <p className="text-[0.8125rem] font-medium truncate">{t.title}</p>
+                  <p className="text-[0.6875rem] text-muted-foreground truncate">{t.status}</p>
                 </div>
               </CommandItem>
             ))}
@@ -280,8 +280,8 @@ export function GlobalSearch({ open, onClose, initialQuery, onAsk, onOpenMessage
               >
                 <Calendar className="w-4 h-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0">
-                  <p className="text-[13px] font-medium truncate">{ev.title}</p>
-                  <p className="text-[11px] text-muted-foreground truncate">
+                  <p className="text-[0.8125rem] font-medium truncate">{ev.title}</p>
+                  <p className="text-[0.6875rem] text-muted-foreground truncate">
                     {ev.startAt ? new Date(ev.startAt).toLocaleDateString() : ''}
                   </p>
                 </div>

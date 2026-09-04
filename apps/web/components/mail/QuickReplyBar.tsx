@@ -75,7 +75,7 @@ export function QuickReplyBar({ message, onSent, onExpand }: Props) {
           }}
           placeholder="Quick reply…"
           rows={expanded ? 3 : 1}
-          className="flex-1 min-w-0 bg-transparent text-[13px] text-foreground placeholder:text-muted-foreground/40 resize-none outline-none leading-relaxed"
+          className="flex-1 min-w-0 bg-transparent text-[0.8125rem] text-foreground placeholder:text-muted-foreground/40 resize-none outline-none leading-relaxed"
         />
 
         {expanded && (
@@ -91,7 +91,7 @@ export function QuickReplyBar({ message, onSent, onExpand }: Props) {
               onClick={handleSend}
               disabled={sending || !body.trim()}
               title="Send reply (⌘↵)"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50 transition-colors hover:bg-primary/90"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-[0.75rem] font-medium disabled:opacity-50 transition-colors hover:bg-primary/90"
             >
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               Send
@@ -101,7 +101,7 @@ export function QuickReplyBar({ message, onSent, onExpand }: Props) {
       </div>
 
       {expanded && (
-        <p className="text-[10px] text-muted-foreground/30 mt-1.5 text-right">
+        <p className="text-[0.625rem] text-muted-foreground/30 mt-1.5 text-right">
           ⌘↵ to send · <button onClick={onExpand} className="underline hover:text-muted-foreground/50">Open full editor</button>
         </p>
       )}

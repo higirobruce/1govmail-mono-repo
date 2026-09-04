@@ -483,7 +483,7 @@ function CreateEventModal({
                   size="sm"
                   onClick={handleFindTime}
                   disabled={fbLoading || attendees.length === 0}
-                  className="h-7 px-2 text-[11px] gap-1.5 text-muted-foreground/70 hover:text-primary"
+                  className="h-7 px-2 text-[0.6875rem] gap-1.5 text-muted-foreground/70 hover:text-primary"
                   title={attendees.length === 0 ? 'Add attendees below first' : 'Find a time that works for everyone'}
                 >
                   {fbLoading
@@ -494,7 +494,7 @@ function CreateEventModal({
                   <button
                     type="button"
                     onClick={() => setShowFindTime(false)}
-                    className="text-[10px] text-muted-foreground/50 hover:text-foreground"
+                    className="text-[0.625rem] text-muted-foreground/50 hover:text-foreground"
                   >
                     hide
                   </button>
@@ -503,7 +503,7 @@ function CreateEventModal({
             )}
             {showFindTime && !allDay && (
               <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 space-y-1.5">
-                <p className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
+                <p className="text-[0.625rem] font-semibold text-muted-foreground/60 uppercase tracking-wider">
                   Suggested slots ({Math.round(durationMs / 60_000)} min, weekdays 9–5)
                 </p>
                 {suggestedSlots.length === 0 ? (
@@ -518,10 +518,10 @@ function CreateEventModal({
                         className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-emerald-500/8 border border-emerald-500/20 hover:bg-emerald-500/12 transition-colors"
                       >
                         <div className="min-w-0">
-                          <p className="text-[11px] font-medium text-foreground/80 truncate">
+                          <p className="text-[0.6875rem] font-medium text-foreground/80 truncate">
                             {format(slot.start, 'EEE, MMM d')}
                           </p>
-                          <p className="text-[10px] text-muted-foreground/60">
+                          <p className="text-[0.625rem] text-muted-foreground/60">
                             {format(slot.start, 'h:mm a')} – {format(slot.end, 'h:mm a')}
                           </p>
                         </div>
@@ -530,7 +530,7 @@ function CreateEventModal({
                           size="sm"
                           variant="ghost"
                           onClick={() => applySlot(slot)}
-                          className="h-6 px-2 text-[10px] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1"
+                          className="h-6 px-2 text-[0.625rem] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1"
                         >
                           Use <ChevronRight className="w-3 h-3" />
                         </Button>
@@ -610,7 +610,7 @@ function MonthView({
       {/* Day-of-week headers */}
       <div className="grid grid-cols-7 border-b border-border/30 shrink-0">
         {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d) => (
-          <div key={d} className="py-2 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+          <div key={d} className="py-2 text-center text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50">
             {d}
           </div>
         ))}
@@ -638,12 +638,12 @@ function MonthView({
               <div className="space-y-0.5">
                 {dayEvs.slice(0, 3).map((ev) => (
                   <button key={ev.id} onClick={() => onSelectEvent(ev)}
-                    className={cn('w-full text-left px-1.5 py-0.5 rounded text-[11px] font-medium truncate transition-opacity hover:opacity-80', eventColor(ev.id))}>
+                    className={cn('w-full text-left px-1.5 py-0.5 rounded text-[0.6875rem] font-medium truncate transition-opacity hover:opacity-80', eventColor(ev.id))}>
                     {ev.allDay ? ev.title : `${fmtTime(ev.startAt)} ${ev.title}`}
                   </button>
                 ))}
                 {dayEvs.length > 3 && (
-                  <p className="text-[10px] text-muted-foreground/50 px-1">+{dayEvs.length - 3} more</p>
+                  <p className="text-[0.625rem] text-muted-foreground/50 px-1">+{dayEvs.length - 3} more</p>
                 )}
               </div>
             </div>
@@ -686,13 +686,13 @@ function YearView({
           return (
             <div key={month.toISOString()} className="bg-card/50 border border-border/30 rounded-lg p-3 hover:border-primary/30 transition-colors">
               <button onClick={() => onMonthClick(month)}
-                className="text-[13px] font-semibold text-foreground mb-2 hover:text-primary transition-colors w-full text-left">
+                className="text-[0.8125rem] font-semibold text-foreground mb-2 hover:text-primary transition-colors w-full text-left">
                 {format(month, 'MMMM')}
               </button>
               {/* Mini grid */}
               <div className="grid grid-cols-7 gap-px">
                 {['M','T','W','T','F','S','S'].map((d, i) => (
-                  <div key={i} className="text-[9px] text-center text-muted-foreground/40 font-medium pb-0.5">{d}</div>
+                  <div key={i} className="text-[0.5625rem] text-center text-muted-foreground/40 font-medium pb-0.5">{d}</div>
                 ))}
                 {mDays.map((day) => {
                   const inM    = isSameMonth(day, month);
@@ -700,7 +700,7 @@ function YearView({
                   const hasEv  = eventDays.has(format(day, 'yyyy-MM-dd'));
                   return (
                     <div key={day.toISOString()}
-                      className={cn('relative text-[10px] text-center h-5 flex items-center justify-center rounded-full',
+                      className={cn('relative text-[0.625rem] text-center h-5 flex items-center justify-center rounded-full',
                         !inM && 'opacity-25',
                         today && 'bg-primary text-primary-foreground font-bold',
                         !today && inM && 'text-muted-foreground/70',
@@ -790,7 +790,7 @@ function TimelineView({
             'flex-1 min-w-0 text-center py-2 border-l border-border/20',
             isToday(day) && 'bg-primary/5',
           )}>
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-semibold">
+            <span className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 font-semibold">
               {format(day, 'EEE')}
             </span>
             <div className={cn('text-sm font-semibold mx-auto mt-0.5 w-7 h-7 flex items-center justify-center rounded-full',
@@ -802,7 +802,7 @@ function TimelineView({
               <div className="px-1 mt-1 space-y-0.5">
                 {allDayFor(day).map((ev) => (
                   <button key={ev.id} onClick={() => onSelectEvent(ev)}
-                    className={cn('w-full text-left px-1.5 py-0.5 rounded text-[10px] font-medium truncate', eventColor(ev.id))}>
+                    className={cn('w-full text-left px-1.5 py-0.5 rounded text-[0.625rem] font-medium truncate', eventColor(ev.id))}>
                     {ev.title}
                   </button>
                 ))}
@@ -818,7 +818,7 @@ function TimelineView({
           {/* Hour labels */}
           <div className="w-14 shrink-0 relative">
             {Array.from({ length: DAY_HOURS }, (_, h) => (
-              <div key={h} className="absolute right-2 text-[10px] text-muted-foreground/40 -translate-y-1/2"
+              <div key={h} className="absolute right-2 text-[0.625rem] text-muted-foreground/40 -translate-y-1/2"
                 style={{ top: h * SLOT_H }}>
                 {h === 0 ? '' : format(new Date(2000, 0, 1, h), 'ha').toLowerCase()}
               </div>
@@ -899,10 +899,10 @@ function TimelineView({
                   const leftPct  = col * widthPct;
                   return (
                     <button key={ev.id} onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
-                      className={cn('absolute rounded px-1.5 py-0.5 text-[11px] font-medium text-left overflow-hidden transition-opacity hover:opacity-80 z-10', eventColor(ev.id))}
+                      className={cn('absolute rounded px-1.5 py-0.5 text-[0.6875rem] font-medium text-left overflow-hidden transition-opacity hover:opacity-80 z-10', eventColor(ev.id))}
                       style={{ top, height: h, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)` }}>
                       <span className="block truncate leading-tight">{ev.title}</span>
-                      {h > 28 && <span className="block text-[10px] opacity-75 leading-tight truncate">{fmtTime(ev.startAt)}</span>}
+                      {h > 28 && <span className="block text-[0.625rem] opacity-75 leading-tight truncate">{fmtTime(ev.startAt)}</span>}
                     </button>
                   );
                 });
@@ -983,7 +983,7 @@ function AgendaView({
                   )}>
                     {format(day, 'd')}
                   </p>
-                  <p className="text-[10px] text-muted-foreground/40">{format(day, 'MMM')}</p>
+                  <p className="text-[0.625rem] text-muted-foreground/40">{format(day, 'MMM')}</p>
                 </div>
 
                 {/* Events for the day */}
@@ -1017,7 +1017,7 @@ function AgendaView({
                             </span>
                           )}
                           {ev.isRecurring && (
-                            <span className="text-[10px] text-muted-foreground/40 flex items-center gap-0.5">
+                            <span className="text-[0.625rem] text-muted-foreground/40 flex items-center gap-0.5">
                               <Repeat className="w-3 h-3" /> Recurring
                             </span>
                           )}
@@ -1025,7 +1025,7 @@ function AgendaView({
                       </div>
 
                       {ev.attendees.length > 0 && (
-                        <span className="text-[10px] text-muted-foreground/40 flex items-center gap-1 shrink-0">
+                        <span className="text-[0.625rem] text-muted-foreground/40 flex items-center gap-1 shrink-0">
                           <Users className="w-3 h-3" /> {ev.attendees.length}
                         </span>
                       )}
@@ -1328,7 +1328,7 @@ function AvailabilityPanel({
             : <><Users className="w-3 h-3" /> Check availability</>}
         </Button>
 
-        <p className="text-[10px] text-muted-foreground/40">
+        <p className="text-[0.625rem] text-muted-foreground/40">
           {format(viewStart, 'MMM d')} – {format(viewEnd, 'MMM d, yyyy')}
         </p>
       </div>
@@ -1345,13 +1345,13 @@ function AvailabilityPanel({
             {/* ── Find a time ── */}
             <div className="px-4 pt-4 pb-3 border-b border-border/20 space-y-2.5">
               <div className="flex items-center justify-between">
-                <p className="text-[11px] font-semibold text-foreground/80">Find a time</p>
+                <p className="text-[0.6875rem] font-semibold text-foreground/80">Find a time</p>
                 {/* Duration chips */}
                 <div className="flex items-center gap-1">
                   {([60, 90, 120] as FBDuration[]).map((d) => (
                     <button key={d} onClick={() => setDuration(d)}
                       className={cn(
-                        'px-2 py-0.5 rounded text-[10px] font-medium transition-colors border',
+                        'px-2 py-0.5 rounded text-[0.625rem] font-medium transition-colors border',
                         duration === d
                           ? 'bg-primary text-primary-foreground border-primary'
                           : 'border-border/40 text-muted-foreground/60 hover:border-primary/40 hover:text-foreground',
@@ -1369,14 +1369,14 @@ function AvailabilityPanel({
                   {suggestedSlots.map((slot, i) => (
                     <div key={i} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-emerald-500/8 border border-emerald-500/20 hover:bg-emerald-500/12 transition-colors">
                       <div className="min-w-0">
-                        <p className="text-[11px] font-medium text-foreground/80 truncate">{format(slot.start, 'EEE, MMM d')}</p>
-                        <p className="text-[10px] text-muted-foreground/60">
+                        <p className="text-[0.6875rem] font-medium text-foreground/80 truncate">{format(slot.start, 'EEE, MMM d')}</p>
+                        <p className="text-[0.625rem] text-muted-foreground/60">
                           {format(slot.start, 'h:mm a')} – {format(slot.end, 'h:mm a')}
                         </p>
                       </div>
                       <Button size="sm" variant="ghost"
                         onClick={() => onSuggestTime(slot.start, slot.end, attendees)}
-                        className="h-6 px-2 text-[10px] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1">
+                        className="h-6 px-2 text-[0.625rem] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1">
                         Use <ChevronRight className="w-3 h-3" />
                       </Button>
                     </div>
@@ -1395,7 +1395,7 @@ function AvailabilityPanel({
                 return (
                   <div key={day.toISOString()} className="px-4 py-2.5 space-y-1.5">
                     {/* Date header */}
-                    <span className={cn('text-[11px] font-semibold', isToday(day) ? 'text-primary' : 'text-muted-foreground/60')}>
+                    <span className={cn('text-[0.6875rem] font-semibold', isToday(day) ? 'text-primary' : 'text-muted-foreground/60')}>
                       {format(day, 'EEE, MMM d')}
                     </span>
 
@@ -1408,7 +1408,7 @@ function AvailabilityPanel({
                           {/* Label */}
                           <div className="flex items-center gap-1 w-24 shrink-0">
                             <span className={cn('w-2 h-2 rounded-full shrink-0', color.dot)} />
-                            <span className="text-[10px] text-muted-foreground/60 truncate">{fb.email.split('@')[0]}</span>
+                            <span className="text-[0.625rem] text-muted-foreground/60 truncate">{fb.email.split('@')[0]}</span>
                           </div>
                           {/* Timeline bar */}
                           <div className="relative flex-1 h-4 bg-muted/20 rounded border border-border/20">
@@ -1442,7 +1442,7 @@ function AvailabilityPanel({
                       <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1 w-24 shrink-0">
                           <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-500/70" />
-                          <span className="text-[10px] text-emerald-600/70 font-medium truncate">Free for all</span>
+                          <span className="text-[0.625rem] text-emerald-600/70 font-medium truncate">Free for all</span>
                         </div>
                         <div className="relative flex-1 h-4 bg-muted/20 rounded border border-border/20">
                           {freeAll.map((fw, fi) => (
@@ -1565,7 +1565,7 @@ function EventDetailPanel({
               {event.allDay ? 'All day' : 'Event'}
             </div>
             {event.isRecurring && (
-              <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium text-muted-foreground/60 bg-muted/40 border border-border/30">
+              <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[0.625rem] font-medium text-muted-foreground/60 bg-muted/40 border border-border/30">
                 <Repeat className="w-3 h-3" />
                 Recurring
               </div>
@@ -1575,7 +1575,7 @@ function EventDetailPanel({
           {/* RSVP buttons — shown for attendees who are not the organizer */}
           {showRsvp && (
             <div className="space-y-1.5">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium">RSVP</p>
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium">RSVP</p>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline"
                   onClick={() => handleRsvp('ACCEPT')}
@@ -1650,7 +1650,7 @@ function EventDetailPanel({
           {/* Description */}
           {event.description && (
             <div className="text-sm text-foreground/70 leading-relaxed wrap-break-word overflow-x-hidden">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Description</p>
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Description</p>
               <Linkified text={event.description} />
             </div>
           )}
@@ -1658,7 +1658,7 @@ function EventDetailPanel({
           {/* Linked source email */}
           {event.linkedMessageId && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Source email</p>
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Source email</p>
               <a
                 href={`/mail?open=${encodeURIComponent(event.linkedMessageId)}`}
                 className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs hover:bg-amber-100 dark:hover:bg-amber-800/30 transition-colors"
@@ -1673,7 +1673,7 @@ function EventDetailPanel({
           {/* Organizer */}
           {event.organizer && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Organizer</p>
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Organizer</p>
               <p className="text-xs text-foreground/70 break-all">{event.organizer}</p>
             </div>
           )}
@@ -1681,7 +1681,7 @@ function EventDetailPanel({
           {/* Attendees */}
           {(attendeesLoading || event.attendees.length > 0) && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-2">
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium mb-2">
                 {attendeesLoading
                   ? 'Attendees'
                   : `Attendees (${event.attendees.length})`}
@@ -1712,7 +1712,7 @@ function EventDetailPanel({
                         : 'text-muted-foreground/40';
                       return (
                         <div key={a.email} className="flex items-start gap-2">
-                          <div className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[9px] font-semibold flex items-center justify-center shrink-0 mt-0.5">
+                          <div className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[0.5625rem] font-semibold flex items-center justify-center shrink-0 mt-0.5">
                             {(a.name ?? a.email).slice(0, 2).toUpperCase()}
                           </div>
                           <div className="min-w-0 flex-1">
@@ -1721,12 +1721,12 @@ function EventDetailPanel({
                                 <p className="text-xs font-medium text-foreground/80 truncate">{a.name}</p>
                               )}
                               {ptstLabel && (
-                                <span className={cn('text-[10px] font-medium', ptstColor)}>
+                                <span className={cn('text-[0.625rem] font-medium', ptstColor)}>
                                   · {ptstLabel}
                                 </span>
                               )}
                             </div>
-                            <p className="text-[11px] text-muted-foreground/55 break-all">{a.email}</p>
+                            <p className="text-[0.6875rem] text-muted-foreground/55 break-all">{a.email}</p>
                           </div>
                         </div>
                       );

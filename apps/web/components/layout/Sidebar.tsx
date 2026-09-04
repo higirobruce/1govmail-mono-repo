@@ -83,7 +83,7 @@ function FolderContextMenu({
     >
       {!folder.isSystem && onRename && (
         <button
-          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[13px] text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors text-left"
+          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors text-left"
           onMouseDown={(e) => { e.preventDefault(); onClose(); onRename(folder.id, folder.name); }}
         >
           <Pencil className="w-3.5 h-3.5 shrink-0" />
@@ -92,7 +92,7 @@ function FolderContextMenu({
       )}
       {onEmpty && (
         <button
-          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[13px] text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors text-left"
+          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors text-left"
           onMouseDown={(e) => { e.preventDefault(); onClose(); onEmpty(folder.id, folder.name); }}
         >
           <Trash2 className="w-3.5 h-3.5 shrink-0" />
@@ -105,7 +105,7 @@ function FolderContextMenu({
             <div className="my-1 h-px bg-border/50 mx-1" />
           )}
           <button
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[13px] text-destructive hover:bg-destructive/10 transition-colors text-left"
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[0.8125rem] text-destructive hover:bg-destructive/10 transition-colors text-left"
             onMouseDown={(e) => { e.preventDefault(); onClose(); onDelete(folder.id, folder.name); }}
           >
             <X className="w-3.5 h-3.5 shrink-0" />
@@ -216,7 +216,7 @@ function NavItem({
       onClick={comingSoon ? undefined : onClick}
       disabled={comingSoon}
       className={cn(
-        'w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] transition-all duration-100 group relative',
+        'w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] transition-all duration-100 group relative',
         active
           ? 'bg-primary/10 text-primary font-medium'
           : comingSoon
@@ -237,12 +237,12 @@ function NavItem({
       )}
       <span className="flex-1 text-left truncate">{label}</span>
       {comingSoon ? (
-        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/35 tracking-wide">
+        <span className="text-[0.625rem] font-medium px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/35 tracking-wide">
           Soon
         </span>
       ) : (!!unread && unread > 0 && (
         <span className={cn(
-          'text-[11px] font-medium px-1.5 py-0.5 rounded-md tabular-nums',
+          'text-[0.6875rem] font-medium px-1.5 py-0.5 rounded-md tabular-nums',
           active ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
         )}>
           {unread > 99 ? '99+' : unread}
@@ -273,7 +273,7 @@ function LabelRow({
 }) {
   return (
     <div className={cn(
-      'w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-lg text-[13px] transition-all duration-100 group relative',
+      'w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-lg text-[0.8125rem] transition-all duration-100 group relative',
       active ? 'bg-primary/10 text-primary font-medium' : 'text-foreground/65 hover:bg-muted/50 hover:text-foreground',
     )}>
       {active && (
@@ -318,7 +318,7 @@ function LabelRow({
       {/* Unread count */}
       {!!folder.unreadCount && folder.unreadCount > 0 && (
         <span className={cn(
-          'text-[11px] font-medium px-1.5 py-0.5 rounded-md tabular-nums shrink-0',
+          'text-[0.6875rem] font-medium px-1.5 py-0.5 rounded-md tabular-nums shrink-0',
           active ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
         )}>
           {folder.unreadCount > 99 ? '99+' : folder.unreadCount}
@@ -362,7 +362,7 @@ function OfflineStatusPill() {
           : 'Pending actions are syncing in the background.'
       }
       className={cn(
-        'flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[12px]',
+        'flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.75rem]',
         tone,
       )}
     >
@@ -556,9 +556,9 @@ export default function Sidebar({
       <div className="px-3 pt-4 pb-2">
         <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg">
           <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0">
-            <span className="text-[11px] font-bold text-white leading-none">{initials}</span>
+            <span className="text-[0.6875rem] font-bold text-white leading-none">{initials}</span>
           </div>
-          <span className="flex-1 text-[13px] font-semibold text-foreground truncate">
+          <span className="flex-1 text-[0.8125rem] font-semibold text-foreground truncate">
             {displayName}
           </span>
           <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
@@ -570,7 +570,7 @@ export default function Sidebar({
         <button
           data-tour="compose"
           onClick={() => { onCompose?.(); onClose?.(); }}
-          className="w-full flex items-center gap-2 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[13px] font-medium transition-all"
+          className="w-full flex items-center gap-2 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[0.8125rem] font-medium transition-all"
         >
           <Plus className="w-3.5 h-3.5 shrink-0" />
           Compose
@@ -634,12 +634,12 @@ export default function Sidebar({
               <div className="flex items-center pr-1">
                 <button
                   onClick={() => setLabelsOpen((o) => !o)}
-                  className="flex items-center gap-1.5 px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50 hover:text-muted-foreground flex-1 transition-colors"
+                  className="flex items-center gap-1.5 px-3 pb-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50 hover:text-muted-foreground flex-1 transition-colors"
                 >
                   <ChevronDown className={cn('w-3 h-3 transition-transform', !labelsOpen && '-rotate-90')} />
                   Labels
                   {filterEnabled && selectedLabelNames && selectedLabelNames.size > 0 && (
-                    <span className="ml-1 inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary normal-case tracking-normal">
+                    <span className="ml-1 inline-flex items-center text-[0.625rem] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary normal-case tracking-normal">
                       {selectedLabelNames.size} active
                     </span>
                   )}
@@ -697,7 +697,7 @@ export default function Sidebar({
                             onBlur={() => { if (!savingRename) { setRenamingFolderId(null); setRenameFolderName(''); } }}
                             disabled={savingRename}
                             placeholder="Folder name…"
-                            className="flex-1 text-[13px] bg-transparent border-b border-border/60 focus:border-primary outline-none py-0.5 text-foreground placeholder:text-muted-foreground/40"
+                            className="flex-1 text-[0.8125rem] bg-transparent border-b border-border/60 focus:border-primary outline-none py-0.5 text-foreground placeholder:text-muted-foreground/40"
                           />
                         </div>
                       ) : (
@@ -734,7 +734,7 @@ export default function Sidebar({
                         onBlur={() => { if (!savingFolder) { setCreatingFolder(false); setNewFolderName(''); } }}
                         disabled={savingFolder}
                         placeholder="Folder name…"
-                        className="flex-1 text-[13px] bg-transparent border-b border-border/60 focus:border-primary outline-none py-0.5 text-foreground placeholder:text-muted-foreground/40"
+                        className="flex-1 text-[0.8125rem] bg-transparent border-b border-border/60 focus:border-primary outline-none py-0.5 text-foreground placeholder:text-muted-foreground/40"
                       />
                     </div>
                   )}
@@ -782,14 +782,14 @@ export default function Sidebar({
         <button
           onClick={() => setTheme(nextTheme)}
           title={themeLabel}
-          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all"
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all"
         >
           <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
           <span className="flex-1 text-left capitalize">Theme: {theme}</span>
         </button>
         <button
           onClick={() => setTourActive(true)}
-          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all"
+          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all"
         >
           <Sparkles className="w-3.5 h-3.5 shrink-0" />
           Take a tour

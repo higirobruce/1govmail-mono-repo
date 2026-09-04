@@ -34,7 +34,7 @@ function isPreviewableAttachment(att: { mimeType: string; filename: string }): b
 // ─── Email rendering (mirrors MailDetail.tsx constants) ─────────────────────
 
 const EMAIL_CSS = `*,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;overflow-x:auto;word-wrap:break-word}
+html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;overflow-x:auto;word-wrap:break-word}
 a{color:#2563eb;text-decoration:underline}
 a:hover{color:#1d4ed8}
 img{max-width:100%;height:auto;display:inline-block}
@@ -56,7 +56,7 @@ p:last-child{margin-bottom:0}
 font{font-family:inherit}`;
 
 const NORMALIZE_CSS = `
-*,*::before,*::after{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif!important;color:#111827!important;background-color:transparent!important;font-size:14px!important;line-height:1.65!important;letter-spacing:normal!important;text-transform:none!important;font-weight:normal!important;font-style:normal!important}
+*,*::before,*::after{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif!important;color:#111827!important;background-color:transparent!important;font-size:16px!important;line-height:1.65!important;letter-spacing:normal!important;text-transform:none!important;font-weight:normal!important;font-style:normal!important}
 html,body{background-color:#ffffff!important;color:#111827!important}
 h1{font-size:22px!important;font-weight:700!important;line-height:1.3!important;margin:16px 0 8px!important}
 h2{font-size:18px!important;font-weight:600!important;line-height:1.3!important;margin:14px 0 6px!important}
@@ -318,7 +318,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
 
   if (!docs) {
     return (
-      <pre className="whitespace-pre-wrap font-sans text-[13px] text-foreground/80 leading-relaxed p-4">
+      <pre className="whitespace-pre-wrap font-sans text-[0.8125rem] text-foreground/80 leading-relaxed p-4">
         {text ?? 'No content'}
       </pre>
     );
@@ -342,7 +342,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
             <div className="px-4 py-2">
               <button
                 onClick={() => setShowQuoted((v) => !v)}
-                className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-1 text-[0.75rem] text-muted-foreground hover:text-foreground transition-colors"
               >
                 {showQuoted ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                 {showQuoted ? 'Hide quoted message' : 'Show quoted message'}
@@ -565,7 +565,7 @@ export default function ThreadMessage({
       >
         {/* Avatar node — ring punches through spine line */}
         {message.isDraft ? (
-          <div className="w-7 h-7 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0 relative z-10 ring-2 ring-background bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+          <div className="w-7 h-7 rounded-full text-[0.6875rem] font-semibold flex items-center justify-center shrink-0 relative z-10 ring-2 ring-background bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
             {initials}
           </div>
         ) : (
@@ -579,7 +579,7 @@ export default function ThreadMessage({
 
         {/* Sender name */}
         <span className={cn(
-          'text-[13px] shrink-0',
+          'text-[0.8125rem] shrink-0',
           !message.isRead && !message.isDraft ? 'text-foreground font-semibold' : 'text-foreground/75',
         )}>
           {displayName}
@@ -587,13 +587,13 @@ export default function ThreadMessage({
 
         {/* Draft badge */}
         {message.isDraft && (
-          <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+          <span className="shrink-0 px-1.5 py-0.5 rounded text-[0.625rem] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
             DRAFT
           </span>
         )}
 
         {/* Snippet — takes remaining space */}
-        <span className="text-[12px] text-muted-foreground/50 truncate flex-1 min-w-0">
+        <span className="text-[0.75rem] text-muted-foreground/50 truncate flex-1 min-w-0">
           {message.snippet ?? ''}
         </span>
 
@@ -602,7 +602,7 @@ export default function ThreadMessage({
           {message.hasAttachments && (
             <Paperclip className="w-3 h-3 text-muted-foreground/40" />
           )}
-          <span className="text-[11px] text-muted-foreground/40">{timeStr}</span>
+          <span className="text-[0.6875rem] text-muted-foreground/40">{timeStr}</span>
           {message.isDraft ? (
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
@@ -649,17 +649,17 @@ export default function ThreadMessage({
         >
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[13px] text-foreground font-semibold">{displayName}</span>
+              <span className="text-[0.8125rem] text-foreground font-semibold">{displayName}</span>
               <div className="flex items-center gap-1.5 shrink-0">
                 {message.hasAttachments && (
                   <Paperclip className="w-3 h-3 text-muted-foreground/50" />
                 )}
-                <span className="text-[11px] text-muted-foreground/50">{timeStr}</span>
+                <span className="text-[0.6875rem] text-muted-foreground/50">{timeStr}</span>
                 <ChevronUp className="w-3.5 h-3.5 text-muted-foreground/35" />
               </div>
             </div>
             {/* Recipient summary */}
-            <div className="flex flex-wrap gap-x-3 text-[11px] text-muted-foreground/50 mt-0.5">
+            <div className="flex flex-wrap gap-x-3 text-[0.6875rem] text-muted-foreground/50 mt-0.5">
               <span className="text-muted-foreground/65">{`<${message.fromEmail}>`}</span>
               {message.toRecipients.length > 0 && (
                 <span>
@@ -692,7 +692,7 @@ export default function ThreadMessage({
               <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40" />
             </div>
           ) : bodyError ? (
-            <div className="px-4 py-4 text-[13px] text-destructive/60">
+            <div className="px-4 py-4 text-[0.8125rem] text-destructive/60">
               Could not load message.{' '}
               <button
                 onClick={() => { setBodyError(false); setLoadingBody(true); api.mail.getMessage(message.id).then(setFullMessage).catch(() => setBodyError(true)).finally(() => setLoadingBody(false)); }}
@@ -706,7 +706,7 @@ export default function ThreadMessage({
               <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} stripQuotes={!isOnlyMessage} />
             </div>
           ) : (
-            <div className="px-4 py-4 text-[13px] text-muted-foreground/50">
+            <div className="px-4 py-4 text-[0.8125rem] text-muted-foreground/50">
               {message.snippet ?? 'No content'}
             </div>
           )}
@@ -716,8 +716,8 @@ export default function ThreadMessage({
             <div className="px-4 pt-3 pb-3 border-t border-border/10">
               <div className="flex items-center gap-1.5 mb-2.5">
                 <Paperclip className="w-3.5 h-3.5 text-muted-foreground/55" />
-                <span className="text-[11.5px] font-semibold text-foreground/85">Attachments</span>
-                <span className="text-[11px] text-muted-foreground/55">
+                <span className="text-[0.719rem] font-semibold text-foreground/85">Attachments</span>
+                <span className="text-[0.6875rem] text-muted-foreground/55">
                   ({fullMessage.attachments.length})
                 </span>
               </div>
@@ -757,21 +757,21 @@ export default function ThreadMessage({
         <div className="flex items-center gap-0.5 px-4 pb-3 pt-1 border-t border-border/10">
           <button
             onClick={() => onReply(detail)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[0.75rem] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <Reply className="w-3.5 h-3.5" />
             Reply
           </button>
           <button
             onClick={() => onReplyAll(detail)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[0.75rem] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <ReplyAll className="w-3.5 h-3.5" />
             Reply All
           </button>
           <button
             onClick={() => onForward(detail)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[0.75rem] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <Forward className="w-3.5 h-3.5" />
             Forward

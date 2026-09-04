@@ -818,7 +818,7 @@ export function TemplatePickerDialog({ open, onOpenChange, onSelect }: TemplateP
                         <div className="min-w-0">
                           <p className="text-sm font-semibold leading-tight">{template.name}</p>
                           {template.description && (
-                            <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug line-clamp-2">{template.description}</p>
+                            <p className="text-[0.6875rem] text-muted-foreground mt-0.5 leading-snug line-clamp-2">{template.description}</p>
                           )}
                         </div>
                       </div>
@@ -864,7 +864,7 @@ export function TemplatePickerDialog({ open, onOpenChange, onSelect }: TemplateP
                       <span className="text-xl shrink-0 leading-tight">{template.emoji}</span>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold leading-tight">{template.name}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug line-clamp-2">{template.description}</p>
+                        <p className="text-[0.6875rem] text-muted-foreground mt-0.5 leading-snug line-clamp-2">{template.description}</p>
                       </div>
                     </div>
 
@@ -874,11 +874,11 @@ export function TemplatePickerDialog({ open, onOpenChange, onSelect }: TemplateP
                         {template.sections.slice(0, 6).map((section) => (
                           <div key={section} className="flex items-center gap-1.5">
                             <div className="w-1 h-1 rounded-full bg-muted-foreground/30 shrink-0" />
-                            <span className="text-[10px] text-muted-foreground/70 leading-tight truncate">{section}</span>
+                            <span className="text-[0.625rem] text-muted-foreground/70 leading-tight truncate">{section}</span>
                           </div>
                         ))}
                         {template.sections.length > 6 && (
-                          <span className="text-[10px] text-muted-foreground/40 pl-2.5">
+                          <span className="text-[0.625rem] text-muted-foreground/40 pl-2.5">
                             +{template.sections.length - 6} more sections
                           </span>
                         )}

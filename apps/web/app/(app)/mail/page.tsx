@@ -1233,7 +1233,7 @@ export default function MailPage() {
               >
                 <Menu className="w-4 h-4" />
               </button>
-              <h2 className="text-[14px] font-semibold text-foreground">
+              <h2 className="text-[0.875rem] font-semibold text-foreground">
                 {isSearchMode
                   ? 'Search'
                   : (folders.find((f) => f.id === activeFolderId)?.name ?? 'Inbox')}
@@ -1272,7 +1272,7 @@ export default function MailPage() {
                     >
                       <ClipboardCheck className="w-3.5 h-3.5" />
                       {!!commitmentsData?.openCount && commitmentsData.openCount > 0 && (
-                        <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold leading-none text-primary-foreground tabular-nums">
+                        <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-primary px-0.5 text-[0.5625rem] font-semibold leading-none text-primary-foreground tabular-nums">
                           {commitmentsData.openCount > 99 ? '99+' : commitmentsData.openCount}
                         </span>
                       )}
@@ -1307,7 +1307,7 @@ export default function MailPage() {
               value={searchInput}
               onChange={(e) => handleSearchInput(e.target.value)}
               placeholder="Search messages…"
-              className="pl-8 h-7 text-[12px] bg-muted/40 border-border/40 focus-visible:border-primary/40 rounded-lg"
+              className="pl-8 h-7 text-[0.75rem] bg-muted/40 border-border/40 focus-visible:border-primary/40 rounded-lg"
             />
             {searchInput && (
               <button
@@ -1321,7 +1321,7 @@ export default function MailPage() {
 
           {/* Search result count */}
           {isSearchMode && !loadingSearch && (
-            <p className="text-[11px] text-muted-foreground/45 mt-1.5">
+            <p className="text-[0.6875rem] text-muted-foreground/45 mt-1.5">
               {searchTotal > 0
                 ? `${searchTotal.toLocaleString()} message${searchTotal !== 1 ? 's' : ''} found`
                 : 'No messages found'}
@@ -1330,7 +1330,7 @@ export default function MailPage() {
         </div>
 
         {!offline.status.online && (
-          <div className="px-3 py-1.5 text-[12px] bg-amber-500/10 text-amber-700 dark:text-amber-300 border-b border-amber-500/20 flex items-center gap-2">
+          <div className="px-3 py-1.5 text-[0.75rem] bg-amber-500/10 text-amber-700 dark:text-amber-300 border-b border-amber-500/20 flex items-center gap-2">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
             <span className="truncate">You&rsquo;re offline. Showing cached messages; some may be unavailable.</span>
           </div>
@@ -1362,7 +1362,7 @@ export default function MailPage() {
                     key={chip.id}
                     onClick={() => toggleTriageLabelFilter(chip.id)}
                     className={cn(
-                      'shrink-0 text-[11px] px-2 py-0.5 rounded-full border transition-colors',
+                      'shrink-0 text-[0.6875rem] px-2 py-0.5 rounded-full border transition-colors',
                       triageLabelFilter === chip.id
                         ? 'border-primary/50 bg-primary/10 text-primary'
                         : 'border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60',
@@ -1375,7 +1375,7 @@ export default function MailPage() {
                   <button
                     onClick={() => { if (!loadingMore) fetchNextPage(); }}
                     disabled={loadingMore}
-                    className="shrink-0 ml-auto text-[11px] px-2 py-0.5 rounded-full border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 transition-colors"
+                    className="shrink-0 ml-auto text-[0.6875rem] px-2 py-0.5 rounded-full border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 transition-colors"
                     title="Filters only search loaded mail — fetch another page of older messages"
                   >
                     {loadingMore ? 'Loading…' : 'Search older mail'}
@@ -1422,7 +1422,7 @@ export default function MailPage() {
         <div className="md:hidden flex items-center px-3 py-2 border-b border-border/25 shrink-0">
           <button
             onClick={closeReader}
-            className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70 hover:text-foreground transition-colors"
+            className="flex items-center gap-1.5 text-[0.8125rem] text-muted-foreground/70 hover:text-foreground transition-colors"
           >
             <ChevronLeft className="w-4 h-4" />
             Back

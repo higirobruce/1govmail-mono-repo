@@ -74,14 +74,14 @@ export default function LandingPage() {
       {/* ── Nav ───────────────────────────────────────────────────── */}
       <header className="border-b border-border/40 sticky top-0 z-30 bg-background/80 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <span className="text-[15px] font-semibold tracking-tight">1Gov Mail</span>
+          <span className="text-[0.9375rem] font-semibold tracking-tight">1Gov Mail</span>
           <div className="flex items-center gap-3">
-            <span className="text-[11px] font-medium text-muted-foreground/50 border border-border/40 rounded-full px-2.5 py-0.5">
+            <span className="text-[0.6875rem] font-medium text-muted-foreground/50 border border-border/40 rounded-full px-2.5 py-0.5">
               v1.4.0
             </span>
             <Link
               href="/login"
-              className="h-8 px-4 rounded-lg bg-primary text-primary-foreground text-[13px] font-medium flex items-center hover:bg-primary/90 transition-colors"
+              className="h-8 px-4 rounded-lg bg-primary text-primary-foreground text-[0.8125rem] font-medium flex items-center hover:bg-primary/90 transition-colors"
             >
               Sign in
             </Link>
@@ -93,15 +93,15 @@ export default function LandingPage() {
       <section className="flex-1 flex flex-col items-center justify-center text-center px-6 pt-24 pb-16">
         <div className="inline-flex items-center gap-2 border border-border/50 rounded-full px-3.5 py-1 mb-8 bg-muted/30">
           <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
-          <span className="text-[11px] font-medium text-muted-foreground tracking-wide uppercase">
+          <span className="text-[0.6875rem] font-medium text-muted-foreground tracking-wide uppercase">
             What&apos;s new in v1.4.0
           </span>
         </div>
 
-        <h1 className="text-[48px] font-bold leading-[1.1] tracking-tight max-w-2xl mb-5">
+        <h1 className="text-[3rem] font-bold leading-[1.1] tracking-tight max-w-2xl mb-5">
           The smarter way to handle government email
         </h1>
-        <p className="text-[17px] text-muted-foreground max-w-xl leading-relaxed mb-10">
+        <p className="text-[1.0625rem] text-muted-foreground max-w-xl leading-relaxed mb-10">
           1Gov Mail gives your team the tools to stay on top of every conversation —
           built on Zimbra, designed for modern work.
         </p>
@@ -109,13 +109,13 @@ export default function LandingPage() {
         <div className="flex items-center gap-3">
           <Link
             href="/login"
-            className="h-11 px-6 rounded-xl bg-primary text-primary-foreground text-[14px] font-semibold flex items-center hover:bg-primary/90 transition-colors"
+            className="h-11 px-6 rounded-xl bg-primary text-primary-foreground text-[0.875rem] font-semibold flex items-center hover:bg-primary/90 transition-colors"
           >
             Get started
           </Link>
           <Link
             href="/mail"
-            className="h-11 px-6 rounded-xl border border-border/60 text-[14px] font-medium flex items-center hover:bg-muted/50 transition-colors"
+            className="h-11 px-6 rounded-xl border border-border/60 text-[0.875rem] font-medium flex items-center hover:bg-muted/50 transition-colors"
           >
             Open inbox
           </Link>
@@ -124,7 +124,7 @@ export default function LandingPage() {
 
       {/* ── Features grid ─────────────────────────────────────────── */}
       <section className="max-w-6xl mx-auto w-full px-6 pb-24">
-        <h2 className="text-[13px] font-semibold text-muted-foreground/60 uppercase tracking-widest text-center mb-10">
+        <h2 className="text-[0.8125rem] font-semibold text-muted-foreground/60 uppercase tracking-widest text-center mb-10">
           9 new features in this release
         </h2>
 
@@ -138,8 +138,8 @@ export default function LandingPage() {
                 <Icon className="w-4.5 h-4.5 text-foreground/70" strokeWidth={1.75} />
               </div>
               <div>
-                <p className="text-[14px] font-semibold text-foreground mb-1">{title}</p>
-                <p className="text-[13px] text-muted-foreground leading-relaxed">{description}</p>
+                <p className="text-[0.875rem] font-semibold text-foreground mb-1">{title}</p>
+                <p className="text-[0.8125rem] text-muted-foreground leading-relaxed">{description}</p>
               </div>
             </div>
           ))}
@@ -148,7 +148,7 @@ export default function LandingPage() {
 
       {/* ── Footer ────────────────────────────────────────────────── */}
       <footer className="border-t border-border/30 py-6 text-center">
-        <p className="text-[12px] text-muted-foreground/40">
+        <p className="text-[0.75rem] text-muted-foreground/40">
           1Gov Mail v1.4.0 &mdash; Built on Zimbra
         </p>
       </footer>

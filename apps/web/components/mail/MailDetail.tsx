@@ -129,7 +129,7 @@ function escapeHtml(s: string): string {
 }
 
 const EMAIL_CSS = `*,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;overflow-x:auto;word-wrap:break-word}
+html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;overflow-x:auto;word-wrap:break-word}
 a{color:#2563eb;text-decoration:underline}
 a:hover{color:#1d4ed8}
 img{max-width:100%;height:auto;display:inline-block}
@@ -156,7 +156,7 @@ font{font-family:inherit}`;
 // Heading-specific rules restore the visual hierarchy because those selectors
 // (h1, h2…) have higher specificity than the wildcard (*) rule.
 const NORMALIZE_CSS = `
-*,*::before,*::after{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif!important;color:#111827!important;background-color:transparent!important;font-size:14px!important;line-height:1.65!important;letter-spacing:normal!important;text-transform:none!important;font-weight:normal!important;font-style:normal!important}
+*,*::before,*::after{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif!important;color:#111827!important;background-color:transparent!important;font-size:16px!important;line-height:1.65!important;letter-spacing:normal!important;text-transform:none!important;font-weight:normal!important;font-style:normal!important}
 html,body{background-color:#ffffff!important;color:#111827!important}
 h1{font-size:22px!important;font-weight:700!important;line-height:1.3!important;margin:16px 0 8px!important}
 h2{font-size:18px!important;font-weight:600!important;line-height:1.3!important;margin:14px 0 6px!important}
@@ -238,7 +238,7 @@ function EmailBody({
 
   if (!srcDoc) {
     return (
-      <pre className="whitespace-pre-wrap font-sans text-[13px] text-foreground/80 leading-relaxed">
+      <pre className="whitespace-pre-wrap font-sans text-[0.8125rem] text-foreground/80 leading-relaxed">
         {text ?? 'No content'}
       </pre>
     );
@@ -266,9 +266,9 @@ function MetaRow({ icon: Icon, label, children }: {
     <div className="flex items-start gap-3 py-2">
       <div className="flex items-center gap-2 w-20 shrink-0 mt-0.5">
         <Icon className="w-3.5 h-3.5 text-muted-foreground/35 shrink-0" />
-        <span className="text-[12px] text-muted-foreground/50">{label}</span>
+        <span className="text-[0.75rem] text-muted-foreground/50">{label}</span>
       </div>
-      <div className="flex-1 min-w-0 text-[13px] text-foreground">
+      <div className="flex-1 min-w-0 text-[0.8125rem] text-foreground">
         {children}
       </div>
     </div>
@@ -533,7 +533,7 @@ export default function MailDetail({
         )}
 
         {/* Subject as breadcrumb */}
-        <h2 className="flex-1 min-w-0 px-1.5 text-[13px] font-semibold text-foreground truncate">
+        <h2 className="flex-1 min-w-0 px-1.5 text-[0.8125rem] font-semibold text-foreground truncate">
           {message.subject ?? '(no subject)'}
         </h2>
 
@@ -598,7 +598,7 @@ export default function MailDetail({
                     <button
                       key={folder.id}
                       onClick={() => { setFolderDropdownOpen(false); onMoveToFolder(folder.id); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] rounded-md text-foreground/80 hover:bg-muted hover:text-foreground transition-colors"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.8125rem] rounded-md text-foreground/80 hover:bg-muted hover:text-foreground transition-colors"
                     >
                       <FolderOpen className="w-3.5 h-3.5 shrink-0 text-muted-foreground/50" />
                       {folder.name}
@@ -625,7 +625,7 @@ export default function MailDetail({
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              'px-4 py-2.5 text-[13px] font-medium transition-all border-b-2 -mb-px',
+              'px-4 py-2.5 text-[0.8125rem] font-medium transition-all border-b-2 -mb-px',
               activeTab === tab.id
                 ? 'text-primary border-primary'
                 : 'text-muted-foreground/55 border-transparent hover:text-foreground hover:border-border/50',
@@ -645,11 +645,11 @@ export default function MailDetail({
 
             {/* Subject title + sender subtitle — outside the card */}
             <div>
-              <h1 className="text-[20px] font-semibold text-foreground leading-snug mb-1.5">
+              <h1 className="text-[1.25rem] font-semibold text-foreground leading-snug mb-1.5">
                 {message.subject ?? '(no subject)'}
               </h1>
               <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-[13px] text-muted-foreground/65">
+                <p className="text-[0.8125rem] text-muted-foreground/65">
                   {message.fromName ?? message.fromEmail}
                 </p>
                 {classification && <ClassificationChip value={classification.label} size="sm" withIcon />}
@@ -667,10 +667,10 @@ export default function MailDetail({
                   size="md"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-semibold text-foreground leading-none mb-0.5">
+                  <p className="text-[0.8125rem] font-semibold text-foreground leading-none mb-0.5">
                     {message.fromName ?? message.fromEmail}
                   </p>
-                  <p className="text-[11px] text-muted-foreground/55">{formattedDate}</p>
+                  <p className="text-[0.6875rem] text-muted-foreground/55">{formattedDate}</p>
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
                   <ActionBtn icon={MoreHorizontal} label="More" />
@@ -683,7 +683,7 @@ export default function MailDetail({
                   <div className="flex items-center gap-2 flex-wrap">
                     <span>{message.fromName ?? message.fromEmail}</span>
                     {message.fromName && (
-                      <span className="text-[11px] text-muted-foreground/40">
+                      <span className="text-[0.6875rem] text-muted-foreground/40">
                         &lt;{message.fromEmail}&gt;
                       </span>
                     )}
@@ -709,7 +709,7 @@ export default function MailDetail({
                 <MetaRow icon={Tag} label="Status">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={cn(
-                      'inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium',
+                      'inline-flex items-center px-2 py-0.5 rounded-md text-[0.6875rem] font-medium',
                       message.isRead
                         ? 'bg-muted text-muted-foreground'
                         : 'bg-primary/10 text-primary',
@@ -717,12 +717,12 @@ export default function MailDetail({
                       {message.isRead ? 'Read' : 'Unread'}
                     </span>
                     {message.isStarred && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-400/15 text-amber-600">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[0.6875rem] font-medium bg-amber-400/15 text-amber-600">
                         Starred
                       </span>
                     )}
                     {message.hasAttachments && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-muted text-muted-foreground">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[0.6875rem] font-medium bg-muted text-muted-foreground">
                         <Paperclip className="w-2.5 h-2.5" /> Attachments
                       </span>
                     )}
@@ -734,13 +734,13 @@ export default function MailDetail({
               {/* Description section */}
               {(message.bodyText || message.bodyHtml) && (
                 <div className="px-5 pt-4 pb-5 border-t border-border/25">
-                  <h4 className="text-[14px] font-semibold text-foreground mb-3">Description</h4>
-                  <p className="text-[13px] text-foreground/65 leading-relaxed">
+                  <h4 className="text-[0.875rem] font-semibold text-foreground mb-3">Description</h4>
+                  <p className="text-[0.8125rem] text-foreground/65 leading-relaxed">
                     {message.bodyText?.trim().slice(0, 600) ?? 'View the full message in the Message tab.'}
                   </p>
                   <button
                     onClick={() => setActiveTab('message')}
-                    className="mt-4 text-[12px] text-muted-foreground/50 hover:text-foreground font-medium transition-colors"
+                    className="mt-4 text-[0.75rem] text-muted-foreground/50 hover:text-foreground font-medium transition-colors"
                   >
                     Read full message →
                   </button>
@@ -758,16 +758,16 @@ export default function MailDetail({
               <MailAvatar name={message.fromName} email={message.fromEmail} size="md" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-[13px] font-semibold text-foreground">
+                  <span className="text-[0.8125rem] font-semibold text-foreground">
                     {message.fromName ?? message.fromEmail}
                   </span>
                   {message.fromName && (
-                    <span className="text-[11px] text-muted-foreground/55">
+                    <span className="text-[0.6875rem] text-muted-foreground/55">
                       &lt;{message.fromEmail}&gt;
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-muted-foreground/55 mt-0.5">{formattedDate}</p>
+                <p className="text-[0.6875rem] text-muted-foreground/55 mt-0.5">{formattedDate}</p>
               </div>
               {classification && <ClassificationChip value={classification.label} size="sm" withIcon />}
             </div>
@@ -787,10 +787,10 @@ export default function MailDetail({
               <div className="px-6 py-4 border-t border-border/20 shrink-0">
                 <div className="flex items-center gap-1.5 mb-3">
                   <Paperclip className="w-3.5 h-3.5 text-muted-foreground/55" />
-                  <span className="text-[12px] font-semibold text-foreground/85">
+                  <span className="text-[0.75rem] font-semibold text-foreground/85">
                     Attachments
                   </span>
-                  <span className="text-[11px] text-muted-foreground/55">
+                  <span className="text-[0.6875rem] text-muted-foreground/55">
                     ({message.attachments.length})
                   </span>
                 </div>
@@ -831,7 +831,7 @@ export default function MailDetail({
         {/* Attachments tab */}
         {activeTab === 'attachments' && (
           <div className="p-5">
-            <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-4">
+            <p className="text-[0.6875rem] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-4">
               {message.attachments.length} attachment{message.attachments.length !== 1 ? 's' : ''}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -848,13 +848,13 @@ export default function MailDetail({
                     className="flex items-center gap-2.5 p-3 bg-card border border-border/45 rounded-xl group hover:bg-muted/30 transition-colors"
                   >
                     <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center shrink-0', style.bgTint)}>
-                      <span className={cn('text-[10px] font-bold tracking-wide', style.color)}>
+                      <span className={cn('text-[0.625rem] font-bold tracking-wide', style.color)}>
                         {style.label}
                       </span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-medium text-foreground truncate">{att.filename}</p>
-                      <p className="text-[11px] text-muted-foreground/55">{formatBytes(att.size)}</p>
+                      <p className="text-[0.75rem] font-medium text-foreground truncate">{att.filename}</p>
+                      <p className="text-[0.6875rem] text-muted-foreground/55">{formatBytes(att.size)}</p>
                     </div>
                     <div className="flex items-center gap-0.5 shrink-0">
                       {isPreviewable && (
@@ -892,7 +892,7 @@ export default function MailDetail({
       <div className="px-4 py-2.5 border-t border-border/35 shrink-0 flex items-center gap-2">
         <button
           onClick={onReply}
-          className="flex-1 text-left px-4 py-2 bg-muted/40 hover:bg-muted border border-border/40 rounded-xl text-[13px] text-muted-foreground/50 hover:text-muted-foreground transition-all"
+          className="flex-1 text-left px-4 py-2 bg-muted/40 hover:bg-muted border border-border/40 rounded-xl text-[0.8125rem] text-muted-foreground/50 hover:text-muted-foreground transition-all"
         >
           <span className="flex items-center gap-2">
             <Reply className="w-3.5 h-3.5 shrink-0" />
@@ -946,7 +946,7 @@ export default function MailDetail({
         >
           <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
             <Sparkles className="w-3.5 h-3.5 text-primary" />
-            <span className="text-[12px] font-semibold text-foreground">Summary</span>
+            <span className="text-[0.75rem] font-semibold text-foreground">Summary</span>
             {summarizing && (
               <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
             )}
@@ -960,14 +960,14 @@ export default function MailDetail({
           </div>
           <div className="flex-1 overflow-y-auto px-3.5 py-3">
             {summaryError ? (
-              <div className="text-[12px] text-destructive">
+              <div className="text-[0.75rem] text-destructive">
                 {summaryError}{' '}
                 <button onClick={handleSummarize} className="underline ml-1">
                   Retry
                 </button>
               </div>
             ) : (
-              <p className="text-[12.5px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+              <p className="text-[0.781rem] text-foreground/85 leading-relaxed whitespace-pre-wrap">
                 {streamedSummary || (summarizing ? 'Thinking…' : '')}
               </p>
             )}

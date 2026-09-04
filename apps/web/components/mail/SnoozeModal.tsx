@@ -79,7 +79,7 @@ export default function SnoozeModal({ open, onClose, onSnooze }: SnoozeModalProp
         <div className="flex items-center justify-between px-5 py-4 border-b border-border/30">
           <div className="flex items-center gap-2">
             <AlarmClock className="w-4 h-4 text-primary" />
-            <span className="text-[14px] font-semibold text-foreground">Snooze until…</span>
+            <span className="text-[0.875rem] font-semibold text-foreground">Snooze until…</span>
           </div>
           <button onClick={onClose} className="p-1 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors">
             <X className="w-4 h-4" />
@@ -96,27 +96,27 @@ export default function SnoozeModal({ open, onClose, onSnooze }: SnoozeModalProp
             >
               <div className="flex items-center gap-3">
                 <Clock className="w-4 h-4 text-muted-foreground/40 group-hover:text-primary transition-colors shrink-0" />
-                <span className="text-[13px] font-medium text-foreground">{opt.label}</span>
+                <span className="text-[0.8125rem] font-medium text-foreground">{opt.label}</span>
               </div>
-              <span className="text-[11px] text-muted-foreground/50 shrink-0">{opt.sublabel}</span>
+              <span className="text-[0.6875rem] text-muted-foreground/50 shrink-0">{opt.sublabel}</span>
             </button>
           ))}
         </div>
 
         {/* Custom date/time */}
         <div className="px-4 pb-4 pt-1 border-t border-border/20 mt-1">
-          <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">Custom time</p>
+          <p className="text-[0.6875rem] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">Custom time</p>
           <div className="flex gap-2 items-center">
             <DateTimePicker
               value={customDateTime}
               onChange={setCustomDateTime}
-              className="flex-1 h-8 text-[12px]"
+              className="flex-1 h-8 text-[0.75rem]"
             />
             <button
               onClick={handleCustom}
               disabled={!customDateTime}
               className={cn(
-                'h-8 px-3 rounded-lg text-[12px] font-medium transition-colors',
+                'h-8 px-3 rounded-lg text-[0.75rem] font-medium transition-colors',
                 customDateTime
                   ? 'bg-primary text-primary-foreground hover:bg-primary/90'
                   : 'bg-muted text-muted-foreground/40 cursor-not-allowed',

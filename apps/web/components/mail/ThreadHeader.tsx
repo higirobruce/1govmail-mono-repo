@@ -110,12 +110,12 @@ export default function ThreadHeader({
         {/* Subject + meta */}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-3">
-            <h1 className="text-[15px] font-semibold text-foreground leading-snug">
+            <h1 className="text-[0.9375rem] font-semibold text-foreground leading-snug">
               {subject ?? '(no subject)'}
             </h1>
             <span
               className={cn(
-                'text-[10px] px-2 py-0.5 rounded-full shrink-0 font-medium whitespace-nowrap',
+                'text-[0.625rem] px-2 py-0.5 rounded-full shrink-0 font-medium whitespace-nowrap',
                 status.className,
               )}
             >
@@ -147,12 +147,12 @@ export default function ThreadHeader({
                 </Tooltip>
               ))}
               {extraParticipantCount > 0 && (
-                <div className="w-6 h-6 rounded-full bg-muted text-muted-foreground text-[9px] font-medium flex items-center justify-center ring-1 ring-background">
+                <div className="w-6 h-6 rounded-full bg-muted text-muted-foreground text-[0.5625rem] font-medium flex items-center justify-center ring-1 ring-background">
                   +{extraParticipantCount}
                 </div>
               )}
             </div>
-            <span className="text-[11px] text-muted-foreground/50">
+            <span className="text-[0.6875rem] text-muted-foreground/50">
               {messageCount} message{messageCount !== 1 ? 's' : ''}
               {unreadCount > 0 && ` · ${unreadCount} unread`}
               {lastActivity && ` · ${lastActivity}`}

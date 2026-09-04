@@ -64,12 +64,12 @@ export function NotificationsBell() {
     <div ref={ref} className="relative">
       <button
         onClick={handleOpen}
-        className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all relative"
+        className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all relative"
       >
         <Bell className="w-3.5 h-3.5 shrink-0" />
         <span className="flex-1 text-left">Notifications</span>
         {unread > 0 && (
-          <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center shrink-0">
+          <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[0.625rem] font-bold flex items-center justify-center shrink-0">
             {unread > 9 ? '9+' : unread}
           </span>
         )}
@@ -78,11 +78,11 @@ export function NotificationsBell() {
       {open && (
         <div className="absolute bottom-full left-0 mb-1 w-80 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden z-50">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
-            <span className="text-[13px] font-semibold text-foreground">Notifications</span>
+            <span className="text-[0.8125rem] font-semibold text-foreground">Notifications</span>
             {notifications.length > 0 && (
               <button
                 onClick={() => markAllRead.mutate()}
-                className="flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-foreground transition-colors"
+                className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground/50 hover:text-foreground transition-colors"
                 title="Mark all read"
               >
                 <CheckCheck className="w-3.5 h-3.5" />
@@ -93,7 +93,7 @@ export function NotificationsBell() {
 
           <div className="max-h-80 overflow-y-auto">
             {notifications.length === 0 ? (
-              <div className="px-4 py-8 text-center text-[12px] text-muted-foreground/40">
+              <div className="px-4 py-8 text-center text-[0.75rem] text-muted-foreground/40">
                 No notifications
               </div>
             ) : (
@@ -112,9 +112,9 @@ export function NotificationsBell() {
                       <Icon className="w-3.5 h-3.5 text-muted-foreground/70" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className={cn('text-[12px] font-medium truncate', !n.isRead && 'text-foreground')}>{n.title}</p>
-                      {n.body && <p className="text-[11px] text-muted-foreground/55 mt-0.5 line-clamp-2">{n.body}</p>}
-                      <p className="text-[10px] text-muted-foreground/35 mt-1">
+                      <p className={cn('text-[0.75rem] font-medium truncate', !n.isRead && 'text-foreground')}>{n.title}</p>
+                      {n.body && <p className="text-[0.6875rem] text-muted-foreground/55 mt-0.5 line-clamp-2">{n.body}</p>}
+                      <p className="text-[0.625rem] text-muted-foreground/35 mt-1">
                         {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true })}
                       </p>
                     </div>

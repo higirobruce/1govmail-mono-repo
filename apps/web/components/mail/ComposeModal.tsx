@@ -1121,7 +1121,7 @@ export default function ComposeModal({
                 <Badge key={`fwd-${i}`} variant="secondary" className="gap-1.5 px-2 py-0.5 bg-primary/10 border-primary/30 text-micro max-w-[200px]">
                   <Paperclip className="w-3 h-3 text-primary/60 shrink-0" />
                   <span className="truncate">{att.filename}</span>
-                  {att.size > 0 && <span className="text-ink-4 shrink-0">({formatFileSize(att.size)})</span>}
+                  {att.size > 0 && <span className="text-ink-3 shrink-0">({formatFileSize(att.size)})</span>}
                   <button type="button" onClick={() => setForwardedAttachments((prev) => prev.filter((_, j) => j !== i))}
                     className="text-ink-3 hover:text-destructive leading-none shrink-0">
                     <X className="w-3 h-3" />
@@ -1133,7 +1133,7 @@ export default function ComposeModal({
                 <Badge key={`new-${i}`} variant="secondary" className="gap-1.5 px-2 py-0.5 bg-muted/50 border-border text-micro max-w-[200px]">
                   <Paperclip className="w-3 h-3 text-ink-3 shrink-0" />
                   <span className="truncate">{file.name}</span>
-                  <span className="text-ink-4 shrink-0">({formatFileSize(file.size)})</span>
+                  <span className="text-ink-3 shrink-0">({formatFileSize(file.size)})</span>
                   <button type="button" onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
                     className="text-ink-3 hover:text-destructive leading-none shrink-0">
                     <X className="w-3 h-3" />

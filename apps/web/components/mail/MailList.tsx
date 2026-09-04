@@ -353,7 +353,7 @@ function MailRow({
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-2 mb-0.5">
                 <span className={cn(
-                  'text-ui truncate',
+                  'text-body truncate',
                   message.isRead ? 'text-foreground' : 'text-primary font-semibold',
                 )}>
                   {message.fromName ?? message.fromEmail}
@@ -662,7 +662,7 @@ export default function MailList({
                 Load more
               </button>
             ) : messages.length > 0 ? (
-              <span className="text-micro font-normal text-ink-4">All messages loaded</span>
+              <span className="text-micro font-normal text-ink-3">All messages loaded</span>
             ) : null}
           </div>
         </div>
@@ -697,7 +697,7 @@ export default function MailList({
             onClick={() => { onBulkAction?.({ type: 'delete', messageIds: [...selectedIds] }); clearSelection(); }}>
             Delete
           </Button>
-          <Button variant="ghost" size="icon-xs" onClick={clearSelection} aria-label="Clear selection">
+          <Button variant="ghost" size="icon-xs" className="hover:bg-muted" onClick={clearSelection} aria-label="Clear selection">
             <X />
           </Button>
         </div>

@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
+let mockEditor: any = null;
 vi.mock('@tiptap/react', () => ({
-  useEditor: () => null,
+  useEditor: () => mockEditor,
   EditorContent: (props: any) => <div data-testid="editor" {...props} />,
 }));
 vi.mock('@/lib/api', () => ({ api: { mail: { send: vi.fn(async () => ({})) } } }));
@@ -22,7 +23,10 @@ const message = {
 };
 
 describe('QuickReplyBar mini-composer', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEditor = null;
+  });
 
   it('shows the reply recipient as a chip after focusing', () => {
     render(<QuickReplyBar message={message} onSent={() => {}} onExpand={() => {}} />);
@@ -46,5 +50,20 @@ describe('QuickReplyBar mini-composer', () => {
     fireEvent.click(screen.getByRole('button', { name: /reply all/i }));
     fireEvent.click(screen.getByRole('button', { name: /open full editor/i }));
     expect(onExpand).toHaveBeenCalledWith('', 'replyAll');
+  });
+
+  it('expand carries the typed draft HTML', () => {
+    mockEditor = {
+      isEmpty: false,
+      getHTML: () => '<p>draft text</p>',
+      isActive: () => false,
+      commands: { clearContent: vi.fn() },
+      chain: () => ({ focus: () => ({ toggleBold: () => ({ run: vi.fn() }), toggleItalic: () => ({ run: vi.fn() }), toggleBulletList: () => ({ run: vi.fn() }), insertContent: () => ({ run: vi.fn() }) }) }),
+    };
+    const onExpand = vi.fn();
+    render(<QuickReplyBar message={message} onSent={() => {}} onExpand={onExpand} />);
+    fireEvent.focus(screen.getByTestId('editor'));
+    fireEvent.click(screen.getByRole('button', { name: /open full editor/i }));
+    expect(onExpand).toHaveBeenCalledWith('<p>draft text</p>', 'reply');
   });
 });

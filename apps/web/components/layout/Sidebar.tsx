@@ -566,7 +566,7 @@ export default function Sidebar({
                     size="icon-sm"
                     onClick={toggleSidebar}
                     aria-label="Expand sidebar"
-                    className="text-ink-3 hover:text-foreground shrink-0"
+                    className="text-ink-3 hover:bg-muted hover:text-foreground shrink-0"
                   >
                     <PanelLeftOpen className="size-4" />
                   </Button>
@@ -580,7 +580,7 @@ export default function Sidebar({
                 onClick={toggleSidebar}
                 title="Collapse sidebar"
                 aria-label="Collapse sidebar"
-                className="text-ink-3 hover:text-foreground shrink-0"
+                className="text-ink-3 hover:bg-muted hover:text-foreground shrink-0"
               >
                 <PanelLeftClose className="size-4" />
               </Button>
@@ -695,7 +695,7 @@ export default function Sidebar({
                     variant="ghost"
                     size="icon-xs"
                     onClick={onClearLabelFilter}
-                    className="mb-1.5 text-ink-4 hover:text-foreground"
+                    className="mb-1.5 text-ink-4 hover:bg-muted hover:text-foreground"
                     title="Clear filter"
                     aria-label="Clear label filter"
                   >
@@ -711,7 +711,7 @@ export default function Sidebar({
                       setLabelsOpen(true);
                       setTimeout(() => newFolderInputRef.current?.focus(), 50);
                     }}
-                    className="mb-1.5 text-ink-4 hover:text-ink-2"
+                    className="mb-1.5 text-ink-4 hover:bg-muted hover:text-ink-2"
                     title="New folder"
                   >
                     <Plus />

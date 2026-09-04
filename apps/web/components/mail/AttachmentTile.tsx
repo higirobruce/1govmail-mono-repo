@@ -213,7 +213,7 @@ export function AttachmentTile({
       </div>
 
       {attachment.size > 0 && (
-        <span className="mt-0.5 text-micro leading-none font-normal text-ink-4 tabular-nums">
+        <span className="mt-0.5 text-micro leading-none font-normal text-ink-3 tabular-nums">
           {formatBytes(attachment.size)}
         </span>
       )}

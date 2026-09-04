@@ -1,7 +1,6 @@
 'use client';
 
 import { format, parseISO } from 'date-fns';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Reply, ReplyAll, Forward, Trash2, Archive, Star, Inbox, Tag, FolderOpen,
@@ -510,13 +509,6 @@ export default function MailDetail({
     );
   }
 
-  const senderInitials = (message.fromName ?? message.fromEmail)
-    .split(' ')
-    .map((w: string) => w[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-
   const formattedDate = (() => {
     try { return format(parseISO(message.receivedAt), 'EEE, MMM d yyyy · h:mm a'); }
     catch { return ''; }
@@ -541,7 +533,7 @@ export default function MailDetail({
             size="icon-sm"
             onClick={onClose}
             aria-label="Back"
-            className="text-ink-3 hover:text-foreground"
+            className="text-ink-3 hover:bg-muted hover:text-foreground"
           >
             <ChevronLeft className="w-4 h-4" />
           </Button>
@@ -602,7 +594,7 @@ export default function MailDetail({
                     variant="ghost"
                     size="icon-sm"
                     onClick={() => setFolderDropdownOpen((v) => !v)}
-                    className="text-ink-3 hover:text-foreground"
+                    className="text-ink-3 hover:bg-muted hover:text-foreground"
                   >
                     <Tag className="w-4 h-4" />
                   </Button>
@@ -700,7 +692,7 @@ export default function MailDetail({
                   <div className="flex items-center gap-2 flex-wrap">
                     <span>{message.fromName ?? message.fromEmail}</span>
                     {message.fromName && (
-                      <span className="text-micro text-ink-4">
+                      <span className="text-micro text-ink-3">
                         &lt;{message.fromEmail}&gt;
                       </span>
                     )}
@@ -814,7 +806,7 @@ export default function MailDetail({
                     <Button
                       variant="ghost"
                       size="xs"
-                      className="ml-auto text-primary hover:text-primary"
+                      className="ml-auto text-primary hover:bg-muted hover:text-primary"
                       onClick={handleDownloadAll}
                       disabled={downloadingAll}
                     >
@@ -893,7 +885,7 @@ export default function MailDetail({
                           size="icon-xs"
                           onClick={() => { setLightboxSelectedId(att.id); setLightboxOpen(true); }}
                           disabled={!!downloadingId}
-                          className="text-ink-3 hover:text-foreground disabled:opacity-30"
+                          className="text-ink-3 hover:bg-muted hover:text-foreground disabled:opacity-30"
                           title="Open lightbox"
                         >
                           <Eye className="w-3.5 h-3.5" />
@@ -904,7 +896,7 @@ export default function MailDetail({
                         size="icon-xs"
                         onClick={() => handleDownload(att)}
                         disabled={!!downloadingId}
-                        className="text-ink-3 hover:text-foreground disabled:opacity-30"
+                        className="text-ink-3 hover:bg-muted hover:text-foreground disabled:opacity-30"
                         title="Download"
                       >
                         {downloadingId === att.id

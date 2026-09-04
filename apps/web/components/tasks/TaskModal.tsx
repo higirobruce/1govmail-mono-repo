@@ -109,10 +109,10 @@ export const EMPTY_FORM: TaskForm = {
 const REMINDER_PRESETS = ['15', '30', '60', '1440'] as const;
 
 export const PRIORITY_META: Record<TaskPriority, { label: string; cls: string }> = {
-  LOW:    { label: 'Low',    cls: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
-  MEDIUM: { label: 'Medium', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' },
-  HIGH:   { label: 'High',   cls: 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300' },
-  URGENT: { label: 'Urgent', cls: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300' },
+  LOW:    { label: 'Low',    cls: 'bg-muted text-ink-2' },
+  MEDIUM: { label: 'Medium', cls: 'bg-primary/10 text-primary' },
+  HIGH:   { label: 'High',   cls: 'bg-warning/15 text-warning-strong' },
+  URGENT: { label: 'Urgent', cls: 'bg-destructive/10 text-destructive' },
 };
 
 export const STATUS_META: Record<TaskStatus, { label: string }> = {

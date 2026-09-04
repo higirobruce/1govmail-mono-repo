@@ -344,9 +344,14 @@ export default function ThreadView({
   const [inlineReply, setInlineReply] = useState<{ mode: 'reply' | 'replyAll'; target: any; initialBody?: string } | null>(null);
   useEffect(() => { setInlineReply(null); }, [message?.id]);
 
+  const composerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [inlineReply?.target?.id, inlineReply?.mode]);
+
   const inlineComposer = inlineReply && (
     <div
-      ref={(el) => el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}
+      ref={composerRef}
       className="mt-2 mb-3"
     >
       <ComposeModal
@@ -853,7 +858,7 @@ export default function ThreadView({
                     <Button
                       variant="ghost"
                       size="xs"
-                      className="ml-auto text-primary hover:text-primary"
+                      className="ml-auto text-primary hover:bg-muted hover:text-primary"
                       onClick={handleDownloadAll}
                       disabled={downloadingAll}
                     >
@@ -867,7 +872,7 @@ export default function ThreadView({
                     {/* Group header */}
                     <div className="flex items-center gap-2 mb-2">
                       <GroupIcon group={group} />
-                      <span className="text-ui font-semibold text-ink-2 uppercase tracking-[0.06em]">
+                      <span className="text-micro font-semibold text-ink-3 uppercase tracking-[0.06em]">
                         {group}
                       </span>
                       <span className="text-micro font-normal text-ink-4">
@@ -904,7 +909,7 @@ export default function ThreadView({
                                     onClick={() => handleAttachmentPreview(att)}
                                     disabled={!!previewLoadingId}
                                     className={cn(
-                                      'disabled:opacity-30',
+                                      'disabled:opacity-30 hover:bg-muted',
                                       isActive ? 'text-primary' : 'text-ink-3 hover:text-foreground',
                                     )}
                                     aria-label={isActive ? 'Close preview' : 'Preview'}
@@ -929,7 +934,7 @@ export default function ThreadView({
                                       })
                                       .catch(() => toast.error('Download failed'))
                                   }
-                                  className="text-ink-3 hover:text-foreground"
+                                  className="text-ink-3 hover:bg-muted hover:text-foreground"
                                   aria-label={`Download ${att.filename}`}
                                 >
                                   <Download className="w-3.5 h-3.5" />
@@ -956,7 +961,7 @@ export default function ThreadView({
                                           a.click();
                                         })
                                       }
-                                      className="text-ink-3 hover:text-foreground"
+                                      className="text-ink-3 hover:bg-muted hover:text-foreground"
                                       aria-label="Download"
                                       title="Download"
                                     >
@@ -966,7 +971,7 @@ export default function ThreadView({
                                       variant="ghost"
                                       size="icon-xs"
                                       onClick={() => setPreviewState(null)}
-                                      className="text-ink-3 hover:text-foreground"
+                                      className="text-ink-3 hover:bg-muted hover:text-foreground"
                                       aria-label="Close"
                                       title="Close"
                                     >

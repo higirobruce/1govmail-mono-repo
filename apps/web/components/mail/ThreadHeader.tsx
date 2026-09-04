@@ -91,7 +91,7 @@ export default function ThreadHeader({
               variant="ghost"
               size="icon-sm"
               onClick={onClose}
-              className="mt-0.5 text-ink-3 hover:text-foreground shrink-0"
+              className="mt-0.5 text-ink-3 hover:bg-muted hover:text-foreground shrink-0"
               aria-label="Close thread"
             >
               <X className="w-4 h-4" />
@@ -166,7 +166,7 @@ export default function ThreadHeader({
                   variant="ghost"
                   size="icon-sm"
                   onClick={onClick}
-                  className="text-ink-3 hover:text-foreground"
+                  className="text-ink-3 hover:bg-muted hover:text-foreground"
                   aria-label={label}
                 >
                   <Icon className="w-4 h-4" />
@@ -198,7 +198,7 @@ export default function ThreadHeader({
                   variant="ghost"
                   size="icon-sm"
                   onClick={onQuickReply}
-                  className="text-ink-3 hover:text-foreground"
+                  className="text-ink-3 hover:bg-muted hover:text-foreground"
                   aria-label="Quick reply (AI)"
                 >
                   <MessageSquareReply className="w-4 h-4" />

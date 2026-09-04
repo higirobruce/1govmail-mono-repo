@@ -610,7 +610,7 @@ export default function ThreadMessage({
           {message.hasAttachments && (
             <Paperclip className="w-3 h-3 text-ink-4" />
           )}
-          <span className="text-micro text-ink-4">{timeStr}</span>
+          <span className="text-micro text-ink-3">{timeStr}</span>
           {message.isDraft ? (
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
@@ -732,7 +732,7 @@ export default function ThreadMessage({
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="ml-auto text-primary hover:text-primary"
+                    className="ml-auto text-primary hover:bg-muted hover:text-primary"
                     onClick={handleDownloadAll}
                     disabled={downloadingAll}
                   >
@@ -779,7 +779,7 @@ export default function ThreadMessage({
             variant="ghost"
             size="xs"
             onClick={() => onReply(detail)}
-            className="text-ink-2 hover:text-foreground"
+            className="text-ink-2 hover:bg-muted hover:text-foreground"
           >
             <Reply className="w-3.5 h-3.5" />
             Reply
@@ -788,7 +788,7 @@ export default function ThreadMessage({
             variant="ghost"
             size="xs"
             onClick={() => onReplyAll(detail)}
-            className="text-ink-2 hover:text-foreground"
+            className="text-ink-2 hover:bg-muted hover:text-foreground"
           >
             <ReplyAll className="w-3.5 h-3.5" />
             Reply All
@@ -797,7 +797,7 @@ export default function ThreadMessage({
             variant="ghost"
             size="xs"
             onClick={() => onForward(detail)}
-            className="text-ink-2 hover:text-foreground"
+            className="text-ink-2 hover:bg-muted hover:text-foreground"
           >
             <Forward className="w-3.5 h-3.5" />
             Forward

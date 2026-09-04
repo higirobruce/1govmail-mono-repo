@@ -66,12 +66,12 @@ export function QuickReplyBar({ message, onSent, onExpand }: Props) {
     mode,
     user?.email ?? '',
   );
-  const hasReplyAllExtras =
-    computeReplyRecipients(
-      { fromEmail: message.fromEmail, fromName: message.fromName,
-        toRecipients: message.toRecipients, ccRecipients: message.ccRecipients },
-      'replyAll', user?.email ?? '',
-    ).to.length > 1;
+  const replyAllRecipients = computeReplyRecipients(
+    { fromEmail: message.fromEmail, fromName: message.fromName,
+      toRecipients: message.toRecipients, ccRecipients: message.ccRecipients },
+    'replyAll', user?.email ?? '',
+  );
+  const hasReplyAllExtras = replyAllRecipients.to.length > 1 || replyAllRecipients.cc.length > 0;
 
   const currentHtml = () => editor?.getHTML() ?? '';
   const isEmpty = !editor || editor.isEmpty;
@@ -117,7 +117,7 @@ export function QuickReplyBar({ message, onSent, onExpand }: Props) {
               </>
             )}
             {hasReplyAllExtras && (
-              <Button variant="ghost" size="xs" className="ml-auto text-ink-3 hover:text-foreground"
+              <Button variant="ghost" size="xs" className="ml-auto text-ink-3 hover:bg-muted hover:text-foreground"
                 aria-label={mode === 'reply' ? 'Reply all' : 'Reply only to sender'}
                 onClick={() => setMode((m) => (m === 'reply' ? 'replyAll' : 'reply'))}>
                 {mode === 'reply' ? 'Reply all' : 'Reply only'}
@@ -139,15 +139,15 @@ export function QuickReplyBar({ message, onSent, onExpand }: Props) {
         {expanded && (
           <div className="flex items-center gap-0.5 px-2 pb-2">
             <Button variant="ghost" size="icon-xs" aria-label="Bold"
-              className={cn('text-ink-3', editor?.isActive('bold') && 'bg-muted text-foreground')}
+              className={cn('text-ink-3 hover:bg-muted hover:text-foreground', editor?.isActive('bold') && 'bg-muted text-foreground')}
               onClick={() => editor?.chain().focus().toggleBold().run()}><Bold /></Button>
             <Button variant="ghost" size="icon-xs" aria-label="Italic"
-              className={cn('text-ink-3', editor?.isActive('italic') && 'bg-muted text-foreground')}
+              className={cn('text-ink-3 hover:bg-muted hover:text-foreground', editor?.isActive('italic') && 'bg-muted text-foreground')}
               onClick={() => editor?.chain().focus().toggleItalic().run()}><Italic /></Button>
             <Button variant="ghost" size="icon-xs" aria-label="Bullet list"
-              className={cn('text-ink-3', editor?.isActive('bulletList') && 'bg-muted text-foreground')}
+              className={cn('text-ink-3 hover:bg-muted hover:text-foreground', editor?.isActive('bulletList') && 'bg-muted text-foreground')}
               onClick={() => editor?.chain().focus().toggleBulletList().run()}><List /></Button>
-            <Button variant="ghost" size="icon-xs" aria-label="Insert link" className="text-ink-3"
+            <Button variant="ghost" size="icon-xs" aria-label="Insert link" className="text-ink-3 hover:bg-muted hover:text-foreground"
               onClick={() => {
                 if (editor?.isActive('link')) { editor.chain().focus().unsetLink().run(); return; }
                 const url = window.prompt('Enter URL (e.g. https://example.com):');
@@ -155,7 +155,7 @@ export function QuickReplyBar({ message, onSent, onExpand }: Props) {
               }}><Link2 /></Button>
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon-xs" aria-label="Insert emoji" className="text-ink-3"><Smile /></Button>
+                <Button variant="ghost" size="icon-xs" aria-label="Insert emoji" className="text-ink-3 hover:bg-muted hover:text-foreground"><Smile /></Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-2" align="start">
                 <div className="grid grid-cols-6 gap-1">
@@ -170,12 +170,12 @@ export function QuickReplyBar({ message, onSent, onExpand }: Props) {
               </PopoverContent>
             </Popover>
             <Button variant="ghost" size="icon-xs" aria-label="Attach files — opens the full editor"
-              className="text-ink-3" onClick={() => onExpand(currentHtml(), mode)}><Paperclip /></Button>
+              className="text-ink-3 hover:bg-muted hover:text-foreground" onClick={() => onExpand(currentHtml(), mode)}><Paperclip /></Button>
 
             <div className="flex-1" />
 
             <Button variant="ghost" size="icon-xs" aria-label="Open full editor"
-              className="text-ink-3" onClick={() => onExpand(currentHtml(), mode)}><Maximize2 /></Button>
+              className="text-ink-3 hover:bg-muted hover:text-foreground" onClick={() => onExpand(currentHtml(), mode)}><Maximize2 /></Button>
             <Button size="xs" onClick={handleSend} disabled={sending || isEmpty}
               aria-label="Send reply (⌘↵)">
               {sending ? <Loader2 className="animate-spin" /> : <Send />}

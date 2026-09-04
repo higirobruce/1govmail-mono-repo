@@ -38,6 +38,7 @@ import { useCharStream } from '@/lib/ai/useCharStream';
 import { Sparkles, X as XIconSmall } from 'lucide-react';
 import ThreadMessage, { type ThreadMessageMeta } from './ThreadMessage';
 import MailDetail from './MailDetail';
+import ComposeModal from './ComposeModal';
 import TaskModal, { type Task, PRIORITY_META } from '@/components/tasks/TaskModal';
 
 const MAX_VISIBLE = 50;
@@ -100,6 +101,9 @@ interface Props {
   loading?: boolean;
   onClose: () => void;
   onComposeWith: (mode: 'reply' | 'replyAll' | 'forward' | 'new', target: any) => void;
+  /** Called after an inline reply is sent — the parent invalidates lists and
+   *  bumps refreshKey so the sent message appears in the thread. */
+  onReplySent?: () => void;
   /** Triggered by the thread toolbar's Quick Reply (AI) button. Should open
    *  compose in 'reply' mode and auto-run the suggestReply task. */
   onQuickReply?: (target: any) => void;
@@ -122,6 +126,7 @@ export default function ThreadView({
   loading,
   onClose,
   onComposeWith,
+  onReplySent,
   onQuickReply,
   onDelete,
   onToggleStar,
@@ -329,25 +334,54 @@ export default function ThreadView({
     setExpandedId(null);
   }, []);
 
+  // ── Inline reply ───────────────────────────────────────────────────────────
+  // Replies compose in-flow, directly below the message being answered —
+  // the detached floating window is kept for new messages and forwards.
+  const [inlineReply, setInlineReply] = useState<{ mode: 'reply' | 'replyAll'; target: any } | null>(null);
+  useEffect(() => { setInlineReply(null); }, [message?.id]);
+
+  const inlineComposer = inlineReply && (
+    <div
+      ref={(el) => el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}
+      className="mt-2 mb-3"
+    >
+      <ComposeModal
+        inline
+        open
+        mode={inlineReply.mode}
+        originalMessage={inlineReply.target}
+        onClose={() => setInlineReply(null)}
+        onSent={() => { setInlineReply(null); onReplySent?.(); }}
+      />
+    </div>
+  );
+
   // ── Fallback: single message or conversation not in DB ────────────────────
 
   const fallback = (
-    <MailDetail
-      message={message}
-      loading={loading}
-      onClose={onClose}
-      onReply={() => onComposeWith('reply', message)}
-      onReplyAll={() => onComposeWith('replyAll', message)}
-      onForward={() => onComposeWith('forward', message)}
-      onDelete={onDelete}
-      onToggleStar={onToggleStar}
-      onMoveToInbox={onMoveToInbox}
-      folders={folders}
-      onMoveToFolder={onMoveToFolder}
-      onMute={onMute}
-      isMuted={isMuted}
-      onSnooze={onSnooze}
-    />
+    <div className="h-full flex flex-col">
+      <div className="flex-1 min-h-0">
+        <MailDetail
+          message={message}
+          loading={loading}
+          onClose={onClose}
+          onReply={() => setInlineReply({ mode: 'reply', target: message })}
+          onReplyAll={() => setInlineReply({ mode: 'replyAll', target: message })}
+          onForward={() => onComposeWith('forward', message)}
+          onDelete={onDelete}
+          onToggleStar={onToggleStar}
+          onMoveToInbox={onMoveToInbox}
+          folders={folders}
+          onMoveToFolder={onMoveToFolder}
+          onMute={onMute}
+          isMuted={isMuted}
+          onSnooze={onSnooze}
+        />
+      </div>
+      {inlineReply && inlineReply.target?.id === message?.id && (
+        <div className="shrink-0 overflow-y-auto max-h-[60%] px-4 pb-3">{inlineComposer}</div>
+      )}
+    </div>
   );
 
   if (!message?.conversationId) return fallback;
@@ -712,8 +746,8 @@ export default function ThreadView({
             <div className="relative py-3">
               <div className="absolute left-[30px] top-0 bottom-0 w-px bg-border/25 pointer-events-none" />
               {visibleMessages.map((msg) => (
+              <div key={msg.id}>
               <ThreadMessage
-                key={msg.id}
                 message={msg}
                 isExpanded={!msg.isDraft && (expandAll || expandedId === msg.id)}
                 isOnlyMessage={threadMessages.length === 1}
@@ -723,8 +757,8 @@ export default function ThreadView({
                     prev.map((m) => (m.id === msg.id ? { ...m, isRead: true } : m)),
                   )
                 }
-                onReply={(detail) => onComposeWith('reply', detail ?? msg)}
-                onReplyAll={(detail) => onComposeWith('replyAll', detail ?? msg)}
+                onReply={(detail) => setInlineReply({ mode: 'reply', target: detail ?? msg })}
+                onReplyAll={(detail) => setInlineReply({ mode: 'replyAll', target: detail ?? msg })}
                 onForward={(detail) => onComposeWith('forward', detail ?? msg)}
                 onDelete={msg.isDraft
                   ? async () => {
@@ -785,6 +819,11 @@ export default function ThreadView({
                     }
                   : undefined}
               />
+              {/* Inline reply card, directly below the message being answered */}
+              {inlineReply && (inlineReply.target?.id ?? message.id) === msg.id && (
+                <div className="pl-12 pr-2">{inlineComposer}</div>
+              )}
+              </div>
               ))}
             </div>
           </>

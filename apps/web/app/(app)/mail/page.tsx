@@ -1434,6 +1434,10 @@ export default function MailPage() {
           loading={loadingMessage}
           onClose={closeReader}
           onComposeWith={openComposeWith}
+          onReplySent={() => {
+            invalidateMessages();
+            setThreadRefreshKey((k) => k + 1);
+          }}
           onQuickReply={openQuickReply}
           onDelete={deleteMessage}
           onToggleStar={toggleStar}

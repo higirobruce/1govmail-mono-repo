@@ -103,6 +103,9 @@ interface ComposeModalProps {
   /** When true and originalMessage is present, automatically run Suggest Reply
    *  once the modal opens. Used by the thread toolbar's Quick Reply action. */
   autoSuggestReply?: boolean;
+  /** Render in-flow (a card below the message being answered) instead of the
+   *  detached floating window. Used by the thread view for replies. */
+  inline?: boolean;
 }
 
 // ── Email chip input ──────────────────────────────────────────────────────────
@@ -236,6 +239,7 @@ export default function ComposeModal({
   open, mode, originalMessage, onClose, onSent,
   initialDraftZimbraId, initialTo, initialCc, initialBcc, initialSubject, initialBody,
   autoSuggestReply,
+  inline = false,
 }: ComposeModalProps) {
   const user = useAuthStore((s) => s.user);
 
@@ -1034,11 +1038,17 @@ export default function ComposeModal({
 
   return (
     <div className={cn(
-      'fixed z-50 flex flex-col bg-card rounded-2xl border border-border shadow-2xl overflow-hidden',
-      // Mobile: full-bleed with small insets so nothing runs off-screen.
-      // ≥sm: anchored bottom-right at the fixed 680px compose width.
-      'inset-x-2 bottom-2 w-auto sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[680px]',
-      minimised ? 'h-auto' : 'max-h-[calc(100vh-2rem)]',
+      'flex flex-col bg-card border border-border overflow-hidden',
+      inline
+        // In-flow reply card under the message being answered.
+        ? 'relative w-full rounded-xl shadow-sm max-h-[75vh]'
+        : cn(
+            'fixed z-50 rounded-2xl shadow-2xl',
+            // Mobile: full-bleed with small insets so nothing runs off-screen.
+            // ≥sm: anchored bottom-right at the fixed 680px compose width.
+            'inset-x-2 bottom-2 w-auto sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[680px]',
+            minimised ? 'h-auto' : 'max-h-[calc(100vh-2rem)]',
+          ),
     )}>
       {/* ── Header ── */}
       <div
@@ -1052,10 +1062,12 @@ export default function ComposeModal({
             {draftStatus === 'saving' && <><Loader2 className="w-2.5 h-2.5 animate-spin" /> Saving…</>}
             {draftStatus === 'saved' && 'Draft saved'}
           </span>
-          <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setMinimised((m) => !m); }}
-            className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title={minimised ? 'Restore' : 'Minimise'}>
-            {minimised ? <ChevronDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
-          </Button>
+          {!inline && (
+            <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setMinimised((m) => !m); }}
+              className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title={minimised ? 'Restore' : 'Minimise'}>
+              {minimised ? <ChevronDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={onClose} disabled={sending}
             className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground" title="Close">
             <X className="w-3.5 h-3.5" />

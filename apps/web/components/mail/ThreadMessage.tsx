@@ -12,13 +12,16 @@ import {
   Star,
   Trash2,
   Loader2,
+  Download,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { prepareEmailHtml } from '@/lib/emailRender';
+import { downloadAll } from '@/lib/downloadAll';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { MailAvatar, getInitials } from './MailAvatar';
@@ -458,6 +461,20 @@ export default function ThreadMessage({
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxSelectedId, setLightboxSelectedId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+
+  const handleDownloadAll = useCallback(async () => {
+    if (downloadingAll || !fullMessage?.attachments?.length) return;
+    setDownloadingAll(true);
+    const items = fullMessage.attachments.map((a: any) => ({ messageId: message.id, id: a.id, filename: a.filename }));
+    const n = await downloadAll(
+      items,
+      (mid, aid) => getAttachmentUrl(mid, aid, () => api.mail.downloadAttachment(mid, aid)),
+      { onError: (f) => toast.error(`Failed to download ${f}`) },
+    );
+    if (n > 0) toast.success(`Downloaded ${n} file${n === 1 ? '' : 's'}`);
+    setDownloadingAll(false);
+  }, [downloadingAll, fullMessage, message.id]);
 
   const handleDownloadAttachment = useCallback(async (att: { id: string; filename: string }) => {
     if (downloadingId) return;
@@ -711,6 +728,18 @@ export default function ThreadMessage({
                 <span className="text-micro text-ink-3">
                   ({fullMessage.attachments.length})
                 </span>
+                {fullMessage.attachments.length > 1 && (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="ml-auto text-primary hover:text-primary"
+                    onClick={handleDownloadAll}
+                    disabled={downloadingAll}
+                  >
+                    {downloadingAll ? <Loader2 className="animate-spin" /> : <Download />}
+                    Download all
+                  </Button>
+                )}
               </div>
               <div className="flex items-start gap-3 flex-wrap">
                 {fullMessage.attachments.map((att: any) => {

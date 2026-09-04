@@ -211,6 +211,12 @@ export function AttachmentTile({
         </span>
         <span className="truncate">{attachment.filename}</span>
       </div>
+
+      {attachment.size > 0 && (
+        <span className="mt-0.5 text-micro leading-none font-normal text-ink-4 tabular-nums">
+          {formatBytes(attachment.size)}
+        </span>
+      )}
     </div>
   );
 }

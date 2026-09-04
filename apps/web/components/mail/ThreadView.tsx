@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
+import { downloadAll } from '@/lib/downloadAll';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { AttachmentPreview } from './AttachmentPreview';
 import { useAuthStore } from '@/stores/auth.store';
@@ -152,6 +153,7 @@ export default function ThreadView({
 
   // Tab: 'overview' | 'messages' | 'attachments'
   const [activeTab, setActiveTab] = useState<'overview' | 'messages' | 'attachments'>('messages');
+  const [downloadingAll, setDownloadingAll] = useState(false);
 
   // ── AI summarize state ───────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
@@ -449,6 +451,19 @@ export default function ThreadView({
     grouped[g]!.push(a);
   });
   const orderedGroups = GROUP_ORDER.filter((g) => grouped[g]?.length);
+
+  const handleDownloadAll = async () => {
+    if (downloadingAll) return;
+    setDownloadingAll(true);
+    const items = allAttachments.map((a) => ({ messageId: a.messageId, id: a.id, filename: a.filename }));
+    const n = await downloadAll(
+      items,
+      (mid, aid) => getAttachmentUrl(mid, aid, () => api.mail.downloadAttachment(mid, aid)),
+      { onError: (f) => toast.error(`Failed to download ${f}`) },
+    );
+    if (n > 0) toast.success(`Downloaded ${n} file${n === 1 ? '' : 's'}`);
+    setDownloadingAll(false);
+  };
 
   // Chronologically last message for header status
   const lastMessage = threadMessages[threadMessages.length - 1];
@@ -832,6 +847,20 @@ export default function ThreadView({
               </div>
             ) : (
               <div className="flex flex-col gap-6">
+                {allAttachments.length > 1 && (
+                  <div className="flex items-center">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="ml-auto text-primary hover:text-primary"
+                      onClick={handleDownloadAll}
+                      disabled={downloadingAll}
+                    >
+                      {downloadingAll ? <Loader2 className="animate-spin" /> : <Download />}
+                      Download all
+                    </Button>
+                  </div>
+                )}
                 {orderedGroups.map((group) => (
                   <div key={group}>
                     {/* Group header */}

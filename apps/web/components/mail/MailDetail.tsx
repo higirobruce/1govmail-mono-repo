@@ -566,8 +566,8 @@ export default function MailDetail({
           <span className="mx-1 h-4 w-px bg-border-faint" aria-hidden />
 
           {/* Reply group */}
-          <ActionBtn icon={Reply}     label="Reply"     onClick={onReply} />
-          <ActionBtn icon={ReplyAll}  label="Reply All" onClick={onReplyAll} />
+          <ActionBtn icon={Reply}     label="Reply"     onClick={() => onReply?.()} />
+          <ActionBtn icon={ReplyAll}  label="Reply All" onClick={() => onReplyAll?.()} />
           <ActionBtn icon={Forward}   label="Forward"   onClick={onForward} />
 
           {aiEnabled && (

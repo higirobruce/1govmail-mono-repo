@@ -508,20 +508,27 @@ export default function ThreadMessage({
     // Cache-first: when this is the message the detail pane already fetched
     // (the common case — the newest message auto-expands on open), this resolves
     // from the shared body cache instead of re-downloading the body + images.
+    //
+    // Settlement deliberately IGNORES `cancelled` for state that stays valid:
+    // this component instance is keyed by message.id, so a fetch that lands
+    // after a collapse still belongs to this message — store it. Skipping
+    // setLoadingBody(false) on cancel used to strand loadingBody=true forever
+    // (the guard above then blocked every retry → eternal spinner on re-open,
+    // since a closed reader keeps its ThreadView rows mounted).
     fetchBodyCached(message.id, api.mail.getMessage)
       .then((data) => {
-        if (cancelled) return;
         setFullMessage(data);
         // Inline images still embedding server-side — poll for the final body
         // and swap it in when it lands (shares one poll loop with the detail pane).
         if ((data as { embedPending?: boolean })?.embedPending) {
-          watchPendingBody(message.id, api.mail.getMessage, (fresh) => {
-            if (!cancelled) setFullMessage(fresh);
-          });
+          watchPendingBody(message.id, api.mail.getMessage, (fresh) => setFullMessage(fresh));
         }
       })
+      // `cancelled` only gates the error flag — a failure from an abandoned
+      // expand shouldn't flash "Could not load" on a collapsed row; the next
+      // expand simply retries because loadingBody is reset below.
       .catch(() => { if (!cancelled) setBodyError(true); })
-      .finally(() => { if (!cancelled) setLoadingBody(false); });
+      .finally(() => setLoadingBody(false));
     return () => { cancelled = true; };
   }, [isExpanded, message.id]); // eslint-disable-line react-hooks/exhaustive-deps
 

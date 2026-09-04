@@ -15,6 +15,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
 import { prepareEmailHtml } from '@/lib/emailRender';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
+import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { toast } from 'sonner';
 import { QuickReplyBar } from '@/components/mail/QuickReplyBar';
 import { AttachmentLightbox } from '@/components/mail/AttachmentLightbox';
@@ -255,10 +256,6 @@ function EmailBody({
     />
   );
 }
-
-// Fetches a blob: URL and renders its content as plain text — avoids any
-// embedded-frame restrictions that privacy-first browsers (e.g. Dia) impose on
-// blob: URLs loaded inside iframes.
 
 function MetaRow({ icon: Icon, label, children }: {
   icon: React.ElementType;
@@ -799,11 +796,7 @@ export default function MailDetail({
                 </div>
                 <div className="flex items-start gap-3 flex-wrap">
                   {message.attachments.map((att) => {
-                    const isPreviewable =
-                      att.mimeType.startsWith('image/') ||
-                      att.mimeType === 'application/pdf' ||
-                      att.mimeType.startsWith('text/') ||
-                      att.filename.toLowerCase().endsWith('.pdf');
+                    const isPreviewable = getPreviewKind(att.mimeType, att.filename) !== null;
                     return (
                       <AttachmentTile
                         key={att.id}

@@ -17,20 +17,18 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
+import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { prepareEmailHtml } from '@/lib/emailRender';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MailAvatar } from './MailAvatar';
 import { AttachmentTile } from './AttachmentTile';
 import { AttachmentLightbox } from './AttachmentLightbox';
 
-/** Files we can render inline (image / PDF / text) rather than force-download. */
+/** Files we can render inline rather than force-download — one shared
+ *  classification with the lightbox and inline previewer (image / pdf / csv /
+ *  text / video / audio). */
 function isPreviewableAttachment(att: { mimeType: string; filename: string }): boolean {
-  return (
-    att.mimeType.startsWith('image/') ||
-    att.mimeType === 'application/pdf' ||
-    att.mimeType.startsWith('text/') ||
-    att.filename.toLowerCase().endsWith('.pdf')
-  );
+  return getPreviewKind(att.mimeType, att.filename) !== null;
 }
 
 // ─── Email rendering (mirrors MailDetail.tsx constants) ─────────────────────

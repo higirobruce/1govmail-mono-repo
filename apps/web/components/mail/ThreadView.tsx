@@ -26,6 +26,8 @@ import {
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
+import { getPreviewKind } from '@/lib/attachmentPreviewKind';
+import { AttachmentPreview } from './AttachmentPreview';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
 import ThreadHeader, { type ThreadParticipant } from './ThreadHeader';
@@ -69,74 +71,8 @@ function getFileGroup(mimeType: string, filename: string): FileGroup {
 
 const GROUP_ORDER: FileGroup[] = ['Images', 'PDFs', 'Documents', 'Spreadsheets', 'Presentations', 'Archives', 'Other'];
 
-type PreviewType = 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'csv';
-
-function getPreviewType(mimeType: string, filename: string): PreviewType | null {
-  const mt = mimeType.toLowerCase();
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  if (mt.startsWith('image/')) return 'image';
-  if (mt === 'application/pdf' || ext === 'pdf') return 'pdf';
-  if (mt === 'text/csv' || ext === 'csv') return 'csv';
-  if (mt.startsWith('text/')) return 'text';
-  if (mt.startsWith('video/') || ['mp4', 'webm', 'ogg', 'mov'].includes(ext)) return 'video';
-  if (mt.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'aac', 'm4a'].includes(ext)) return 'audio';
-  return null;
-}
-
-// Fetches a text blob URL and returns the raw text for rendering
-function TextFetcher({ url }: { url: string }) {
-  const [text, setText] = useState<string | null>(null);
-  useEffect(() => {
-    fetch(url).then((r) => r.text()).then(setText).catch(() => setText('Failed to load file'));
-  }, [url]);
-  if (text === null) return <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40 mx-auto" />;
-  return <>{text}</>;
-}
-
-// Renders a CSV blob URL as a simple table
-function CsvPreview({ url }: { url: string }) {
-  const [rows, setRows] = useState<string[][]>([]);
-  useEffect(() => {
-    fetch(url)
-      .then((r) => r.text())
-      .then((text) => {
-        const parsed = text.trim().split('\n').map((line) =>
-          line.split(',').map((cell) => cell.replace(/^"|"$/g, '').trim()),
-        );
-        setRows(parsed);
-      })
-      .catch(() => setRows([['Failed to load CSV']]));
-  }, [url]);
-
-  if (rows.length === 0) return <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40 mx-auto" />;
-  const [header, ...body] = rows;
-  return (
-    <div className="overflow-auto max-h-80 rounded-lg border border-border/30 text-[12px]">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="bg-muted/50">
-            {header.map((cell, i) => (
-              <th key={i} className="px-3 py-1.5 text-left font-semibold text-foreground/70 border-b border-border/30 whitespace-nowrap">
-                {cell}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {body.slice(0, 200).map((row, ri) => (
-            <tr key={ri} className="even:bg-muted/20 hover:bg-muted/40 transition-colors">
-              {row.map((cell, ci) => (
-                <td key={ci} className="px-3 py-1.5 text-foreground/80 border-b border-border/10 whitespace-nowrap">
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+// Preview classification and rendering are shared with the lightbox — see
+// lib/attachmentPreviewKind and components/mail/AttachmentPreview.
 
 function GroupIcon({ group, className }: { group: FileGroup; className?: string }) {
   const cls = cn('w-4 h-4 shrink-0', className);
@@ -875,7 +811,7 @@ export default function ThreadView({
                     {/* Attachment rows */}
                     <div className="flex flex-col gap-1">
                       {grouped[group]!.map((att) => {
-                        const pt = getPreviewType(att.mimeType, att.filename);
+                        const pt = getPreviewKind(att.mimeType, att.filename);
                         const isActive = previewState?.id === att.id;
                         return (
                           <div key={`${att.messageId}-${att.id}`}>
@@ -962,27 +898,12 @@ export default function ThreadView({
                                   </div>
                                 </div>
                                 <div className="p-3 bg-muted/10">
-                                  {(() => {
-                                    const pt2 = getPreviewType(previewState.mimeType, previewState.filename);
-                                    if (pt2 === 'image') return (
-                                      <img src={previewState.url} alt={previewState.filename} className="max-w-full h-auto rounded-lg block mx-auto" style={{ maxHeight: 480 }} />
-                                    );
-                                    if (pt2 === 'video') return (
-                                      <video controls src={previewState.url} className="w-full rounded-lg" style={{ maxHeight: 400 }} />
-                                    );
-                                    if (pt2 === 'audio') return (
-                                      <audio controls src={previewState.url} className="w-full mt-2" />
-                                    );
-                                    if (pt2 === 'csv') return <CsvPreview url={previewState.url} />;
-                                    if (pt2 === 'text') return (
-                                      <pre className="text-[12px] text-foreground/80 whitespace-pre-wrap font-mono overflow-auto max-h-80 bg-muted/20 rounded-lg p-3">
-                                        <TextFetcher url={previewState.url} />
-                                      </pre>
-                                    );
-                                    return (
-                                      <embed src={previewState.url} type={previewState.mimeType} className="w-full rounded-lg border-0" style={{ height: 500 }} />
-                                    );
-                                  })()}
+                                  <AttachmentPreview
+                                    url={previewState.url}
+                                    mimeType={previewState.mimeType}
+                                    filename={previewState.filename}
+                                    variant="inline"
+                                  />
                                 </div>
                               </div>
                             )}

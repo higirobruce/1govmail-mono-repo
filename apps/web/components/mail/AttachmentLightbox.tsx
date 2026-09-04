@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
+import { AttachmentPreview } from './AttachmentPreview';
 import { toast } from 'sonner';
 import {
   X, Download, ChevronLeft, ChevronRight,
@@ -48,7 +49,6 @@ export function AttachmentLightbox({ open, attachments, selectedId, messageId, o
 
   const isImage = current?.mimeType.startsWith('image/') ?? false;
   const isPdf = current?.mimeType === 'application/pdf' || current?.filename.toLowerCase().endsWith('.pdf');
-  const isText = current?.mimeType.startsWith('text/') ?? false;
   const tooLarge = (current?.size ?? 0) > MAX_PREVIEW_BYTES;
 
   // Load blob URL when selection changes — served from the shared blob cache,
@@ -226,17 +226,17 @@ export function AttachmentLightbox({ open, attachments, selectedId, messageId, o
           </div>
         )}
 
-        {!loading && blobUrl && (isPdf || (!isImage && !isText)) && (
-          <embed
-            src={blobUrl}
-            type={current.mimeType}
-            className="w-full h-full border-0"
-          />
-        )}
-
-        {!loading && blobUrl && isText && (
-          <div className="w-full h-full overflow-auto p-6">
-            <TextPreviewLightbox url={blobUrl} />
+        {/* Everything except the zoomable image goes through the shared
+            previewer — same component as the thread's inline panel, so type
+            coverage (pdf/csv/text/video/audio/embed) can't drift. */}
+        {!loading && blobUrl && !isImage && (
+          <div className={cn('w-full h-full overflow-auto', isPdf ? '' : 'p-6')}>
+            <AttachmentPreview
+              url={blobUrl}
+              mimeType={current.mimeType}
+              filename={current.filename}
+              variant="lightbox"
+            />
           </div>
         )}
 
@@ -284,11 +284,3 @@ export function AttachmentLightbox({ open, attachments, selectedId, messageId, o
   );
 }
 
-function TextPreviewLightbox({ url }: { url: string }) {
-  const [text, setText] = useState<string | null>(null);
-  useEffect(() => {
-    fetch(url).then((r) => r.text()).then(setText).catch(() => setText('(Failed to load text)'));
-  }, [url]);
-  if (text === null) return <div className="text-white/40 text-sm">Loading…</div>;
-  return <pre className="text-[13px] text-white/80 leading-relaxed whitespace-pre-wrap font-mono">{text}</pre>;
-}

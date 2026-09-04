@@ -39,6 +39,20 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
+/** true between md (768px) and lg (1024px) — the band where only the rail fits */
+function useIsTabletBand(): boolean {
+  const [tablet, setTablet] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px) and (max-width: 1023.98px)');
+    const update = () => setTablet(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
+  return tablet;
+}
 
 interface FolderMenuState {
   x: number;
@@ -128,6 +142,8 @@ function NavItem({
   iconBg,
   comingSoon,
   tourId,
+  collapsed,
+  collapsedBadge = 'dot',
 }: {
   icon: React.ElementType;
   label: string;
@@ -137,13 +153,15 @@ function NavItem({
   iconBg?: string;
   comingSoon?: boolean;
   tourId?: string;
+  collapsed?: boolean;
+  collapsedBadge?: 'count' | 'dot';
 }) {
-  return (
+  const button = (
     <button
       data-tour={tourId}
       onClick={comingSoon ? undefined : onClick}
       disabled={comingSoon}
-      title={label}
+      title={collapsed ? undefined : label}
       className={cn(
         'w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-ui transition-all duration-100 group relative',
         // Icon rail mode (sidebar collapsed): center the icon, drop the text.
@@ -158,7 +176,7 @@ function NavItem({
       {active && (
         <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary rounded-r-full" />
       )}
-      {iconBg ? (
+      {iconBg && !collapsed ? (
         <FolderIcon icon={Icon} bg={iconBg} />
       ) : (
         <Icon className={cn(
@@ -179,12 +197,28 @@ function NavItem({
           )}>
             {unread > 99 ? '99+' : unread}
           </span>
-          {/* Icon-rail mode: unread shows as a dot on the icon's corner */}
-          <span className="hidden group-data-[collapsed=true]/sidebar:block absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" />
+          {/* Icon-rail mode: unread shows as a numeric badge or a dot on the icon's corner */}
+          {collapsedBadge === 'count' ? (
+            <span className="hidden group-data-[collapsed=true]/sidebar:flex absolute top-0.5 right-1 min-w-4 h-4 px-1 items-center justify-center rounded-full bg-primary text-primary-foreground text-micro leading-none font-semibold tabular-nums">
+              {unread > 99 ? '99+' : unread}
+            </span>
+          ) : (
+            <span className="hidden group-data-[collapsed=true]/sidebar:block absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" />
+          )}
         </>
       ))}
     </button>
   );
+
+  if (collapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="right" className="text-xs">{label}{unread ? ` (${unread})` : ''}</TooltipContent>
+      </Tooltip>
+    );
+  }
+  return button;
 }
 
 function LabelRow({
@@ -473,6 +507,8 @@ export default function Sidebar({
   const { theme, setTheme } = useThemeStore();
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const isTablet = useIsTabletBand();
+  const railMode = collapsed || isTablet; // effective collapsed state
   const THEME_CYCLE: Theme[] = ['light', 'dark', 'system'];
   const ThemeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
   const nextTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
@@ -489,53 +525,85 @@ export default function Sidebar({
 
   return (
     <div
-      data-collapsed={collapsed}
+      data-collapsed={railMode}
       className={cn(
-        'group/sidebar shrink-0 hidden lg:flex flex-col h-full bg-sidebar border-r border-sidebar-border transition-[width] duration-150',
-        collapsed ? 'w-[60px]' : 'w-[220px]',
+        'group/sidebar shrink-0 hidden md:flex flex-col h-full bg-sidebar border-r border-sidebar-border transition-[width] duration-150',
+        railMode ? 'w-[60px]' : 'w-[220px]',
         className,
       )}
     >
 
       {/* User / org header + collapse toggle */}
-      <div className={cn('pt-4 pb-2', collapsed ? 'px-2' : 'px-3')}>
-        <div className={cn('flex items-center gap-2.5 py-1.5 rounded-lg', collapsed ? 'flex-col px-0' : 'px-2')}>
+      <div className={cn('pt-4 pb-2', railMode ? 'px-2' : 'px-3')}>
+        <div className={cn('flex items-center gap-2.5 py-1.5 rounded-lg', railMode ? 'flex-col px-0' : 'px-2')}>
           <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0" title={displayName}>
             <span className="text-micro font-bold text-white leading-none">{initials}</span>
           </div>
-          {!collapsed && (
+          {!railMode && (
             <span className="flex-1 text-ui font-semibold text-foreground truncate">
               {displayName}
             </span>
           )}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={toggleSidebar}
-            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="text-ink-3 hover:text-foreground shrink-0"
-          >
-            {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-          </Button>
+          {!isTablet && (
+            railMode ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={toggleSidebar}
+                    aria-label="Expand sidebar"
+                    className="text-ink-3 hover:text-foreground shrink-0"
+                  >
+                    <PanelLeftOpen className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="text-xs">Expand sidebar</TooltipContent>
+              </Tooltip>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={toggleSidebar}
+                title="Collapse sidebar"
+                aria-label="Collapse sidebar"
+                className="text-ink-3 hover:text-foreground shrink-0"
+              >
+                <PanelLeftClose className="size-4" />
+              </Button>
+            )
+          )}
         </div>
       </div>
 
       {/* Compose button */}
-      <div className={cn('pb-3', collapsed ? 'px-2' : 'px-3')}>
-        <Button
-          variant="ghost"
-          data-tour="compose"
-          onClick={() => { onCompose?.(); onClose?.(); }}
-          title="Compose"
-          className={cn(
-            'w-full justify-start gap-2 bg-primary/10 hover:bg-primary/20 text-primary text-ui font-medium h-8',
-            collapsed ? 'justify-center px-0' : 'px-3',
-          )}
-        >
-          <Plus className="w-3.5 h-3.5 shrink-0" />
-          {!collapsed && 'Compose'}
-        </Button>
+      <div className={cn('pb-3', railMode ? 'px-2' : 'px-3')}>
+        {railMode ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                data-tour="compose"
+                onClick={() => { onCompose?.(); onClose?.(); }}
+                className="w-full justify-center px-0 gap-2 bg-primary/10 hover:bg-primary/20 text-primary text-ui font-medium h-8"
+              >
+                <Plus className="w-3.5 h-3.5 shrink-0" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs">Compose</TooltipContent>
+          </Tooltip>
+        ) : (
+          <Button
+            variant="ghost"
+            data-tour="compose"
+            onClick={() => { onCompose?.(); onClose?.(); }}
+            title="Compose"
+            className="w-full justify-start gap-2 bg-primary/10 hover:bg-primary/20 text-primary text-ui font-medium h-8 px-3"
+          >
+            <Plus className="w-3.5 h-3.5 shrink-0" />
+            Compose
+          </Button>
+        )}
       </div>
 
       {/* Folder list */}
@@ -556,6 +624,8 @@ export default function Sidebar({
                   onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
                   iconBg={folder.iconBg}
                   tourId={folder.id === 'inbox' ? 'inbox' : undefined}
+                  collapsed={railMode}
+                  collapsedBadge={folder.id === 'inbox' || folder.path === '/Inbox' ? 'count' : 'dot'}
                 />
               );
             }
@@ -575,6 +645,8 @@ export default function Sidebar({
                   active={activeFolderId === folder.id}
                   onClick={() => { onFolderSelect(folder.id); onClose?.(); }}
                   iconBg={folder.iconBg}
+                  collapsed={railMode}
+                  collapsedBadge={folder.id === 'inbox' || folder.path === '/Inbox' ? 'count' : 'dot'}
                 />
                 <button
                   className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center w-5 h-5 rounded text-ink-3 hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 pointer-events-none group-hover/folderrow:opacity-100 group-hover/folderrow:pointer-events-auto"
@@ -590,7 +662,7 @@ export default function Sidebar({
           })}
 
           {/* Custom / label folders — labels need their names; hidden in icon-rail mode */}
-          {!collapsed && (customFolders.length > 0 || onCreateFolder) && (
+          {!railMode && (customFolders.length > 0 || onCreateFolder) && (
             <div className="pt-3">
               <div className="flex items-center pr-1">
                 <button
@@ -720,10 +792,10 @@ export default function Sidebar({
             onDrop={handleMailNavDrop('calendar')}
             className={calDragOver ? 'rounded-lg ring-2 ring-primary/40 bg-primary/5' : undefined}
           >
-            <NavItem icon={Calendar} label="Calendar" onClick={() => { router.push('/calendar'); onClose?.(); }} tourId="calendar-nav" />
+            <NavItem icon={Calendar} label="Calendar" onClick={() => { router.push('/calendar'); onClose?.(); }} tourId="calendar-nav" collapsed={railMode} />
           </div>
-          <NavItem icon={Users} label="Contacts" onClick={() => { router.push('/contacts'); onClose?.(); }} tourId="contacts-nav" />
-          <NavItem icon={BookOpen} label="Docs" onClick={() => { router.push('/docs'); onClose?.(); }} tourId="docs-nav" />
+          <NavItem icon={Users} label="Contacts" onClick={() => { router.push('/contacts'); onClose?.(); }} tourId="contacts-nav" collapsed={railMode} />
+          <NavItem icon={BookOpen} label="Docs" onClick={() => { router.push('/docs'); onClose?.(); }} tourId="docs-nav" collapsed={railMode} />
 
           {/* Upcoming features */}
           <div
@@ -732,10 +804,10 @@ export default function Sidebar({
             onDrop={handleMailNavDrop('tasks')}
             className={tasksDragOver ? 'rounded-lg ring-2 ring-primary/40 bg-primary/5' : undefined}
           >
-            <NavItem icon={ListTodo} label="Tasks" onClick={() => { router.push('/tasks'); onClose?.(); }} tourId="tasks-nav" />
+            <NavItem icon={ListTodo} label="Tasks" onClick={() => { router.push('/tasks'); onClose?.(); }} tourId="tasks-nav" collapsed={railMode} />
           </div>
-          <NavItem icon={UsersRound} label="Collaboration"  comingSoon />
-          <NavItem icon={Newspaper}  label="News"           comingSoon />
+          <NavItem icon={UsersRound} label="Collaboration"  comingSoon collapsed={railMode} />
+          <NavItem icon={Newspaper}  label="News"           comingSoon collapsed={railMode} />
         </div>
       </div>
 
@@ -743,29 +815,62 @@ export default function Sidebar({
       <div className="px-2 py-2 border-t border-sidebar-border space-y-0.5">
         <OfflineStatusPill />
         <NotificationsBell />
-        <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} />
-        <Button
-          variant="ghost"
-          onClick={() => setTheme(nextTheme)}
-          title={themeLabel}
-          className="w-full justify-start gap-2.5 px-3 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
-        >
-          <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
-          <span className="flex-1 text-left capitalize group-data-[collapsed=true]/sidebar:hidden">Theme: {theme}</span>
-        </Button>
-        <Button
-          variant="ghost"
-          onClick={() => setTourActive(true)}
-          title="Take a tour"
-          className="w-full justify-start gap-2.5 px-3 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
-        >
-          <Sparkles className="w-3.5 h-3.5 shrink-0" />
-          <span className="group-data-[collapsed=true]/sidebar:hidden">Take a tour</span>
-        </Button>
+        <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} collapsed={railMode} />
+        {railMode ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                onClick={() => setTheme(nextTheme)}
+                aria-label={themeLabel}
+                className="w-full justify-center px-0 gap-2.5 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground"
+              >
+                <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs">{themeLabel}</TooltipContent>
+          </Tooltip>
+        ) : (
+          <Button
+            variant="ghost"
+            onClick={() => setTheme(nextTheme)}
+            title={themeLabel}
+            className="w-full justify-start gap-2.5 px-3 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground"
+          >
+            <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
+            <span className="flex-1 text-left capitalize">Theme: {theme}</span>
+          </Button>
+        )}
+        {railMode ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                onClick={() => setTourActive(true)}
+                aria-label="Take a tour"
+                className="w-full justify-center px-0 gap-2.5 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground"
+              >
+                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs">Take a tour</TooltipContent>
+          </Tooltip>
+        ) : (
+          <Button
+            variant="ghost"
+            onClick={() => setTourActive(true)}
+            title="Take a tour"
+            className="w-full justify-start gap-2.5 px-3 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground"
+          >
+            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+            <span>Take a tour</span>
+          </Button>
+        )}
         <NavItem
           icon={LogOut}
           label={loggingOut ? 'Signing out…' : 'Sign out'}
           onClick={handleLogout}
+          collapsed={railMode}
         />
       </div>
 
@@ -845,7 +950,7 @@ export default function Sidebar({
             )}
             {!folderMenu.folder.isSystem && onDeleteFolder && (
               <>
-                <DropdownMenuSeparator />
+                {(onRenameFolder || onEmptyFolder) && <DropdownMenuSeparator />}
                 <DropdownMenuItem
                   variant="destructive"
                   onSelect={() => handleDeleteFolder(folderMenu.folder.id, folderMenu.folder.name)}

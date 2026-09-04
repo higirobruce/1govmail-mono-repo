@@ -341,7 +341,7 @@ export default function ThreadView({
   // ── Inline reply ───────────────────────────────────────────────────────────
   // Replies compose in-flow, directly below the message being answered —
   // the detached floating window is kept for new messages and forwards.
-  const [inlineReply, setInlineReply] = useState<{ mode: 'reply' | 'replyAll'; target: any } | null>(null);
+  const [inlineReply, setInlineReply] = useState<{ mode: 'reply' | 'replyAll'; target: any; initialBody?: string } | null>(null);
   useEffect(() => { setInlineReply(null); }, [message?.id]);
 
   const inlineComposer = inlineReply && (
@@ -354,6 +354,7 @@ export default function ThreadView({
         open
         mode={inlineReply.mode}
         originalMessage={inlineReply.target}
+        initialBody={inlineReply.initialBody}
         onClose={() => setInlineReply(null)}
         onSent={() => { setInlineReply(null); onReplySent?.(); }}
       />
@@ -369,8 +370,8 @@ export default function ThreadView({
           message={message}
           loading={loading}
           onClose={onClose}
-          onReply={() => setInlineReply({ mode: 'reply', target: message })}
-          onReplyAll={() => setInlineReply({ mode: 'replyAll', target: message })}
+          onReply={(initialBody) => setInlineReply({ mode: 'reply', target: message, initialBody })}
+          onReplyAll={(initialBody) => setInlineReply({ mode: 'replyAll', target: message, initialBody })}
           onForward={() => onComposeWith('forward', message)}
           onDelete={onDelete}
           onToggleStar={onToggleStar}
@@ -491,8 +492,8 @@ export default function ThreadView({
         lastSenderEmail={lastMessage.fromEmail}
         currentUserEmail={user?.email ?? ''}
         onClose={onClose}
-        onReply={() => onComposeWith('reply', lastMessage)}
-        onReplyAll={() => onComposeWith('replyAll', lastMessage)}
+        onReply={() => { setActiveTab('messages'); setInlineReply({ mode: 'reply', target: lastMessage }); }}
+        onReplyAll={() => { setActiveTab('messages'); setInlineReply({ mode: 'replyAll', target: lastMessage }); }}
         onForward={() => onComposeWith('forward', lastMessage)}
         onSummarize={aiEnabled ? handleSummarize : undefined}
         summarizing={summarizing}
@@ -703,14 +704,14 @@ export default function ThreadView({
               </p>
               <div className="flex gap-2">
                 <button
-                  onClick={() => onComposeWith('reply', lastMessage)}
+                  onClick={() => { setActiveTab('messages'); setInlineReply({ mode: 'reply', target: lastMessage }); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-ui text-ink-2 hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
                   <Mail className="w-3.5 h-3.5" />
                   Reply
                 </button>
                 <button
-                  onClick={() => onComposeWith('replyAll', lastMessage)}
+                  onClick={() => { setActiveTab('messages'); setInlineReply({ mode: 'replyAll', target: lastMessage }); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-ui text-ink-2 hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
                   <MessageSquare className="w-3.5 h-3.5" />

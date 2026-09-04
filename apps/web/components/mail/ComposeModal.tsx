@@ -567,11 +567,14 @@ export default function ComposeModal({
       setForwardedAttachments(originalMessage.attachments ?? []);
     }
 
-    editor?.commands.setContent('<p></p>');
+    // A carried-over draft (e.g. typed in the mini-composer before expanding to
+    // the full editor) seeds the content here; otherwise replies/forwards start
+    // blank — the quoted original is appended separately at send time.
+    editor?.commands.setContent(initialBody || '<p></p>');
     if (mode !== 'forward') {
       setTimeout(() => editor?.commands.focus(), 50);
     }
-  }, [open, mode, originalMessage, user?.email]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, mode, originalMessage, user?.email, initialBody]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Signature injection ────────────────────────────────────────────────────
   // `editor` is in the dep array so this effect re-runs automatically when

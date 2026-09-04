@@ -211,6 +211,19 @@ function NavItem({
   );
 
   if (collapsed) {
+    // Radix's TooltipTrigger relies on pointer/focus events, which a native
+    // `disabled` button suppresses — comingSoon items need a non-interactive,
+    // focusable wrapper as the trigger instead of the disabled button itself.
+    if (comingSoon) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-block w-full" tabIndex={0}>{button}</span>
+          </TooltipTrigger>
+          <TooltipContent side="right" className="text-xs">{label}</TooltipContent>
+        </Tooltip>
+      );
+    }
     return (
       <Tooltip>
         <TooltipTrigger asChild>{button}</TooltipTrigger>

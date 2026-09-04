@@ -348,3 +348,11 @@ html[data-electron='true'] body {
   padding: 0.15em 0.35em;
   border-radius: 0.25rem;
 }
+
+/* Hide scrollbars on horizontally scrollable chip/pill rows */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}

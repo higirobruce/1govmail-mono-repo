@@ -181,24 +181,20 @@ export default function ThreadHeader({
             </Tooltip>
           ))}
           {onSummarize && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={onSummarize}
-                  disabled={summarizing}
-                  className={cn(
-                    'p-1.5 rounded-md transition-colors',
-                    summarizing
-                      ? 'text-primary'
-                      : 'text-muted-foreground/50 hover:text-foreground hover:bg-muted',
-                  )}
-                  aria-label="Summarize"
-                >
-                  <Sparkles className={cn('w-4 h-4', summarizing && 'animate-pulse')} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs">Summarize</TooltipContent>
-            </Tooltip>
+            <button
+              onClick={onSummarize}
+              disabled={summarizing}
+              className={cn(
+                'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-[0.75rem] font-medium transition-colors',
+                summarizing
+                  ? 'bg-primary/15 text-primary'
+                  : 'bg-primary/10 text-primary hover:bg-primary/20',
+              )}
+              aria-label="Summarize"
+            >
+              <Sparkles className={cn('w-3.5 h-3.5', summarizing && 'animate-pulse')} />
+              Summarize
+            </button>
           )}
           {onQuickReply && (
             <Tooltip>

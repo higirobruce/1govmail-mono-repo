@@ -1277,16 +1277,24 @@ export default function ComposeModal({
                   </div>
                 )}
 
-                {/* Rewrite (AI) */}
+                {/* Rewrite (AI) — labeled pill, not a ghost icon: the AI
+                    features earn their visibility. */}
                 {aiEnabled && (
                   <div ref={rewriteRef} className="relative">
-                    <ToolbarBtn
+                    <button
+                      type="button"
                       title="Rewrite with AI"
-                      onClick={() => setShowRewrite((v) => !v)}
-                      active={showRewrite || rewriteOpen}
+                      onMouseDown={(e) => { e.preventDefault(); setShowRewrite((v) => !v); }}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-[0.75rem] font-medium transition-colors',
+                        showRewrite || rewriteOpen
+                          ? 'bg-primary/15 text-primary'
+                          : 'bg-primary/10 text-primary hover:bg-primary/20',
+                      )}
                     >
                       <Sparkles className="w-3.5 h-3.5" />
-                    </ToolbarBtn>
+                      AI
+                    </button>
                     {showRewrite && (
                       <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border/60 rounded-xl shadow-lg overflow-hidden min-w-[200px]">
                         {originalMessage && (

@@ -1254,47 +1254,14 @@ export default function MailPage() {
                   <XIcon className="w-3.5 h-3.5" />
                 </button>
               ) : (
-                <>
-                  {aiEnabled && (
-                    <button
-                      onClick={() => { setBriefingOpen(true); setBriefingExpanded((e) => !e); }}
-                      title="Brief me"
-                      className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  {aiEnabled && (
-                    <button
-                      onClick={() => setCommitmentsOpen(true)}
-                      title="Commitments"
-                      className="relative p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
-                    >
-                      <ClipboardCheck className="w-3.5 h-3.5" />
-                      {!!commitmentsData?.openCount && commitmentsData.openCount > 0 && (
-                        <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-primary px-0.5 text-[0.5625rem] font-semibold leading-none text-primary-foreground tabular-nums">
-                          {commitmentsData.openCount > 99 ? '99+' : commitmentsData.openCount}
-                        </span>
-                      )}
-                    </button>
-                  )}
-                  {aiEnabled && (
-                    <button
-                      onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); setAskOpen(true); }}
-                      title="Ask your inbox"
-                      className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
-                    >
-                      <MessageCircleQuestion className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  <button
-                    onClick={() => refetchMessages()}
-                    disabled={loadingMessages}
-                    className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
-                  >
-                    <RefreshCw className={cn('w-3.5 h-3.5', loadingMessages && 'animate-spin')} />
-                  </button>
-                </>
+                <button
+                  onClick={() => refetchMessages()}
+                  disabled={loadingMessages}
+                  title="Refresh"
+                  className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
+                >
+                  <RefreshCw className={cn('w-3.5 h-3.5', loadingMessages && 'animate-spin')} />
+                </button>
               )}
             </div>
           </div>
@@ -1318,6 +1285,39 @@ export default function MailPage() {
               </button>
             )}
           </div>
+
+          {/* AI actions — labeled pills so the features are discoverable, not
+              hidden behind 14px ghost icons. Scrolls horizontally if cramped. */}
+          {aiEnabled && !isSearchMode && (
+            <div className="flex items-center gap-1.5 mt-2 overflow-x-auto scrollbar-none">
+              <button
+                onClick={() => { setBriefingOpen(true); setBriefingExpanded((e) => !e); }}
+                className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Brief me
+              </button>
+              <button
+                onClick={() => setCommitmentsOpen(true)}
+                className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
+              >
+                <ClipboardCheck className="w-3.5 h-3.5" />
+                Commitments
+                {!!commitmentsData?.openCount && commitmentsData.openCount > 0 && (
+                  <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[0.5625rem] font-semibold leading-none text-primary-foreground tabular-nums">
+                    {commitmentsData.openCount > 99 ? '99+' : commitmentsData.openCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); setAskOpen(true); }}
+                className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
+              >
+                <MessageCircleQuestion className="w-3.5 h-3.5" />
+                Ask your inbox
+              </button>
+            </div>
+          )}
 
           {/* Search result count */}
           {isSearchMode && !loadingSearch && (

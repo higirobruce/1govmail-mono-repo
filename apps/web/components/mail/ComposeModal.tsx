@@ -1180,7 +1180,7 @@ export default function ComposeModal({
                   className="relative p-1.5 rounded hover:bg-muted/60 transition-colors"
                 >
                   <span className="text-[0.6875rem] font-bold leading-none" style={{ color: currentColor ?? 'currentColor' }}>A</span>
-                  <span className="block h-[3px] w-4 rounded-sm mt-0.5" style={{ backgroundColor: currentColor ?? 'hsl(var(--foreground))' }} />
+                  <span className="block h-[3px] w-4 rounded-sm mt-0.5" style={{ backgroundColor: currentColor ?? 'var(--foreground)' }} />
                 </button>
                 <input
                   ref={colorInputRef}

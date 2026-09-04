@@ -48,12 +48,24 @@ describe('AttachmentPreview', () => {
     expect(container.querySelector('audio[controls]')).toHaveAttribute('src', 'blob:a');
   });
 
-  it('falls back to a typed <embed> for previewless types (pdf plumbing path)', () => {
+  it('renders PDFs in an <iframe> — <embed> is dead under the app CSP (object-src none)', () => {
     const { container } = render(
       <AttachmentPreview url="blob:p" mimeType="application/pdf" filename="doc.pdf" />,
     );
-    const embed = container.querySelector('embed');
-    expect(embed).toHaveAttribute('src', 'blob:p');
-    expect(embed).toHaveAttribute('type', 'application/pdf');
+    expect(container.querySelector('embed')).toBeNull();
+    const frame = container.querySelector('iframe');
+    expect(frame).toHaveAttribute('src', 'blob:p');
+    expect(frame).toHaveAttribute('title', 'doc.pdf');
+    // Chrome's PDF viewer refuses fully-sandboxed frames — must stay unsandboxed.
+    expect(frame).not.toHaveAttribute('sandbox');
+  });
+
+  it('offers download instead of blind-embedding types with no inline preview', () => {
+    const { container } = render(
+      <AttachmentPreview url="blob:z" mimeType="application/zip" filename="archive.zip" />,
+    );
+    expect(container.querySelector('embed')).toBeNull();
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(screen.getByText(/no inline preview/i)).toBeInTheDocument();
   });
 });

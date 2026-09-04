@@ -119,16 +119,26 @@ export function AttachmentPreview({ url, mimeType, filename, variant = 'inline' 
     );
   }
 
-  // pdf and anything else with a URL worth trying: hand it to the browser's
-  // native renderer with the declared type.
-  return (
-    <embed
-      src={url}
-      type={mimeType}
-      className={cn('w-full border-0', lightbox ? 'h-full' : 'rounded-lg')}
-      style={lightbox ? undefined : { height: 500 }}
-    />
-  );
+  if (kind === 'pdf') {
+    // MUST be an <iframe>, not <embed>/<object>: the app CSP sets
+    // `object-src 'none'` (plugin content), which blanks embeds silently,
+    // while `frame-src 'self' blob:` allows frames. No sandbox attribute —
+    // Chrome's PDF viewer refuses to render in a fully sandboxed frame; the
+    // blob carries the server's application/pdf content type, so the frame
+    // hosts Chrome's own viewer, not sender-controlled markup.
+    return (
+      <iframe
+        src={url}
+        title={filename}
+        className={cn('w-full border-0', lightbox ? 'h-full' : 'rounded-lg')}
+        style={lightbox ? undefined : { height: 500 }}
+      />
+    );
+  }
+
+  // No inline preview for this type (only reachable by paging the lightbox
+  // onto a non-previewable file) — a note beats a silently blank embed.
+  return <FailureNote light={lightbox} label="No inline preview for this file type — use download" />;
 }
 
 function FailureNote({ light, label = 'Failed to load file' }: { light: boolean; label?: string }) {

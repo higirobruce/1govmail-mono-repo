@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/stores/auth.store';
@@ -33,91 +32,18 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 interface FolderMenuState {
   x: number;
   y: number;
   folder: { id: string; name: string; isSystem?: boolean };
-}
-
-function FolderContextMenu({
-  state,
-  onClose,
-  onRename,
-  onEmpty,
-  onDelete,
-}: {
-  state: FolderMenuState;
-  onClose: () => void;
-  onRename?: (id: string, name: string) => void;
-  onEmpty?: (id: string, name: string) => void;
-  onDelete?: (id: string, name: string) => void;
-}) {
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener('keydown', handleKey);
-    document.addEventListener('mousedown', handleClick);
-    return () => {
-      document.removeEventListener('keydown', handleKey);
-      document.removeEventListener('mousedown', handleClick);
-    };
-  }, [onClose]);
-
-  const style: React.CSSProperties = {
-    position: 'fixed',
-    top: Math.min(state.y, window.innerHeight - 160),
-    left: Math.min(state.x, window.innerWidth - 180),
-    zIndex: 9999,
-  };
-
-  const { folder } = state;
-
-  return createPortal(
-    <div
-      ref={menuRef}
-      style={style}
-      className="bg-card border border-border/50 rounded-xl shadow-lg p-1.5 min-w-[160px]"
-    >
-      {!folder.isSystem && onRename && (
-        <button
-          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors text-left"
-          onMouseDown={(e) => { e.preventDefault(); onClose(); onRename(folder.id, folder.name); }}
-        >
-          <Pencil className="w-3.5 h-3.5 shrink-0" />
-          Rename
-        </button>
-      )}
-      {onEmpty && (
-        <button
-          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/80 hover:bg-muted/60 hover:text-foreground transition-colors text-left"
-          onMouseDown={(e) => { e.preventDefault(); onClose(); onEmpty(folder.id, folder.name); }}
-        >
-          <Trash2 className="w-3.5 h-3.5 shrink-0" />
-          Empty folder
-        </button>
-      )}
-      {!folder.isSystem && onDelete && (
-        <>
-          {(onRename || onEmpty) && (
-            <div className="my-1 h-px bg-border/50 mx-1" />
-          )}
-          <button
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[0.8125rem] text-destructive hover:bg-destructive/10 transition-colors text-left"
-            onMouseDown={(e) => { e.preventDefault(); onClose(); onDelete(folder.id, folder.name); }}
-          >
-            <X className="w-3.5 h-3.5 shrink-0" />
-            Delete folder
-          </button>
-        </>
-      )}
-    </div>,
-    document.body,
-  );
 }
 
 interface Folder {
@@ -219,14 +145,14 @@ function NavItem({
       disabled={comingSoon}
       title={label}
       className={cn(
-        'w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] transition-all duration-100 group relative',
+        'w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-ui transition-all duration-100 group relative',
         // Icon rail mode (sidebar collapsed): center the icon, drop the text.
         'group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0',
         active
           ? 'bg-primary/10 text-primary font-medium'
           : comingSoon
-          ? 'text-foreground/28 cursor-not-allowed select-none'
-          : 'text-foreground/65 hover:bg-muted/50 hover:text-foreground',
+          ? 'text-ink-4 cursor-not-allowed select-none'
+          : 'text-ink-2 hover:bg-muted/50 hover:text-foreground',
       )}
     >
       {active && (
@@ -237,19 +163,19 @@ function NavItem({
       ) : (
         <Icon className={cn(
           'w-4 h-4 shrink-0',
-          active ? 'text-primary' : comingSoon ? 'text-foreground/20' : 'text-muted-foreground/50 group-hover:text-foreground/70',
+          active ? 'text-primary' : comingSoon ? 'text-ink-4' : 'text-ink-3 group-hover:text-ink-2',
         )} />
       )}
       <span className="flex-1 text-left truncate group-data-[collapsed=true]/sidebar:hidden">{label}</span>
       {comingSoon ? (
-        <span className="text-[0.625rem] font-medium px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/35 tracking-wide group-data-[collapsed=true]/sidebar:hidden">
+        <span className="text-micro font-medium px-1.5 py-0.5 rounded bg-muted/50 text-ink-4 tracking-[0.06em] group-data-[collapsed=true]/sidebar:hidden">
           Soon
         </span>
       ) : (!!unread && unread > 0 && (
         <>
           <span className={cn(
-            'text-[0.6875rem] font-medium px-1.5 py-0.5 rounded-md tabular-nums group-data-[collapsed=true]/sidebar:hidden',
-            active ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
+            'text-micro font-medium px-1.5 py-0.5 rounded-md tabular-nums group-data-[collapsed=true]/sidebar:hidden',
+            active ? 'bg-primary/20 text-primary' : 'bg-muted text-ink-2',
           )}>
             {unread > 99 ? '99+' : unread}
           </span>
@@ -282,8 +208,8 @@ function LabelRow({
 }) {
   return (
     <div className={cn(
-      'w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-lg text-[0.8125rem] transition-all duration-100 group relative',
-      active ? 'bg-primary/10 text-primary font-medium' : 'text-foreground/65 hover:bg-muted/50 hover:text-foreground',
+      'w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-lg text-ui transition-all duration-100 group relative',
+      active ? 'bg-primary/10 text-primary font-medium' : 'text-ink-2 hover:bg-muted/50 hover:text-foreground',
     )}>
       {active && (
         <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary rounded-r-full" />
@@ -303,7 +229,7 @@ function LabelRow({
           'shrink-0 w-[18px] h-[18px] rounded-[5px] flex items-center justify-center transition-all',
           color,
           filterEnabled && !checked && 'opacity-30 hover:opacity-60',
-          checked && 'shadow-[0_0_0_1px_rgba(0,0,0,0.04)]',
+          checked && 'shadow-pill',
         )}
       >
         {checked ? (
@@ -327,8 +253,8 @@ function LabelRow({
       {/* Unread count */}
       {!!folder.unreadCount && folder.unreadCount > 0 && (
         <span className={cn(
-          'text-[0.6875rem] font-medium px-1.5 py-0.5 rounded-md tabular-nums shrink-0',
-          active ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
+          'text-micro font-medium px-1.5 py-0.5 rounded-md tabular-nums shrink-0',
+          active ? 'bg-primary/20 text-primary' : 'bg-muted text-ink-2',
         )}>
           {folder.unreadCount > 99 ? '99+' : folder.unreadCount}
         </span>
@@ -337,7 +263,7 @@ function LabelRow({
       {/* Overflow menu */}
       {onMore && (
         <button
-          className="shrink-0 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 pointer-events-none group-hover/folderrow:opacity-100 group-hover/folderrow:pointer-events-auto"
+          className="shrink-0 flex items-center justify-center w-5 h-5 rounded text-ink-3 hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 pointer-events-none group-hover/folderrow:opacity-100 group-hover/folderrow:pointer-events-auto"
           onClick={(e) => { e.stopPropagation(); onMore(e.clientX, e.clientY); }}
           aria-label="Folder options"
         >
@@ -360,8 +286,8 @@ function OfflineStatusPill() {
       : 'Offline'
     : `${status.pending} queued`;
   const tone = offline
-    ? 'text-amber-600 dark:text-amber-400'
-    : 'text-muted-foreground';
+    ? 'text-warning-strong'
+    : 'text-ink-2';
 
   return (
     <div
@@ -371,7 +297,7 @@ function OfflineStatusPill() {
           : 'Pending actions are syncing in the background.'
       }
       className={cn(
-        'flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.75rem]',
+        'flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-ui',
         'group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0',
         tone,
       )}
@@ -565,7 +491,7 @@ export default function Sidebar({
     <div
       data-collapsed={collapsed}
       className={cn(
-        'group/sidebar shrink-0 hidden lg:flex flex-col h-full bg-sidebar border-r border-sidebar-border/60 transition-[width] duration-150',
+        'group/sidebar shrink-0 hidden lg:flex flex-col h-full bg-sidebar border-r border-sidebar-border transition-[width] duration-150',
         collapsed ? 'w-[60px]' : 'w-[220px]',
         className,
       )}
@@ -575,38 +501,41 @@ export default function Sidebar({
       <div className={cn('pt-4 pb-2', collapsed ? 'px-2' : 'px-3')}>
         <div className={cn('flex items-center gap-2.5 py-1.5 rounded-lg', collapsed ? 'flex-col px-0' : 'px-2')}>
           <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0" title={displayName}>
-            <span className="text-[0.6875rem] font-bold text-white leading-none">{initials}</span>
+            <span className="text-micro font-bold text-white leading-none">{initials}</span>
           </div>
           {!collapsed && (
-            <span className="flex-1 text-[0.8125rem] font-semibold text-foreground truncate">
+            <span className="flex-1 text-ui font-semibold text-foreground truncate">
               {displayName}
             </span>
           )}
-          <button
+          <Button
+            variant="ghost"
+            size="icon-xs"
             onClick={toggleSidebar}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="p-1 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-colors shrink-0"
+            className="text-ink-3 hover:text-foreground shrink-0"
           >
-            {collapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
-          </button>
+            {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+          </Button>
         </div>
       </div>
 
       {/* Compose button */}
       <div className={cn('pb-3', collapsed ? 'px-2' : 'px-3')}>
-        <button
+        <Button
+          variant="ghost"
           data-tour="compose"
           onClick={() => { onCompose?.(); onClose?.(); }}
           title="Compose"
           className={cn(
-            'w-full flex items-center gap-2 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg text-[0.8125rem] font-medium transition-all',
+            'w-full justify-start gap-2 bg-primary/10 hover:bg-primary/20 text-primary text-ui font-medium h-8',
             collapsed ? 'justify-center px-0' : 'px-3',
           )}
         >
           <Plus className="w-3.5 h-3.5 shrink-0" />
           {!collapsed && 'Compose'}
-        </button>
+        </Button>
       </div>
 
       {/* Folder list */}
@@ -648,7 +577,7 @@ export default function Sidebar({
                   iconBg={folder.iconBg}
                 />
                 <button
-                  className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center w-5 h-5 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 pointer-events-none group-hover/folderrow:opacity-100 group-hover/folderrow:pointer-events-auto"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center w-5 h-5 rounded text-ink-3 hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 pointer-events-none group-hover/folderrow:opacity-100 group-hover/folderrow:pointer-events-auto"
                   onClick={(e) => {
                     e.stopPropagation();
                     setFolderMenu({ x: e.clientX, y: e.clientY, folder: { id: folder.id, name: folder.name, isSystem: true } });
@@ -666,38 +595,42 @@ export default function Sidebar({
               <div className="flex items-center pr-1">
                 <button
                   onClick={() => setLabelsOpen((o) => !o)}
-                  className="flex items-center gap-1.5 px-3 pb-1.5 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50 hover:text-muted-foreground flex-1 transition-colors"
+                  className="flex items-center gap-1.5 px-3 pb-1.5 text-micro font-semibold uppercase tracking-[0.06em] text-ink-3 hover:text-ink-2 flex-1 transition-colors"
                 >
                   <ChevronDown className={cn('w-3 h-3 transition-transform', !labelsOpen && '-rotate-90')} />
                   Labels
                   {filterEnabled && selectedLabelNames && selectedLabelNames.size > 0 && (
-                    <span className="ml-1 inline-flex items-center text-[0.625rem] px-1.5 py-0.5 rounded-full bg-primary/15 text-primary normal-case tracking-normal">
+                    <span className="ml-1 inline-flex items-center text-micro font-normal px-1.5 py-0.5 rounded-full bg-primary/15 text-primary normal-case tracking-normal">
                       {selectedLabelNames.size} active
                     </span>
                   )}
                 </button>
                 {filterEnabled && selectedLabelNames && selectedLabelNames.size > 0 && onClearLabelFilter && (
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={onClearLabelFilter}
-                    className="p-1 mb-1.5 rounded text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-colors"
+                    className="mb-1.5 text-ink-4 hover:text-foreground"
                     title="Clear filter"
                     aria-label="Clear label filter"
                   >
-                    <X className="w-3 h-3" />
-                  </button>
+                    <X />
+                  </Button>
                 )}
                 {onCreateFolder && (
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={() => {
                       setCreatingFolder(true);
                       setLabelsOpen(true);
                       setTimeout(() => newFolderInputRef.current?.focus(), 50);
                     }}
-                    className="p-1 mb-1.5 rounded text-muted-foreground/40 hover:text-muted-foreground hover:bg-muted/50 transition-colors"
+                    className="mb-1.5 text-ink-4 hover:text-ink-2"
                     title="New folder"
                   >
-                    <Plus className="w-3 h-3" />
-                  </button>
+                    <Plus />
+                  </Button>
                 )}
               </div>
               {labelsOpen && (
@@ -729,7 +662,7 @@ export default function Sidebar({
                             onBlur={() => { if (!savingRename) { setRenamingFolderId(null); setRenameFolderName(''); } }}
                             disabled={savingRename}
                             placeholder="Folder name…"
-                            className="flex-1 text-[0.8125rem] bg-transparent border-b border-border/60 focus:border-primary outline-none py-0.5 text-foreground placeholder:text-muted-foreground/40"
+                            className="flex-1 text-ui bg-transparent border-b border-border focus:border-primary outline-none py-0.5 text-foreground placeholder:text-ink-4"
                           />
                         </div>
                       ) : (
@@ -766,7 +699,7 @@ export default function Sidebar({
                         onBlur={() => { if (!savingFolder) { setCreatingFolder(false); setNewFolderName(''); } }}
                         disabled={savingFolder}
                         placeholder="Folder name…"
-                        className="flex-1 text-[0.8125rem] bg-transparent border-b border-border/60 focus:border-primary outline-none py-0.5 text-foreground placeholder:text-muted-foreground/40"
+                        className="flex-1 text-ui bg-transparent border-b border-border focus:border-primary outline-none py-0.5 text-foreground placeholder:text-ink-4"
                       />
                     </div>
                   )}
@@ -777,7 +710,7 @@ export default function Sidebar({
 
           {/* Divider */}
           <div className="pt-3 pb-1.5 px-1">
-            <div className="h-px bg-sidebar-border/50" />
+            <div className="h-px bg-sidebar-border" />
           </div>
 
           {/* Utility nav */}
@@ -807,26 +740,28 @@ export default function Sidebar({
       </div>
 
       {/* Footer */}
-      <div className="px-2 py-2 border-t border-sidebar-border/50 space-y-0.5">
+      <div className="px-2 py-2 border-t border-sidebar-border space-y-0.5">
         <OfflineStatusPill />
         <NotificationsBell />
         <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} />
-        <button
+        <Button
+          variant="ghost"
           onClick={() => setTheme(nextTheme)}
           title={themeLabel}
-          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
+          className="w-full justify-start gap-2.5 px-3 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
         >
           <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
           <span className="flex-1 text-left capitalize group-data-[collapsed=true]/sidebar:hidden">Theme: {theme}</span>
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="ghost"
           onClick={() => setTourActive(true)}
           title="Take a tour"
-          className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
+          className="w-full justify-start gap-2.5 px-3 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
         >
           <Sparkles className="w-3.5 h-3.5 shrink-0" />
           <span className="group-data-[collapsed=true]/sidebar:hidden">Take a tour</span>
-        </button>
+        </Button>
         <NavItem
           icon={LogOut}
           label={loggingOut ? 'Signing out…' : 'Sign out'}
@@ -848,7 +783,7 @@ export default function Sidebar({
           <DialogHeader>
             <DialogTitle>Empty &ldquo;{emptyConfirmFolder?.name}&rdquo;?</DialogTitle>
             <DialogDescription asChild>
-              <div className="space-y-3 text-sm text-muted-foreground pt-1">
+              <div className="space-y-3 text-body text-ink-2 pt-1">
                 <p>
                   This action <strong className="text-foreground">cannot be undone</strong>. All messages
                   in <strong className="text-foreground">{emptyConfirmFolder?.name}</strong> will be
@@ -892,13 +827,35 @@ export default function Sidebar({
       </Dialog>
 
       {folderMenu && (
-        <FolderContextMenu
-          state={folderMenu}
-          onClose={() => setFolderMenu(null)}
-          onRename={onRenameFolder ? openRenameInline : undefined}
-          onEmpty={onEmptyFolder ? openEmptyConfirm : undefined}
-          onDelete={onDeleteFolder ? (id, name) => { handleDeleteFolder(id, name); } : undefined}
-        />
+        <DropdownMenu open onOpenChange={(o) => { if (!o) setFolderMenu(null); }}>
+          <DropdownMenuTrigger asChild>
+            {/* invisible anchor at the click position */}
+            <span style={{ position: 'fixed', top: folderMenu.y, left: folderMenu.x, width: 0, height: 0 }} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[160px]">
+            {!folderMenu.folder.isSystem && onRenameFolder && (
+              <DropdownMenuItem onSelect={() => openRenameInline(folderMenu.folder.id, folderMenu.folder.name)}>
+                <Pencil /> Rename
+              </DropdownMenuItem>
+            )}
+            {onEmptyFolder && (
+              <DropdownMenuItem onSelect={() => openEmptyConfirm(folderMenu.folder.id, folderMenu.folder.name)}>
+                <Trash2 /> Empty folder
+              </DropdownMenuItem>
+            )}
+            {!folderMenu.folder.isSystem && onDeleteFolder && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  variant="destructive"
+                  onSelect={() => handleDeleteFolder(folderMenu.folder.id, folderMenu.folder.name)}
+                >
+                  <X /> Delete folder
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </div>
   );

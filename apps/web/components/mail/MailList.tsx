@@ -6,6 +6,8 @@ import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, Folde
 import { cn } from '@/lib/utils';
 import { MailAvatar } from './MailAvatar';
 import { ClassificationChip } from './ClassificationChip';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
 
 interface Message {
   id: string;
@@ -34,8 +36,8 @@ export interface TriageCard {
 
 const TRIAGE_LABEL_META: Record<string, { text: string; textClass: string; dotClass: string }> = {
   needsDecision: { text: 'Needs decision', textClass: 'text-destructive', dotClass: 'bg-destructive' },
-  waitingOnYou: { text: 'Waiting on you', textClass: 'text-amber-600 dark:text-amber-400', dotClass: 'bg-amber-500' },
-  deadline: { text: 'Deadline', textClass: 'text-blue-600 dark:text-blue-400', dotClass: 'bg-blue-500' },
+  waitingOnYou: { text: 'Waiting on you', textClass: 'text-warning-strong', dotClass: 'bg-warning-strong' },
+  deadline: { text: 'Deadline', textClass: 'text-primary', dotClass: 'bg-primary' },
   // fyi intentionally renders nothing — not high-signal enough to warrant a badge.
 };
 
@@ -129,7 +131,7 @@ function groupMessages(messages: Message[], tab: Tab, stickyIds: Set<string>): G
 function SectionHeader({ label }: { label: string }) {
   return (
     <div className="px-4 pt-3 pb-1">
-      <span className="text-[0.656rem] font-semibold text-muted-foreground/55 uppercase tracking-[0.06em]">
+      <span className="text-micro font-semibold text-ink-3 uppercase tracking-[0.06em]">
         {label}
       </span>
     </div>
@@ -200,10 +202,10 @@ function ContextMenu({
         key={type}
         onMouseDown={(e) => { e.preventDefault(); onAction({ type, messageId: state.message.id }); onClose(); }}
         className={cn(
-          'w-full flex items-center gap-2.5 px-3 py-2 text-[0.8125rem] rounded-md transition-colors',
+          'w-full flex items-center gap-2.5 px-3 py-2 text-ui rounded-md transition-colors',
           danger
             ? 'text-destructive/80 hover:bg-destructive/10 hover:text-destructive'
-            : 'text-foreground/80 hover:bg-muted hover:text-foreground',
+            : 'text-ink-2 hover:bg-muted hover:text-foreground',
         )}
       >
         <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -219,11 +221,11 @@ function ContextMenu({
     <div
       ref={menuRef}
       style={style}
-      className="bg-card border border-border/50 rounded-xl shadow-lg p-1.5 min-w-[180px]"
+      className="bg-card border border-border rounded-xl shadow-lg p-1.5 min-w-[180px]"
     >
       {item(Reply,      'Reply',          'reply')}
       {item(Forward,    'Forward',        'forward')}
-      <div className="my-1 h-px bg-border/40" />
+      <div className="my-1 h-px bg-border-faint" />
       {state.message.isRead
         ? item(MailCheck,  'Mark as Unread', 'markUnread')
         : item(MailOpen,   'Mark as Read',   'markRead')}
@@ -236,10 +238,10 @@ function ContextMenu({
       {item(CalendarPlus, 'Create Event',   'createEvent')}
       {labelFolders.length > 0 && (
         <>
-          <div className="my-1 h-px bg-border/40" />
+          <div className="my-1 h-px bg-border-faint" />
           <button
             onMouseDown={(e) => { e.preventDefault(); setShowFolders((v) => !v); }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.8125rem] rounded-md transition-colors text-foreground/80 hover:bg-muted hover:text-foreground"
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-ui rounded-md transition-colors text-ink-2 hover:bg-muted hover:text-foreground"
           >
             <FolderOpen className="w-3.5 h-3.5 shrink-0" />
             <span className="flex-1 text-left">Move to folder</span>
@@ -255,9 +257,9 @@ function ContextMenu({
                     onAction({ type: 'moveToFolder', messageId: state.message.id, targetFolderId: folder.id });
                     onClose();
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[0.75rem] rounded-md text-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-ui rounded-md text-ink-2 hover:bg-muted hover:text-foreground transition-colors"
                 >
-                  <FolderOpen className="w-3 h-3 shrink-0 text-muted-foreground/50" />
+                  <FolderOpen className="w-3 h-3 shrink-0 text-ink-3" />
                   {folder.name}
                 </button>
               ))}
@@ -265,7 +267,7 @@ function ContextMenu({
           )}
         </>
       )}
-      <div className="my-1 h-px bg-border/40" />
+      <div className="my-1 h-px bg-border-faint" />
       {item(Trash2,     'Delete',         'delete',  true)}
     </div>
   );
@@ -312,7 +314,7 @@ function MailRow({
         className={cn(
           'group relative rounded-2xl transition-all',
           active
-            ? 'bg-card shadow-[0_2px_8px_rgba(15,76,129,0.08)] ring-1 ring-primary/15'
+            ? 'bg-card shadow-active-row ring-1 ring-primary/15'
             : selected
             ? 'bg-primary/5 ring-1 ring-primary/20'
             : !message.isRead
@@ -325,26 +327,16 @@ function MailRow({
         )}
         <div className="flex items-start gap-2 px-2.5 py-2.5">
           {/* Checkbox — always visible at low opacity, full on hover/select */}
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
+          <Checkbox
+            checked={!!selected}
+            onCheckedChange={() => onSelect?.()}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={selected ? 'Deselect message' : 'Select message'}
             className={cn(
               'shrink-0 mt-[3px] transition-opacity',
               selected || active ? 'opacity-100' : 'opacity-50 group-hover:opacity-100',
             )}
-            aria-label={selected ? 'Deselect message' : 'Select message'}
-          >
-            <div className={cn(
-              'w-4 h-4 rounded-md border-2 flex items-center justify-center transition-colors',
-              selected ? 'bg-primary border-primary' : 'border-muted-foreground/30 hover:border-primary/50',
-            )}>
-              {selected && (
-                <svg className="w-2.5 h-2.5 text-primary-foreground" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M2 6l3 3 5-6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              )}
-            </div>
-          </button>
+          />
 
           {/* Avatar */}
           <button
@@ -361,14 +353,14 @@ function MailRow({
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-2 mb-0.5">
                 <span className={cn(
-                  'text-[0.8125rem] truncate',
-                  message.isRead ? 'text-foreground/85 font-normal' : 'text-primary font-semibold',
+                  'text-ui truncate',
+                  message.isRead ? 'text-foreground' : 'text-primary font-semibold',
                 )}>
                   {message.fromName ?? message.fromEmail}
                 </span>
                 <span className={cn(
                   'shrink-0 inline-flex items-center gap-1 tabular-nums',
-                  message.isRead ? 'text-[0.6875rem] text-muted-foreground/60' : 'text-[0.6875rem] text-primary font-semibold',
+                  message.isRead ? 'text-micro font-normal text-ink-3' : 'text-micro text-primary font-semibold',
                 )}>
                   {!message.isRead && <span className="w-1.5 h-1.5 rounded-full bg-primary" aria-hidden />}
                   {formatDate(message.receivedAt)}
@@ -376,13 +368,13 @@ function MailRow({
               </div>
 
               <p className={cn(
-                'text-[0.781rem] truncate mb-0.5',
-                message.isRead ? 'text-foreground/70' : 'text-foreground font-semibold',
+                'text-ui truncate mb-0.5',
+                message.isRead ? 'text-ink-2' : 'text-foreground font-semibold',
               )}>
                 {message.subject ?? '(no subject)'}
               </p>
 
-              <p className="text-[0.719rem] text-muted-foreground/70 truncate leading-snug">
+              <p className="text-ui font-normal text-ink-3 truncate leading-snug">
                 {message.snippet}
               </p>
 
@@ -390,14 +382,14 @@ function MailRow({
               {(message.hasAttachments || classification || labelMeta || card?.injectionSuspected) && (
                 <div className="flex items-center gap-1.5 mt-1.5">
                   {message.hasAttachments && (
-                    <span className="inline-flex items-center gap-1 text-[0.625rem] text-muted-foreground/80 bg-muted/60 rounded-full px-1.5 py-0.5">
+                    <span className="inline-flex items-center gap-1 text-micro font-normal text-ink-2 bg-muted/60 rounded-full px-1.5 py-0.5">
                       <Paperclip className="w-2.5 h-2.5" />
                       Attachment
                     </span>
                   )}
                   {classification && <ClassificationChip value={classification} size="xs" />}
                   {labelMeta && (
-                    <span className={cn('inline-flex items-center gap-1 text-[0.625rem] font-medium', labelMeta.textClass)}>
+                    <span className={cn('inline-flex items-center gap-1 text-micro', labelMeta.textClass)}>
                       <span className={cn('w-1.5 h-1.5 rounded-full', labelMeta.dotClass)} aria-hidden />
                       {labelMeta.text}
                     </span>
@@ -405,7 +397,7 @@ function MailRow({
                   {card?.injectionSuspected && (
                     <span title="This message contains text addressed to an AI — verify carefully">
                       <AlertTriangle
-                        className="w-3 h-3 text-amber-500"
+                        className="w-3 h-3 text-warning-strong"
                         aria-label="This message contains text addressed to an AI — verify carefully"
                       />
                     </span>
@@ -613,10 +605,10 @@ export default function MailList({
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  'px-3.5 py-1 rounded-full text-[0.75rem] font-medium transition-all',
+                  'px-3.5 py-1 rounded-full text-ui font-medium transition-all',
                   activeTab === tab.id
-                    ? 'bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
-                    : 'text-muted-foreground/80 hover:text-foreground',
+                    ? 'bg-card text-foreground shadow-pill'
+                    : 'text-ink-2 hover:text-foreground',
                 )}
               >
                 {tab.label}
@@ -631,9 +623,9 @@ export default function MailList({
             emptyState ?? (
               <div className="flex flex-col items-center justify-center py-16 px-8 text-center">
                 <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-3">
-                  <Mail className="w-5 h-5 text-muted-foreground/30" />
+                  <Mail className="w-5 h-5 text-ink-4" />
                 </div>
-                <p className="text-sm text-muted-foreground/60">No messages</p>
+                <p className="text-body text-ink-3">No messages</p>
               </div>
             )
           )}
@@ -661,16 +653,16 @@ export default function MailList({
           {/* Infinite scroll sentinel + manual fallback */}
           <div ref={sentinelRef} className="py-3 flex justify-center">
             {(loadingMore && hasMore) ? (
-              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40" />
+              <Loader2 className="w-4 h-4 animate-spin text-ink-4" />
             ) : hasMore ? (
               <button
                 onClick={() => onLoadMore?.()}
-                className="text-[0.6875rem] text-muted-foreground/50 hover:text-foreground/70 transition-colors px-3 py-1 rounded-md hover:bg-muted/50"
+                className="text-micro font-normal text-ink-3 hover:text-ink-2 transition-colors px-3 py-1 rounded-md hover:bg-muted/50"
               >
                 Load more
               </button>
             ) : messages.length > 0 ? (
-              <span className="text-[0.6875rem] text-muted-foreground/30">All messages loaded</span>
+              <span className="text-micro font-normal text-ink-4">All messages loaded</span>
             ) : null}
           </div>
         </div>
@@ -689,34 +681,25 @@ export default function MailList({
 
       {/* Floating bulk action bar */}
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 bg-card border border-border/60 rounded-2xl shadow-xl">
-          <span className="text-[0.75rem] font-medium text-foreground/70 mr-1">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 bg-card border border-border rounded-2xl shadow-xl">
+          <span className="text-ui font-medium text-ink-2 mr-1">
             {selectedIds.size} selected
           </span>
-          <button
-            onClick={() => { onBulkAction?.({ type: 'markRead', messageIds: [...selectedIds] }); clearSelection(); }}
-            className="px-3 py-1.5 rounded-lg text-[0.75rem] font-medium bg-blue-500/10 text-blue-600 hover:bg-blue-500/20 transition-colors"
-          >
+          <Button variant="ghost" size="xs" className="bg-primary/10 text-primary hover:bg-primary/20"
+            onClick={() => { onBulkAction?.({ type: 'markRead', messageIds: [...selectedIds] }); clearSelection(); }}>
             Mark read
-          </button>
-          <button
-            onClick={() => { onBulkAction?.({ type: 'markUnread', messageIds: [...selectedIds] }); clearSelection(); }}
-            className="px-3 py-1.5 rounded-lg text-[0.75rem] font-medium bg-muted/60 text-foreground/70 hover:bg-muted transition-colors"
-          >
+          </Button>
+          <Button variant="secondary" size="xs"
+            onClick={() => { onBulkAction?.({ type: 'markUnread', messageIds: [...selectedIds] }); clearSelection(); }}>
             Mark unread
-          </button>
-          <button
-            onClick={() => { onBulkAction?.({ type: 'delete', messageIds: [...selectedIds] }); clearSelection(); }}
-            className="px-3 py-1.5 rounded-lg text-[0.75rem] font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
-          >
+          </Button>
+          <Button variant="destructive-ghost" size="xs" className="bg-destructive/10 text-destructive hover:bg-destructive/20"
+            onClick={() => { onBulkAction?.({ type: 'delete', messageIds: [...selectedIds] }); clearSelection(); }}>
             Delete
-          </button>
-          <button
-            onClick={clearSelection}
-            className="ml-1 p-1 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+          </Button>
+          <Button variant="ghost" size="icon-xs" onClick={clearSelection} aria-label="Clear selection">
+            <X />
+          </Button>
         </div>
       )}
     </>

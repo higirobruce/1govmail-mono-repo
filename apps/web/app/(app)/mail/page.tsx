@@ -1330,8 +1330,8 @@ export default function MailPage() {
         </div>
 
         {!offline.status.online && (
-          <div className="px-3 py-1.5 text-[0.75rem] bg-amber-500/10 text-amber-700 dark:text-amber-300 border-b border-amber-500/20 flex items-center gap-2">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+          <div className="px-3 py-1.5 text-ui bg-warning/10 text-warning-strong border-b border-warning/20 flex items-center gap-2">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-warning-strong shrink-0" />
             <span className="truncate">You&rsquo;re offline. Showing cached messages; some may be unavailable.</span>
           </div>
         )}

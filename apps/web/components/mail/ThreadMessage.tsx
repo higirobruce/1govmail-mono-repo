@@ -440,6 +440,8 @@ interface Props {
   onToggleStar: () => void;
   /** Called when the user clicks a draft row to continue editing it */
   onOpenDraft?: (message: ThreadMessageMeta) => void;
+  /** Called after expanding an unread message marks it read (parent updates its list state) */
+  onMarkedRead?: () => void;
   /** When true, quoted history in the body is preserved (single-message threads) */
   isOnlyMessage?: boolean;
 }
@@ -456,6 +458,7 @@ export default function ThreadMessage({
   onDelete,
   onToggleStar,
   onOpenDraft,
+  onMarkedRead,
   isOnlyMessage = false,
 }: Props) {
   const [fullMessage, setFullMessage] = useState<any>(null);
@@ -482,6 +485,17 @@ export default function ThreadMessage({
       setDownloadingId(null);
     }
   }, [downloadingId, message.id]);
+
+  // Expanding an unread message marks it read explicitly. The body fetch is a
+  // pure read (the server no longer passes Zimbra's read flag, so background
+  // jobs can't consume unread state) — the user actually seeing the message is
+  // the one moment read-marking belongs to. Fire-and-forget + idempotent: the
+  // clicked/newest message may already be marked by openMessage.
+  useEffect(() => {
+    if (!isExpanded || message.isRead || message.isDraft) return;
+    api.mail.markRead(message.id, true).catch(() => {});
+    onMarkedRead?.();
+  }, [isExpanded, message.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch the full message body whenever this message becomes expanded — this
   // covers both the user clicking to expand AND the default-expanded state set

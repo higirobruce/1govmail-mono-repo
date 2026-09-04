@@ -718,6 +718,11 @@ export default function ThreadView({
                 isExpanded={!msg.isDraft && (expandAll || expandedId === msg.id)}
                 isOnlyMessage={threadMessages.length === 1}
                 onToggle={() => { if (!msg.isDraft) toggleMessage(msg.id); }}
+                onMarkedRead={() =>
+                  setThreadMessages((prev) =>
+                    prev.map((m) => (m.id === msg.id ? { ...m, isRead: true } : m)),
+                  )
+                }
                 onReply={(detail) => onComposeWith('reply', detail ?? msg)}
                 onReplyAll={(detail) => onComposeWith('replyAll', detail ?? msg)}
                 onForward={(detail) => onComposeWith('forward', detail ?? msg)}

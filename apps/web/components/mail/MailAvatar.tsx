@@ -21,7 +21,7 @@ function isSystemSender(email: string): boolean {
   return SYSTEM_PREFIXES.some((p) => local === p || local.startsWith(`${p}+`) || local.startsWith(`${p}-`));
 }
 
-function initials(name: string | null | undefined, email: string): string {
+export function getInitials(name: string | null | undefined, email: string): string {
   const n = (name ?? '').trim();
   if (n) {
     const parts = n.split(/\s+/);
@@ -83,7 +83,7 @@ export function MailAvatar({ name, email, size = 'md', className }: MailAvatarPr
       )}
       aria-hidden
     >
-      {initials(name, email)}
+      {getInitials(name, email)}
     </div>
   );
 }

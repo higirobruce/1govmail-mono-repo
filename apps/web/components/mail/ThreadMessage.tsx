@@ -20,7 +20,7 @@ import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { prepareEmailHtml } from '@/lib/emailRender';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { MailAvatar } from './MailAvatar';
+import { MailAvatar, getInitials } from './MailAvatar';
 import { AttachmentTile } from './AttachmentTile';
 import { AttachmentLightbox } from './AttachmentLightbox';
 
@@ -380,16 +380,6 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getInitials(name: string | null, email: string): string {
-  if (name) {
-    const parts = name.trim().split(/\s+/);
-    return parts.length >= 2
-      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-      : parts[0].slice(0, 2).toUpperCase();
-  }
-  return email.slice(0, 2).toUpperCase();
-}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

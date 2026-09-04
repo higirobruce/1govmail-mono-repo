@@ -31,6 +31,7 @@ import { AttachmentPreview } from './AttachmentPreview';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
 import ThreadHeader, { type ThreadParticipant } from './ThreadHeader';
+import { MailAvatar } from './MailAvatar';
 import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
 import { summarizeMessage, summarizeThread } from '@/lib/ai/tasks';
@@ -460,11 +461,6 @@ export default function ThreadView({
       : displayMessages;
   const hiddenCount = displayMessages.length - visibleMessages.length;
 
-  // ── Overview helpers ──────────────────────────────────────────────────────
-  const P_COLORS = ['bg-blue-500','bg-emerald-500','bg-violet-500','bg-amber-500','bg-rose-500','bg-cyan-500','bg-indigo-500','bg-pink-500'];
-  const pColor = (email: string) => { let h = 0; for (let i = 0; i < email.length; i++) h = email.charCodeAt(i) + ((h << 5) - h); return P_COLORS[Math.abs(h) % P_COLORS.length]; };
-  const pInitials = (name: string | null, email: string) => { if (name) { const p = name.trim().split(/\s+/); return ((p[0]?.[0] ?? '') + (p[1]?.[0] ?? '')).toUpperCase() || '?'; } return (email?.[0] ?? '?').toUpperCase(); };
-
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -562,9 +558,7 @@ export default function ThreadView({
                   const isMe = p.email === user?.email;
                   return (
                     <div key={p.email} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group">
-                      <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[0.6875rem] font-semibold shrink-0', pColor(p.email))}>
-                        {pInitials(p.name, p.email)}
-                      </div>
+                      <MailAvatar name={p.name} email={p.email} size="sm" />
                       <div className="flex-1 min-w-0">
                         <p className="text-[0.8125rem] font-medium text-foreground truncate">
                           {isMe ? 'You' : (p.name || p.email)}
@@ -597,9 +591,7 @@ export default function ThreadView({
                       const isMe = p.email === user?.email;
                       return (
                         <div key={p.email} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group">
-                          <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[0.6875rem] font-semibold shrink-0 opacity-70', pColor(p.email))}>
-                            {pInitials(p.name, p.email)}
-                          </div>
+                          <MailAvatar name={p.name} email={p.email} size="sm" className="opacity-70" />
                           <div className="flex-1 min-w-0">
                             <p className="text-[0.8125rem] text-foreground/80 truncate">
                               {isMe ? 'You' : (p.name || p.email)}

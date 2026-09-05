@@ -8,6 +8,7 @@ import { scrubOutput } from '@/lib/ai/prompt';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { AIHttpError } from '@/lib/ai/client';
 import { cn } from '@/lib/utils';
+import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 
 interface AnswerTurn {
   role: 'assistant';
@@ -328,10 +329,14 @@ export default function AskInboxPanel({
         {streaming && (
           <div className="space-y-2">
             <InjectionBanner sources={pendingSources} />
-            <p className="whitespace-pre-wrap text-[0.75rem] leading-relaxed text-foreground">
-              {stream.text}
-              <Loader2 className="ml-1 inline h-3 w-3 animate-spin align-middle text-muted-foreground/60" />
-            </p>
+            {stream.text ? (
+              <p className="whitespace-pre-wrap text-[0.75rem] leading-relaxed text-foreground">
+                {stream.text}
+                <Loader2 className="ml-1 inline h-3 w-3 animate-spin align-middle text-muted-foreground/60" />
+              </p>
+            ) : (
+              <AIWorkingIndicator step="Searching your mail" />
+            )}
             <DegradedNotice degraded={pendingDegraded} />
             <SourcesRail
               sources={pendingSources}

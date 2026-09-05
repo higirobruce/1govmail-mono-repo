@@ -10,18 +10,14 @@ import {
   Inbox, Send, FileText, Trash2, Archive,
   ChevronDown, LogOut, Settings, Plus, X,
   Calendar, Users, FolderOpen,
-  ListTodo, UsersRound, Newspaper, Sparkles,
-  Sun, Moon, Monitor, BookOpen, ShieldAlert,
+  ListTodo, BookOpen, ShieldAlert,
   MoreHorizontal, Pencil, CloudOff, Loader2,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { useOffline } from '@/lib/offline/provider';
 import { cn } from '@/lib/utils';
 import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
-import { AppTour } from '@/components/tour/AppTour';
-import { useThemeStore, type Theme } from '@/stores/theme.store';
 import { useUIStore } from '@/stores/ui.store';
-import { NotificationsBell } from '@/components/layout/NotificationsBell';
 import {
   Dialog,
   DialogContent,
@@ -88,8 +84,6 @@ interface SidebarProps {
   selectedLabelNames?: Set<string>;
   onToggleLabelFilter?: (name: string) => void;
   onClearLabelFilter?: () => void;
-  /** Hide Settings + theme rows — the mail page shows them on the right rail instead. */
-  hideUtilities?: boolean;
 }
 
 // All built-in Zimbra folder paths — user-created folders have paths not in this set
@@ -371,7 +365,6 @@ export default function Sidebar({
   selectedLabelNames,
   onToggleLabelFilter,
   onClearLabelFilter,
-  hideUtilities = false,
 }: SidebarProps) {
   const filterEnabled = !!onToggleLabelFilter;
   const router = useRouter();
@@ -389,7 +382,6 @@ export default function Sidebar({
   const [emptyConfirmInput, setEmptyConfirmInput] = useState('');
   const [emptyingFolder, setEmptyingFolder] = useState(false);
   const [folderMenu, setFolderMenu] = useState<FolderMenuState | null>(null);
-  const [tourActive, setTourActive] = useState(false);
   const [calDragOver, setCalDragOver] = useState(false);
   const [tasksDragOver, setTasksDragOver] = useState(false);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
@@ -520,15 +512,10 @@ export default function Sidebar({
     }
   };
 
-  const { theme, setTheme } = useThemeStore();
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const isTablet = useIsTabletBand();
   const railMode = collapsed || isTablet; // effective collapsed state
-  const THEME_CYCLE: Theme[] = ['light', 'dark', 'system'];
-  const ThemeIcon = theme === 'dark' ? Moon : theme === 'light' ? Sun : Monitor;
-  const nextTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
-  const themeLabel = `Theme: ${theme} (click for ${nextTheme})`;
 
   const initials = user?.displayName
     ?.split(' ')
@@ -814,8 +801,6 @@ export default function Sidebar({
           >
             <NavItem icon={ListTodo} label="Tasks" onClick={() => { router.push('/tasks'); onClose?.(); }} tourId="tasks-nav" collapsed={railMode} />
           </div>
-          <NavItem icon={UsersRound} label="Collaboration"  comingSoon collapsed={railMode} />
-          <NavItem icon={Newspaper}  label="News"           comingSoon collapsed={railMode} />
         </div>
       </div>
 
@@ -833,61 +818,7 @@ export default function Sidebar({
           </span>
         </div>
         <OfflineStatusPill />
-        <NotificationsBell />
-        {!hideUtilities && (
-          <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} collapsed={railMode} />
-        )}
-        {!hideUtilities && (railMode ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                onClick={() => setTheme(nextTheme)}
-                aria-label={themeLabel}
-                className="w-full justify-center px-0 gap-2.5 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground"
-              >
-                <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs">{themeLabel}</TooltipContent>
-          </Tooltip>
-        ) : (
-          <Button
-            variant="ghost"
-            onClick={() => setTheme(nextTheme)}
-            title={themeLabel}
-            className="w-full justify-start gap-2.5 px-3 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground"
-          >
-            <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
-            <span className="flex-1 text-left capitalize">Theme: {theme}</span>
-          </Button>
-        ))}
-
-        {railMode ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                onClick={() => setTourActive(true)}
-                aria-label="Take a tour"
-                className="w-full justify-center px-0 gap-2.5 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground"
-              >
-                <Sparkles className="w-3.5 h-3.5 shrink-0" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs">Take a tour</TooltipContent>
-          </Tooltip>
-        ) : (
-          <Button
-            variant="ghost"
-            onClick={() => setTourActive(true)}
-            title="Take a tour"
-            className="w-full justify-start gap-2.5 px-3 h-8 rounded-lg text-ui text-ink-2 hover:bg-muted/50 hover:text-foreground"
-          >
-            <Sparkles className="w-3.5 h-3.5 shrink-0" />
-            <span>Take a tour</span>
-          </Button>
-        )}
+        <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} collapsed={railMode} />
         <NavItem
           icon={LogOut}
           label={loggingOut ? 'Signing out…' : 'Sign out'}
@@ -897,7 +828,6 @@ export default function Sidebar({
       </div>
 
       <GlobalConfirmDialog />
-      <AppTour active={tourActive} onClose={() => setTourActive(false)} />
 
       {/* GitHub-style empty folder confirmation dialog */}
       <Dialog

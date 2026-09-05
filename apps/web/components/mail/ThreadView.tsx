@@ -33,6 +33,7 @@ import { AttachmentPreview } from './AttachmentPreview';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
 import ThreadHeader, { type ThreadParticipant } from './ThreadHeader';
+import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import { MailAvatar } from './MailAvatar';
 import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
@@ -1050,7 +1051,7 @@ export default function ThreadView({
               </div>
             ) : (
               <p className="text-ui text-foreground leading-relaxed whitespace-pre-wrap">
-                {streamedSummary || (summarizing ? 'Thinking…' : '')}
+                {streamedSummary || (summarizing ? <AIWorkingIndicator step="Reading the thread" /> : '')}
               </p>
             )}
           </div>

@@ -1191,7 +1191,6 @@ export default function MailPage() {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar
-        hideUtilities
         folders={folders}
         activeFolderId={activeFolderId}
         onFolderSelect={(id) => setActiveFolderId(id)}

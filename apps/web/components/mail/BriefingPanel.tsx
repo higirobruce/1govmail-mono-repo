@@ -9,6 +9,7 @@ import {
   generateBriefing, type BriefingWindow, type BriefingResult, type BriefingProgress, type BriefItem,
 } from '@/lib/ai/briefing';
 import { cn } from '@/lib/utils';
+import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 
 const WINDOWS: Array<[BriefingWindow, string]> = [['today', 'Today'], ['24h', 'Last 24h'], ['week', 'This week']];
 const SECTIONS: Array<[keyof BriefingResult['brief'], string]> = [
@@ -169,7 +170,7 @@ export default function BriefingPanel({
         {running && (
           <div className="flex items-center justify-center gap-2 py-6 text-[0.75rem] text-muted-foreground/70">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>{progress ? phaseLabel(progress) : 'Starting…'}</span>
+            <AIWorkingIndicator step={progress ? phaseLabel(progress) : undefined} />
           </div>
         )}
 

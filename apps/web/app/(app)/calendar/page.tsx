@@ -1883,6 +1883,12 @@ export default function CalendarPage() {
   useEffect(() => {
     return () => { quickAddAbortRef.current?.abort(); };
   }, []);
+  // The shared create modal below is opened by several flows (quick-add, the
+  // New Event buttons, day-click, mail drag-drop, the createFromEmail deep
+  // link). Only a quick-add-originated save should clear the quick-add text —
+  // every other open path resets this to false so a stale true (e.g. from a
+  // cancelled quick-add) can't leak into an unrelated creation.
+  const quickAddOriginRef = useRef(false);
 
   // Availability
   const [showAvailability, setShowAvailability] = useState(false);
@@ -1944,6 +1950,7 @@ export default function CalendarPage() {
     if (!createFromEmail) return;
     window.history.replaceState({}, '', window.location.pathname);
     const subject = params.get('subject') ?? '';
+    quickAddOriginRef.current = false;
     setDragPrefill({
       title: subject,
       linkedMessageId: createFromEmail,
@@ -1978,6 +1985,7 @@ export default function CalendarPage() {
     sessionStorage.removeItem('govmail-prefill-calendar');
     const payload = parseMailDragPayload(raw);
     if (!payload) return;
+    quickAddOriginRef.current = false;
     setDragPrefill(dropPrefillFromPayload(payload));
     setShowCreate(true);
   }, [hydrated]); // eslint-disable-line
@@ -2050,6 +2058,7 @@ export default function CalendarPage() {
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
+      quickAddOriginRef.current = true;
       setDragPrefill(prefill);
       setShowCreate(true);
     } catch (err: any) {
@@ -2066,6 +2075,7 @@ export default function CalendarPage() {
     if (!raw) return;
     const payload = parseMailDragPayload(raw);
     if (!payload) return;
+    quickAddOriginRef.current = false;
     setDragPrefill(dropPrefillFromPayload(payload));
     setShowCreate(true);
   };
@@ -2130,7 +2140,7 @@ export default function CalendarPage() {
             </div>
             {/* New Event — shown on mobile right side of row 1 */}
             <Button size="sm"
-              onClick={() => { setCreateForDay(undefined); setShowCreate(true); }}
+              onClick={() => { quickAddOriginRef.current = false; setCreateForDay(undefined); setShowCreate(true); }}
               className="lg:hidden bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-3 gap-1.5">
               <Plus className="w-3.5 h-3.5" /> New
             </Button>
@@ -2162,7 +2172,7 @@ export default function CalendarPage() {
                 <span className="hidden sm:inline">Availability</span>
               </Button>
               <Button size="sm"
-                onClick={() => { setCreateForDay(undefined); setShowCreate(true); }}
+                onClick={() => { quickAddOriginRef.current = false; setCreateForDay(undefined); setShowCreate(true); }}
                 className="hidden lg:flex bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-4 gap-1.5">
                 <Plus className="w-3.5 h-3.5" /> New Event
               </Button>
@@ -2205,7 +2215,7 @@ export default function CalendarPage() {
                 currentDate={currentDate}
                 events={events}
                 onSelectEvent={setSelectedEvent}
-                onCreateForDay={(d) => { setCreateForDay(d); setShowCreate(true); }}
+                onCreateForDay={(d) => { quickAddOriginRef.current = false; setCreateForDay(d); setShowCreate(true); }}
               />
             )}
 
@@ -2215,7 +2225,7 @@ export default function CalendarPage() {
                 events={events}
                 freeBusy={null}
                 onSelectEvent={setSelectedEvent}
-                onCreateForDay={(d) => { setCreateForDay(d); setShowCreate(true); }}
+                onCreateForDay={(d) => { quickAddOriginRef.current = false; setCreateForDay(d); setShowCreate(true); }}
               />
             )}
 
@@ -2273,14 +2283,25 @@ export default function CalendarPage() {
         <CreateEventModal
           initialDate={createForDay}
           prefillData={dragPrefill ?? undefined}
-          onClose={() => { setShowCreate(false); setCreateForDay(undefined); setDragPrefill(null); }}
+          onClose={() => {
+            setShowCreate(false);
+            setCreateForDay(undefined);
+            setDragPrefill(null);
+            // A cancelled quick-add must not clear the input; but the origin
+            // flag itself is spent either way so a later, unrelated open (day
+            // click, New Event, ...) can never inherit it.
+            quickAddOriginRef.current = false;
+          }}
           onCreated={(event) => {
             setEvents((prev) => [...prev, event]);
             setShowCreate(false);
             setCreateForDay(undefined);
             setDragPrefill(null);
             setSelectedEvent(event);
-            setQuickAdd('');
+            if (quickAddOriginRef.current) {
+              setQuickAdd('');
+              quickAddOriginRef.current = false;
+            }
           }}
         />
       )}

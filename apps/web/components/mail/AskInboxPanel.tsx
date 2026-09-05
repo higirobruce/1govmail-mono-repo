@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { MessageCircleQuestion, X, Send, Loader2, CornerUpRight, TriangleAlert, Square } from 'lucide-react';
+import { MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square } from 'lucide-react';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
 import { streamInboxChat, type InboxChatSource, type InboxChatDegraded, type InboxChatTurn } from '@/lib/ai/inboxChat';
 import { scrubOutput } from '@/lib/ai/prompt';
@@ -148,9 +148,12 @@ function AnswerBody({
 }
 
 export default function AskInboxPanel({
-  open, onClose, onOpenMessage, onReplyToMessage, prefill, openCommitments = [],
+  open, collapsed = false, onCollapse, onClose, onOpenMessage, onReplyToMessage, prefill, openCommitments = [],
 }: {
   open: boolean;
+  /** Slide the panel away while keeping it mounted (conversation preserved). */
+  collapsed?: boolean;
+  onCollapse?: () => void;
   onClose: () => void;
   onOpenMessage: (messageId: string) => void;
   onReplyToMessage: (messageId: string) => void;
@@ -237,21 +240,35 @@ export default function AskInboxPanel({
     <aside
       role="complementary"
       aria-label="Ask your inbox"
+      aria-hidden={collapsed}
       className={cn(
         // z-[41]: same layer as the other AI drawers — only one is ever open.
         'fixed inset-y-0 right-0 z-[41] w-full max-w-[420px]',
         'border-l border-border/40 bg-card shadow-xl',
         'flex flex-col overflow-hidden',
+        'transition-transform duration-200 ease-out',
+        collapsed ? 'translate-x-full pointer-events-none' : 'translate-x-0',
       )}
     >
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
         <MessageCircleQuestion className="w-4 h-4 text-primary" />
         <span className="text-[0.75rem] font-semibold text-foreground">Ask your inbox</span>
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
+            aria-label="Minimize"
+            title="Minimize"
+          >
+            <Minus className="w-3.5 h-3.5" />
+          </button>
+        )}
         <button
           type="button"
           onClick={onClose}
-          className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
+          className={cn('p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors', !onCollapse && 'ml-auto')}
           aria-label="Close"
           title="Close"
         >

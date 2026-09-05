@@ -253,6 +253,7 @@ export default function MailPage() {
   // ── Ask your inbox state (declared here so the ?ask= deep-link effect below
   //    can set it — panel toggle/prefill only, no async data of its own) ─────
   const [askOpen, setAskOpen] = useState(false);
+  const [askCollapsed, setAskCollapsed] = useState(false);
   const [askPrefill, setAskPrefill] = useState<string | null>(null);
 
   // ── Deep-link: open specific message via ?open=<messageId> ────────────────
@@ -276,6 +277,7 @@ export default function MailPage() {
     window.history.replaceState({}, '', window.location.pathname);
     setAskPrefill(ask);
     setAskOpen(true);
+    setAskCollapsed(false);
   }, [hydrated, isAuthenticated]); // eslint-disable-line
 
   // ── Compose state ──────────────────────────────────────────────────────────
@@ -1309,13 +1311,6 @@ export default function MailPage() {
                   </span>
                 )}
               </button>
-              <button
-                onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); setAskOpen(true); }}
-                className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
-              >
-                <MessageCircleQuestion className="w-3.5 h-3.5" />
-                Ask your inbox
-              </button>
             </div>
           )}
 
@@ -1530,7 +1525,7 @@ export default function MailPage() {
       <GlobalSearch
         open={globalSearchOpen}
         onClose={() => setGlobalSearchOpen(false)}
-        onAsk={(q) => { setCommitmentsOpen(false); setBriefingOpen(false); setAskPrefill(q); setAskOpen(true); }}
+        onAsk={(q) => { setCommitmentsOpen(false); setBriefingOpen(false); setAskPrefill(q); setAskOpen(true); setAskCollapsed(false); }}
         onOpenMessage={(id) => void openMessage(id)}
       />
 
@@ -1552,9 +1547,24 @@ export default function MailPage() {
         onMutated={() => queryClient.invalidateQueries({ queryKey: ['commitments'] })}
       />
 
+      {/* Floating Ask-your-inbox trigger — hidden while the panel is expanded */}
+      {aiEnabled && (!askOpen || askCollapsed) && (
+        <button
+          type="button"
+          onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); setAskOpen(true); setAskCollapsed(false); }}
+          className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 transition-colors"
+          aria-label="Ask your inbox"
+          title="Ask your inbox"
+        >
+          <MessageCircleQuestion className="w-5 h-5" />
+        </button>
+      )}
+
       <AskInboxPanel
         open={askOpen}
-        onClose={() => { setAskOpen(false); setAskPrefill(null); }}
+        collapsed={askCollapsed}
+        onCollapse={() => setAskCollapsed(true)}
+        onClose={() => { setAskOpen(false); setAskCollapsed(false); setAskPrefill(null); }}
         onOpenMessage={(id) => void openMessage(id)}
         onReplyToMessage={(id) => void openReplyTo(id)}
         prefill={askPrefill}

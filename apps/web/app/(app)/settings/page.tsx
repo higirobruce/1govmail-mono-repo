@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useThemeStore, type FontSize } from '@/stores/theme.store';
 import { useAIStore } from '@/stores/ai.store';
+import { AI_LOCKED } from '@/lib/ai/config';
 import { api } from '@/lib/api';
 import { AIClient } from '@/lib/ai/client';
 import { CUSTOM_INSTRUCTIONS_MAX_CHARS } from '@/lib/ai/prompt';
@@ -476,7 +477,9 @@ export default function SettingsPage() {
         <NavItem icon={Palmtree}      label="Vacation Reply" active={section === 'vacation'}   onClick={() => setSection('vacation')} />
         <NavItem icon={Ban}           label="Blocked Senders" active={section === 'blocked-senders'} onClick={() => setSection('blocked-senders')} />
         <NavItem icon={Settings2}     label="Preferences"   active={section === 'preferences'} onClick={() => setSection('preferences')} />
-        <NavItem icon={Sparkles}      label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
+        {!AI_LOCKED && (
+          <NavItem icon={Sparkles}      label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
+        )}
         <NavItem icon={Shield}        label="Security"      active={section === 'security'}    onClick={() => setSection('security')} />
       </div>
 
@@ -494,7 +497,7 @@ export default function SettingsPage() {
               {section === 'vacation'    && <VacationSection     data={data} onUpdate={loadSettings} />}
               {section === 'blocked-senders' && <BlockedSendersSection />}
               {section === 'preferences' && <PreferencesSection  data={data} onUpdate={loadSettings} />}
-              {section === 'ai'          && <AISection />}
+              {section === 'ai' && !AI_LOCKED && <AISection />}
               {section === 'security'    && <SecuritySection     data={data} />}
             </>
           ) : null}

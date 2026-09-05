@@ -9,7 +9,7 @@ export class MailScheduler {
   constructor(private readonly mailService: MailService) {}
 
   /** Every minute: resurface snoozed messages whose timer has expired */
-  @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_MINUTE, { waitForCompletion: true })
   async processSnoozed() {
     try {
       await this.mailService.processExpiredSnoozes();
@@ -19,7 +19,7 @@ export class MailScheduler {
   }
 
   /** Every minute: send any scheduled messages that are due */
-  @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_MINUTE, { waitForCompletion: true })
   async processScheduled() {
     try {
       await this.mailService.processDueScheduled();

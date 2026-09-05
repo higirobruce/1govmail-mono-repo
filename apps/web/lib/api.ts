@@ -3,6 +3,9 @@ import {
   MOCK_MESSAGES,
   MOCK_MESSAGE_DETAIL,
 } from './mock-data';
+import { clearCardCache } from './ai/briefingCache';
+import { clearBodyCache } from './mailBodyCache';
+import { clearAttachmentBlobCache } from './attachmentBlobCache';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
@@ -49,6 +52,9 @@ async function request<T>(
       // Clear the persisted auth state so the store starts fresh on /login
       localStorage.removeItem('auth');
       localStorage.removeItem('access_token'); // legacy key, safe to clear
+      clearCardCache(); // don't leak this user's briefing cards to the next login
+      clearBodyCache(); // …nor their message bodies
+      clearAttachmentBlobCache(); // …nor their attachment blobs
       window.location.replace('/login');
       throw new Error('Session expired — please log in again');
     }
@@ -137,6 +143,8 @@ export const api = {
       endAt: string;
       allDay?: boolean;
       attendees?: string[];
+      linkedMessageId?: string;
+      linkedSubject?: string;
     }) => {
       if (USE_MOCK) return delay({ id: `e-${Date.now()}`, ...data });
       return request<any>('/calendar/events', { method: 'POST', body: JSON.stringify(data) });
@@ -149,6 +157,8 @@ export const api = {
       endAt: string;
       allDay?: boolean;
       attendees?: string[];
+      linkedMessageId?: string;
+      linkedSubject?: string;
     }) => {
       if (USE_MOCK) return delay({ id, ...data });
       return request<any>(`/calendar/events/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
@@ -220,22 +230,34 @@ export const api = {
       if (USE_MOCK) return delay(undefined);
       return request<void>('/auth/logout', { method: 'POST' });
     },
+    getSessions: () => {
+      if (USE_MOCK) return delay<any[]>([]);
+      return request<any[]>('/auth/sessions');
+    },
+    revokeSession: (id: string) => {
+      if (USE_MOCK) return delay({ success: true });
+      return request<any>(`/auth/sessions/${id}`, { method: 'DELETE' });
+    },
+    revokeOtherSessions: () => {
+      if (USE_MOCK) return delay({ success: true, revoked: 0 });
+      return request<any>('/auth/sessions/revoke-others', { method: 'POST' });
+    },
   },
 
   mail: {
-    getFolders: () => {
+    getFolders: (opts?: { signal?: AbortSignal }) => {
       if (USE_MOCK) return delay(MOCK_FOLDERS);
-      return request<any[]>('/mail/folders');
+      return request<any[]>('/mail/folders', { signal: opts?.signal });
     },
-    getMessages: (folderId: string, limit = 50, offset = 0) => {
+    getMessages: (folderId: string, limit = 50, offset = 0, opts?: { signal?: AbortSignal }) => {
       if (USE_MOCK)
         return delay({ messages: MOCK_MESSAGES, total: 120, offset: 0, limit: 50, hasMore: true });
-      return request<any>(`/mail/folders/${folderId}/messages?limit=${limit}&offset=${offset}`);
+      return request<any>(`/mail/folders/${folderId}/messages?limit=${limit}&offset=${offset}`, { signal: opts?.signal });
     },
-    getMessage: (messageId: string) => {
+    getMessage: (messageId: string, opts?: { signal?: AbortSignal }) => {
       if (USE_MOCK)
         return delay(messageId === 'm1' ? MOCK_MESSAGE_DETAIL : MOCK_MESSAGES.find((m) => m.id === messageId) ?? MOCK_MESSAGE_DETAIL);
-      return request<any>(`/mail/messages/${messageId}`);
+      return request<any>(`/mail/messages/${messageId}`, { signal: opts?.signal });
     },
     /** Fetch all messages in the same conversation, ordered oldest → newest.
      *  Body fields are omitted — fetch individual messages via getMessage on expand. */
@@ -248,6 +270,11 @@ export const api = {
     search: (query: string, limit = 50, offset = 0) => {
       if (USE_MOCK) return delay({ messages: MOCK_MESSAGES.filter(m => JSON.stringify(m).toLowerCase().includes(query.toLowerCase())), total: 0, offset: 0, limit: 50, hasMore: false });
       return request<any>(`/mail/search?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`);
+    },
+    /** Semantic (vector) mail search — phase 4. Same response shape as `search`. */
+    semanticSearch: (query: string, limit = 5, opts?: { signal?: AbortSignal }) => {
+      if (USE_MOCK) return delay({ messages: [], total: 0, offset: 0, limit, hasMore: false });
+      return request<any>(`/mail/search/semantic?q=${encodeURIComponent(query)}&limit=${limit}`, { signal: opts?.signal });
     },
     send: (payload: any) => {
       if (USE_MOCK) return delay({ success: true });
@@ -421,6 +448,22 @@ export const api = {
       return request<any>(`/mail/rules/${id}`, { method: 'DELETE' });
     },
 
+    // ── Sender Rules ─────────────────────────────────────────────────────────
+    senderRules: {
+      list: () => {
+        if (USE_MOCK) return delay<any[]>([]);
+        return request<any[]>('/mail/sender-rules');
+      },
+      create: (data: { type: 'BLOCK' | 'ALLOW'; address: string }) => {
+        if (USE_MOCK) return delay({ id: `sr-${Date.now()}`, ...data });
+        return request<any>('/mail/sender-rules', { method: 'POST', body: JSON.stringify(data) });
+      },
+      remove: (id: string) => {
+        if (USE_MOCK) return delay({ success: true });
+        return request<any>(`/mail/sender-rules/${id}`, { method: 'DELETE' });
+      },
+    },
+
     // ── Mute ──────────────────────────────────────────────────────────────────
     muteConversation: (conversationId: string) => {
       if (USE_MOCK) return delay({ success: true, muted: true });
@@ -447,6 +490,40 @@ export const api = {
     bulkMove: (messageIds: string[], folderId: string) => {
       if (USE_MOCK) return delay({ results: messageIds.map((id) => ({ id, success: true })) });
       return request<any>('/mail/bulk/move', { method: 'POST', body: JSON.stringify({ messageIds, folderId }) });
+    },
+
+    // ── Triage cards ──────────────────────────────────────────────────────────
+    /** Fetch persisted triage cards for the given message ids (max ~100 per call). */
+    getCards: (ids: string[]) => {
+      if (USE_MOCK) return delay({ cards: {} });
+      return request<any>(`/mail/cards?ids=${encodeURIComponent(ids.join(','))}`);
+    },
+    getWindowCards: (window: string, opts?: { signal?: AbortSignal }) => {
+      if (USE_MOCK) return delay({ cards: [] });
+      return request<any>(`/mail/cards/window?window=${window}`, { signal: opts?.signal });
+    },
+
+    // ── Commitments ledger ──────────────────────────────────────────────────
+    getCommitments: (status: 'open' | 'archived', opts?: { signal?: AbortSignal }) => {
+      if (USE_MOCK) return delay<CommitmentsResponse>({ promised: [], waiting: [], openCount: 0 });
+      return request<CommitmentsResponse>(`/mail/commitments?status=${status}`, { signal: opts?.signal });
+    },
+    updateCommitment: (id: string, status: 'done' | 'dismissed' | 'open') => {
+      if (USE_MOCK) return delay(undefined);
+      return request<void>(`/mail/commitments/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+    },
+    promoteCommitment: (
+      id: string,
+      overrides?: { title?: string; description?: string; dueDate?: string; priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT' },
+    ) => {
+      if (USE_MOCK) return delay({ taskId: `mock-task-${Date.now()}`, task: {} });
+      return request<{ taskId: string; task: any }>(`/mail/commitments/${id}/promote`, {
+        method: 'POST',
+        body: JSON.stringify(overrides ?? {}),
+      });
     },
   },
 
@@ -690,7 +767,8 @@ export const api = {
       return request<InvitedDoc[]>('/docs/shared-with-me');
     },
     share: {
-      enable:  (id: string) => request<{ shareToken: string; isShared: boolean }>(`/docs/${id}/share`, { method: 'POST' }),
+      enable:  (id: string, data?: { sharePermission?: 'VIEW' | 'EDIT' }) =>
+        request<{ shareToken: string; isShared: boolean; sharePermission: 'VIEW' | 'EDIT' }>(`/docs/${id}/share`, { method: 'POST', body: JSON.stringify(data ?? {}) }),
       disable: (id: string) => request<{ shareToken: null; isShared: false }>(`/docs/${id}/share`, { method: 'DELETE' }),
     },
     invites: {
@@ -755,6 +833,29 @@ export const api = {
   },
 };
 
+export interface Commitment {
+  id: string;
+  conversationId: string | null;
+  messageId: string;
+  type: 'promised' | 'waiting';
+  text: string;
+  dueHint: string | null;
+  status: 'open' | 'done' | 'dismissed' | 'archived' | 'promoted';
+  suggestResolve: boolean;
+  hintMessageId: string | null;
+  taskId: string | null;
+  extractedAt: string;
+  lastActivityAt: string;
+  resolvedAt: string | null;
+  counterparty: string | null;
+}
+
+export interface CommitmentsResponse {
+  promised: Commitment[];
+  waiting: Commitment[];
+  openCount: number;
+}
+
 export interface Doc {
   id: string;
   title: string;
@@ -767,6 +868,7 @@ export interface Doc {
   coverColor: string | null;
   shareToken: string | null;
   isShared: boolean;
+  sharePermission?: 'VIEW' | 'EDIT';
   createdAt: string;
   updatedAt: string;
   /** Present when the requesting user is an invitee (not the owner) */

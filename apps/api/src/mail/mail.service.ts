@@ -1,16 +1,89 @@
-import { Injectable, NotFoundException, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Logger, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { deriveLabel, formatAttachments, type ExtractedCard, type TriageLabel } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { TasksService } from '../tasks/tasks.service';
+import { matchSenderRule, type SenderRuleLike } from './sender-rule-matcher';
+import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
+
+const CARD_WINDOWS = ['today', '24h', 'week'] as const;
+type CardWindow = (typeof CARD_WINDOWS)[number];
+const CARD_FOLDER_PATHS = ['/Inbox', '/Sent'];
+const MAX_CARD_IDS = 100;
+const MAX_WINDOW_CARDS = 50;
+const MAX_COMMITMENTS = 200;
+const COMMITMENT_STATUS_FILTERS = ['open', 'archived'] as const;
+type CommitmentStatusFilter = (typeof COMMITMENT_STATUS_FILTERS)[number];
+const COMMITMENT_UPDATE_STATUSES = ['done', 'dismissed', 'open'] as const;
+type CommitmentUpdateStatus = (typeof COMMITMENT_UPDATE_STATUSES)[number];
+
+export interface CommitmentRow {
+  id: string;
+  conversationId: string | null;
+  messageId: string;
+  type: string;
+  text: string;
+  dueHint: string | null;
+  status: string;
+  suggestResolve: boolean;
+  hintMessageId: string | null;
+  taskId: string | null;
+  extractedAt: Date;
+  lastActivityAt: Date;
+  resolvedAt: Date | null;
+}
+
+export interface CommitmentDto extends CommitmentRow {
+  counterparty: string | null;
+}
+
+interface WindowCardRow {
+  messageId: string;
+  gist: string;
+  asksOfMe: unknown;
+  deadlines: unknown;
+  commitmentsIMade: unknown;
+  waitingOn: string | null;
+  importance: string;
+  injectionSuspected: boolean;
+  message: {
+    conversationId: string | null;
+    subject: string | null;
+    fromEmail: string;
+    fromName: string | null;
+    receivedAt: Date;
+    attachments: unknown;
+    folder: { path: string };
+  };
+}
+
+// Different Zimbra deployments report the spam folder under either path —
+// this app's own Sidebar (apps/web/components/layout/Sidebar.tsx) already
+// treats both as "the spam folder", so enforcement must match both too.
+const SPAM_FOLDER_PATHS = ['/Junk', '/Spam'];
+
+// Browsers cannot load cid: URLs — replace with src="" so the image is skipped
+// silently instead of rendering a broken-image icon. Applied to embedPending
+// responses only; the DB keeps the raw cid-bearing body until the embed lands.
+function stripCidRefs(html: string): string {
+  return html.replace(/src=["']cid:[^"']*["']/gi, 'src=""');
+}
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
 
+  // Background inline-image embeds still running, keyed `${userId}:${zimbraId}`.
+  // getMessage checks this to serve polls from the cached raw body instead of
+  // spawning a duplicate Zimbra fetch + embed per poll.
+  private readonly inflightEmbeds = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly zimbra: ZimbraService,
     private readonly notifications: NotificationsService,
+    private readonly tasksService: TasksService,
   ) {}
 
   private async getUser(userId: string) {
@@ -101,6 +174,42 @@ export class MailService {
     return saved;
   }
 
+  // `rules` and `junkFolder` are resolved once per `getMessages` call (see the
+  // caller) rather than fetched here — this method used to re-query both on
+  // every single message, which meant ~50 serialized Postgres queries (plus a
+  // Zimbra SOAP call per match) added to every folder-open, for every user,
+  // whether or not they use this feature at all.
+  // Public: called by SenderRuleSweepService, which owns rule enforcement now
+  // that it no longer runs inside the Inbox list GET.
+  async enforceSenderRules(
+    userId: string,
+    user: { zimbraHost: string; authToken: string; csrfToken?: string | null },
+    message: { id: string; zimbraId: string; fromEmail: string; folderId: string },
+    rules: SenderRuleLike[],
+    junkFolder: { id: string; zimbraId: string } | null,
+  ): Promise<void> {
+    if (matchSenderRule(message.fromEmail, rules) !== 'BLOCK') return;
+
+    const currentFolder = await this.prisma.folder.findFirst({ where: { userId, id: message.folderId } });
+    if (currentFolder && SPAM_FOLDER_PATHS.includes(currentFolder.path)) return;
+
+    if (!junkFolder) {
+      this.logger.warn(
+        `Sender rule BLOCK matched for message id=${message.id} (userId=${userId}) but no /Junk or /Spam folder is synced for this account — skipping auto-file.`,
+      );
+      return;
+    }
+
+    await this.zimbra.moveMessage(
+      user.zimbraHost,
+      user.authToken,
+      message.zimbraId,
+      junkFolder.zimbraId,
+      user.csrfToken ?? undefined,
+    );
+    await this.prisma.message.update({ where: { id: message.id }, data: { folderId: junkFolder.id } });
+  }
+
   async getMessages(userId: string, folderId: string, limit = 50, offset = 0) {
     const user = await this.getUser(userId);
 
@@ -118,15 +227,14 @@ export class MailService {
       user.csrfToken ?? undefined,
     );
 
-    const saved: any[] = [];
-    for (const m of messages) {
-      try {
+    const results = await Promise.allSettled(
+      messages.map((m) => {
         const fromAddr = m.e?.find((e) => e.t === 'f');
         const toAddrs = (m.e ?? []).filter((e) => e.t === 't').map((e) => ({ email: e.a, name: e.d }));
         const flags = m.f ?? '';
         const zimbraId = String(m.id);   // Zimbra may return numeric IDs
 
-        const msg = await this.prisma.message.upsert({
+        return this.prisma.message.upsert({
           where: { userId_zimbraId: { userId, zimbraId } },
           update: {
             isRead:    !flags.includes('u'),
@@ -150,16 +258,52 @@ export class MailService {
             hasAttachments:  flags.includes('a'),
             receivedAt:      new Date(m.d),
           },
+          // Metadata only — the list view never needs bodies, and bodyHtml
+          // with embedded base64 images for 50 messages at once can exceed
+          // V8's string length limit in JSON.stringify.
+          select: {
+            id: true,
+            userId: true,
+            folderId: true,
+            zimbraId: true,
+            conversationId: true,
+            subject: true,
+            snippet: true,
+            fromEmail: true,
+            fromName: true,
+            toRecipients: true,
+            ccRecipients: true,
+            bccRecipients: true,
+            replyTo: true,
+            isRead: true,
+            isStarred: true,
+            isDraft: true,
+            hasAttachments: true,
+            flags: true,
+            tags: true,
+            sentAt: true,
+            receivedAt: true,
+            syncedAt: true,
+            createdAt: true,
+            updatedAt: true,
+          },
         });
-        // Strip large body fields — the list view only needs metadata.
-        // Returning bodyHtml with embedded base64 images for 50 messages at
-        // once can exceed V8's string length limit in JSON.stringify.
-        const { bodyHtml: _bh, bodyText: _bt, inlineImages: _ii, attachments: _att, ...msgMeta } = msg as any;
-        saved.push(msgMeta);
-      } catch (err: any) {
-        this.logger.error(`Failed to upsert message zimbraId=${m.id}: ${err?.message}`);
+      }),
+    );
+
+    const saved: any[] = [];
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled') {
+        saved.push(result.value);
+      } else {
+        this.logger.error(`Failed to upsert message zimbraId=${messages[i].id}: ${result.reason?.message}`);
       }
-    }
+    });
+
+    // Sender-rule enforcement deliberately does NOT run here: a mutating SOAP
+    // call in a read path cost rule-owning users up to 50 serial Zimbra moves
+    // of latency per Inbox load. SenderRuleSweepService enforces the same
+    // rules each minute against the rows this read-through cache just synced.
 
     return {
       messages: saved,
@@ -186,6 +330,18 @@ export class MailService {
       return cached;
     }
 
+    // A background embed for this message is still running (the previous open
+    // returned early with embedPending). Serve the cached raw body again instead
+    // of firing a duplicate Zimbra fetch + embed — the poller will get the final
+    // version once the in-flight embed lands in the DB.
+    if (cached && this.inflightEmbeds.has(`${userId}:${cached.zimbraId}`)) {
+      return {
+        ...cached,
+        bodyHtml: cached.bodyHtml == null ? cached.bodyHtml : stripCidRefs(cached.bodyHtml),
+        embedPending: true,
+      };
+    }
+
     const m = await this.zimbra.getMessage(
       user.zimbraHost,
       user.authToken!,
@@ -207,14 +363,15 @@ export class MailService {
       .filter((e) => e.t === 'b')
       .map((e) => ({ email: e.a, name: e.d ?? null }));
 
-    // Embed inline images with a time budget.
-    // - If Zimbra responds quickly (< 5 s): return fully embedded HTML immediately.
-    // - If slow: return raw HTML now and finish embedding in the background so the
-    //   next open returns the cached, fully embedded version instantly.
-    // 5 s (up from 2 s) because on-premise Zimbra servers regularly take 3–7 s to
-    // serve attachment buffers over an internal network.
-    const EMBED_BUDGET_MS = 5_000;
+    // Embed inline images with a short time budget.
+    // - If Zimbra responds quickly: return fully embedded HTML immediately.
+    // - If slow: return the raw HTML now flagged `embedPending` (cid refs stripped
+    //   for display) and finish embedding in the background — the client polls
+    //   getMessage until the pending flag clears, so slow Zimbra attachment
+    //   fetches never hold the open behind a spinner.
+    const EMBED_BUDGET_MS = Number(process.env.EMBED_BUDGET_MS ?? 1_500);
     let bodyHtml = rawBodyHtml;
+    let embedPending = false;
 
     // Detect any src attribute pointing to the Zimbra host — covers
     // /service/home/ (inline attachments), /service/proxy/ (image proxy for
@@ -240,7 +397,11 @@ export class MailService {
         // Timed out — warm the cache in the background; next open will be instant.
         // Use updateMany keyed on zimbraId so this works whether the DB record was
         // pre-existing (folder-listed message) or newly upserted below (search result).
-        void embedTask
+        // Register the task in inflightEmbeds so polls for this message reuse the
+        // cached raw body instead of spawning duplicate Zimbra fetches.
+        embedPending = true;
+        const embedKey = `${userId}:${String(m.id)}`;
+        const background = embedTask
           .then((embeddedHtml) =>
             this.prisma.message.updateMany({
               where: { userId, zimbraId: String(m.id) },
@@ -249,7 +410,9 @@ export class MailService {
           )
           .catch((err: any) =>
             this.logger.error(`[getMessage] background embed failed: ${err?.message}`),
-          );
+          )
+          .finally(() => this.inflightEmbeds.delete(embedKey));
+        this.inflightEmbeds.set(embedKey, background);
       }
     }
 
@@ -309,6 +472,16 @@ export class MailService {
       }
     }
 
+    if (embedPending) {
+      // DB keeps the raw cid-bearing body (so the cache guard above keeps treating
+      // it as not-final); the response gets a display-safe copy with cid refs
+      // stripped so the client never renders broken-image icons.
+      return {
+        ...result,
+        bodyHtml: result.bodyHtml == null ? result.bodyHtml : stripCidRefs(result.bodyHtml),
+        embedPending: true,
+      };
+    }
     return result;
   }
 
@@ -360,49 +533,41 @@ export class MailService {
       });
       const folderByZimbraId = new Map(folders.map((f) => [f.zimbraId, f.id]));
 
-      for (const m of zimbraMsgs) {
+      // Collect the missing rows and insert them in ONE batched write — a
+      // 20-message thread used to cost 20 serial upsert round-trips inside the
+      // open-thread request. skipDuplicates covers the race where a row appears
+      // between the existing-ids read and this insert (the old upsert's only
+      // remaining job, since already-synced ids are filtered out above).
+      const rows = zimbraMsgs.flatMap((m) => {
         const zimbraId = String(m.id);
-        if (existingZimbraIds.has(zimbraId)) continue; // already synced
+        if (existingZimbraIds.has(zimbraId)) return []; // already synced
 
-        try {
-          const fromAddr    = m.e?.find((e) => e.t === 'f');
-          const toAddrs     = (m.e ?? []).filter((e) => e.t === 't').map((e) => ({ email: e.a, name: e.d ?? null }));
-          const ccAddrs     = (m.e ?? []).filter((e) => e.t === 'c').map((e) => ({ email: e.a, name: e.d ?? null }));
-          const flags       = m.f ?? '';
-          const folderId    = folderByZimbraId.get(String(m.l));
+        const folderId = folderByZimbraId.get(String(m.l));
+        if (!folderId) return []; // folder not yet synced — skip
 
-          if (!folderId) continue; // folder not yet synced — skip
+        const fromAddr = m.e?.find((e) => e.t === 'f');
+        const flags    = m.f ?? '';
+        return [{
+          userId,
+          folderId,
+          zimbraId,
+          conversationId: msg.conversationId,
+          subject:        m.su ?? null,
+          snippet:        m.fr ?? null,
+          fromEmail:      fromAddr?.a ?? '',
+          fromName:       fromAddr?.d ?? null,
+          toRecipients:   (m.e ?? []).filter((e) => e.t === 't').map((e) => ({ email: e.a, name: e.d ?? null })),
+          ccRecipients:   (m.e ?? []).filter((e) => e.t === 'c').map((e) => ({ email: e.a, name: e.d ?? null })),
+          isRead:         !flags.includes('u'),
+          isStarred:       flags.includes('f'),
+          isDraft:         flags.includes('d'),
+          hasAttachments:  flags.includes('a'),
+          receivedAt:      new Date(m.d),
+        }];
+      });
 
-          await this.prisma.message.upsert({
-            where:  { userId_zimbraId: { userId, zimbraId } },
-            create: {
-              userId,
-              folderId,
-              zimbraId,
-              conversationId: msg.conversationId,
-              subject:        m.su  ?? null,
-              snippet:        m.fr  ?? null,
-              fromEmail:      fromAddr?.a ?? '',
-              fromName:       fromAddr?.d ?? null,
-              toRecipients:   toAddrs,
-              ccRecipients:   ccAddrs,
-              isRead:         !flags.includes('u'),
-              isStarred:       flags.includes('f'),
-              isDraft:         flags.includes('d'),
-              hasAttachments:  flags.includes('a'),
-              receivedAt:      new Date(m.d),
-            },
-            update: {
-              conversationId: msg.conversationId,
-              isRead:    !flags.includes('u'),
-              isStarred:  flags.includes('f'),
-              isDraft:    flags.includes('d'),
-              syncedAt:   new Date(),
-            },
-          });
-        } catch (err: any) {
-          this.logger.warn(`[getConversation] failed to upsert zimbraId=${m.id}: ${err?.message}`);
-        }
+      if (rows.length > 0) {
+        await this.prisma.message.createMany({ data: rows, skipDuplicates: true });
       }
     } catch (err: any) {
       // Back-fill is best-effort — a Zimbra outage must not break the thread view
@@ -923,8 +1088,12 @@ export class MailService {
   ): Array<{ id: string; filename: string; mimeType: string; size: number }> {
     const result: Array<{ id: string; filename: string; mimeType: string; size: number }> = [];
     for (const part of parts) {
-      // A part is an attachment when it has a filename and is not the inline body
-      if (part.filename && !part.body) {
+      // A part is an attachment when it has a filename and is not the inline body.
+      // CID-referenced inline images (signature logos, tracking pixels) carry a
+      // filename too but belong to the body — surfacing them as attachments
+      // pollutes attachment counts and the "has attachment" filter.
+      const isInlineImage = part.ci && part.ct?.startsWith('image/');
+      if (part.filename && !part.body && !isInlineImage) {
         result.push({
           id:       String(part.part),
           filename: part.filename,
@@ -1220,7 +1389,17 @@ export class MailService {
   async cancelScheduledMessage(userId: string, id: string) {
     const msg = await this.prisma.scheduledMessage.findFirst({ where: { userId, id } });
     if (!msg) throw new NotFoundException('Scheduled message not found');
-    return this.prisma.scheduledMessage.update({ where: { id }, data: { status: 'CANCELLED' } });
+    // Only PENDING rows can be cancelled: once processDueScheduled has claimed
+    // one as SENDING the send is already in flight, and reporting it cancelled
+    // would contradict the mail the recipient receives.
+    const cancelled = await this.prisma.scheduledMessage.updateMany({
+      where: { id, status: 'PENDING' },
+      data: { status: 'CANCELLED' },
+    });
+    if (cancelled.count === 0) {
+      throw new ConflictException('Message is already being sent and can no longer be cancelled');
+    }
+    return this.prisma.scheduledMessage.findUnique({ where: { id } });
   }
 
   async getScheduledMessages(userId: string) {
@@ -1233,6 +1412,17 @@ export class MailService {
 
   /** Called by MailScheduler — send all due scheduled messages */
   async processDueScheduled() {
+    // Sweep rows stranded in SENDING by a crash mid-send; mark FAILED rather
+    // than PENDING so an uncertain send is never retried as a duplicate.
+    const stuckBefore = new Date(Date.now() - 15 * 60 * 1000);
+    const swept = await this.prisma.scheduledMessage.updateMany({
+      where: { status: 'SENDING', updatedAt: { lt: stuckBefore } },
+      data: { status: 'FAILED', errorMsg: 'Send did not complete (stuck in SENDING)' },
+    });
+    if (swept.count > 0) {
+      this.logger.warn(`Marked ${swept.count} scheduled message(s) stuck in SENDING as FAILED`);
+    }
+
     const due = await this.prisma.scheduledMessage.findMany({
       where: { status: 'PENDING', sendAt: { lte: new Date() } },
       include: { user: true },
@@ -1240,6 +1430,12 @@ export class MailService {
     for (const msg of due) {
       const user = msg.user as any;
       if (!user.authToken) continue;
+      // Atomic claim — only one worker wins the PENDING→SENDING transition.
+      const claimed = await this.prisma.scheduledMessage.updateMany({
+        where: { id: msg.id, status: 'PENDING' },
+        data: { status: 'SENDING' },
+      });
+      if (claimed.count === 0) continue;
       try {
         await this.zimbra.sendMessage(
           user.zimbraHost,
@@ -1253,7 +1449,10 @@ export class MailService {
           },
           user.csrfToken ?? undefined,
         );
-        await this.prisma.scheduledMessage.update({ where: { id: msg.id }, data: { status: 'SENT' } });
+        await this.prisma.scheduledMessage.updateMany({
+          where: { id: msg.id, status: 'SENDING' },
+          data: { status: 'SENT' },
+        });
         await this.notifications.createNotification(
           msg.userId,
           'SCHEDULED_SENT',
@@ -1262,8 +1461,8 @@ export class MailService {
         ).catch(() => {});
       } catch (err: any) {
         this.logger.warn(`Scheduled message ${msg.id} failed: ${err?.message}`);
-        await this.prisma.scheduledMessage.update({
-          where: { id: msg.id },
+        await this.prisma.scheduledMessage.updateMany({
+          where: { id: msg.id, status: 'SENDING' },
           data: { status: 'FAILED', errorMsg: err?.message ?? 'Unknown error' },
         });
       }
@@ -1319,6 +1518,27 @@ export class MailService {
     const rule = await this.prisma.mailRule.findFirst({ where: { userId, id } });
     if (!rule) throw new NotFoundException('Rule not found');
     await this.prisma.mailRule.delete({ where: { id } });
+    return { success: true };
+  }
+
+  // ─── Sender Rules (Blocked / Allowed) ───────────────────────────────────────
+
+  async getSenderRules(userId: string) {
+    await this.getUser(userId);
+    return this.prisma.senderRule.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+  }
+
+  async createSenderRule(userId: string, dto: { type: 'BLOCK' | 'ALLOW'; address: string }) {
+    await this.getUser(userId);
+    return this.prisma.senderRule.create({
+      data: { userId, type: dto.type, address: dto.address.trim().toLowerCase() },
+    });
+  }
+
+  async deleteSenderRule(userId: string, id: string) {
+    const rule = await this.prisma.senderRule.findFirst({ where: { userId, id } });
+    if (!rule) throw new NotFoundException('Sender rule not found');
+    await this.prisma.senderRule.delete({ where: { id } });
     return { success: true };
   }
 
@@ -1392,5 +1612,219 @@ export class MailService {
       } catch { results.push({ id: messageId, success: false }); }
     }
     return { results };
+  }
+
+  // ── Triage cards (read paths) ─────────────────────────────────────────────
+
+  /** Batch label lookup for a set of message ids, scoped to the caller and excluding tombstones. */
+  async getCardsByIds(
+    userId: string,
+    ids: string[],
+  ): Promise<{ cards: Record<string, { label: TriageLabel; importance: string; injectionSuspected: boolean }> }> {
+    if (ids.length > MAX_CARD_IDS) {
+      throw new BadRequestException(`Too many ids (max ${MAX_CARD_IDS})`);
+    }
+    if (ids.length === 0) return { cards: {} };
+
+    const rows = await this.prisma.messageCard.findMany({
+      where: { userId, messageId: { in: ids }, failed: false },
+    });
+
+    const cards: Record<string, { label: TriageLabel; importance: string; injectionSuspected: boolean }> = {};
+    for (const row of rows as any[]) {
+      cards[row.messageId] = {
+        label: deriveLabel({
+          asksOfMe: row.asksOfMe as string[],
+          waitingOn: row.waitingOn,
+          deadlines: row.deadlines as string[],
+        }),
+        importance: row.importance,
+        injectionSuspected: row.injectionSuspected,
+      };
+    }
+    return { cards };
+  }
+
+  private windowCutoff(window: CardWindow): Date {
+    if (window === 'today') {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+    if (window === '24h') return new Date(Date.now() - 24 * 60 * 60 * 1000);
+    return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  }
+
+  private toExtractedCard(row: WindowCardRow): ExtractedCard {
+    const msg = row.message;
+    return {
+      messageId: row.messageId,
+      conversationId: msg.conversationId,
+      direction: msg.folder?.path === '/Sent' ? 'sent' : 'received',
+      from: msg.fromName ? `${msg.fromName} <${msg.fromEmail}>` : msg.fromEmail,
+      subject: msg.subject,
+      receivedAt: msg.receivedAt.toISOString(),
+      gist: row.gist,
+      asksOfMe: row.asksOfMe as string[],
+      deadlines: row.deadlines as string[],
+      commitmentsIMade: row.commitmentsIMade as string[],
+      waitingOn: row.waitingOn,
+      importance: row.importance as ExtractedCard['importance'],
+      attachments: formatAttachments(msg.attachments),
+      injectionSuspected: row.injectionSuspected,
+    };
+  }
+
+  /** Full cards for the caller's Inbox+Sent within a time window, newest first, capped, tombstones excluded. */
+  async getWindowCards(userId: string, window: string): Promise<{ cards: ExtractedCard[] }> {
+    if (!(CARD_WINDOWS as readonly string[]).includes(window)) {
+      throw new BadRequestException(`Invalid window (expected one of ${CARD_WINDOWS.join(', ')})`);
+    }
+
+    const gte = this.windowCutoff(window as CardWindow);
+
+    const rows = (await this.prisma.messageCard.findMany({
+      where: {
+        userId,
+        failed: false,
+        message: {
+          receivedAt: { gte },
+          folder: { path: { in: CARD_FOLDER_PATHS } },
+        },
+      },
+      include: { message: { include: { folder: true } } },
+      orderBy: { message: { receivedAt: 'desc' } },
+      take: MAX_WINDOW_CARDS,
+    })) as unknown as WindowCardRow[];
+
+    return { cards: rows.map((row) => this.toExtractedCard(row)) };
+  }
+
+  // ── Commitments ledger ──────────────────────────────────────────────────────
+
+  /** Batch-resolve from-labels for a set of source message ids. Missing rows map to null. */
+  private async counterpartiesFor(userId: string, messageIds: string[]): Promise<Map<string, string>> {
+    if (messageIds.length === 0) return new Map();
+    const messages = await this.prisma.message.findMany({
+      where: { id: { in: messageIds }, userId },
+      select: { id: true, fromName: true, fromEmail: true },
+    });
+    const map = new Map<string, string>();
+    for (const m of messages as any[]) {
+      map.set(m.id, m.fromName ? `${m.fromName} <${m.fromEmail}>` : m.fromEmail);
+    }
+    return map;
+  }
+
+  /** Grouped, user-scoped commitment ledger. `openCount` always reflects status='open'. */
+  async getCommitments(
+    userId: string,
+    status: string,
+  ): Promise<{ promised: CommitmentDto[]; waiting: CommitmentDto[]; openCount: number }> {
+    if (!(COMMITMENT_STATUS_FILTERS as readonly string[]).includes(status)) {
+      throw new BadRequestException(`Invalid status (expected one of ${COMMITMENT_STATUS_FILTERS.join(', ')})`);
+    }
+
+    const where =
+      (status as CommitmentStatusFilter) === 'open'
+        ? { userId, status: 'open' }
+        : { userId, status: 'archived' };
+
+    const [rows, openCount] = await Promise.all([
+      this.prisma.commitment.findMany({
+        where,
+        orderBy: { lastActivityAt: 'desc' },
+        take: MAX_COMMITMENTS,
+      }),
+      this.prisma.commitment.count({ where: { userId, status: 'open' } }),
+    ]);
+
+    const counterparties = await this.counterpartiesFor(userId, [...new Set((rows as any[]).map((r) => r.messageId))]);
+
+    const toDto = (row: any): CommitmentDto => {
+      const { userId: _userId, textHash: _textHash, ...rest } = row;
+      return { ...rest, counterparty: counterparties.get(row.messageId) ?? null };
+    };
+
+    const promised = (rows as any[]).filter((r) => r.type === 'promised').map(toDto);
+    const waiting = (rows as any[]).filter((r) => r.type === 'waiting').map(toDto);
+
+    return { promised, waiting, openCount };
+  }
+
+  /** Human resolution/reopen. Always clears `suggestResolve`; sets/nulls `resolvedAt`.
+   * Returns the updated row (minus userId/textHash) — the web `request<T>` helper
+   * calls `res.json()` unconditionally, which rejects on an empty body, so the
+   * PATCH response must carry something even though callers currently ignore it.
+   */
+  async updateCommitment(userId: string, id: string, status: string): Promise<CommitmentRow> {
+    if (!(COMMITMENT_UPDATE_STATUSES as readonly string[]).includes(status)) {
+      throw new BadRequestException(`Invalid status (expected one of ${COMMITMENT_UPDATE_STATUSES.join(', ')})`);
+    }
+
+    const commitment = await this.prisma.commitment.findUnique({ where: { id } });
+    if (!commitment || commitment.userId !== userId) throw new NotFoundException('Commitment not found');
+    // Promoted rows are terminal in the ledger — the linked Task is now authoritative.
+    // Allowing a transition here would leave a stale taskId and enable re-promotion
+    // (duplicate Task) via a second POST .../promote call.
+    if (commitment.status === 'promoted') {
+      throw new ConflictException('A promoted commitment cannot be resolved or reopened here');
+    }
+
+    const updated = await this.prisma.commitment.update({
+      where: { id },
+      data: {
+        status,
+        resolvedAt: (status as CommitmentUpdateStatus) === 'open' ? null : new Date(),
+        suggestResolve: false,
+      },
+    });
+
+    const { userId: _userId, textHash: _textHash, ...rest } = updated as any;
+    return rest;
+  }
+
+  /** Promotes an open commitment to a real Task; the ledger row is then a historical pointer.
+   * `overrides` (all optional) let the caller override title/description/dueDate/priority on
+   * the created Task — an empty/absent body preserves the prior default derivation. */
+  async promoteCommitment(
+    userId: string,
+    id: string,
+    overrides?: PromoteCommitmentDto,
+  ): Promise<{ taskId: string; task: Awaited<ReturnType<TasksService['create']>> }> {
+    const commitment = await this.prisma.commitment.findUnique({ where: { id } });
+    if (!commitment || commitment.userId !== userId) throw new NotFoundException('Commitment not found');
+    if (commitment.status !== 'open') throw new ConflictException('Only an open commitment can be promoted');
+
+    const sourceMessage = await this.prisma.message.findFirst({
+      where: { id: commitment.messageId, userId },
+      select: { subject: true },
+    });
+
+    const task = await this.tasksService.create(userId, {
+      title: overrides?.title?.trim() || commitment.text,
+      description: overrides?.description ?? `${commitment.dueHint ? `Due hint: ${commitment.dueHint}. ` : ''}Extracted from email.`,
+      dueDate: overrides?.dueDate,
+      priority: overrides?.priority,
+      linkedMessageId: commitment.messageId,
+      linkedSubject: sourceMessage?.subject ?? undefined,
+    });
+
+    try {
+      await this.prisma.commitment.update({
+        where: { id },
+        data: { status: 'promoted', taskId: task.id, resolvedAt: new Date() },
+      });
+    } catch (err) {
+      // Saga-style compensation: the Task was already created, but the ledger
+      // write that records it failed. Leaving the Task orphaned would let a
+      // retry of this endpoint create a second, duplicate Task for the same
+      // commitment — best-effort delete it, then rethrow so the caller still
+      // sees the failure.
+      await this.prisma.task.delete({ where: { id: task.id } }).catch(() => {});
+      throw err;
+    }
+
+    return { taskId: task.id, task };
   }
 }

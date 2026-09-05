@@ -34,6 +34,7 @@ model User {
   scheduledMessages  ScheduledMessage[]
   emailTemplates     EmailTemplate[]
   mailRules          MailRule[]
+  senderRules        SenderRule[]
   mutedConversations MutedConversation[]
   contactGroups      ContactGroup[]
   notifications      Notification[]
@@ -44,6 +45,9 @@ model User {
   docVersionsCreated     DocVersion[]
   docActivity            DocActivity[]
   auditLogs              AuditLog[]
+  messageCards           MessageCard[]
+  commitments            Commitment[]
+  messageEmbeddings      MessageEmbedding[]
 
   @@map("users")
 }
@@ -75,13 +79,14 @@ model AuditLog {
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  userAgent String?
-  ipAddress String?
+  id         String   @id @default(cuid())
+  userId     String
+  token      String   @unique
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  userAgent  String?
+  ipAddress  String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -153,13 +158,87 @@ model Message {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder     Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  card       MessageCard?
+  embeddings MessageEmbedding[]
 
   @@unique([userId, zimbraId])
   @@index([userId, folderId])
   @@index([userId, conversationId])
+  @@index([receivedAt])
   @@map("messages")
+}
+
+model MessageCard {
+  id                 String   @id @default(cuid())
+  messageId          String   @unique
+  userId             String
+  model              String
+  gist               String
+  asksOfMe           Json     @default("[]")
+  deadlines          Json     @default("[]")
+  commitmentsIMade   Json     @default("[]")
+  waitingOn          String?
+  importance         String   // 'high' | 'normal' | 'low'
+  injectionSuspected Boolean  @default(false)
+  failed             Boolean  @default(false) // tombstone: extraction gave up; invisible to reads
+  extractedAt        DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, extractedAt])
+  @@map("message_cards")
+}
+
+// The `embedding` column has a hand-written HNSW index (see migration
+// 20260903211047_add_message_embeddings) that Prisma cannot represent on an
+// Unsupported() column. Running `prisma migrate dev` again will therefore
+// offer a migration that DROPS "message_embeddings_embedding_hnsw_idx" —
+// always decline that offer; it is spurious drift detection, not a real
+// schema change.
+model MessageEmbedding {
+  id          String                       @id @default(cuid())
+  messageId   String
+  userId      String
+  chunkIndex  Int                          // 0-based; <= 4 chunks per message
+  model       String                       // embed-model tag; model change => re-embed
+  chunkText   String                       // the embedded text — prompt context + snippet
+  embedding   Unsupported("vector(1024)")? // null on tombstone rows; written via $executeRaw
+  failed      Boolean  @default(false)     // tombstone: embedding gave up; invisible to reads
+  extractedAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, chunkIndex, model])
+  @@index([userId, extractedAt])
+  @@map("message_embeddings")
+}
+
+model Commitment {
+  id             String    @id @default(cuid())
+  userId         String
+  conversationId String?
+  messageId      String    // source message (kept even after its card purges)
+  type           String    // 'promised' | 'waiting'
+  text           String
+  dueHint        String?   // fuzzy, as stated in the mail ("by Friday")
+  status         String    @default("open") // open | done | dismissed | archived | promoted
+  suggestResolve Boolean   @default(false)
+  hintMessageId  String?   // newest conversation message that triggered the hint
+  taskId         String?   // set when promoted to a Task
+  textHash       String    // sha256 of normalized text — dedupe key
+  extractedAt    DateTime  @default(now())
+  lastActivityAt DateTime  @default(now())
+  resolvedAt     DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, textHash])
+  @@index([userId, status, lastActivityAt])
+  @@map("commitments")
 }
 
 // ─── Contacts ────────────────────────────────────────────────────────────────
@@ -284,6 +363,7 @@ model SnoozedMessage {
 
 enum ScheduledMessageStatus {
   PENDING
+  SENDING
   SENT
   FAILED
   CANCELLED
@@ -343,6 +423,26 @@ model MailRule {
   @@map("mail_rules")
 }
 
+enum SenderRuleType {
+  BLOCK
+  ALLOW
+}
+
+model SenderRule {
+  id        String         @id @default(cuid())
+  userId    String
+  type      SenderRuleType
+  // Exact address ("person@example.com") or a domain wildcard ("@example.com").
+  address   String
+  createdAt DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, address])
+  @@index([userId])
+  @@map("sender_rules")
+}
+
 model MutedConversation {
   id             String   @id @default(cuid())
   userId         String
@@ -395,6 +495,11 @@ model Notification {
 
 // ─── Docs ─────────────────────────────────────────────────────────────────────
 
+enum SharePermission {
+  VIEW
+  EDIT
+}
+
 model Document {
   id         String   @id @default(cuid())
   userId     String
@@ -405,6 +510,7 @@ model Document {
   position   Int      @default(0)
   shareToken String?  @unique   // UUID; set when sharing is enabled
   isShared   Boolean  @default(false)
+  sharePermission SharePermission @default(VIEW)   // what a share-link holder may do
   yjsState   Bytes?               // Yjs encoded binary state for real-time collaboration
   isFavorite Boolean  @default(false)
   tags       String[] @default([])

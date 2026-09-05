@@ -1,19 +1,22 @@
 'use client';
 
 import { format, parseISO } from 'date-fns';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Reply, ReplyAll, Forward, Trash2, Archive, Star, Inbox, Tag, FolderOpen,
   Paperclip, Download, Loader2, MoreHorizontal,
   ChevronLeft, ChevronRight, X, Mail, User, Calendar,
   Eye, File, FileText, Image as ImageIcon, Printer, BellOff, Bell, AlarmClock,
-  Sparkles, X as XIcon,
+  ScrollText, X as XIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { Button } from '@/components/ui/button';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
-import { sanitizeEmailHtml } from '@/lib/sanitize';
+import { prepareEmailHtml } from '@/lib/emailRender';
+import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
+import { downloadAll } from '@/lib/downloadAll';
+import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { toast } from 'sonner';
 import { QuickReplyBar } from '@/components/mail/QuickReplyBar';
 import { AttachmentLightbox } from '@/components/mail/AttachmentLightbox';
@@ -61,8 +64,8 @@ interface MailDetailProps {
   message?: MessageDetail | null;
   loading?: boolean;
   onClose?: () => void;
-  onReply?: () => void;
-  onReplyAll?: () => void;
+  onReply?: (initialBody?: string) => void;
+  onReplyAll?: (initialBody?: string) => void;
   onForward?: () => void;
   onDelete?: () => void;
   onToggleStar?: () => void;
@@ -98,41 +101,33 @@ function ActionBtn({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
+        <Button
+          variant={danger ? 'destructive-ghost' : 'ghost'}
+          size="icon-sm"
           onClick={onClick}
           className={cn(
-            'p-1.5 rounded-md transition-colors',
-            danger
-              ? 'text-muted-foreground/45 hover:text-destructive hover:bg-destructive/10'
-              : highlight
-              ? 'text-amber-400 hover:bg-muted'
-              : 'text-muted-foreground/45 hover:text-foreground hover:bg-muted',
+            !danger && (highlight ? 'text-warning-strong hover:bg-muted' : 'text-ink-3 hover:text-foreground hover:bg-muted'),
           )}
         >
-          <Icon className={cn('w-4 h-4', highlight && 'fill-amber-400')} />
-        </button>
+          <Icon className={cn('w-4 h-4', highlight && 'fill-warning-strong')} />
+        </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="text-xs">{label}</TooltipContent>
     </Tooltip>
   );
 }
 
-function extractBodyContent(html: string): string {
-  // Greedy match so that an early stray </body> inside the email body doesn't
-  // truncate the content (common in newsletter templates / old Outlook HTML).
-  const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  if (match) return match[1];
-  // No <body> tag at all — strip <head> and any stray html/body open/close tags,
-  // then return the rest verbatim (preserves content from old plaintext-to-HTML
-  // converters that omit the body element).
-  return html
-    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
-    .replace(/<\/?(html|body)[^>]*>/gi, '')
-    .trim();
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 const EMAIL_CSS = `*,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.6;overflow-x:hidden;word-wrap:break-word}
+html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;overflow-x:auto;word-wrap:break-word}
 a{color:#2563eb;text-decoration:underline}
 a:hover{color:#1d4ed8}
 img{max-width:100%;height:auto;display:inline-block}
@@ -159,7 +154,7 @@ font{font-family:inherit}`;
 // Heading-specific rules restore the visual hierarchy because those selectors
 // (h1, h2…) have higher specificity than the wildcard (*) rule.
 const NORMALIZE_CSS = `
-*,*::before,*::after{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif!important;color:#111827!important;background-color:transparent!important;font-size:14px!important;line-height:1.65!important;letter-spacing:normal!important;text-transform:none!important;font-weight:normal!important;font-style:normal!important}
+*,*::before,*::after{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif!important;color:#111827!important;background-color:transparent!important;font-size:16px!important;line-height:1.65!important;letter-spacing:normal!important;text-transform:none!important;font-weight:normal!important;font-style:normal!important}
 html,body{background-color:#ffffff!important;color:#111827!important}
 h1{font-size:22px!important;font-weight:700!important;line-height:1.3!important;margin:16px 0 8px!important}
 h2{font-size:18px!important;font-weight:600!important;line-height:1.3!important;margin:14px 0 6px!important}
@@ -194,16 +189,20 @@ function EmailBody({
       ? localStorage.getItem('1gov_normalize_email_styles') !== 'false'
       : true;
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(400);
 
   // Re-measure iframe height, deferred one animation frame so the browser has
   // finished reflowing (needed when called from an image's load event).
+  // Written straight to the element style instead of React state: every image
+  // load fires a resize, and a state update here would re-render (and re-build
+  // the srcDoc for) a body that can hold multi-megabyte base64 images.
   const resizeFrame = useCallback(() => {
-    const doc = iframeRef.current?.contentDocument;
-    if (!doc) return;
-    requestAnimationFrame(() =>
-      setHeight(Math.max(doc.documentElement.scrollHeight, 200)),
-    );
+    const frame = iframeRef.current;
+    const doc = frame?.contentDocument;
+    if (!frame || !doc) return;
+    requestAnimationFrame(() => {
+      if (!iframeRef.current?.contentDocument) return;
+      frame.style.height = `${Math.max(doc.documentElement.scrollHeight, 200)}px`;
+    });
   }, []);
 
   const handleLoad = useCallback(() => {
@@ -220,31 +219,28 @@ function EmailBody({
     });
   }, [resizeFrame]);
 
-  if (!html) {
-    return (
-      <pre className="whitespace-pre-wrap font-sans text-[13px] text-foreground/80 leading-relaxed">
-        {text ?? 'No content'}
-      </pre>
-    );
-  }
-
-  // Zimbra uses `dfsrc` instead of `src` on images (deferred loading). Convert
-  // them to standard `src` so the browser renders them correctly.
-  // Also strip the non-standard `name=` parameter from data URIs — e.g.
-  // `data:image/gif; name="foo.gif";base64,...` — whose unescaped inner quotes
-  // break HTML attribute parsing and cause the image to render as broken.
-  const body = sanitizeEmailHtml(
-    extractBodyContent(html)
-      .replace(/\bdfsrc=/gi, 'src=')
-      .replace(/data:([^;]+);\s*name="[^"]*";/gi, 'data:$1;'),
-  );
+  // Prepare (dfsrc fix, data-URI fix, sanitize — memoized in prepareEmailHtml)
+  // and build the srcDoc once per body; the hook runs before the no-html early
+  // return to keep the hook order stable.
   // upgrade-insecure-requests: silently upgrades http:// image/resource URLs to
   // https:// so external email images are not blocked by mixed-content policy on
   // HTTPS deployments.
   // NORMALIZE_CSS is appended after EMAIL_CSS so its !important rules override
   // any inline styles the sender embedded in the email HTML.
-  const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
-  const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${body}</body></html>`;
+  const srcDoc = useMemo(() => {
+    if (!html) return null;
+    const body = prepareEmailHtml(html);
+    const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${body}</body></html>`;
+  }, [html, normalizeStyles]);
+
+  if (!srcDoc) {
+    return (
+      <pre className="whitespace-pre-wrap font-sans text-ui text-ink-2 leading-relaxed">
+        {text ?? 'No content'}
+      </pre>
+    );
+  }
 
   return (
     <iframe
@@ -252,16 +248,12 @@ function EmailBody({
       srcDoc={srcDoc}
       onLoad={handleLoad}
       className="w-full border-0 block"
-      style={{ height }}
+      style={{ height: 400 }}
       sandbox="allow-same-origin"
       title="Email message"
     />
   );
 }
-
-// Fetches a blob: URL and renders its content as plain text — avoids any
-// embedded-frame restrictions that privacy-first browsers (e.g. Dia) impose on
-// blob: URLs loaded inside iframes.
 
 function MetaRow({ icon: Icon, label, children }: {
   icon: React.ElementType;
@@ -271,10 +263,10 @@ function MetaRow({ icon: Icon, label, children }: {
   return (
     <div className="flex items-start gap-3 py-2">
       <div className="flex items-center gap-2 w-20 shrink-0 mt-0.5">
-        <Icon className="w-3.5 h-3.5 text-muted-foreground/35 shrink-0" />
-        <span className="text-[12px] text-muted-foreground/50">{label}</span>
+        <Icon className="w-3.5 h-3.5 text-ink-4 shrink-0" />
+        <span className="text-ui text-ink-3">{label}</span>
       </div>
-      <div className="flex-1 min-w-0 text-[13px] text-foreground">
+      <div className="flex-1 min-w-0 text-ui text-foreground">
         {children}
       </div>
     </div>
@@ -304,6 +296,7 @@ export default function MailDetail({
   const classification = message ? pickHighestClassification(message.tags) : null;
   const [activeTab, setActiveTab] = useState<DetailTab>('message');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadingAll, setDownloadingAll] = useState(false);
   const [folderDropdownOpen, setFolderDropdownOpen] = useState(false);
   const folderDropdownRef = useRef<HTMLDivElement>(null);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -311,10 +304,14 @@ export default function MailDetail({
 
   // ── AI summarize state ────────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
-  const aiBaseUrl = useAIStore((s) => s.baseUrl);
   const aiModel = useAIStore((s) => s.model);
-  const aiApiKey = useAIStore((s) => s.apiKey);
-  const { text: streamedSummary, push: pushSummary, reset: resetSummary } = useCharStream();
+  const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  const {
+    text: streamedSummary,
+    push: pushSummary,
+    reset: resetSummary,
+    replace: replaceSummary,
+  } = useCharStream();
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -340,22 +337,24 @@ export default function MailDetail({
     setSummarizing(true);
     setSummaryOpen(true);
     try {
-      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
-      const body = message.bodyHtml ?? message.bodyText ?? '';
+      const client = new AIClient();
+      const body = message.bodyText ?? message.bodyHtml ?? '';
       const fromLabel = message.fromName
         ? `${message.fromName} <${message.fromEmail}>`
         : message.fromEmail;
-      await summarizeMessage(
+      const final = await summarizeMessage(
         client,
         body,
         {
           model: aiModel,
           subject: message.subject ?? undefined,
           from: fromLabel,
+          customInstructions: aiCustomInstructions,
           signal: abort.signal,
         },
         pushSummary,
       );
+      if (!abort.signal.aborted) replaceSummary(final);
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') return;
       const m = err instanceof Error ? err.message : String(err);
@@ -363,7 +362,7 @@ export default function MailDetail({
     } finally {
       setSummarizing(false);
     }
-  }, [message, aiBaseUrl, aiApiKey, aiModel, pushSummary, resetSummary]);
+  }, [message, aiModel, aiCustomInstructions, pushSummary, resetSummary, replaceSummary]);
 
   const closeSummary = useCallback(() => {
     summaryAbortRef.current?.abort();
@@ -407,35 +406,55 @@ export default function MailDetail({
       h1{font-size:20px;margin-bottom:4px}
       .meta{font-size:12px;color:#666;margin-bottom:16px;border-bottom:1px solid #e5e7eb;padding-bottom:12px}
       .meta span{margin-right:16px}`;
-    const body = message.bodyHtml ?? `<pre style="white-space:pre-wrap">${message.bodyText ?? ''}</pre>`;
-    const printWin = window.open('', '_blank', 'width=800,height=600');
-    if (!printWin) return;
-    printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${css}</style><title>${message.subject ?? 'Email'}</title></head><body>
-      <h1>${message.subject ?? '(no subject)'}</h1>
+    // Same sanitize pipeline as EmailBody — never inject raw email HTML.
+    const body = message.bodyHtml
+      ? prepareEmailHtml(message.bodyHtml)
+      : `<pre style="white-space:pre-wrap">${escapeHtml(message.bodyText ?? '')}</pre>`;
+    const fromStr = message.fromName
+      ? `${escapeHtml(message.fromName)} &lt;${escapeHtml(message.fromEmail)}&gt;`
+      : escapeHtml(message.fromEmail);
+    const toStr = escapeHtml(message.toRecipients.map((r) => r.name ?? r.email).join(', '));
+    const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="script-src 'none'"><style>${css}</style><title>${escapeHtml(message.subject ?? 'Email')}</title></head><body>
+      <h1>${escapeHtml(message.subject ?? '(no subject)')}</h1>
       <div class="meta">
-        <span><b>From:</b> ${message.fromName ? `${message.fromName} &lt;${message.fromEmail}&gt;` : message.fromEmail}</span>
-        <span><b>To:</b> ${message.toRecipients.map((r) => r.name ?? r.email).join(', ')}</span>
-        <span><b>Date:</b> ${message.receivedAt}</span>
+        <span><b>From:</b> ${fromStr}</span>
+        <span><b>To:</b> ${toStr}</span>
+        <span><b>Date:</b> ${escapeHtml(message.receivedAt)}</span>
       </div>
       ${body}
-      </body></html>`);
-    printWin.document.close();
-    printWin.focus();
-    setTimeout(() => { printWin.print(); }, 400);
+      </body></html>`;
+    // Hidden sandboxed iframe (no allow-scripts) instead of a same-origin
+    // popup, so the printed content can never reach the app's localStorage.
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-same-origin allow-modals');
+    frame.style.position = 'fixed';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    frame.style.width = '0';
+    frame.style.height = '0';
+    frame.style.border = '0';
+    frame.onload = () => {
+      frame.contentWindow?.print();
+      setTimeout(() => frame.remove(), 1000);
+    };
+    frame.srcdoc = srcDoc;
+    document.body.appendChild(frame);
   }, [message]);
 
   const handleDownload = useCallback(async (att: { id: string; filename: string }) => {
     if (!message || downloadingId) return;
     setDownloadingId(att.id);
     try {
-      const url = await api.mail.downloadAttachment(message.id, att.id);
+      // Shared blob cache: a preview-then-download (or repeat download) reuses
+      // the already-fetched blob instead of transferring the file again. The
+      // cache owns the URL lifecycle — no revoke here.
+      const url = await getAttachmentUrl(message.id, att.id, () => api.mail.downloadAttachment(message.id, att.id));
       const a = document.createElement('a');
       a.href = url;
       a.download = att.filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch (err: any) {
       toast.error('Download failed', { description: err?.message });
     } finally {
@@ -443,17 +462,30 @@ export default function MailDetail({
     }
   }, [message, downloadingId]);
 
+  const handleDownloadAll = useCallback(async () => {
+    if (downloadingAll || !message?.attachments?.length) return;
+    setDownloadingAll(true);
+    const items = message.attachments.map((a) => ({ messageId: message.id, id: a.id, filename: a.filename }));
+    const n = await downloadAll(
+      items,
+      (mid, aid) => getAttachmentUrl(mid, aid, () => api.mail.downloadAttachment(mid, aid)),
+      { onError: (f) => toast.error(`Failed to download ${f}`) },
+    );
+    if (n > 0) toast.success(`Downloaded ${n} file${n === 1 ? '' : 's'}`);
+    setDownloadingAll(false);
+  }, [downloadingAll, message]);
+
   // ── Loading skeleton ──────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex flex-col h-full bg-background">
-        <div className="h-11 border-b border-border/35 animate-pulse bg-muted/10" />
-        <div className="h-9 border-b border-border/25 animate-pulse bg-muted/5" />
+        <div className="h-11 border-b border-border-faint animate-pulse bg-muted/10" />
+        <div className="h-9 border-b border-border-faint animate-pulse bg-muted/5" />
         <div className="flex-1 p-5 animate-pulse space-y-4">
-          <div className="bg-card border border-border/40 rounded-xl p-5 space-y-3">
+          <div className="bg-card border border-border rounded-xl p-5 space-y-3">
             <div className="h-5 w-2/3 bg-muted rounded" />
             {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="flex gap-3 py-2 border-b border-border/20">
+              <div key={i} className="flex gap-3 py-2 border-b border-border-faint">
                 <div className="h-3 w-20 bg-muted/60 rounded" />
                 <div className="h-3 w-40 bg-muted/40 rounded" />
               </div>
@@ -469,20 +501,13 @@ export default function MailDetail({
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-8 bg-background">
         <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
-          <Mail className="w-6 h-6 text-muted-foreground/30" />
+          <Mail className="w-6 h-6 text-ink-4" />
         </div>
-        <p className="text-sm font-medium text-muted-foreground/55">Select a message to read</p>
-        <p className="text-xs text-muted-foreground/35 mt-1">Your email will appear here</p>
+        <p className="text-body font-medium text-ink-3">Select a message to read</p>
+        <p className="text-ui text-ink-4 mt-1">Your email will appear here</p>
       </div>
     );
   }
-
-  const senderInitials = (message.fromName ?? message.fromEmail)
-    .split(' ')
-    .map((w: string) => w[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
 
   const formattedDate = (() => {
     try { return format(parseISO(message.receivedAt), 'EEE, MMM d yyyy · h:mm a'); }
@@ -501,19 +526,21 @@ export default function MailDetail({
     <div className="flex flex-col h-full bg-background overflow-hidden relative">
 
       {/* ── Navigation header ─────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1 px-3 py-2 border-b border-border/35 shrink-0">
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-border-faint shrink-0">
         {onClose && (
-          <button
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={onClose}
             aria-label="Back"
-            className="p-1.5 rounded-md text-muted-foreground/55 hover:text-foreground hover:bg-muted transition-colors"
+            className="text-ink-3 hover:bg-muted hover:text-foreground"
           >
             <ChevronLeft className="w-4 h-4" />
-          </button>
+          </Button>
         )}
 
         {/* Subject as breadcrumb */}
-        <h2 className="flex-1 min-w-0 px-1.5 text-[13px] font-semibold text-foreground truncate">
+        <h2 className="flex-1 min-w-0 px-1.5 text-ui font-semibold text-foreground truncate">
           {message.subject ?? '(no subject)'}
         </h2>
 
@@ -528,18 +555,18 @@ export default function MailDetail({
             <ActionBtn icon={AlarmClock} label="Snooze" onClick={onSnooze} />
           )}
 
-          <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
+          <span className="mx-1 h-4 w-px bg-border-faint" aria-hidden />
 
           {/* Reply group */}
-          <ActionBtn icon={Reply}     label="Reply"     onClick={onReply} />
-          <ActionBtn icon={ReplyAll}  label="Reply All" onClick={onReplyAll} />
+          <ActionBtn icon={Reply}     label="Reply"     onClick={() => onReply?.()} />
+          <ActionBtn icon={ReplyAll}  label="Reply All" onClick={() => onReplyAll?.()} />
           <ActionBtn icon={Forward}   label="Forward"   onClick={onForward} />
 
           {aiEnabled && (
             <>
-              <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
+              <span className="mx-1 h-4 w-px bg-border-faint" aria-hidden />
               <ActionBtn
-                icon={Sparkles}
+                icon={ScrollText}
                 label="Summarize"
                 onClick={handleSummarize}
                 highlight={summaryOpen}
@@ -547,7 +574,7 @@ export default function MailDetail({
             </>
           )}
 
-          <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
+          <span className="mx-1 h-4 w-px bg-border-faint" aria-hidden />
 
           {/* Secondary group */}
           <ActionBtn
@@ -563,24 +590,26 @@ export default function MailDetail({
             <div ref={folderDropdownRef} className="relative">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
                     onClick={() => setFolderDropdownOpen((v) => !v)}
-                    className="p-1.5 rounded-md transition-colors text-muted-foreground/45 hover:text-foreground hover:bg-muted"
+                    className="text-ink-3 hover:bg-muted hover:text-foreground"
                   >
                     <Tag className="w-4 h-4" />
-                  </button>
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">Move to folder</TooltipContent>
               </Tooltip>
               {folderDropdownOpen && (
-                <div className="absolute right-0 top-full mt-1 bg-card border border-border/50 rounded-xl shadow-lg p-1.5 min-w-[160px] z-50">
+                <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded-xl shadow-lg p-1.5 min-w-[160px] z-50">
                   {labelFolders.map((folder) => (
                     <button
                       key={folder.id}
                       onClick={() => { setFolderDropdownOpen(false); onMoveToFolder(folder.id); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] rounded-md text-foreground/80 hover:bg-muted hover:text-foreground transition-colors"
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-ui rounded-md text-ink-2 hover:bg-muted hover:text-foreground transition-colors"
                     >
-                      <FolderOpen className="w-3.5 h-3.5 shrink-0 text-muted-foreground/50" />
+                      <FolderOpen className="w-3.5 h-3.5 shrink-0 text-ink-3" />
                       {folder.name}
                     </button>
                   ))}
@@ -599,16 +628,16 @@ export default function MailDetail({
       </div>
 
       {/* ── Tab bar ───────────────────────────────────────────────────────── */}
-      <div className="flex items-end gap-0 px-4 border-b border-border/25 shrink-0 bg-background">
+      <div className="flex items-end gap-0 px-4 border-b border-border-faint shrink-0 bg-background">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              'px-4 py-2.5 text-[13px] font-medium transition-all border-b-2 -mb-px',
+              'px-4 py-2.5 text-ui font-medium transition-all border-b-2 -mb-px',
               activeTab === tab.id
                 ? 'text-primary border-primary'
-                : 'text-muted-foreground/55 border-transparent hover:text-foreground hover:border-border/50',
+                : 'text-ink-3 border-transparent hover:text-foreground hover:border-border',
             )}
           >
             {tab.label}
@@ -621,15 +650,15 @@ export default function MailDetail({
 
         {/* Overview tab */}
         {activeTab === 'overview' && (
-          <div className="p-6 space-y-5">
+          <div className="px-6 pt-8 pb-6 space-y-5 w-full">
 
             {/* Subject title + sender subtitle — outside the card */}
             <div>
-              <h1 className="text-[20px] font-semibold text-foreground leading-snug mb-1.5">
+              <h1 className="text-display text-balance text-foreground mb-1.5">
                 {message.subject ?? '(no subject)'}
               </h1>
               <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-[13px] text-muted-foreground/65">
+                <p className="text-body font-medium text-ink-2">
                   {message.fromName ?? message.fromEmail}
                 </p>
                 {classification && <ClassificationChip value={classification.label} size="sm" withIcon />}
@@ -637,20 +666,20 @@ export default function MailDetail({
             </div>
 
             {/* Detail card */}
-            <div className="bg-card border border-border/40 rounded-2xl overflow-hidden">
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
 
               {/* Sender strip */}
-              <div className="flex items-center gap-3 px-5 py-4 border-b border-border/25">
+              <div className="flex items-center gap-3 px-5 py-4 border-b border-border-faint">
                 <MailAvatar
                   name={message.fromName}
                   email={message.fromEmail}
                   size="md"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-semibold text-foreground leading-none mb-0.5">
+                  <p className="text-ui font-semibold text-foreground leading-none mb-0.5">
                     {message.fromName ?? message.fromEmail}
                   </p>
-                  <p className="text-[11px] text-muted-foreground/55">{formattedDate}</p>
+                  <p className="text-micro text-ink-3">{formattedDate}</p>
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
                   <ActionBtn icon={MoreHorizontal} label="More" />
@@ -663,7 +692,7 @@ export default function MailDetail({
                   <div className="flex items-center gap-2 flex-wrap">
                     <span>{message.fromName ?? message.fromEmail}</span>
                     {message.fromName && (
-                      <span className="text-[11px] text-muted-foreground/40">
+                      <span className="text-micro text-ink-3">
                         &lt;{message.fromEmail}&gt;
                       </span>
                     )}
@@ -689,20 +718,20 @@ export default function MailDetail({
                 <MetaRow icon={Tag} label="Status">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={cn(
-                      'inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium',
+                      'inline-flex items-center px-2 py-0.5 rounded-md text-micro font-medium',
                       message.isRead
-                        ? 'bg-muted text-muted-foreground'
+                        ? 'bg-muted text-ink-2'
                         : 'bg-primary/10 text-primary',
                     )}>
                       {message.isRead ? 'Read' : 'Unread'}
                     </span>
                     {message.isStarred && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-400/15 text-amber-600">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-micro font-medium bg-warning/15 text-warning-strong">
                         Starred
                       </span>
                     )}
                     {message.hasAttachments && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-muted text-muted-foreground">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-micro font-medium bg-muted text-ink-2">
                         <Paperclip className="w-2.5 h-2.5" /> Attachments
                       </span>
                     )}
@@ -713,14 +742,14 @@ export default function MailDetail({
 
               {/* Description section */}
               {(message.bodyText || message.bodyHtml) && (
-                <div className="px-5 pt-4 pb-5 border-t border-border/25">
-                  <h4 className="text-[14px] font-semibold text-foreground mb-3">Description</h4>
-                  <p className="text-[13px] text-foreground/65 leading-relaxed">
+                <div className="px-5 pt-4 pb-5 border-t border-border-faint">
+                  <h4 className="text-body font-semibold text-foreground mb-3">Description</h4>
+                  <p className="text-ui text-ink-2 leading-relaxed">
                     {message.bodyText?.trim().slice(0, 600) ?? 'View the full message in the Message tab.'}
                   </p>
                   <button
                     onClick={() => setActiveTab('message')}
-                    className="mt-4 text-[12px] text-muted-foreground/50 hover:text-foreground font-medium transition-colors"
+                    className="mt-4 text-ui text-ink-3 hover:text-foreground font-medium transition-colors"
                   >
                     Read full message →
                   </button>
@@ -734,20 +763,20 @@ export default function MailDetail({
         {activeTab === 'message' && (
           <div className="flex flex-col h-full">
             {/* Sender strip */}
-            <div className="flex items-center gap-3 px-6 pt-5 pb-4 border-b border-border/25 shrink-0">
+            <div className="flex items-center gap-3 px-6 pt-5 pb-4 border-b border-border-faint shrink-0">
               <MailAvatar name={message.fromName} email={message.fromEmail} size="md" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-[13px] font-semibold text-foreground">
+                  <span className="text-ui font-semibold text-foreground">
                     {message.fromName ?? message.fromEmail}
                   </span>
                   {message.fromName && (
-                    <span className="text-[11px] text-muted-foreground/55">
+                    <span className="text-micro text-ink-3">
                       &lt;{message.fromEmail}&gt;
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-muted-foreground/55 mt-0.5">{formattedDate}</p>
+                <p className="text-micro text-ink-3 mt-0.5">{formattedDate}</p>
               </div>
               {classification && <ClassificationChip value={classification.label} size="sm" withIcon />}
             </div>
@@ -764,23 +793,31 @@ export default function MailDetail({
             {/* Inline attachments bar — shown below the email body so the user
                 can see which files are attached without switching tabs. */}
             {message.attachments.length > 0 && (
-              <div className="px-6 py-4 border-t border-border/20 shrink-0">
+              <div className="px-6 py-4 border-t border-border-faint shrink-0">
                 <div className="flex items-center gap-1.5 mb-3">
-                  <Paperclip className="w-3.5 h-3.5 text-muted-foreground/55" />
-                  <span className="text-[12px] font-semibold text-foreground/85">
+                  <Paperclip className="w-3.5 h-3.5 text-ink-3" />
+                  <span className="text-ui font-semibold text-foreground">
                     Attachments
                   </span>
-                  <span className="text-[11px] text-muted-foreground/55">
+                  <span className="text-micro text-ink-3">
                     ({message.attachments.length})
                   </span>
+                  {message.attachments.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="ml-auto text-primary hover:bg-muted hover:text-primary"
+                      onClick={handleDownloadAll}
+                      disabled={downloadingAll}
+                    >
+                      {downloadingAll ? <Loader2 className="animate-spin" /> : <Download />}
+                      Download all
+                    </Button>
+                  )}
                 </div>
                 <div className="flex items-start gap-3 flex-wrap">
                   {message.attachments.map((att) => {
-                    const isPreviewable =
-                      att.mimeType.startsWith('image/') ||
-                      att.mimeType === 'application/pdf' ||
-                      att.mimeType.startsWith('text/') ||
-                      att.filename.toLowerCase().endsWith('.pdf');
+                    const isPreviewable = getPreviewKind(att.mimeType, att.filename) !== null;
                     return (
                       <AttachmentTile
                         key={att.id}
@@ -807,7 +844,8 @@ export default function MailDetail({
             <QuickReplyBar
               message={message}
               onSent={() => {}}
-              onExpand={() => onReply?.()}
+              onExpand={(initialBody, mode) =>
+                mode === 'replyAll' ? onReplyAll?.(initialBody) : onReply?.(initialBody)}
             />
           </div>
         )}
@@ -815,10 +853,10 @@ export default function MailDetail({
         {/* Attachments tab */}
         {activeTab === 'attachments' && (
           <div className="p-5">
-            <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-4">
+            <p className="text-micro font-semibold text-ink-3 uppercase tracking-[0.06em] mb-4">
               {message.attachments.length} attachment{message.attachments.length !== 1 ? 's' : ''}
             </p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {message.attachments.map((att) => {
                 const isPreviewable =
                   att.mimeType.startsWith('image/') ||
@@ -829,39 +867,43 @@ export default function MailDetail({
                 return (
                   <div
                     key={att.id}
-                    className="flex items-center gap-2.5 p-3 bg-card border border-border/45 rounded-xl group hover:bg-muted/30 transition-colors"
+                    className="flex items-center gap-2.5 p-3 bg-card border border-border rounded-xl group hover:bg-muted/30 transition-colors"
                   >
                     <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center shrink-0', style.bgTint)}>
-                      <span className={cn('text-[10px] font-bold tracking-wide', style.color)}>
+                      <span className={cn('text-micro leading-none font-bold tracking-[0.06em]', style.color)}>
                         {style.label}
                       </span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-medium text-foreground truncate">{att.filename}</p>
-                      <p className="text-[11px] text-muted-foreground/55">{formatBytes(att.size)}</p>
+                      <p className="text-ui font-medium text-foreground truncate">{att.filename}</p>
+                      <p className="text-micro text-ink-3">{formatBytes(att.size)}</p>
                     </div>
-                    <div className="flex items-center gap-0.5 shrink-0">
+                    <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                       {isPreviewable && (
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
                           onClick={() => { setLightboxSelectedId(att.id); setLightboxOpen(true); }}
                           disabled={!!downloadingId}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-muted-foreground/45 hover:text-foreground disabled:opacity-30"
+                          className="text-ink-3 hover:bg-muted hover:text-foreground disabled:opacity-30"
                           title="Open lightbox"
                         >
                           <Eye className="w-3.5 h-3.5" />
-                        </button>
+                        </Button>
                       )}
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
                         onClick={() => handleDownload(att)}
                         disabled={!!downloadingId}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/45 hover:text-foreground disabled:opacity-30 p-1 rounded"
+                        className="text-ink-3 hover:bg-muted hover:text-foreground disabled:opacity-30"
                         title="Download"
                       >
                         {downloadingId === att.id
                           ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                           : <Download className="w-3.5 h-3.5" />
                         }
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 );
@@ -873,10 +915,10 @@ export default function MailDetail({
       </div>
 
       {/* Reply bar */}
-      <div className="px-4 py-2.5 border-t border-border/35 shrink-0 flex items-center gap-2">
+      <div className="px-4 py-2.5 border-t border-border-faint shrink-0 flex items-center gap-2">
         <button
-          onClick={onReply}
-          className="flex-1 text-left px-4 py-2 bg-muted/40 hover:bg-muted border border-border/40 rounded-xl text-[13px] text-muted-foreground/50 hover:text-muted-foreground transition-all"
+          onClick={() => onReply?.()}
+          className="flex-1 text-left px-4 py-2 bg-muted/40 hover:bg-muted border border-border rounded-xl text-ui text-ink-3 hover:text-ink-2 transition-all"
         >
           <span className="flex items-center gap-2">
             <Reply className="w-3.5 h-3.5 shrink-0" />
@@ -884,15 +926,15 @@ export default function MailDetail({
           </span>
         </button>
         <button
-          onClick={onReplyAll}
-          className="p-2 bg-muted/40 hover:bg-muted border border-border/40 rounded-xl text-muted-foreground/45 hover:text-muted-foreground transition-all"
+          onClick={() => onReplyAll?.()}
+          className="p-2 bg-muted/40 hover:bg-muted border border-border rounded-xl text-ink-3 hover:text-ink-2 transition-all"
           title="Reply All"
         >
           <ReplyAll className="w-3.5 h-3.5" />
         </button>
         <button
           onClick={onForward}
-          className="p-2 bg-muted/40 hover:bg-muted border border-border/40 rounded-xl text-muted-foreground/45 hover:text-muted-foreground transition-all"
+          className="p-2 bg-muted/40 hover:bg-muted border border-border rounded-xl text-ink-3 hover:text-ink-2 transition-all"
           title="Forward"
         >
           <Forward className="w-3.5 h-3.5" />
@@ -914,25 +956,29 @@ export default function MailDetail({
         <aside
           aria-hidden={!summaryOpen}
           className={cn(
-            'absolute top-3 right-3 w-[340px] xl:w-[380px] max-h-[55vh] z-20',
-            'rounded-xl border border-border/40 bg-card shadow-xl',
+            // Below lg the floating top-right card has no room — render as a
+            // fixed bottom sheet instead so tapping Summarize on a phone shows
+            // the stream rather than spending tokens into an invisible panel.
+            // z-[45]: above the AI drawers (z-40/41), below compose (z-50).
+            'fixed inset-x-2 bottom-2 z-[45] max-h-[55vh]',
+            'lg:absolute lg:inset-x-auto lg:bottom-auto lg:top-3 lg:right-3 lg:w-[340px] xl:w-[380px] lg:z-20',
+            'rounded-xl border border-border bg-card shadow-xl',
             'flex flex-col overflow-hidden',
             'transition-all duration-200 ease-out',
-            'hidden lg:flex',
             summaryOpen
-              ? 'translate-x-0 opacity-100 scale-100'
-              : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
+              ? 'translate-y-0 lg:translate-x-0 opacity-100 scale-100'
+              : 'translate-y-[130%] lg:translate-y-0 lg:translate-x-[120%] opacity-0 scale-95 pointer-events-none',
           )}
         >
-          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
-            <Sparkles className="w-3.5 h-3.5 text-primary" />
-            <span className="text-[12px] font-semibold text-foreground">Summary</span>
+          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border-faint shrink-0">
+            <ScrollText className="w-3.5 h-3.5 text-primary" />
+            <span className="text-ui font-semibold text-foreground">Summary</span>
             {summarizing && (
-              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
+              <Loader2 className="w-3 h-3 animate-spin text-ink-3" />
             )}
             <button
               onClick={closeSummary}
-              className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
+              className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
               aria-label="Close summary"
             >
               <XIcon className="w-3.5 h-3.5" />
@@ -940,14 +986,14 @@ export default function MailDetail({
           </div>
           <div className="flex-1 overflow-y-auto px-3.5 py-3">
             {summaryError ? (
-              <div className="text-[12px] text-destructive">
+              <div className="text-ui text-destructive">
                 {summaryError}{' '}
                 <button onClick={handleSummarize} className="underline ml-1">
                   Retry
                 </button>
               </div>
             ) : (
-              <p className="text-[12.5px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
+              <p className="text-ui text-ink-2 leading-relaxed whitespace-pre-wrap">
                 {streamedSummary || (summarizing ? 'Thinking…' : '')}
               </p>
             )}

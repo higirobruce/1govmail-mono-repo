@@ -13,7 +13,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./test/setup.ts'],
-    include: ['{app,components,lib,hooks}/**/*.{test,spec}.{ts,tsx}', 'test/**/*.{test,spec}.{ts,tsx}'],
+    include: ['{app,components,lib,hooks,stores}/**/*.{test,spec}.{ts,tsx}', 'test/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['node_modules', '.next', 'tests/e2e/**'],
     reporters: process.env.CI
       ? ['default', ['junit', { outputFile: 'test-report/junit.xml' }], ['html', { outputFile: 'test-report/index.html' }]]

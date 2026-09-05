@@ -20,6 +20,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@email-client/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@hocuspocus/extension-database':
         specifier: ^3.4.4
         version: 3.4.4(y-protocols@1.0.7(yjs@13.6.29))(yjs@13.6.29)
@@ -219,6 +222,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@email-client/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@hocuspocus/provider':
         specifier: ^3.4.4
         version: 3.4.4(y-protocols@1.0.7(yjs@13.6.29))(yjs@13.6.29)
@@ -443,7 +449,11 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@20.19.33)(@vitest/ui@2.1.9)(jsdom@25.0.1)(lightningcss@1.31.1)(msw@2.12.10(@types/node@20.19.33)(typescript@5.9.3))(terser@5.46.0)
 
-  packages/shared: {}
+  packages/shared:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
 packages:
 

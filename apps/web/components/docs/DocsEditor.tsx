@@ -25,6 +25,7 @@ import {
   Trash2, Columns2, Rows3, History, Activity, Play, MoreHorizontal,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Code,
   Link2, Type, Heading1, Heading2, Heading3, ChevronDown, RemoveFormatting,
+  PenLine,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -33,8 +34,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { toast } from 'sonner';
+import { AIClient } from '@/lib/ai/client';
+import { formatMinutes, rewriteText, summarizeSelection, type RewriteMode } from '@/lib/ai/tasks';
+import { markdownToHtml } from '@/lib/ai/markdownToHtml';
+import { useCharStream } from '@/lib/ai/useCharStream';
+import { useAIStore } from '@/stores/ai.store';
+import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import {
   SlashCommandMenu,
   filterCommands,
@@ -51,6 +60,7 @@ import { MathBlock } from './extensions/MathBlock';
 import { MermaidBlock } from './extensions/MermaidBlock';
 import Image from '@tiptap/extension-image';
 import { PresentationMode } from './PresentationMode';
+import { bearerHeaders } from '@/lib/authed-fetch';
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_WS_URL ?? 'ws://localhost:1234';
 
@@ -139,6 +149,27 @@ export function DocsEditor({
   const [wordCount, setWordCount] = useState({ words: 0, chars: 0 });
   const [headingMenuOpen, setHeadingMenuOpen] = useState(false);
   const [selBubble, setSelBubble] = useState<{ top: number; left: number } | null>(null);
+
+  // ── AI writing assistant (rewrite + summarize from the selection bubble) ───
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiModel = useAIStore((s) => s.model);
+  const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  // Docs render markdown (lib/ai/markdownToHtml) — invite the model to use it.
+  // Ours first so it survives the 500-char customInstructions truncation.
+  const docsAiInstructions = [
+    'You may use Markdown formatting — ## headings, **bold**, and "- " bullet lists — whenever it makes the result clearer.',
+    aiCustomInstructions,
+  ].filter(Boolean).join('\n');
+  const { text: aiPreview, push: pushAi, reset: resetAi, replace: replaceAi } = useCharStream();
+  const [aiOpen, setAiOpen] = useState(false); // preview popover
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiAction, setAiAction] = useState<'rewrite' | 'summarize' | 'minutes'>('rewrite');
+  const [aiRange, setAiRange] = useState<{ from: number; to: number } | null>(null);
+  const [aiAnchor, setAiAnchor] = useState<{ top: number; left: number } | null>(null);
+  const [aiMenuOpen, setAiMenuOpen] = useState(false); // rewrite-mode dropdown
+  const aiAbortRef = useRef<AbortController | null>(null);
+
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const destroyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -309,7 +340,7 @@ export function DocsEditor({
           try {
             const formData = new FormData();
             formData.append('file', file);
-            const res = await fetch('/upload/image', { method: 'POST', body: formData });
+            const res = await fetch('/upload/image', { method: 'POST', body: formData, headers: bearerHeaders() });
             dlog('image upload response', { status: res.status, ok: res.ok });
             if (!res.ok) return;
             const { url } = await res.json() as { url: string };
@@ -353,7 +384,7 @@ export function DocsEditor({
             try {
               const formData = new FormData();
               formData.append('file', file);
-              const res = await fetch('/upload/image', { method: 'POST', body: formData });
+              const res = await fetch('/upload/image', { method: 'POST', body: formData, headers: bearerHeaders() });
               dlog('image upload response', { status: res.status, ok: res.ok });
               if (!res.ok) return;
               const { url } = await res.json() as { url: string };
@@ -490,7 +521,7 @@ export function DocsEditor({
         setSelBubble(null);
       }
     };
-    const hide = () => { setSelBubble(null); setHeadingMenuOpen(false); };
+    const hide = () => { setSelBubble(null); setHeadingMenuOpen(false); setAiMenuOpen(false); };
     editor.on('selectionUpdate', update);
     editor.on('blur', hide);
     return () => {
@@ -719,6 +750,124 @@ export function DocsEditor({
     },
     [editor],
   );
+
+  // ── AI writing assistant handlers ──────────────────────────────────────────
+  const closeAi = useCallback(() => {
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
+    setAiOpen(false);
+    setAiBusy(false);
+    setAiError(null);
+    setAiRange(null);
+    setAiAnchor(null);
+    resetAi();
+  }, [resetAi]);
+
+  const runAi = useCallback(
+    async (action: 'rewrite' | 'summarize' | 'minutes', mode?: RewriteMode) => {
+      if (!editor) return;
+      const { from, to } = editor.state.selection;
+      const original = editor.state.doc.textBetween(from, to, '\n').trim();
+      if (!original) {
+        toast.error('Select some text first.');
+        return;
+      }
+
+      aiAbortRef.current?.abort();
+      const abort = new AbortController();
+      aiAbortRef.current = abort;
+      resetAi();
+      setAiError(null);
+      setAiRange({ from, to });
+      setAiAnchor(selBubble);
+      setAiAction(action);
+      setAiOpen(true);
+      setAiBusy(true);
+
+      try {
+        const client = new AIClient();
+        const final =
+          action === 'rewrite'
+            ? await rewriteText(
+                client,
+                original,
+                mode!,
+                { model: aiModel, customInstructions: docsAiInstructions, signal: abort.signal },
+                pushAi,
+              )
+            : action === 'summarize'
+              ? await summarizeSelection(
+                  client,
+                  original,
+                  { model: aiModel, subject: title, customInstructions: aiCustomInstructions, signal: abort.signal },
+                  pushAi,
+                )
+              : await formatMinutes(
+                  client,
+                  original,
+                  { model: aiModel, subject: title, customInstructions: aiCustomInstructions, signal: abort.signal },
+                  pushAi,
+                );
+        if (!abort.signal.aborted) replaceAi(final);
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        const m = err instanceof Error ? err.message : String(err);
+        setAiError(m);
+      } finally {
+        setAiBusy(false);
+      }
+    },
+    [editor, selBubble, aiModel, aiCustomInstructions, title, resetAi, replaceAi, pushAi],
+  );
+
+  // Apply modes are independent of `aiAction`: rewrite only ever offers
+  // "replace", summarize only ever offers "insert below", but minutes offers
+  // both buttons at once, so the mode has to be passed explicitly.
+  const applyAi = useCallback(
+    (applyMode: 'replace' | 'insert') => {
+      if (!editor || !aiPreview.trim() || !aiRange) return;
+      // The doc may have changed since aiRange was snapshotted (local typing or
+      // a remote Yjs peer editing while the preview streamed) — clamp against
+      // the current doc size so a shrunk doc can't send insertContentAt out of
+      // bounds and throw.
+      const size = editor.state.doc.content.size;
+      const from = Math.min(aiRange.from, size);
+      const to = Math.min(aiRange.to, size);
+      const html = markdownToHtml(aiPreview);
+      // Close the popover before our own edit lands so the doc-change watcher
+      // below doesn't treat this insert as an external change (harmless no-op
+      // if it fires anyway — closeAi is idempotent).
+      closeAi();
+      if (applyMode === 'replace') {
+        editor.chain().focus().insertContentAt({ from, to }, html).run();
+      } else {
+        // Insert AFTER the enclosing block rather than at the raw (clamped) end
+        // of the selection — landing at `to` directly would split the block in
+        // two when the selection ends mid-paragraph.
+        const $to = editor.state.doc.resolve(to);
+        const insertPos = $to.depth === 0 ? to : Math.min($to.end($to.depth) + 1, size);
+        editor.chain().focus().insertContentAt(insertPos, html).run(); // lands BELOW the selection's block
+      }
+    },
+    [editor, aiPreview, aiRange, closeAi],
+  );
+
+  // Abort any in-flight AI request on unmount (component remounts per doc via `key={docId}`).
+  useEffect(() => {
+    return () => { aiAbortRef.current?.abort(); };
+  }, []);
+
+  // Close the AI preview popover if the doc changes underneath it — local
+  // typing or a remote Yjs peer editing while the preview streams would
+  // otherwise leave `aiRange` pointing at the wrong span for Apply.
+  useEffect(() => {
+    if (!editor || !aiOpen) return;
+    const onDocChange = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (transaction.docChanged) closeAi();
+    };
+    editor.on('update', onDocChange);
+    return () => { editor.off('update', onDocChange); };
+  }, [editor, aiOpen, closeAi]);
 
   if (!editor) return null;
 
@@ -1078,6 +1227,115 @@ export function DocsEditor({
               Comment
             </button>
           </div>
+
+          {/* ── Row 3: AI writing assistant ─────────────────────────────────── */}
+          {aiEnabled && (
+            <div className="flex items-center gap-0.5 border-t border-border-faint p-1.5 relative">
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); setAiMenuOpen((v) => !v); }}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-micro text-ink-2 hover:text-foreground hover:bg-muted transition-colors"
+              >
+                <PenLine className="w-3 h-3 text-primary" /> Rewrite <ChevronDown className="w-2.5 h-2.5" />
+              </button>
+              {aiMenuOpen && (
+                <div className="absolute bottom-full left-1.5 mb-1 rounded-lg border border-border bg-popover shadow-lg p-1 flex flex-col min-w-[130px]">
+                  {(['paraphrase', 'formal', 'concise', 'friendly', 'grammar'] as RewriteMode[]).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); setAiMenuOpen(false); void runAi('rewrite', m); }}
+                      className="px-2 py-1 rounded text-micro font-normal text-ink-2 hover:bg-muted hover:text-foreground text-left capitalize"
+                    >
+                      {m === 'grammar' ? 'Fix grammar' : m}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); void runAi('summarize'); }}
+                className="px-2 py-1 rounded-md text-micro text-ink-2 hover:text-foreground hover:bg-muted transition-colors"
+              >
+                Summarize
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); void runAi('minutes'); }}
+                className="px-2 py-1 rounded-md text-micro text-ink-2 hover:text-foreground hover:bg-muted transition-colors"
+              >
+                Minutes
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* AI writing assistant preview popover */}
+      {aiOpen && aiAnchor && (
+        <div
+          style={{
+            position: 'fixed',
+            top: aiAnchor.top + 8,
+            left: aiAnchor.left,
+            transform: 'translate(-50%, 0)',
+            zIndex: 9999,
+          }}
+          className="w-[340px] rounded-xl border border-border bg-popover shadow-xl p-3 flex flex-col gap-2"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-micro uppercase tracking-[0.06em] text-ink-3">
+              {aiAction === 'rewrite' ? 'Rewrite' : aiAction === 'summarize' ? 'Summary' : 'Minutes'}
+            </span>
+            <Button variant="ghost" size="icon-xs" className="ml-auto text-ink-3" aria-label="Discard" onClick={closeAi}>
+              <X />
+            </Button>
+          </div>
+          <div className="max-h-48 overflow-y-auto text-ui text-foreground leading-relaxed [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mb-0.5 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h1]:mt-2 [&_h2]:mt-2 [&_h3]:mt-1.5 [&_code]:font-mono [&_pre]:bg-muted [&_pre]:rounded-md [&_pre]:p-2 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-2 [&_blockquote]:text-ink-2">
+            {aiPreview ? (
+              aiBusy ? (
+                // While streaming: cheap plain-text render — re-parsing markdown
+                // (+ DOMPurify) on every stream tick locks the main thread.
+                <div className="whitespace-pre-wrap">{aiPreview}</div>
+              ) : (
+                // Sanitized by markdownToHtml (escape-first + DOMPurify) — safe to inject.
+                <div dangerouslySetInnerHTML={{ __html: markdownToHtml(aiPreview) }} />
+              )
+            ) : aiBusy ? (
+              <AIWorkingIndicator
+                step={aiAction === 'rewrite' ? 'Rewriting' : aiAction === 'summarize' ? 'Summarizing' : 'Formatting minutes'}
+              />
+            ) : null}
+          </div>
+          {aiError && <p className="text-micro font-normal text-destructive">{aiError}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="xs" onClick={closeAi}>Discard</Button>
+            {aiAction === 'rewrite' && (
+              <Button size="xs" onClick={() => applyAi('replace')} disabled={aiBusy || !aiPreview.trim() || !!aiError}>
+                Replace selection
+              </Button>
+            )}
+            {aiAction === 'summarize' && (
+              <Button size="xs" onClick={() => applyAi('insert')} disabled={aiBusy || !aiPreview.trim() || !!aiError}>
+                Insert below
+              </Button>
+            )}
+            {aiAction === 'minutes' && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => applyAi('replace')}
+                  disabled={aiBusy || !aiPreview.trim() || !!aiError}
+                >
+                  Replace selection
+                </Button>
+                <Button size="xs" onClick={() => applyAi('insert')} disabled={aiBusy || !aiPreview.trim() || !!aiError}>
+                  Insert below
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -1090,7 +1348,7 @@ export function DocsEditor({
           className="flex items-center gap-0.5 rounded-lg border border-border bg-popover shadow-lg p-1"
         >
           {/* Row actions */}
-          <span className="text-[10px] text-muted-foreground/50 px-1 font-medium select-none">Row</span>
+          <span className="text-[0.625rem] text-muted-foreground/50 px-1 font-medium select-none">Row</span>
           <button
             type="button"
             title="Add row above"
@@ -1119,7 +1377,7 @@ export function DocsEditor({
           <div className="w-px h-5 bg-border mx-0.5" />
 
           {/* Column actions */}
-          <span className="text-[10px] text-muted-foreground/50 px-1 font-medium select-none">Col</span>
+          <span className="text-[0.625rem] text-muted-foreground/50 px-1 font-medium select-none">Col</span>
           <button
             type="button"
             title="Add column before"
@@ -1194,9 +1452,9 @@ export function DocsEditor({
           >
             {summary ? (
               <>
-                <p className="text-[10px] font-semibold text-primary mb-0.5">{summary.authorName}</p>
+                <p className="text-[0.625rem] font-semibold text-primary mb-0.5">{summary.authorName}</p>
                 <p className="text-xs text-foreground line-clamp-3">{summary.content}</p>
-                <p className="text-[10px] text-muted-foreground mt-1">Click to open comments</p>
+                <p className="text-[0.625rem] text-muted-foreground mt-1">Click to open comments</p>
               </>
             ) : (
               <p className="text-xs text-muted-foreground">Click to open comments</p>

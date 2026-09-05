@@ -109,10 +109,10 @@ export const EMPTY_FORM: TaskForm = {
 const REMINDER_PRESETS = ['15', '30', '60', '1440'] as const;
 
 export const PRIORITY_META: Record<TaskPriority, { label: string; cls: string }> = {
-  LOW:    { label: 'Low',    cls: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
-  MEDIUM: { label: 'Medium', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' },
-  HIGH:   { label: 'High',   cls: 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300' },
-  URGENT: { label: 'Urgent', cls: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300' },
+  LOW:    { label: 'Low',    cls: 'bg-muted text-ink-2' },
+  MEDIUM: { label: 'Medium', cls: 'bg-primary/10 text-primary' },
+  HIGH:   { label: 'High',   cls: 'bg-warning/15 text-warning-strong' },
+  URGENT: { label: 'Urgent', cls: 'bg-destructive/10 text-destructive' },
 };
 
 export const STATUS_META: Record<TaskStatus, { label: string }> = {
@@ -141,12 +141,23 @@ export default function TaskModal({
   onClose,
   onSaved,
   prefill,
+  onCreateOverride,
 }: {
   open: boolean;
   task: Task | null;
   onClose: () => void;
   onSaved: (t: Task) => void;
-  prefill?: { linkedMessageId?: string; linkedSubject?: string };
+  prefill?: {
+    linkedMessageId?: string;
+    linkedSubject?: string;
+    title?: string;
+    description?: string;
+    dueDate?: string; // ISO or YYYY-MM-DD
+    priority?: TaskPriority;
+  };
+  /** When set, create-mode save goes through this instead of api.tasks.create.
+   *  (Edit mode ignores it.) Caller returns the created Task. */
+  onCreateOverride?: (payload: Record<string, unknown>) => Promise<Task>;
 }) {
   const currentUser = useAuthStore((s) => s.user);
 
@@ -179,6 +190,10 @@ export default function TaskModal({
       ...EMPTY_FORM,
       ...(prefill?.linkedMessageId ? { linkedMessageId: prefill.linkedMessageId } : {}),
       ...(prefill?.linkedSubject ? { linkedSubject: prefill.linkedSubject } : {}),
+      ...(prefill?.title ? { title: prefill.title } : {}),
+      ...(prefill?.description ? { description: prefill.description } : {}),
+      ...(prefill?.dueDate ? { dueDate: prefill.dueDate.slice(0, 10) } : {}),
+      ...(prefill?.priority ? { priority: prefill.priority } : {}),
     };
   });
   const [saving, setSaving] = useState(false);
@@ -431,7 +446,7 @@ export default function TaskModal({
         toast.success(newlyAdded.length > 0 ? 'Task updated and assignees notified' : 'Task updated');
         saved = { ...saved, subtasks, comments, assignees };
       } else {
-        saved = (await api.tasks.create(payload)) as Task;
+        saved = (await (onCreateOverride ?? api.tasks.create)(payload)) as Task;
         // Create buffered subtasks
         const createdSubtasks: Subtask[] = [];
         for (const title of pendingSubtasks) {
@@ -598,13 +613,13 @@ export default function TaskModal({
             {/* Subtasks section */}
             <div className="pt-1 border-t border-border/30 space-y-2">
               <div className="flex items-center justify-between">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+                <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50">
                   Subtasks {subtasks.length > 0 && `(${subtasks.filter((s) => s.completed).length}/${subtasks.length})`}
                 </p>
                 <button
                   type="button"
                   onClick={() => setShowSubtaskInput(true)}
-                  className="flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-primary transition-colors"
+                  className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground/50 hover:text-primary transition-colors"
                 >
                   <Plus className="w-3 h-3" />
                   Add
@@ -692,7 +707,7 @@ export default function TaskModal({
 
             {/* Assignee section */}
             <div className="pt-1 border-t border-border/30 space-y-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+              <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50">
                 Assignees
               </p>
 
@@ -755,7 +770,7 @@ export default function TaskModal({
               </div>
 
               {assignees.length > 0 && (
-                <p className="text-[11px] text-muted-foreground/55 flex items-center gap-1.5">
+                <p className="text-[0.6875rem] text-muted-foreground/55 flex items-center gap-1.5">
                   <Mail className="w-3 h-3" />
                   Notification emails will be sent to new assignees
                 </p>
@@ -766,7 +781,7 @@ export default function TaskModal({
             {task && (
               <div className="pt-1 border-t border-border/30 space-y-2">
                 <div className="flex items-center justify-between">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+                  <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50">
                     Attachments{attachments.length > 0 && ` (${attachments.length}/5)`}
                   </p>
                   {attachments.length < 5 && (
@@ -774,7 +789,7 @@ export default function TaskModal({
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={uploadingFiles}
-                      className="flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-primary transition-colors"
+                      className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground/50 hover:text-primary transition-colors"
                     >
                       {uploadingFiles
                         ? <Loader2 className="w-3 h-3 animate-spin" />
@@ -805,7 +820,7 @@ export default function TaskModal({
                         >
                           {att.filename}
                         </button>
-                        <span className="text-muted-foreground/40 text-[10px] shrink-0">
+                        <span className="text-muted-foreground/40 text-[0.625rem] shrink-0">
                           {(att.size / 1024).toFixed(0)}KB
                         </span>
                         <button
@@ -827,7 +842,7 @@ export default function TaskModal({
               <div className="pt-1 border-t border-border/30 space-y-3">
                 <div className="flex items-center gap-2">
                   <MessageSquare className="w-3.5 h-3.5 text-muted-foreground/50" />
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+                  <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50">
                     Comments {comments.length > 0 && `(${comments.length})`}
                   </p>
                 </div>
@@ -837,14 +852,14 @@ export default function TaskModal({
                     {comments.map((c) => (
                       <div key={c.id} className="group flex gap-2.5">
                         <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
-                          <span className="text-[10px] font-semibold text-primary">
+                          <span className="text-[0.625rem] font-semibold text-primary">
                             {c.authorName.charAt(0).toUpperCase()}
                           </span>
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-baseline gap-2">
                             <span className="text-xs font-medium text-foreground">{c.authorName}</span>
-                            <span className="text-[10px] text-muted-foreground/40">
+                            <span className="text-[0.625rem] text-muted-foreground/40">
                               {formatDistanceToNow(new Date(c.createdAt), { addSuffix: true })}
                             </span>
                             {currentUser?.id === c.userId && (

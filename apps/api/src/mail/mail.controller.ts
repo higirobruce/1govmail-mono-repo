@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -28,6 +29,9 @@ import { SnoozeMessageDto } from './dto/snooze-message.dto';
 import { ScheduleMessageDto } from './dto/schedule-message.dto';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { CreateRuleDto } from './dto/create-rule.dto';
+import { CreateSenderRuleDto } from './dto/create-sender-rule.dto';
+import { UpdateCommitmentDto } from './dto/update-commitment.dto';
+import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 
 @UseGuards(JwtAuthGuard)
@@ -182,6 +186,9 @@ export class MailController {
   /**
    * Stream an attachment from Zimbra back to the client.
    * :part is the Zimbra MIME part number (e.g. "2" or "2.1").
+   * `?disposition=inline` serves the file for in-browser preview (img/iframe)
+   * instead of forcing a download; nosniff stops the browser from second-
+   * guessing the declared content type on inline responses.
    */
   @Get('messages/:messageId/attachments/:part')
   async downloadAttachment(
@@ -189,15 +196,18 @@ export class MailController {
     @Res() res: Response,
     @Param('messageId') messageId: string,
     @Param('part') part: string,
+    @Query('disposition') disposition?: string,
   ) {
     const { stream, contentType, filename } =
       await this.mailService.downloadAttachment(req.user.sub, messageId, part);
 
     const safeName = encodeURIComponent(filename).replace(/%20/g, ' ');
+    const inline = disposition === 'inline';
     res.set({
       'Content-Type': contentType,
-      'Content-Disposition': `attachment; filename="${safeName}"`,
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`,
       'Cache-Control': 'private, max-age=3600',
+      ...(inline ? { 'X-Content-Type-Options': 'nosniff' } : {}),
     });
     stream.pipe(res);
   }
@@ -290,6 +300,25 @@ export class MailController {
     return this.mailService.deleteRule(req.user.sub, id);
   }
 
+  // ── Sender Rules ─────────────────────────────────────────────────────────────
+
+  @Get('sender-rules')
+  getSenderRules(@Req() req: AuthenticatedRequest) {
+    return this.mailService.getSenderRules(req.user.sub);
+  }
+
+  @Post('sender-rules')
+  @HttpCode(HttpStatus.OK)
+  createSenderRule(@Req() req: AuthenticatedRequest, @Body() dto: CreateSenderRuleDto) {
+    return this.mailService.createSenderRule(req.user.sub, dto);
+  }
+
+  @Delete('sender-rules/:id')
+  @HttpCode(HttpStatus.OK)
+  deleteSenderRule(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.mailService.deleteSenderRule(req.user.sub, id);
+  }
+
   // ── Mute ─────────────────────────────────────────────────────────────────────
 
   @Post('mute/:conversationId')
@@ -335,5 +364,58 @@ export class MailController {
     @Body('folderId') folderId: string,
   ) {
     return this.mailService.bulkMove(req.user.sub, messageIds, folderId);
+  }
+
+  // ── Triage cards ─────────────────────────────────────────────────────────────
+  // Both are literal (non-parameterized) paths, so they cannot collide with the
+  // `messages/:messageId`-style routes above regardless of declaration order.
+
+  @Get('cards/window')
+  getCardsWindow(@Req() req: AuthenticatedRequest, @Query('window') window?: string) {
+    if (!window || !['today', '24h', 'week'].includes(window)) {
+      throw new BadRequestException('window must be one of: today, 24h, week');
+    }
+    return this.mailService.getWindowCards(req.user.sub, window);
+  }
+
+  @Get('cards')
+  getCards(@Req() req: AuthenticatedRequest, @Query('ids') idsParam?: string) {
+    const ids = (idsParam ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (ids.length > 100) {
+      throw new BadRequestException('ids: maximum of 100 per request');
+    }
+    return this.mailService.getCardsByIds(req.user.sub, ids);
+  }
+
+  // ── Commitments ledger ────────────────────────────────────────────────────────
+  // Literal (non-parameterized) top-level paths, same reasoning as `cards` above —
+  // no collision with the `messages/:messageId`-style routes regardless of order.
+
+  @Get('commitments')
+  getCommitments(@Req() req: AuthenticatedRequest, @Query('status') status?: string) {
+    return this.mailService.getCommitments(req.user.sub, status ?? 'open');
+  }
+
+  @Patch('commitments/:id')
+  @HttpCode(HttpStatus.OK)
+  updateCommitment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateCommitmentDto,
+  ) {
+    return this.mailService.updateCommitment(req.user.sub, id, dto.status);
+  }
+
+  @Post('commitments/:id/promote')
+  @HttpCode(HttpStatus.OK)
+  promoteCommitment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: PromoteCommitmentDto,
+  ) {
+    return this.mailService.promoteCommitment(req.user.sub, id, dto);
   }
 }

@@ -1,27 +1,43 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth.store';
-import { api } from '@/lib/api';
+import { useAIStore } from '@/stores/ai.store';
+import { api, type Commitment } from '@/lib/api';
+import { parseTaskInput } from '@/lib/ai/taskParse';
+import { AIClient } from '@/lib/ai/client';
+import { getCachedBody, setCachedBody, fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
+import type { TriageLabel } from '@email-client/shared';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
+import { AIRail } from '@/components/layout/AIRail';
 import MailList, { type ContextAction, type BulkAction } from '@/components/mail/MailList';
 import { InboxZero } from '@/components/mail/InboxZero';
 import SnoozeModal from '@/components/mail/SnoozeModal';
 import MailDetail from '@/components/mail/MailDetail';
 import ThreadView from '@/components/mail/ThreadView';
 import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
-import TaskModal from '@/components/tasks/TaskModal';
+import BriefingPanel from '@/components/mail/BriefingPanel';
+import CommitmentsPanel from '@/components/mail/CommitmentsPanel';
+import AskInboxPanel from '@/components/mail/AskInboxPanel';
+import TaskModal, { type Task } from '@/components/tasks/TaskModal';
 import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Input } from '@/components/ui/input';
-import { Search, RefreshCw, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
+import { Search, RefreshCw, Newspaper, ClipboardCheck, MessageCircleQuestion, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOffline } from '@/lib/offline/provider';
 import { toast } from 'sonner';
+
+const TRIAGE_CHIPS: { id: TriageLabel; label: string }[] = [
+  { id: 'needsDecision', label: 'Needs decision' },
+  { id: 'waitingOnYou', label: 'Waiting on you' },
+  { id: 'deadline', label: 'Deadline' },
+  // fyi intentionally has no chip — not actionable enough to filter on.
+];
 
 export default function MailPage() {
   const router = useRouter();
@@ -89,6 +105,74 @@ export default function MailPage() {
   // Flatten paginated pages into a single messages array
   const messages: any[] = messagesData?.pages.flatMap((p: any) => p.messages) ?? [];
 
+  // ── Triage cards (Task 6 persisted extraction) ─────────────────────────────
+  // The worker only classifies the last 14 days, so only that slice of the
+  // loaded list is ever asked about — deep scrolling through months of mail
+  // must not grow the request. The query key still changes as pages load, but
+  // each refetch (a) keeps showing the previous map via placeholderData, so
+  // badges/chips never flash out, and (b) fetches ONLY ids we have no card for
+  // and haven't asked about in the last minute — one small request per new
+  // page instead of re-fetching every loaded id (which, at deep scroll, was a
+  // 40+-request burst that tripped the API's global rate limit and blanked
+  // the whole message list).
+  const CARD_WINDOW_MS = 14 * 24 * 3_600_000;
+  const cardMessageIds = useMemo(() => {
+    const cutoff = Date.now() - CARD_WINDOW_MS;
+    return messages
+      .filter((m) => {
+        const t = Date.parse(m.receivedAt);
+        return Number.isFinite(t) && t >= cutoff;
+      })
+      .map((m) => m.id as string);
+    // `messages` is a fresh array each render, so this recomputes per render —
+    // but the derived KEY string below is value-stable, so the query is not
+    // re-triggered unless the id set genuinely changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+  const cardMessageIdsKey = useMemo(() => cardMessageIds.join(','), [cardMessageIds]);
+
+  type CardsMap = Record<string, { label: TriageLabel; importance: string; injectionSuspected: boolean }>;
+  const askedCardIdsRef = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    askedCardIdsRef.current.clear();
+  }, [activeFolderId]);
+
+  const { data: cardsById = {} } = useQuery({
+    queryKey: ['cards', activeFolderId, cardMessageIdsKey],
+    queryFn: async () => {
+      const previous = (queryClient
+        .getQueriesData({ queryKey: ['cards', activeFolderId] })
+        .map(([, data]) => data)
+        .filter(Boolean)
+        .pop() ?? {}) as CardsMap;
+      const now = Date.now();
+      const missing = cardMessageIds.filter(
+        (id) => !(id in previous) && now - (askedCardIdsRef.current.get(id) ?? 0) > 60_000,
+      );
+      const chunks: string[][] = [];
+      for (let i = 0; i < missing.length; i += 100) chunks.push(missing.slice(i, i + 100));
+      const results = await Promise.all(chunks.map((chunk) => api.mail.getCards(chunk)));
+      for (const id of missing) askedCardIdsRef.current.set(id, now);
+      const merged: CardsMap = { ...previous };
+      for (const r of results) Object.assign(merged, r?.cards ?? {});
+      return merged;
+    },
+    enabled: cardMessageIds.length > 0,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+  });
+
+  // Counts for the chip row, computed over the loaded (unfiltered) messages.
+  const triageLabelCounts = useMemo(() => {
+    const counts: Partial<Record<TriageLabel, number>> = {};
+    for (const m of messages) {
+      const label = cardsById[m.id]?.label;
+      if (label) counts[label] = (counts[label] ?? 0) + 1;
+    }
+    return counts;
+  }, [messages, cardsById]);
+  const hasAnyTriageCard = messages.some((m) => cardsById[m.id]);
+
   /** Invalidate the current folder cache (e.g. after send/delete/move) */
   const invalidateMessages = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['messages', activeFolderId] });
@@ -140,6 +224,23 @@ export default function MailPage() {
   // Reset filter when navigating to a different folder.
   useEffect(() => { setSelectedLabelNames(new Set()); }, [activeFolderId]);
 
+  // ── Triage label filter state ─────────────────────────────────────────────
+  // Sibling to the tag filter above, but single-select and driven by the
+  // persisted triage card's `label` rather than a message's `tags`. Clicking
+  // an active chip clears the filter; rows without a card are hidden while
+  // a chip is active.
+  const [triageLabelFilter, setTriageLabelFilter] = useState<TriageLabel | null>(null);
+  const toggleTriageLabelFilter = useCallback((label: TriageLabel) => {
+    setTriageLabelFilter((prev) => (prev === label ? null : label));
+  }, []);
+  // Reset filter when navigating to a different folder.
+  useEffect(() => { setTriageLabelFilter(null); }, [activeFolderId]);
+  // Rows without a card are filtered OUT while a chip is active.
+  const triageFilteredMessages = useMemo(() => {
+    if (!triageLabelFilter) return messages;
+    return messages.filter((m) => cardsById[m.id]?.label === triageLabelFilter);
+  }, [messages, triageLabelFilter, cardsById]);
+
   // ── Mute state ─────────────────────────────────────────────────────────────
   const [mutedConversationIds, setMutedConversationIds] = useState<string[]>([]);
 
@@ -152,6 +253,12 @@ export default function MailPage() {
   // ── Create-task-from-email state ───────────────────────────────────────────
   const [createTaskPrefill, setCreateTaskPrefill] = useState<{ linkedMessageId: string; linkedSubject: string } | null>(null);
 
+  // ── Ask your inbox state (declared here so the ?ask= deep-link effect below
+  //    can set it — panel toggle/prefill only, no async data of its own) ─────
+  const [askOpen, setAskOpen] = useState(false);
+  const [askCollapsed, setAskCollapsed] = useState(false);
+  const [askPrefill, setAskPrefill] = useState<string | null>(null);
+
   // ── Deep-link: open specific message via ?open=<messageId> ────────────────
   useEffect(() => {
     if (!hydrated || !isAuthenticated || !activeFolderId) return;
@@ -162,6 +269,19 @@ export default function MailPage() {
     window.history.replaceState({}, '', window.location.pathname);
     openMessage(openId);
   }, [hydrated, isAuthenticated, activeFolderId]); // eslint-disable-line
+
+  // ── Deep-link: prefill Ask your inbox via ?ask=<question> (used by GlobalSearch) ─
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated) return;
+    const params = new URLSearchParams(window.location.search);
+    const ask = params.get('ask');
+    if (!ask) return;
+    // Clean up the URL without navigating
+    window.history.replaceState({}, '', window.location.pathname);
+    setAskPrefill(ask);
+    setAskOpen(true);
+    setAskCollapsed(false);
+  }, [hydrated, isAuthenticated]); // eslint-disable-line
 
   // ── Compose state ──────────────────────────────────────────────────────────
   const [composeOpen, setComposeOpen] = useState(false);
@@ -195,6 +315,63 @@ export default function MailPage() {
 
   // ── Global search (⌘K) ─────────────────────────────────────────────────────
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+
+  // ── Executive briefing panel ────────────────────────────────────────────────
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiModel = useAIStore((s) => s.model);
+  // Briefing drawer: `briefingOpen` = mounted (set once, kept — the generated
+  // brief must survive collapses without re-analysis); `briefingExpanded`
+  // toggles drawer vs floating pill.
+  const [briefingOpen, setBriefingOpen] = useState(false);
+  const [briefingExpanded, setBriefingExpanded] = useState(false);
+
+  // ── Commitments ledger ──────────────────────────────────────────────────────
+  // Always-mounted 'open' query — its data feeds both the toolbar badge and
+  // the panel's initial list; row mutations invalidate the ['commitments']
+  // prefix so this refetches along with the panel's on-demand archived view.
+  const { data: commitmentsData, isLoading: commitmentsLoading } = useQuery({
+    queryKey: ['commitments', 'open'],
+    queryFn: () => api.mail.getCommitments('open'),
+    staleTime: 60_000,
+    enabled: aiEnabled,
+  });
+  const [commitmentsOpen, setCommitmentsOpen] = useState(false);
+
+  // Promote-with-overrides: opens a prefilled, editable TaskModal for a
+  // commitment. When AI is enabled and the commitment carries a due hint,
+  // parses it into a concrete date first (row spinner covers this wait —
+  // no separate AIWorkingIndicator needed here).
+  const [commitmentTask, setCommitmentTask] = useState<{ c: Commitment; dueDate: string | null } | null>(null);
+  // Cancels a stale due-date parse when the user clicks another commitment
+  // before the previous one resolves, or on unmount — otherwise a modal
+  // could pop open for a commitment the user already navigated away from.
+  const commitmentTaskAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => { commitmentTaskAbortRef.current?.abort(); };
+  }, []);
+  const openTaskFromCommitment = useCallback(async (c: Commitment) => {
+    commitmentTaskAbortRef.current?.abort();
+    const controller = new AbortController();
+    commitmentTaskAbortRef.current = controller;
+    let dueDate: string | null = null;
+    if (aiEnabled && c.dueHint) {
+      const parsed = await parseTaskInput(new AIClient(), `${c.text} — due: ${c.dueHint}`, { model: aiModel, signal: controller.signal });
+      dueDate = parsed.dueDate;
+    }
+    if (controller.signal.aborted) return;
+    setCommitmentTask({ c, dueDate });
+  }, [aiEnabled, aiModel]);
+
+  // Compose (z-50) covers the AI drawers (z-40/41) outright on small screens —
+  // collapse them when compose opens so nothing keeps streaming into a surface
+  // the user can no longer see. Desktop has room for both, so lg+ is left alone.
+  useEffect(() => {
+    if (!composeOpen) return;
+    if (typeof window === 'undefined' || window.innerWidth >= 1024) return;
+    setAskOpen(false);
+    setCommitmentsOpen(false);
+    setBriefingExpanded(false);
+  }, [composeOpen]);
 
   // ── Electron background polling ────────────────────────────────────────────
   // Tracks the last known inbox unread count so we can detect new arrivals.
@@ -337,6 +514,10 @@ export default function MailPage() {
   // zero unread — otherwise "0 starred" on the starred tab would trigger it.
   const showInboxZeroEmptyState = isInboxActive && (activeFolder?.unreadCount ?? 0) === 0;
 
+  // Abort handle for the in-flight message open — a newer open (e.g. holding
+  // j/k past the debounce) cancels the previous fetch instead of racing it.
+  const openAbortRef = useRef<AbortController | null>(null);
+
   // Load full message
   const openMessage = useCallback(async (messageId: string) => {
     // Look in both messages list and search results
@@ -350,7 +531,20 @@ export default function MailPage() {
     const isDraft = activeFolder?.path === '/Drafts' || msg?.isDraft === true;
 
     setActiveMessageId(messageId);
-    setLoadingMessage(true);
+
+    // Keep the URL in step with the open message so the system/browser Back
+    // button returns to the list (critical on phones, where Android/iOS back
+    // used to exit the app). One entry per reader-open: the first open pushes,
+    // subsequent opens replace, so Back always goes list-ward, not through
+    // every message visited.
+    if (!isDraft && typeof window !== 'undefined') {
+      const url = `${window.location.pathname}?msg=${encodeURIComponent(messageId)}`;
+      if (window.history.state?.msg) {
+        window.history.replaceState({ msg: messageId }, '', url);
+      } else if (new URLSearchParams(window.location.search).get('msg') !== messageId) {
+        window.history.pushState({ msg: messageId }, '', url);
+      }
+    }
 
     // Optimistically mark as read in the list immediately (skip for drafts)
     if (wasUnread && !isDraft) {
@@ -360,6 +554,23 @@ export default function MailPage() {
       );
       updateFolderCounts(activeFolderId, -1);
     }
+
+    // Instant path: body already hydrated this session (prefetched on hover, or
+    // opened before) — render it with no spinner and no refetch. Same object
+    // reference on re-open, so React bails out of a needless re-render.
+    const cachedBody = isDraft ? undefined : getCachedBody<any>(messageId);
+    if (cachedBody) {
+      setActiveMessage(cachedBody);
+      setLoadingMessage(false);
+      if (wasUnread) api.mail.markRead(messageId, true).catch(() => {});
+      return;
+    }
+
+    openAbortRef.current?.abort();
+    const abort = new AbortController();
+    openAbortRef.current = abort;
+
+    setLoadingMessage(true);
     try {
       const onlineNow = typeof navigator === 'undefined' ? true : navigator.onLine;
       let data: any;
@@ -377,9 +588,10 @@ export default function MailPage() {
         }
       } else {
         try {
-          data = await api.mail.getMessage(messageId);
+          data = await api.mail.getMessage(messageId, { signal: abort.signal });
           void offline.mail.setMessage(messageId, data);
         } catch (netErr) {
+          if (abort.signal.aborted) throw netErr; // superseded — don't mask with offline copy
           const cached = await offline.mail.getMessage(messageId);
           if (cached) {
             data = cached;
@@ -409,13 +621,33 @@ export default function MailPage() {
         setActiveMessage(null);
         setActiveMessageId(undefined);
       } else {
+        setCachedBody(messageId, data);
         setActiveMessage(data);
+        // Server is still embedding inline images (embedPending) — poll until
+        // the final body lands, then swap it in if this message is still open.
+        // setCachedBody above is a no-op for pending bodies, so the cache only
+        // ever holds the final version.
+        if (data?.embedPending) {
+          watchPendingBody<any>(messageId, (id) => api.mail.getMessage(id), (fresh) => {
+            setActiveMessage((prev: any) => (prev && prev.id === messageId ? fresh : prev));
+          });
+        }
         // Persist read status to server (fire-and-forget, don't block UI)
         if (wasUnread) {
           api.mail.markRead(messageId, true).catch(() => {});
         }
       }
     } catch (err: any) {
+      // Superseded by a newer open (j/k navigation aborted this fetch): the new
+      // open owns the selection and spinner — just undo this message's
+      // optimistic read-mark and bow out quietly.
+      if (abort.signal.aborted) {
+        if (wasUnread && !isDraft) {
+          updateMessageInCache(activeFolderId, messageId, (m) => ({ ...m, isRead: false }));
+          updateFolderCounts(activeFolderId, +1);
+        }
+        return;
+      }
       toast.error('Failed to load message', { description: err?.message });
       setActiveMessageId(undefined);
       // Revert optimistic update on error
@@ -424,9 +656,57 @@ export default function MailPage() {
         updateFolderCounts(activeFolderId, +1);
       }
     } finally {
-      setLoadingMessage(false);
+      // Only the still-current open may clear the spinner — an aborted fetch
+      // finishing late must not hide the loading state of its successor.
+      if (openAbortRef.current === abort) setLoadingMessage(false);
     }
   }, [messages, searchResults, folders, activeFolderId, updateFolderCounts, updateMessageInCache, offline]);
+
+  // ── System back: popping the ?msg=<id> entry closes the reader; navigating
+  // forward to one re-opens it. Any programmatic close (delete, move, snooze…)
+  // strips the stale ?msg so a later Back can't resurrect a gone message.
+  useEffect(() => {
+    const onPop = () => {
+      const msg = new URLSearchParams(window.location.search).get('msg');
+      if (!msg) {
+        setActiveMessageId(undefined);
+        setActiveMessage(null);
+      } else {
+        void openMessage(msg);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [openMessage]);
+
+  useEffect(() => {
+    if (activeMessageId || typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).has('msg')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [activeMessageId]);
+
+  // Close the reader the history-aware way: if this open pushed a ?msg entry,
+  // go back so browser history stays truthful; otherwise (deep link, stale
+  // state) just clear the reader — the effect above strips the URL param.
+  const closeReader = useCallback(() => {
+    if (typeof window !== 'undefined' && window.history.state?.msg) {
+      window.history.back();
+      return;
+    }
+    setActiveMessageId(undefined);
+    setActiveMessage(null);
+  }, []);
+
+  // Warm the body cache on hover so the subsequent click opens instantly. Silent
+  // and de-duplicated (fetchBodyCached collapses hover+click into one request);
+  // skipped for drafts, which open in compose rather than the reader.
+  const prefetchMessage = useCallback((messageId: string) => {
+    if (getCachedBody(messageId)) return;
+    const msg = messages.find((m) => m.id === messageId) ?? searchResults.find((m) => m.id === messageId);
+    if (msg?.isDraft) return;
+    void fetchBodyCached(messageId, (id) => api.mail.getMessage(id)).catch(() => {});
+  }, [messages, searchResults]);
 
   const handleMoveToFolder = useCallback(async (folderId: string) => {
     if (!activeMessageId) return;
@@ -565,6 +845,18 @@ export default function MailPage() {
     },
     [],
   );
+
+  /** Called from AskInboxPanel's per-source Reply button — fetches the full
+   *  message (the panel only holds a snippet) then opens compose in reply
+   *  mode against it, falling back to just opening the message on failure. */
+  const openReplyTo = useCallback(async (messageId: string) => {
+    try {
+      const full = await api.mail.getMessage(messageId);
+      openComposeWith('reply', full);
+    } catch {
+      void openMessage(messageId); // fall back to just opening it
+    }
+  }, [openComposeWith, openMessage]);
 
   /** Called from ThreadView's Quick Reply (AI) button. Opens compose in
    *  reply mode and tells ComposeModal to auto-run the suggestReply task. */
@@ -789,17 +1081,30 @@ export default function MailPage() {
   const displayedMessages = isSearchMode ? searchResults : messages;
   const currentIndex = displayedMessages.findIndex((m) => m.id === activeMessageId);
 
+  // j/k move the selection instantly but debounce the body fetch ~150ms, so
+  // holding a key skims the list without firing a fetch chain per keypress —
+  // only the row the user settles on is actually opened (and openMessage's
+  // AbortController cancels a slower predecessor if one is still in flight).
+  const navDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigateAdjacent = useCallback((delta: 1 | -1) => {
+    if (displayedMessages.length === 0) return;
+    const idx = displayedMessages.findIndex((m) => m.id === activeMessageId);
+    const target =
+      delta === 1
+        ? (idx < displayedMessages.length - 1 ? idx + 1 : 0)
+        : (idx > 0 ? idx - 1 : displayedMessages.length - 1);
+    const id = displayedMessages[target].id;
+    setActiveMessageId(id);
+    if (navDebounceRef.current) clearTimeout(navDebounceRef.current);
+    navDebounceRef.current = setTimeout(() => {
+      navDebounceRef.current = null;
+      void openMessage(id);
+    }, 150);
+  }, [displayedMessages, activeMessageId, openMessage]);
+
   useKeyboardShortcuts({
-    j: () => {
-      if (displayedMessages.length === 0) return;
-      const next = currentIndex < displayedMessages.length - 1 ? currentIndex + 1 : 0;
-      openMessage(displayedMessages[next].id);
-    },
-    k: () => {
-      if (displayedMessages.length === 0) return;
-      const prev = currentIndex > 0 ? currentIndex - 1 : displayedMessages.length - 1;
-      openMessage(displayedMessages[prev].id);
-    },
+    j: () => navigateAdjacent(1),
+    k: () => navigateAdjacent(-1),
     c: () => openCompose('new'),
     r: () => { if (activeMessage) openCompose('reply'); },
     a: () => { if (activeMessage) openCompose('replyAll'); },
@@ -908,6 +1213,9 @@ export default function MailPage() {
 
   if (!isAuthenticated) return null;
 
+  const aiPanelVisible =
+    (briefingOpen && briefingExpanded) || commitmentsOpen || (askOpen && !askCollapsed);
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar
@@ -939,14 +1247,16 @@ export default function MailPage() {
         onClearLabelFilter={clearLabelFilter}
       />
 
-      {/* Mail list pane — full width on mobile, fixed 300px on desktop */}
+      {/* Mail list pane — full width on phones, fixed 300px beside the reader
+          from md (tablet portrait) up; the nav sidebar joins at lg. */}
       <div className={cn(
         'shrink-0 flex flex-col h-full border-r border-border/50',
-        'w-full lg:w-[300px]',
-        activeMessageId ? 'hidden lg:flex' : 'flex',
+        'w-full transition-[width] duration-200',
+        aiPanelVisible ? 'md:w-[300px] xl:w-[320px]' : 'md:w-[300px] lg:w-[340px] xl:w-[370px]',
+        activeMessageId ? 'hidden md:flex' : 'flex',
       )}>
         {/* List header */}
-        <div className="px-3 pt-3 pb-2.5 border-b border-border/25 shrink-0">
+        <div className="px-4 pt-6 pb-3 border-b border-border/25 shrink-0">
           {/* Title row */}
           <div className="flex items-center justify-between mb-2.5">
             <div className="flex items-center gap-1">
@@ -958,7 +1268,7 @@ export default function MailPage() {
               >
                 <Menu className="w-4 h-4" />
               </button>
-              <h2 className="text-[14px] font-semibold text-foreground">
+              <h2 className="text-display text-foreground">
                 {isSearchMode
                   ? 'Search'
                   : (folders.find((f) => f.id === activeFolderId)?.name ?? 'Inbox')}
@@ -982,6 +1292,7 @@ export default function MailPage() {
                 <button
                   onClick={() => refetchMessages()}
                   disabled={loadingMessages}
+                  title="Refresh"
                   className="p-1.5 rounded-md text-muted-foreground/45 hover:text-foreground hover:bg-muted transition-colors"
                 >
                   <RefreshCw className={cn('w-3.5 h-3.5', loadingMessages && 'animate-spin')} />
@@ -998,7 +1309,7 @@ export default function MailPage() {
               value={searchInput}
               onChange={(e) => handleSearchInput(e.target.value)}
               placeholder="Search messages…"
-              className="pl-8 h-7 text-[12px] bg-muted/40 border-border/40 focus-visible:border-primary/40 rounded-lg"
+              className="pl-8 h-7 text-[0.75rem] bg-muted/40 border-border/40 focus-visible:border-primary/40 rounded-lg"
             />
             {searchInput && (
               <button
@@ -1010,9 +1321,35 @@ export default function MailPage() {
             )}
           </div>
 
+          {/* AI actions — labeled pills so the features are discoverable, not
+              hidden behind 14px ghost icons. Scrolls horizontally if cramped. */}
+          {aiEnabled && !isSearchMode && (
+            <div className="flex items-center gap-1.5 mt-2 overflow-x-auto scrollbar-none md:hidden">
+              <button
+                onClick={() => { if (briefingOpen && briefingExpanded) { setBriefingExpanded(false); return; } setCommitmentsOpen(false); if (askOpen) setAskCollapsed(true); setBriefingOpen(true); setBriefingExpanded(true); }}
+                className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
+              >
+                <Newspaper className="w-3.5 h-3.5" />
+                Brief me
+              </button>
+              <button
+                onClick={() => { setBriefingOpen(false); if (askOpen) setAskCollapsed(true); setCommitmentsOpen(true); }}
+                className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
+              >
+                <ClipboardCheck className="w-3.5 h-3.5" />
+                Commitments
+                {!!commitmentsData?.openCount && commitmentsData.openCount > 0 && (
+                  <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[0.5625rem] font-semibold leading-none text-primary-foreground tabular-nums">
+                    {commitmentsData.openCount > 99 ? '99+' : commitmentsData.openCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          )}
+
           {/* Search result count */}
           {isSearchMode && !loadingSearch && (
-            <p className="text-[11px] text-muted-foreground/45 mt-1.5">
+            <p className="text-[0.6875rem] text-muted-foreground/45 mt-1.5">
               {searchTotal > 0
                 ? `${searchTotal.toLocaleString()} message${searchTotal !== 1 ? 's' : ''} found`
                 : 'No messages found'}
@@ -1021,8 +1358,8 @@ export default function MailPage() {
         </div>
 
         {!offline.status.online && (
-          <div className="px-3 py-1.5 text-[12px] bg-amber-500/10 text-amber-700 dark:text-amber-300 border-b border-amber-500/20 flex items-center gap-2">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+          <div className="px-3 py-1.5 text-ui bg-warning/10 text-warning-strong border-b border-warning/20 flex items-center gap-2">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-warning-strong shrink-0" />
             <span className="truncate">You&rsquo;re offline. Showing cached messages; some may be unavailable.</span>
           </div>
         )}
@@ -1035,6 +1372,7 @@ export default function MailPage() {
             loading={loadingSearch && searchResults.length === 0}
             loadingMore={loadingMoreSearch}
             onSelect={openMessage}
+            onPrefetch={prefetchMessage}
             onLoadMore={() => { if (!loadingMoreSearch && searchHasMore) runSearch(searchQuery, false); }}
             hasMore={searchHasMore}
             onContextAction={handleContextAction}
@@ -1044,34 +1382,75 @@ export default function MailPage() {
             filterTagNames={selectedLabelNames}
           />
         ) : (
-          <MailList
-            key="regular"
-            messages={messages}
-            activeMessageId={activeMessageId}
-            loading={loadingMessages && messages.length === 0}
-            loadingMore={loadingMore}
-            onSelect={openMessage}
-            onLoadMore={() => { if (!loadingMore && hasNextPage) fetchNextPage(); }}
-            hasMore={!!hasNextPage}
-            onContextAction={handleContextAction}
-            onBulkAction={handleBulkAction}
-            filterTagNames={selectedLabelNames}
-            folders={folders}
-            mutedConversationIds={mutedConversationIds}
-            emptyState={showInboxZeroEmptyState ? (
-              <InboxZero celebrate={pendingInboxZero} onCelebrated={handleInboxZeroCelebrated} />
-            ) : undefined}
-          />
+          <>
+            {hasAnyTriageCard && TRIAGE_CHIPS.some((c) => (triageLabelCounts[c.id] ?? 0) > 0) && (
+              <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border/25 shrink-0 overflow-x-auto">
+                {TRIAGE_CHIPS.filter((chip) => (triageLabelCounts[chip.id] ?? 0) > 0 || triageLabelFilter === chip.id).map((chip) => (
+                  <button
+                    key={chip.id}
+                    onClick={() => toggleTriageLabelFilter(chip.id)}
+                    className={cn(
+                      'shrink-0 text-[0.6875rem] px-2 py-0.5 rounded-full border transition-colors',
+                      triageLabelFilter === chip.id
+                        ? 'border-primary/50 bg-primary/10 text-primary'
+                        : 'border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                    )}
+                  >
+                    {chip.label} ({triageLabelCounts[chip.id] ?? 0})
+                  </button>
+                ))}
+                {triageLabelFilter && hasNextPage && (
+                  <button
+                    onClick={() => { if (!loadingMore) fetchNextPage(); }}
+                    disabled={loadingMore}
+                    className="shrink-0 ml-auto text-[0.6875rem] px-2 py-0.5 rounded-full border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-40 transition-colors"
+                    title="Filters only search loaded mail — fetch another page of older messages"
+                  >
+                    {loadingMore ? 'Loading…' : 'Search older mail'}
+                  </button>
+                )}
+              </div>
+            )}
+            <MailList
+              key="regular"
+              messages={triageFilteredMessages}
+              activeMessageId={activeMessageId}
+              loading={loadingMessages && messages.length === 0}
+              loadingMore={loadingMore}
+              onSelect={openMessage}
+              onPrefetch={prefetchMessage}
+              onLoadMore={() => {
+                // With a triage filter active, most fetched rows are filtered
+                // out client-side, so the load-more sentinel never leaves the
+                // viewport and auto-fetch cascades through the entire mailbox
+                // (page after page, re-rendering each time — the "blinking").
+                // Filtered mode paginates only via the explicit button above.
+                if (triageLabelFilter) return;
+                if (!loadingMore && hasNextPage) fetchNextPage();
+              }}
+              hasMore={!!hasNextPage && !triageLabelFilter}
+              onContextAction={handleContextAction}
+              onBulkAction={handleBulkAction}
+              filterTagNames={selectedLabelNames}
+              folders={folders}
+              mutedConversationIds={mutedConversationIds}
+              cardsById={cardsById}
+              emptyState={showInboxZeroEmptyState ? (
+                <InboxZero celebrate={pendingInboxZero} onCelebrated={handleInboxZeroCelebrated} />
+              ) : undefined}
+            />
+          </>
         )}
       </div>
 
-      {/* Detail pane — full width on mobile when message selected, always visible on desktop */}
-      <div className={cn('flex-1 min-w-0 h-full flex flex-col', !activeMessageId && 'hidden lg:flex')}>
-        {/* Mobile back button */}
-        <div className="lg:hidden flex items-center px-3 py-2 border-b border-border/25 shrink-0">
+      {/* Detail pane — full width on phones when a message is selected, beside
+          the list from md (tablet portrait) up */}
+      <div className={cn('flex-1 min-w-0 h-full flex flex-col', !activeMessageId && 'hidden md:flex')}>
+        {/* Mobile back button — phones only; from md the list stays visible */}
+        <div className="md:hidden flex items-center px-3 py-2 border-b border-border/25 shrink-0">
           <button
-            onClick={() => { setActiveMessageId(undefined); setActiveMessage(null); }}
-            className="flex items-center gap-1.5 text-[13px] text-muted-foreground/70 hover:text-foreground transition-colors"
+            onClick={closeReader}
+            className="flex items-center gap-1.5 text-[0.8125rem] text-muted-foreground/70 hover:text-foreground transition-colors"
           >
             <ChevronLeft className="w-4 h-4" />
             Back
@@ -1081,8 +1460,12 @@ export default function MailPage() {
         <ThreadView
           message={activeMessage}
           loading={loadingMessage}
-          onClose={() => { setActiveMessageId(undefined); setActiveMessage(null); }}
+          onClose={closeReader}
           onComposeWith={openComposeWith}
+          onReplySent={() => {
+            invalidateMessages();
+            setThreadRefreshKey((k) => k + 1);
+          }}
           onQuickReply={openQuickReply}
           onDelete={deleteMessage}
           onToggleStar={toggleStar}
@@ -1145,6 +1528,35 @@ export default function MailPage() {
         onSaved={() => setCreateTaskPrefill(null)}
       />
 
+      {/* Create task from commitment — promote-with-overrides via TaskModal's create branch */}
+      {commitmentTask && (
+        <TaskModal
+          key={commitmentTask.c.id}
+          open
+          task={null}
+          prefill={{
+            title: commitmentTask.c.text,
+            description: `From ${commitmentTask.c.counterparty ?? 'email'}${commitmentTask.c.dueHint ? ` · ${commitmentTask.c.dueHint}` : ''}`,
+            dueDate: commitmentTask.dueDate ?? undefined,
+            linkedMessageId: commitmentTask.c.messageId,
+          }}
+          onCreateOverride={(payload) =>
+            api.mail.promoteCommitment(commitmentTask.c.id, {
+              title: (payload as any).title,
+              description: (payload as any).description,
+              dueDate: (payload as any).dueDate,
+              priority: (payload as any).priority,
+            }).then((r) => r.task as Task)
+          }
+          onClose={() => setCommitmentTask(null)}
+          onSaved={() => {
+            setCommitmentTask(null);
+            queryClient.invalidateQueries({ queryKey: ['commitments'] });
+            toast.success('Task created from commitment');
+          }}
+        />
+      )}
+
       {/* Floating compose — rendered as a fixed overlay so the thread stays visible */}
       <ComposeModal
         open={composeOpen}
@@ -1175,6 +1587,81 @@ export default function MailPage() {
       <GlobalSearch
         open={globalSearchOpen}
         onClose={() => setGlobalSearchOpen(false)}
+        onAsk={(q) => { setCommitmentsOpen(false); setBriefingExpanded(false); setAskPrefill(q); setAskOpen(true); setAskCollapsed(false); }}
+        onOpenMessage={(id) => void openMessage(id)}
+      />
+
+      <BriefingPanel
+        open={briefingOpen}
+        expanded={briefingExpanded}
+        onToggleExpanded={setBriefingExpanded}
+        onOpenMessage={(id) => void openMessage(id)}
+        openCommitmentsCount={commitmentsData?.openCount}
+        onOpenCommitments={() => setCommitmentsOpen(true)}
+        commitmentsSplit={commitmentsData ? { promised: commitmentsData.promised.length, waiting: commitmentsData.waiting.length } : undefined}
+      />
+
+      <CommitmentsPanel
+        open={commitmentsOpen}
+        onClose={() => setCommitmentsOpen(false)}
+        onOpenMessage={(id) => void openMessage(id)}
+        data={commitmentsData}
+        isLoading={commitmentsLoading}
+        onMutated={() => queryClient.invalidateQueries({ queryKey: ['commitments'] })}
+        onCreateTask={openTaskFromCommitment}
+      />
+
+      {/* Floating Ask-your-inbox trigger — hidden while the panel is expanded */}
+      {aiEnabled && (!askOpen || askCollapsed) && (
+        <button
+          type="button"
+          onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); setAskOpen(true); setAskCollapsed(false); }}
+          className="md:hidden fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 transition-colors"
+          aria-label="Ask your inbox"
+          title="Ask your inbox"
+        >
+          <MessageCircleQuestion className="w-5 h-5" />
+        </button>
+      )}
+
+      <AskInboxPanel
+        open={askOpen}
+        collapsed={askCollapsed}
+        onCollapse={() => setAskCollapsed(true)}
+        onClose={() => { setAskOpen(false); setAskCollapsed(false); setAskPrefill(null); }}
+        onOpenMessage={(id) => void openMessage(id)}
+        onReplyToMessage={(id) => void openReplyTo(id)}
+        prefill={askPrefill}
+        openCommitments={(commitmentsData ? [...commitmentsData.promised, ...commitmentsData.waiting] : []).map((c) => ({ id: c.id, messageId: c.messageId, text: c.text }))}
+      />
+
+      {/* Intelligence rail — AI triggers + utilities; panels dock beside it at xl */}
+      <AIRail
+        aiEnabled={aiEnabled}
+        briefingOpen={briefingOpen && briefingExpanded}
+        commitmentsOpen={commitmentsOpen}
+        askOpen={askOpen && !askCollapsed}
+        commitmentsCount={commitmentsData?.openCount}
+        onBriefing={() => {
+          if (briefingOpen && briefingExpanded) { setBriefingExpanded(false); return; }
+          setCommitmentsOpen(false);
+          if (askOpen) setAskCollapsed(true);
+          setBriefingOpen(true);
+          setBriefingExpanded(true);
+        }}
+        onCommitments={() => {
+          if (commitmentsOpen) { setCommitmentsOpen(false); return; }
+          setBriefingOpen(false);
+          if (askOpen) setAskCollapsed(true);
+          setCommitmentsOpen(true);
+        }}
+        onAsk={() => {
+          if (askOpen && !askCollapsed) { setAskCollapsed(true); return; }
+          setBriefingOpen(false);
+          setCommitmentsOpen(false);
+          setAskOpen(true);
+          setAskCollapsed(false);
+        }}
       />
     </div>
   );

@@ -17,6 +17,7 @@ import type { AuthenticatedRequest } from '../common/interfaces/authenticated-re
 import { DocsService } from './docs.service';
 import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
+import { ShareDocDto } from './dto/share-doc.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { UpdateInviteDto } from './dto/update-invite.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -68,8 +69,12 @@ export class DocsController {
 
   @UseGuards(JwtAuthGuard)
   @Post(':id/share')
-  enableSharing(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.docsService.enableSharing(req.user.sub, id);
+  enableSharing(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ShareDocDto,
+  ) {
+    return this.docsService.enableSharing(req.user.sub, id, dto);
   }
 
   @UseGuards(JwtAuthGuard)

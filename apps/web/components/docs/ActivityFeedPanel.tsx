@@ -77,11 +77,11 @@ export function ActivityFeedPanel({ docId, onClose }: Props) {
                 <Icon className="w-3.5 h-3.5" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] leading-snug">
+                <p className="text-[0.6875rem] leading-snug">
                   <span className="font-semibold">{item.actorName ?? 'Someone'}</span>
                   {' '}<span className="text-muted-foreground">{cfg.label}</span>
                 </p>
-                <p className="text-[10px] text-muted-foreground/70 mt-0.5">{relativeTime(item.createdAt)}</p>
+                <p className="text-[0.625rem] text-muted-foreground/70 mt-0.5">{relativeTime(item.createdAt)}</p>
               </div>
             </div>
           );

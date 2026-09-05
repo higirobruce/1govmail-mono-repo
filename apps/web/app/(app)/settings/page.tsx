@@ -7,8 +7,11 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useThemeStore, type FontSize } from '@/stores/theme.store';
 import { useAIStore } from '@/stores/ai.store';
+import { AI_LOCKED } from '@/lib/ai/config';
 import { api } from '@/lib/api';
 import { AIClient } from '@/lib/ai/client';
+import { CUSTOM_INSTRUCTIONS_MAX_CHARS } from '@/lib/ai/prompt';
+import { isValidSenderAddress } from './blocked-senders-helpers';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -19,10 +22,12 @@ import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import {
   User, Pen, Shield, Mail, Loader2, Plus, Trash2,
-  Check, ChevronRight, RotateCcw, FileSignature,
-  Palmtree, Settings2, Sparkles, AlertTriangle,
+  Check, ChevronRight, ArrowLeft, RotateCcw, FileSignature,
+  Palmtree, Settings2, Bot, AlertTriangle, Ban,
   Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
+  Monitor, LogOut,
 } from 'lucide-react';
+import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -75,7 +80,7 @@ interface SettingsData {
   signatures: Signature[];
 }
 
-type Section = 'profile' | 'signatures' | 'vacation' | 'preferences' | 'ai' | 'security';
+type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'security';
 
 // ── Toggle Switch ──────────────────────────────────────────────────────────────
 
@@ -132,7 +137,8 @@ function NavItem({ icon: Icon, label, active, onClick }: {
     <button
       onClick={onClick}
       className={cn(
-        'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-sm transition-colors',
+        // Chip in the mobile horizontal tab bar; full-width row in the md+ rail.
+        'shrink-0 whitespace-nowrap md:w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-sm transition-colors',
         active
           ? 'bg-primary/10 text-primary font-medium'
           : 'text-muted-foreground/70 hover:bg-muted/50 hover:text-foreground',
@@ -140,7 +146,7 @@ function NavItem({ icon: Icon, label, active, onClick }: {
     >
       <Icon className="w-4 h-4 shrink-0" />
       {label}
-      {active && <ChevronRight className="w-3.5 h-3.5 ml-auto opacity-50" />}
+      {active && <ChevronRight className="hidden md:block w-3.5 h-3.5 ml-auto opacity-50" />}
     </button>
   );
 }
@@ -200,7 +206,7 @@ function FontSizeSelector() {
     { value: 'lg',      label: 'Large',    hint: 'A' },
     { value: 'xl',      label: 'X-Large',  hint: 'A' },
   ];
-  const hintSizes = ['text-[11px]', 'text-[13px]', 'text-[15px]', 'text-[17px]'];
+  const hintSizes = ['text-[0.6875rem]', 'text-[0.8125rem]', 'text-[0.9375rem]', 'text-[1.0625rem]'];
   return (
     <div className="flex gap-2">
       {options.map((opt, i) => (
@@ -215,7 +221,7 @@ function FontSizeSelector() {
           )}
         >
           <span className={cn('font-semibold leading-none', hintSizes[i])}>{opt.hint}</span>
-          <span className="text-[10px] mt-0.5">{opt.label}</span>
+          <span className="text-[0.625rem] mt-0.5">{opt.label}</span>
         </button>
       ))}
     </div>
@@ -364,7 +370,7 @@ function SignatureEditor({
           </div>
           <EditorContent editor={editor} className="bg-background" />
         </div>
-        <p className="text-[11px] text-muted-foreground/40">
+        <p className="text-[0.6875rem] text-muted-foreground/40">
           Use the toolbar to format text and upload images (logo, photo, etc.).
         </p>
       </div>
@@ -441,7 +447,7 @@ export default function SettingsPage() {
   if (!hydrated) return null;
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="flex flex-col md:flex-row h-screen bg-background overflow-hidden">
       <Sidebar
         folders={[]}
         activeFolderId=""
@@ -449,22 +455,37 @@ export default function SettingsPage() {
         onCompose={() => router.push('/mail')}
       />
 
-      {/* ── Settings nav ── */}
-      <div className="w-56 shrink-0 flex flex-col border-r border-border/50 h-full bg-card/50 py-4 px-3 gap-1">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/40 px-2 mb-2">
+      {/* ── Settings nav — side rail from md up, horizontal scrollable tab bar on phones ── */}
+      <div className={cn(
+        'shrink-0 bg-card/50',
+        'flex flex-row items-center gap-1 overflow-x-auto border-b border-border/50 px-2 py-2',
+        'md:w-56 md:h-full md:flex-col md:items-stretch md:overflow-x-visible md:border-b-0 md:border-r md:px-3 md:py-4',
+      )}>
+        {/* The app sidebar is hidden below lg, so this is the only way back to mail on phones/tablets */}
+        <button
+          onClick={() => router.push('/mail')}
+          className="lg:hidden shrink-0 whitespace-nowrap md:w-full flex items-center gap-2 px-3 py-2 md:mb-1 rounded-lg text-sm text-muted-foreground/70 hover:bg-muted/50 hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4 shrink-0" />
+          Mail
+        </button>
+        <p className="hidden md:block text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/40 px-2 mb-2">
           Settings
         </p>
         <NavItem icon={User}          label="Profile"       active={section === 'profile'}     onClick={() => setSection('profile')} />
         <NavItem icon={FileSignature} label="Signatures"    active={section === 'signatures'}  onClick={() => setSection('signatures')} />
         <NavItem icon={Palmtree}      label="Vacation Reply" active={section === 'vacation'}   onClick={() => setSection('vacation')} />
+        <NavItem icon={Ban}           label="Blocked Senders" active={section === 'blocked-senders'} onClick={() => setSection('blocked-senders')} />
         <NavItem icon={Settings2}     label="Preferences"   active={section === 'preferences'} onClick={() => setSection('preferences')} />
-        <NavItem icon={Sparkles}      label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
+        {!AI_LOCKED && (
+          <NavItem icon={Bot}           label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
+        )}
         <NavItem icon={Shield}        label="Security"      active={section === 'security'}    onClick={() => setSection('security')} />
       </div>
 
       {/* ── Main content ── */}
-      <ScrollArea className="flex-1 min-w-0 h-full">
-        <div className="max-w-2xl mx-auto px-8 py-8">
+      <ScrollArea className="flex-1 min-w-0 min-h-0 md:h-full">
+        <div className="max-w-2xl mx-auto px-4 py-6 sm:px-6 md:px-8 md:py-8">
           {loading ? (
             <div className="flex items-center justify-center py-24">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/40" />
@@ -474,8 +495,9 @@ export default function SettingsPage() {
               {section === 'profile'     && <ProfileSection     data={data} onUpdate={loadSettings} />}
               {section === 'signatures'  && <SignaturesSection   data={data} onUpdate={loadSettings} />}
               {section === 'vacation'    && <VacationSection     data={data} onUpdate={loadSettings} />}
+              {section === 'blocked-senders' && <BlockedSendersSection />}
               {section === 'preferences' && <PreferencesSection  data={data} onUpdate={loadSettings} />}
-              {section === 'ai'          && <AISection />}
+              {section === 'ai' && !AI_LOCKED && <AISection />}
               {section === 'security'    && <SecuritySection     data={data} />}
             </>
           ) : null}
@@ -774,7 +796,7 @@ function OooTemplateInserter({ onInsert }: { onInsert: (text: string) => void })
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="text-[11px] text-primary hover:text-primary/80 transition-colors"
+        className="text-[0.6875rem] text-primary hover:text-primary/80 transition-colors"
       >
         Insert template ▾
       </button>
@@ -785,7 +807,7 @@ function OooTemplateInserter({ onInsert }: { onInsert: (text: string) => void })
               key={t.label}
               type="button"
               onClick={() => { onInsert(t.text); setOpen(false); }}
-              className="w-full text-left px-3 py-2 text-[12px] hover:bg-muted/50 text-foreground transition-colors"
+              className="w-full text-left px-3 py-2 text-[0.75rem] hover:bg-muted/50 text-foreground transition-colors"
             >
               {t.label}
             </button>
@@ -847,7 +869,7 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
 
       {/* Past-date warning */}
       {isPastDate && (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[12px] text-amber-600 dark:text-amber-400">
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[0.75rem] text-amber-600 dark:text-amber-400">
           <span className="shrink-0 mt-0.5">⚠</span>
           Your out-of-office period may have already started or passed. Check the dates below.
         </div>
@@ -855,7 +877,7 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
 
       {enabled && (
         <div className="mt-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Away from</Label>
               <DateTimePicker
@@ -922,13 +944,13 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
             <button
               type="button"
               onClick={() => setShowPreview((o) => !o)}
-              className="w-full flex items-center justify-between px-4 py-2.5 bg-muted/20 hover:bg-muted/40 transition-colors text-[12px] font-medium text-muted-foreground"
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-muted/20 hover:bg-muted/40 transition-colors text-[0.75rem] font-medium text-muted-foreground"
             >
               <span>Preview auto-reply</span>
               <span>{showPreview ? '▲' : '▼'}</span>
             </button>
             {showPreview && (
-              <div className="p-4 bg-card space-y-2 text-[12px]">
+              <div className="p-4 bg-card space-y-2 text-[0.75rem]">
                 <div className="flex items-center gap-2 text-muted-foreground/60">
                   <span className="font-medium text-foreground/60">Subject:</span>
                   <span>Out of Office: Re: [your subject]</span>
@@ -938,7 +960,7 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
                   <span>{data.email}</span>
                 </div>
                 <Separator />
-                <pre className="whitespace-pre-wrap text-foreground/80 text-[12px] font-sans leading-relaxed">
+                <pre className="whitespace-pre-wrap text-foreground/80 text-[0.75rem] font-sans leading-relaxed">
                   {message || '(no message set)'}
                 </pre>
               </div>
@@ -957,6 +979,126 @@ function VacationSection({ data, onUpdate }: { data: SettingsData; onUpdate: () 
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
           Save changes
         </Button>
+      </div>
+    </div>
+  );
+}
+
+function BlockedSendersSection() {
+  const [rules, setRules]   = useState<Array<{ id: string; type: 'BLOCK' | 'ALLOW'; address: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [blockInput, setBlockInput] = useState('');
+  const [allowInput, setAllowInput] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.mail.senderRules.list();
+      setRules(data);
+    } catch (err: any) {
+      toast.error('Failed to load sender rules', { description: err?.message });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addRule = async (type: 'BLOCK' | 'ALLOW') => {
+    const address = (type === 'BLOCK' ? blockInput : allowInput).trim();
+    if (!isValidSenderAddress(address)) {
+      toast.error('Enter an email address or a domain like "@example.com"');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.mail.senderRules.create({ type, address });
+      type === 'BLOCK' ? setBlockInput('') : setAllowInput('');
+      await load();
+      toast.success(type === 'BLOCK' ? 'Sender blocked' : 'Sender allowed');
+    } catch (err: any) {
+      toast.error('Failed to save', { description: err?.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeRule = async (id: string) => {
+    try {
+      await api.mail.senderRules.remove(id);
+      setRules((prev) => prev.filter((r) => r.id !== id));
+    } catch (err: any) {
+      toast.error('Failed to remove', { description: err?.message });
+    }
+  };
+
+  const blocked = rules.filter((r) => r.type === 'BLOCK');
+  const allowed = rules.filter((r) => r.type === 'ALLOW');
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/40" />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <SectionHeader
+        title="Blocked & Allowed Senders"
+        description="Mail from blocked senders is moved to Spam automatically. Allowed senders are never auto-filed there."
+      />
+
+      <div className="max-w-sm space-y-6">
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Blocked</Label>
+          <div className="flex gap-2">
+            <Input
+              value={blockInput}
+              onChange={(e) => setBlockInput(e.target.value)}
+              placeholder="person@example.com or @example.com"
+              className="h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/30"
+            />
+            <Button size="sm" onClick={() => addRule('BLOCK')} disabled={saving} className="h-8 text-xs gap-1.5">
+              <Plus className="w-3.5 h-3.5" /> Block
+            </Button>
+          </div>
+          {blocked.map((r) => (
+            <div key={r.id} className="flex items-center justify-between text-sm py-1.5 px-2 rounded bg-muted/20">
+              <span>{r.address}</span>
+              <button onClick={() => removeRule(r.id)} className="text-muted-foreground/60 hover:text-destructive">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Allowed</Label>
+          <div className="flex gap-2">
+            <Input
+              value={allowInput}
+              onChange={(e) => setAllowInput(e.target.value)}
+              placeholder="person@example.com or @example.com"
+              className="h-8 text-sm bg-muted/30 border-border/50 focus-visible:border-primary/30"
+            />
+            <Button size="sm" onClick={() => addRule('ALLOW')} disabled={saving} className="h-8 text-xs gap-1.5">
+              <Plus className="w-3.5 h-3.5" /> Allow
+            </Button>
+          </div>
+          {allowed.map((r) => (
+            <div key={r.id} className="flex items-center justify-between text-sm py-1.5 px-2 rounded bg-muted/20">
+              <span>{r.address}</span>
+              <button onClick={() => removeRule(r.id)} className="text-muted-foreground/60 hover:text-destructive">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1152,24 +1294,39 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
 
 function AISection() {
   const enabled = useAIStore((s) => s.enabled);
-  const baseUrl = useAIStore((s) => s.baseUrl);
   const model = useAIStore((s) => s.model);
-  const apiKey = useAIStore((s) => s.apiKey);
+  const customInstructions = useAIStore((s) => s.customInstructions);
   const setEnabled = useAIStore((s) => s.setEnabled);
-  const setBaseUrl = useAIStore((s) => s.setBaseUrl);
   const setModel = useAIStore((s) => s.setModel);
-  const setApiKey = useAIStore((s) => s.setApiKey);
+  const setCustomInstructions = useAIStore((s) => s.setCustomInstructions);
 
-  const [draftBaseUrl, setDraftBaseUrl] = useState(baseUrl);
   const [draftModel, setDraftModel] = useState(model);
-  const [draftApiKey, setDraftApiKey] = useState(apiKey);
+  const [draftInstructions, setDraftInstructions] = useState(customInstructions);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<null | { ok: boolean; detail: string }>(null);
+  const [installed, setInstalled] = useState<string[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Offer the models actually pulled on the API host — a mistyped or
+  // un-pulled name otherwise only surfaces as a 502 at the point of use.
+  useEffect(() => {
+    const abort = new AbortController();
+    new AIClient()
+      .listModels(abort.signal)
+      .then(setInstalled)
+      .catch((err: unknown) => {
+        if (abort.signal.aborted) return;
+        setInstalled([]);
+        setLoadError(err instanceof Error ? err.message : String(err));
+      });
+    return () => abort.abort();
+  }, []);
+
+  const missing = installed !== null && installed.length > 0 && !installed.includes(draftModel);
 
   const handleSave = () => {
-    setBaseUrl(draftBaseUrl.trim());
     setModel(draftModel.trim());
-    setApiKey(draftApiKey.trim());
+    setCustomInstructions(draftInstructions.trim());
     toast.success('AI settings saved');
   };
 
@@ -1177,7 +1334,7 @@ function AISection() {
     setTesting(true);
     setTestResult(null);
     try {
-      const client = new AIClient({ baseUrl: draftBaseUrl.trim(), apiKey: draftApiKey.trim() || undefined });
+      const client = new AIClient();
       const reply = await client.chat({
         model: draftModel.trim(),
         messages: [
@@ -1195,65 +1352,85 @@ function AISection() {
     }
   };
 
-  const sentToHost = (() => {
-    try {
-      return new URL(draftBaseUrl).host;
-    } catch {
-      return draftBaseUrl;
-    }
-  })();
-
   return (
     <>
       <SectionHeader
         title="AI Assistant"
-        description="Optional. When enabled, you can summarize, paraphrase, and analyze emails using a local or configured AI model."
+        description="Summarize threads, paraphrase drafts, and suggest replies using the organisation's hosted model."
       />
 
       <div className="space-y-1 mb-6">
         <SettingRow
           label="Enable AI features"
-          description="Adds Summarize and related actions inside open messages."
+          description="Adds Summarize, Rewrite, and Suggest Reply actions in mail."
         >
           <Switch checked={enabled} onChange={setEnabled} />
         </SettingRow>
       </div>
 
-      <SectionHeader title="Provider" description="Most users run a local model server like Ollama or LM Studio. The OpenAI HTTP shape is required." />
+      <SectionHeader
+        title="Model"
+        description="Name of the model the server should use. Must match a model installed on the API host."
+      />
 
       <div className="space-y-3 mb-6">
         <div>
-          <Label className="text-xs text-muted-foreground">Base URL</Label>
-          <Input
-            value={draftBaseUrl}
-            onChange={(e) => setDraftBaseUrl(e.target.value)}
-            placeholder="http://localhost:11434/v1"
-            className="mt-1"
-          />
-          <p className="text-[11px] text-muted-foreground/70 mt-1">
-            For Ollama: <code className="font-mono">http://localhost:11434/v1</code>. For LM Studio: <code className="font-mono">http://localhost:1234/v1</code>.
-          </p>
-        </div>
-
-        <div>
           <Label className="text-xs text-muted-foreground">Model</Label>
-          <Input
-            value={draftModel}
-            onChange={(e) => setDraftModel(e.target.value)}
-            placeholder="llama3.1"
-            className="mt-1"
-          />
+          {installed === null ? (
+            <div className="mt-1 flex items-center gap-2 h-9 text-[0.75rem] text-muted-foreground/70">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Checking which models are installed…
+            </div>
+          ) : installed.length > 0 ? (
+            <div className="mt-1">
+              <Select
+                value={draftModel}
+                onChange={setDraftModel}
+                options={(installed.includes(draftModel) ? installed : [draftModel, ...installed])
+                  .map((m) => ({ value: m, label: m }))}
+              />
+            </div>
+          ) : (
+            <Input
+              value={draftModel}
+              onChange={(e) => setDraftModel(e.target.value)}
+              placeholder="gemma2:2b"
+              className="mt-1"
+            />
+          )}
+          {missing ? (
+            <p className="text-[0.6875rem] text-destructive mt-1">
+              <code className="font-mono">{draftModel}</code> is not installed on the API host. Pick an installed model, or ask your administrator to run <code className="font-mono">ollama pull {draftModel}</code>.
+            </p>
+          ) : loadError ? (
+            <p className="text-[0.6875rem] text-muted-foreground/70 mt-1">
+              Could not list installed models ({loadError}). Enter the model name manually.
+            </p>
+          ) : (
+            <p className="text-[0.6875rem] text-muted-foreground/70 mt-1">
+              Models installed on the API host. Ask your administrator to install more.
+            </p>
+          )}
         </div>
 
         <div>
-          <Label className="text-xs text-muted-foreground">API key (optional)</Label>
-          <Input
-            value={draftApiKey}
-            onChange={(e) => setDraftApiKey(e.target.value)}
-            placeholder="Leave blank for local servers"
-            type="password"
-            className="mt-1"
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Custom instructions</Label>
+            <span className="text-[0.6875rem] text-muted-foreground/60 tabular-nums">
+              {draftInstructions.length}/{CUSTOM_INSTRUCTIONS_MAX_CHARS}
+            </span>
+          </div>
+          <textarea
+            value={draftInstructions}
+            onChange={(e) => setDraftInstructions(e.target.value.slice(0, CUSTOM_INSTRUCTIONS_MAX_CHARS))}
+            placeholder="e.g. Keep replies under three sentences. Sign summaries with bullet points. Prefer formal wording."
+            rows={3}
+            maxLength={CUSTOM_INSTRUCTIONS_MAX_CHARS}
+            className="mt-1 w-full rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/20 focus:border-primary/30 resize-y"
           />
+          <p className="text-[0.6875rem] text-muted-foreground/70 mt-1">
+            Style preferences applied to every AI action (Summarize, Rewrite, Suggest Reply). They never override the built-in safety rules, and small models may follow them loosely.
+          </p>
         </div>
 
         <div className="flex items-center gap-2 pt-1">
@@ -1267,7 +1444,7 @@ function AISection() {
           {testResult && (
             <span
               className={cn(
-                'text-[12px]',
+                'text-[0.75rem]',
                 testResult.ok ? 'text-success' : 'text-destructive',
               )}
             >
@@ -1278,12 +1455,12 @@ function AISection() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex gap-2 text-[12px] text-amber-700 dark:text-amber-300">
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex gap-2 text-[0.75rem] text-amber-700 dark:text-amber-300">
         <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
         <div>
           <p className="font-medium">Privacy notice</p>
           <p className="mt-0.5 text-amber-700/80 dark:text-amber-300/80">
-            When you use AI features, the email content (subject, sender, and body) is sent over the network to <span className="font-mono">{sentToHost}</span>. Make sure this host is your local machine or an organisation-approved provider.
+            When you use AI features, the email content (subject, sender, and body) is sent to the API server, which forwards it to a self-hosted model. Content does not leave your organisation's infrastructure.
           </p>
         </div>
       </div>
@@ -1300,6 +1477,46 @@ function SecuritySection({ data }: { data: SettingsData }) {
   const [newPwd, setNewPwd]         = useState('');
   const [confirmPwd, setConfirmPwd] = useState('');
   const [saving, setSaving]         = useState(false);
+
+  const [sessions, setSessions] = useState<Array<{
+    id: string; userAgent: string | null; ipAddress: string | null;
+    createdAt: string; lastSeenAt: string; isCurrent: boolean;
+  }>>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+
+  const loadSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    try {
+      const data = await api.auth.getSessions();
+      setSessions(data);
+    } catch (err: any) {
+      toast.error('Failed to load sessions', { description: err?.message });
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  const handleRevoke = async (id: string) => {
+    try {
+      await api.auth.revokeSession(id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+      toast.success('Session signed out');
+    } catch (err: any) {
+      toast.error('Failed to sign out session', { description: err?.message });
+    }
+  };
+
+  const handleRevokeOthers = async () => {
+    try {
+      const result = await api.auth.revokeOtherSessions();
+      toast.success(`Signed out ${result.revoked} other session${result.revoked === 1 ? '' : 's'}`);
+      await loadSessions();
+    } catch (err: any) {
+      toast.error('Failed to sign out other sessions', { description: err?.message });
+    }
+  };
 
   const handleChange = async () => {
     if (!oldPwd || !newPwd || !confirmPwd) {
@@ -1388,6 +1605,57 @@ function SecuritySection({ data }: { data: SettingsData }) {
           </Button>
         </div>
       </div>
+
+      <Separator className="my-6" />
+
+      <SectionHeader
+        title="Active sessions"
+        description="Devices currently signed in to your account."
+      />
+
+      {sessionsLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/40" />
+        </div>
+      ) : (
+        <div className="max-w-md space-y-2">
+          {sessions.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-3 py-2 px-3 rounded bg-muted/20">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Monitor className="w-4 h-4 text-muted-foreground/50 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm truncate">
+                    {s.userAgent ?? 'Unknown device'}
+                    {s.isCurrent && <span className="ml-2 text-xs text-primary">This session</span>}
+                  </p>
+                  <p className="text-xs text-muted-foreground/60">
+                    {s.ipAddress ?? 'Unknown IP'} · last active {formatDistanceToNow(parseISO(s.lastSeenAt), { addSuffix: true })}
+                  </p>
+                </div>
+              </div>
+              {!s.isCurrent && (
+                <button
+                  onClick={() => handleRevoke(s.id)}
+                  className="text-xs text-muted-foreground/60 hover:text-destructive shrink-0 flex items-center gap-1"
+                >
+                  <LogOut className="w-3.5 h-3.5" /> Sign out
+                </button>
+              )}
+            </div>
+          ))}
+
+          {sessions.filter((s) => !s.isCurrent).length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRevokeOthers}
+              className="h-8 text-xs gap-1.5 mt-2"
+            >
+              <LogOut className="w-3.5 h-3.5" /> Sign out all other sessions
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

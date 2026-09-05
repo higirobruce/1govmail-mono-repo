@@ -10,6 +10,7 @@ import { getCachedBody, setCachedBody, fetchBodyCached, watchPendingBody } from 
 import type { TriageLabel } from '@email-client/shared';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
+import { AIRail } from '@/components/layout/AIRail';
 import MailList, { type ContextAction, type BulkAction } from '@/components/mail/MailList';
 import { InboxZero } from '@/components/mail/InboxZero';
 import SnoozeModal from '@/components/mail/SnoozeModal';
@@ -1187,6 +1188,7 @@ export default function MailPage() {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar
+        hideUtilities
         folders={folders}
         activeFolderId={activeFolderId}
         onFolderSelect={(id) => setActiveFolderId(id)}
@@ -1291,7 +1293,7 @@ export default function MailPage() {
           {/* AI actions — labeled pills so the features are discoverable, not
               hidden behind 14px ghost icons. Scrolls horizontally if cramped. */}
           {aiEnabled && !isSearchMode && (
-            <div className="flex items-center gap-1.5 mt-2 overflow-x-auto scrollbar-none">
+            <div className="flex items-center gap-1.5 mt-2 overflow-x-auto scrollbar-none md:hidden">
               <button
                 onClick={() => { setCommitmentsOpen(false); if (askOpen) setAskCollapsed(true); setBriefingOpen(true); setBriefingExpanded((e) => !e); }}
                 className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
@@ -1552,7 +1554,7 @@ export default function MailPage() {
         <button
           type="button"
           onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); setAskOpen(true); setAskCollapsed(false); }}
-          className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 transition-colors"
+          className="md:hidden fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 transition-colors"
           aria-label="Ask your inbox"
           title="Ask your inbox"
         >
@@ -1569,6 +1571,34 @@ export default function MailPage() {
         onReplyToMessage={(id) => void openReplyTo(id)}
         prefill={askPrefill}
         openCommitments={(commitmentsData ? [...commitmentsData.promised, ...commitmentsData.waiting] : []).map((c) => ({ id: c.id, messageId: c.messageId, text: c.text }))}
+      />
+
+      {/* Intelligence rail — AI triggers + utilities; panels dock beside it at xl */}
+      <AIRail
+        aiEnabled={aiEnabled}
+        briefingOpen={briefingOpen}
+        commitmentsOpen={commitmentsOpen}
+        askOpen={askOpen && !askCollapsed}
+        commitmentsCount={commitmentsData?.openCount}
+        onBriefing={() => {
+          if (briefingOpen) { setBriefingOpen(false); return; }
+          setCommitmentsOpen(false);
+          if (askOpen) setAskCollapsed(true);
+          setBriefingOpen(true);
+        }}
+        onCommitments={() => {
+          if (commitmentsOpen) { setCommitmentsOpen(false); return; }
+          setBriefingOpen(false);
+          if (askOpen) setAskCollapsed(true);
+          setCommitmentsOpen(true);
+        }}
+        onAsk={() => {
+          if (askOpen && !askCollapsed) { setAskCollapsed(true); return; }
+          setBriefingOpen(false);
+          setCommitmentsOpen(false);
+          setAskOpen(true);
+          setAskCollapsed(false);
+        }}
       />
     </div>
   );

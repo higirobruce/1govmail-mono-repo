@@ -88,6 +88,8 @@ interface SidebarProps {
   selectedLabelNames?: Set<string>;
   onToggleLabelFilter?: (name: string) => void;
   onClearLabelFilter?: () => void;
+  /** Hide Settings + theme rows — the mail page shows them on the right rail instead. */
+  hideUtilities?: boolean;
 }
 
 // All built-in Zimbra folder paths — user-created folders have paths not in this set
@@ -369,6 +371,7 @@ export default function Sidebar({
   selectedLabelNames,
   onToggleLabelFilter,
   onClearLabelFilter,
+  hideUtilities = false,
 }: SidebarProps) {
   const filterEnabled = !!onToggleLabelFilter;
   const router = useRouter();
@@ -831,8 +834,10 @@ export default function Sidebar({
         </div>
         <OfflineStatusPill />
         <NotificationsBell />
-        <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} collapsed={railMode} />
-        {railMode ? (
+        {!hideUtilities && (
+          <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} collapsed={railMode} />
+        )}
+        {!hideUtilities && (railMode ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -856,7 +861,8 @@ export default function Sidebar({
             <ThemeIcon className="w-3.5 h-3.5 shrink-0" />
             <span className="flex-1 text-left capitalize">Theme: {theme}</span>
           </Button>
-        )}
+        ))}
+
         {railMode ? (
           <Tooltip>
             <TooltipTrigger asChild>

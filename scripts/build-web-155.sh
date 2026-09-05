@@ -15,7 +15,6 @@ docker run --rm --platform linux/amd64 \
   -v "$REPO":/srcrepo:ro \
   -v govmail-pnpm-store:/pnpm-store \
   -v "$OUT":/out \
-  
   -e NEXT_PUBLIC_API_URL=https://test1.risa.gov.rw/api \
   -e NEXT_PUBLIC_APP_URL=https://test1.risa.gov.rw \
   -e NEXT_PUBLIC_COLLAB_WS_URL=wss://test1.risa.gov.rw/collab \

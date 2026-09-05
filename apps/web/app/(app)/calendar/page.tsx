@@ -1968,6 +1968,31 @@ export default function CalendarPage() {
     setShowCreate(true);
   }, [hydrated, isAuthenticated]); // eslint-disable-line
 
+  // Deep link: /calendar?event=<id> selects that event (opening EventDetailPanel)
+  // once events for the current range have loaded, then cleans the URL. Reads
+  // window.location.search (not useSearchParams) to avoid forcing a Suspense
+  // boundary on this client page at build time. If the id isn't among the
+  // loaded events, falls back to fetching it directly; a 404/failure warns
+  // quietly rather than crashing. Consume-once via ref so it doesn't re-fire
+  // as `events`/`loading` change on later range navigation.
+  const eventParamConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated || loading) return;
+    if (eventParamConsumedRef.current) return;
+    const eventId = new URLSearchParams(window.location.search).get('event');
+    if (!eventId) return;
+    eventParamConsumedRef.current = true;
+    const found = events.find((e) => e.id === eventId);
+    if (found) {
+      setSelectedEvent(found);
+    } else {
+      api.calendar.getEvent(eventId)
+        .then((full) => { if (full) setSelectedEvent(full as CalEvent); })
+        .catch((err) => console.warn('Failed to load event from deep link', err));
+    }
+    router.replace('/calendar');
+  }, [hydrated, isAuthenticated, loading, events, router]);
+
   // When an event is selected, fetch full details from Zimbra (complete attendee list)
   useEffect(() => {
     if (!selectedEvent) return;

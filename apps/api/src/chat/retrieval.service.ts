@@ -27,6 +27,7 @@ export interface RetrievalResult {
 }
 
 interface FusableHit {
+  key: string; // == messageId — rrfFuse's generic dedupe field (Task 5 rename)
   messageId: string;
   subject: string | null;
   fromEmail: string;
@@ -117,7 +118,7 @@ export class RetrievalService {
       if (seen.has(r.messageId)) continue; // rows are distance-ordered: best chunk per message
       seen.add(r.messageId);
       hits.push({
-        messageId: r.messageId, subject: r.subject, fromEmail: r.fromEmail,
+        key: r.messageId, messageId: r.messageId, subject: r.subject, fromEmail: r.fromEmail,
         fromName: r.fromName, receivedAt: r.receivedAt, context: r.chunkText,
       });
     }
@@ -130,7 +131,7 @@ export class RetrievalService {
     const after = zimbraAfterDate(new Date(Date.now() - WINDOW_DAYS * DAY_MS));
     const res = await this.mailService.searchMessages(userId, `${keywords} after:${after}`, KEYWORD_LIMIT, 0);
     return (res.messages ?? []).map((m: any) => ({
-      messageId: m.id, subject: m.subject ?? null, fromEmail: m.fromEmail ?? '',
+      key: m.id, messageId: m.id, subject: m.subject ?? null, fromEmail: m.fromEmail ?? '',
       fromName: m.fromName ?? null, receivedAt: new Date(m.receivedAt),
       context: null,
       row: { snippet: m.snippet, bodyText: m.bodyText, bodyHtml: m.bodyHtml },

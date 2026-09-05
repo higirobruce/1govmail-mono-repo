@@ -42,20 +42,33 @@ export class InboxChatService {
       };
     }
 
+    // Task 5 widened ChatSource (messageId/subject/receivedAt -> id/title/date,
+    // + type); PublicChatSource is this service's own REST-facing shape and is
+    // untouched, so map back to it below.
     const internal: ChatSource[] = retrieved.map((s, i) => ({
       alias: `s${i + 1}`,
-      messageId: s.messageId,
-      subject: s.subject,
+      type: 'mail',
+      id: s.messageId,
+      title: s.subject,
       fromEmail: s.fromEmail,
       fromName: s.fromName,
-      receivedAt: s.receivedAt.toISOString(),
+      date: s.receivedAt.toISOString(),
       context: s.context,
       injectionSuspected: s.injectionSuspected,
     }));
 
     const { system, turns: clamped } = buildInboxChatPrompt(internal, turns);
     return {
-      sources: internal.map(({ context, ...pub }) => ({ ...pub, snippet: context.slice(0, 160) })),
+      sources: internal.map((s) => ({
+        alias: s.alias,
+        messageId: s.id,
+        subject: s.title,
+        fromEmail: s.fromEmail ?? '',
+        fromName: s.fromName ?? null,
+        receivedAt: typeof s.date === 'string' ? s.date : s.date.toISOString(),
+        injectionSuspected: s.injectionSuspected,
+        snippet: s.context.slice(0, 160),
+      })),
       degraded,
       upstreamBody: {
         model: this.chatModel,

@@ -2,13 +2,17 @@ import { UNTRUSTED_CONTENT_RULE, fenceUntrusted, neutralizeMarkers } from './pro
 import { languageRule } from './language';
 import { clampText } from './extract';
 
+export type SourceType = 'mail' | 'doc' | 'event';
+
 export interface ChatSource {
   alias: string;          // s1…sN — the ONLY name the model may cite
-  messageId: string;
-  subject: string | null;
-  fromEmail: string;
-  fromName: string | null;
-  receivedAt: string;     // ISO
+  type: SourceType;
+  id: string;
+  title: string | null;   // subject / doc title / event title
+  fromEmail?: string;             // mail only
+  fromName?: string | null;       // mail only
+  date: string | Date;    // ISO string or Date
+  meta?: string | null;   // event when/where line, doc emoji
   context: string;        // ≤1200 chars of chunk/extract/snippet
   injectionSuspected: boolean;
 }
@@ -53,39 +57,66 @@ export function extractKeywords(question: string): string {
  * score calibration between legs — that is exactly why it was chosen.
  * First-seen payload wins on dedupe (pass the richer leg first).
  */
-export function rrfFuse<T extends { messageId: string }>(legs: T[][], k = 60, top = 8): T[] {
+export function rrfFuse<T extends { key: string }>(legs: T[][], k = 60, top = 8): T[] {
   const entries = new Map<string, { hit: T; score: number }>();
   for (const leg of legs) {
     leg.forEach((hit, idx) => {
       const inc = 1 / (k + idx + 1);
-      const cur = entries.get(hit.messageId);
+      const cur = entries.get(hit.key);
       if (cur) cur.score += inc;
-      else entries.set(hit.messageId, { hit, score: inc });
+      else entries.set(hit.key, { hit, score: inc });
     });
   }
   return [...entries.values()].sort((a, b) => b.score - a.score).slice(0, top).map((e) => e.hit);
 }
 
+function formatDate(d: string | Date): string {
+  return typeof d === 'string' ? d : d.toISOString();
+}
+
 function formatSource(s: ChatSource): string {
+  const date = neutralizeMarkers(formatDate(s.date));
+  const title = s.title ? neutralizeMarkers(s.title) : null;
+
+  if (s.type === 'doc') {
+    const header = [
+      `[${s.alias}] Document: ${title ?? 'Untitled'}`,
+      `Updated: ${date}`,
+    ].join(' | ');
+    return `${header}\n${fenceUntrusted('DOCUMENT', s.context)}`;
+  }
+
+  if (s.type === 'event') {
+    const header = [
+      `[${s.alias}] Event: ${title ?? 'Untitled'}`,
+      `When: ${s.meta ? neutralizeMarkers(s.meta) : ''}`,
+    ].join(' | ');
+    return `${header}\n${fenceUntrusted('EVENT', s.context)}`;
+  }
+
+  // mail — header/fence unchanged from the original single-source-type builder
   const from = s.fromName
-    ? `${neutralizeMarkers(s.fromName)} <${neutralizeMarkers(s.fromEmail)}>`
-    : neutralizeMarkers(s.fromEmail);
+    ? `${neutralizeMarkers(s.fromName)} <${neutralizeMarkers(s.fromEmail ?? '')}>`
+    : neutralizeMarkers(s.fromEmail ?? '');
   const meta = [
     `[${s.alias}] From: ${from}`,
-    s.subject ? `Subject: ${neutralizeMarkers(s.subject)}` : null,
-    `Date: ${s.receivedAt}`,
+    title ? `Subject: ${title}` : null,
+    `Date: ${date}`,
   ].filter(Boolean).join(' | ');
   return `${meta}\n${fenceUntrusted('EMAIL', s.context)}`;
 }
 
-export function buildInboxChatPrompt(
-  sources: ChatSource[],
-  turns: ChatTurn[],
-): { system: string; turns: ChatTurn[] } {
+/**
+ * Builds the system prompt for "Ask 1Gov" — mail, documents, and calendar
+ * sources fused into one cited-answer prompt. Turn clamping is the caller's
+ * responsibility (see `buildInboxChatPrompt` below for the legacy shape that
+ * still does it internally).
+ */
+export function buildAskPrompt(sources: ChatSource[], turns: ChatTurn[]): string {
   const question = turns[turns.length - 1]?.content ?? '';
-  const system = `${UNTRUSTED_CONTENT_RULE}
+  return `${UNTRUSTED_CONTENT_RULE}
 
-You answer questions about the user's own government mailbox using ONLY the email excerpts listed under SOURCES. Each source has an alias like [s1].
+You answer questions about the user's own government mail, documents, and calendar using ONLY the excerpts listed under SOURCES. Each source has an alias like [s1].
 ${languageRule(question)}
 Rules:
 - Base every claim on the sources. If they do not contain the answer, say so plainly — never guess or invent emails, senders, dates, or amounts.
@@ -95,7 +126,18 @@ Rules:
 
 SOURCES:
 ${sources.map(formatSource).join('\n\n')}`;
+}
 
+/**
+ * @deprecated Use `buildAskPrompt`. Kept only so `apps/api`'s not-yet-migrated
+ * inbox-chat service still compiles; the api call site moves to
+ * `buildAskPrompt` in a later task, which deletes this alias.
+ */
+export function buildInboxChatPrompt(
+  sources: ChatSource[],
+  turns: ChatTurn[],
+): { system: string; turns: ChatTurn[] } {
+  const system = buildAskPrompt(sources, turns);
   const clamped = turns.map((t, i) => ({
     role: t.role,
     // clampText adds '\n\n[…truncated]' (14 chars), so subtract that from the limit

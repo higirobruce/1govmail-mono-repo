@@ -8,6 +8,7 @@ import {
   customInstructionsBlock,
   fenceUntrusted,
   languageRule,
+  neutralizeMarkers,
   scrubOutput,
 } from './prompt';
 import { markdownToHtml } from './markdownToHtml';
@@ -73,7 +74,11 @@ export async function draftFromThread(
   opts: { model: string; subject: string; customInstructions?: string | null; signal?: AbortSignal },
 ): Promise<DraftResult> {
   const system = withCustomInstructions(SYSTEM(renderCatalog(), threadText), opts.customInstructions);
-  const user = `Thread subject: ${opts.subject}
+  // Subject is a remote-sender-controlled header (it rides in via the thread's
+  // first message), so it is neutralized the same way fenceUntrusted defangs
+  // the thread body below — matching the Subject-line treatment in
+  // shared/ai/chat.ts's formatSource — before it is placed outside the fence.
+  const user = `Thread subject: ${neutralizeMarkers(opts.subject)}
 
 ${fenceUntrusted('EMAIL THREAD', threadText)}
 
@@ -101,7 +106,7 @@ Draft the document now.`;
   const templateId = TEMPLATE_BY_ID.has(requestedId) ? requestedId : DEFAULT_TEMPLATE_ID;
 
   const rawTitle = typeof data.title === 'string' ? scrubOutput(data.title).trim() : '';
-  const title = rawTitle || opts.subject;
+  const title = rawTitle || neutralizeMarkers(opts.subject);
 
   return { templateId, title, markdown };
 }

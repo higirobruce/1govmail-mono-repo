@@ -68,6 +68,13 @@ function validate(data: Record<string, unknown>, fallbackTitle: string, _now: Da
     }
   }
 
+  // Mixed shape: a timed start with a bare-date end (the date-only repair
+  // above only fires when startAt itself is bare) — normalize endAt to
+  // start + 1h so it never escapes the promised datetime format.
+  if (startAt?.includes('T') && endAt && !endAt.includes('T') && !allDay) {
+    endAt = format(addHours(new Date(startAt), 1), DATETIME_FORMAT);
+  }
+
   if (startAt?.includes('T') && endAt?.includes('T')) {
     const startDate = new Date(startAt);
     const endDate = new Date(endAt);

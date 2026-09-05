@@ -35,6 +35,15 @@ describe('parseEventInput', () => {
     expect(r.endAt).toBe('2026-09-08T11:00');
   });
 
+  it('normalizes a bare-date endAt against a timed startAt to start + 1h', async () => {
+    const client = mockClient(
+      '{"title":"Workshop","startAt":"2026-09-08T10:00","endAt":"2026-09-08","allDay":false,"location":null,"attendees":[]}',
+    );
+    const r = await parseEventInput(client, 'workshop', { model: 'm', now: NOW });
+    expect(r.startAt).toBe('2026-09-08T10:00');
+    expect(r.endAt).toBe('2026-09-08T11:00');
+  });
+
   it('date with no time defaults to 09:00-10:00', async () => {
     const client = mockClient(
       '{"title":"Retreat","startAt":"2026-09-08","endAt":null,"allDay":false,"location":null,"attendees":[]}',

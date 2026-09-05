@@ -414,7 +414,12 @@ function CreateEventModal({
       }
     })();
 
-    return () => { abort.abort(); };
+    // Runs on unmount AND whenever deps change (aiEnabled toggled off, or a
+    // re-render with a different aiFillMessageId). Reset aiFilling here too —
+    // the in-flight fill's own `finally` skips the reset once aborted, so
+    // without this the indicator would otherwise spin forever. Calling
+    // setState from an unmount cleanup is a safe no-op in React 18+.
+    return () => { abort.abort(); setAiFilling(false); };
   }, [prefillData?.aiFillMessageId, aiEnabled]); // eslint-disable-line
 
   // ── Find-a-time (scheduling assistant inline in the event modal) ────────
@@ -472,7 +477,12 @@ function CreateEventModal({
 
   const handleSave = async () => {
     if (!title.trim()) { toast.error('Title is required'); return; }
+    // Abort any in-flight AI fill and clear its indicator now — the fill's
+    // own `finally` skips the reset once aborted (signal.aborted is true by
+    // then), and if this save fails the modal stays open with the component
+    // otherwise showing a permanently-stuck "Reading the email…" indicator.
     fillAbortRef.current?.abort();
+    setAiFilling(false);
     setSaving(true);
     try {
       const startIso = allDay

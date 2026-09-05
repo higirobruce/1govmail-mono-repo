@@ -197,7 +197,7 @@ describe('RetrievalService.retrieve — docs leg', () => {
     expect(result.sources[0]).toMatchObject({ type: 'doc', id: 'd1', context: 'doc chunk for d1' });
   });
 
-  it('scope.docId narrows the docs-leg SQL with an e."documentId" filter and forces docs-only', async () => {
+  it('scope.docId narrows the docs-leg SQL with an e."documentId" filter, forces docs-only, and KEEPS the ACL predicate (owner-OR-invite) in that same query', async () => {
     const { prisma, embedder, mailService } = makeFakes();
     prisma.$queryRaw.mockResolvedValue([docRow('doc123')]);
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
@@ -206,9 +206,20 @@ describe('RetrievalService.retrieve — docs leg', () => {
 
     expect(mailService.searchMessages).not.toHaveBeenCalled();
     expect(prisma.calendarEvent.findMany).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1); // ONE query — docId narrowing is not a second branch
     const [strings, ...values] = prisma.$queryRaw.mock.calls[0];
-    expect(strings.join('')).toContain('e."documentId" =');
+    const sql = strings.join('');
+    expect(sql).toContain('e."documentId" =');
+    // The ACL predicate must survive in the docId-scoped path too — this is
+    // the regression the reviewer flagged: a future edit that special-cases
+    // docId must not be able to drop owner-OR-invite while this still passes.
+    expect(sql).toContain('EXISTS');
+    expect(sql).toContain('"document_invites"');
+    expect(sql).toContain('"invitedEmail"');
+    expect(sql).toContain('d."userId" =');
     expect(values).toContain('doc123');
+    expect(values).toContain('user1'); // userId, bound for the ACL's owner check
+    expect(values).toContain('user1@x.rw'); // userEmail, bound for the ACL's invite check
   });
 
   it('dedupes doc hits by documentId, keeping the best (first, distance-ordered) chunk', async () => {
@@ -305,5 +316,35 @@ describe('RetrievalService.retrieve — degraded flags and typed-key fusion', ()
     const docHit = result.sources.find((s) => s.type === 'doc' && s.id === sameId);
     expect(mailHit).toBeDefined();
     expect(docHit).toBeDefined();
+  });
+});
+
+describe('RetrievalService.retrieve — shared embed() across the mail-vector and docs-vector legs', () => {
+  it('embeds the question exactly ONCE for an unscoped retrieve (mail vector + docs vector share it)', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    routeQueryRaw(prisma, { mail: [vecRow('m1')], doc: [docRow('d1')] });
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    await svc.retrieve('user1', 'user1@x.rw', 'budget');
+
+    expect(embedder.embed).toHaveBeenCalledTimes(1);
+    expect(embedder.embed).toHaveBeenCalledWith(['budget']);
+  });
+
+  it('an embed failure degrades BOTH vector.vector and vector.docs, while keyword and calendar sources still flow', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    embedder.embed.mockRejectedValue(new Error('ollama down'));
+    mailService.searchMessages.mockResolvedValue({
+      messages: [{ id: 'k1', subject: 's', fromEmail: 'a@x.rw', fromName: null, receivedAt: new Date(), snippet: 'snip', bodyText: 'body', bodyHtml: null }],
+    });
+    prisma.calendarEvent.findMany.mockResolvedValue([eventRow('e1', { title: 'budget sync' })]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget');
+
+    expect(result.degraded).toEqual({ vector: true, keyword: false, docs: true, calendar: false });
+    expect(prisma.$queryRaw).not.toHaveBeenCalled(); // neither vector query ever runs without an embedding
+    expect(result.sources.some((s) => s.type === 'mail' && s.id === 'k1')).toBe(true);
+    expect(result.sources.some((s) => s.type === 'event' && s.id === 'e1')).toBe(true);
   });
 });

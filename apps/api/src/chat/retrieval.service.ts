@@ -83,10 +83,18 @@ export class RetrievalService {
     const wantDoc = types.includes('doc');
     const wantEvent = types.includes('event');
 
+    // Mail-vector and docs-vector legs embed the SAME question text — share
+    // ONE embed() call (Ollama serializes per-model, so two calls roughly
+    // doubles unscoped wall-clock). Both legs `await` this same promise; if
+    // it rejects, BOTH legs reject and BOTH degraded flags below turn true —
+    // that's intentional, not a bug, since they'd have used the identical
+    // failed embedding anyway.
+    const vecPromise = (wantMail || wantDoc) ? this.embedQuestion(question) : null;
+
     const [vectorLeg, keywordLeg, docLeg, calendarLeg] = await Promise.allSettled([
-      wantMail ? this.vectorLeg(userId, question) : Promise.resolve<FusableHit[]>([]),
+      wantMail ? this.vectorLeg(userId, vecPromise!) : Promise.resolve<FusableHit[]>([]),
       wantMail ? this.keywordLeg(userId, question) : Promise.resolve<FusableHit[]>([]),
-      wantDoc ? this.docVectorLeg(userId, userEmail, question, scope?.docId) : Promise.resolve<FusableHit[]>([]),
+      wantDoc ? this.docVectorLeg(userId, userEmail, vecPromise!, scope?.docId) : Promise.resolve<FusableHit[]>([]),
       wantEvent ? this.calendarLeg(userId, question) : Promise.resolve<FusableHit[]>([]),
     ]);
 
@@ -116,7 +124,8 @@ export class RetrievalService {
 
   /** Vector leg alone, in message-list row shape — the ⌘K semantic section. Mail-only, untouched. */
   async semantic(userId: string, query: string, limit = 10): Promise<any[]> {
-    const rows = await this.vectorRows(userId, query, limit * 2);
+    const vecText = await this.embedQuestion(query);
+    const rows = await this.vectorRows(userId, vecText, limit * 2);
     const seen = new Set<string>();
     const out: any[] = [];
     for (const r of rows) {
@@ -131,9 +140,13 @@ export class RetrievalService {
     return out;
   }
 
-  private async vectorRows(userId: string, text: string, limit: number) {
+  /** Embeds `text` once and returns the `[..]::vector`-ready literal — shared by every vector leg + semantic(). */
+  private async embedQuestion(text: string): Promise<string> {
     const [qvec] = await this.embedder.embed([text]);
-    const vecText = `[${qvec.join(',')}]`;
+    return `[${qvec.join(',')}]`;
+  }
+
+  private async vectorRows(userId: string, vecText: string, limit: number) {
     return this.prisma.$queryRaw<Array<{
       messageId: string; chunkText: string; subject: string | null;
       fromEmail: string; fromName: string | null; receivedAt: Date;
@@ -150,8 +163,8 @@ export class RetrievalService {
       LIMIT ${limit}`;
   }
 
-  private async vectorLeg(userId: string, question: string): Promise<FusableHit[]> {
-    const rows = await this.vectorRows(userId, question, VECTOR_TOP_K);
+  private async vectorLeg(userId: string, vecPromise: Promise<string>): Promise<FusableHit[]> {
+    const rows = await this.vectorRows(userId, await vecPromise, VECTOR_TOP_K);
     const seen = new Set<string>();
     const hits: FusableHit[] = [];
     for (const r of rows) {
@@ -185,25 +198,16 @@ export class RetrievalService {
    * matching `DocsService.getInviteForUser`'s own (unnormalized) exact-string
    * comparison of `invitedEmail`. This is defense in depth, not the access
    * check itself: see the ACCESS CONTRACT note on `retrieve()`.
+   *
+   * ONE copy of the ACL predicate, always applied, regardless of `docId` —
+   * the docId narrowing is an `AND` tacked onto the SAME query via a
+   * "NULL-safe optional filter" (`docId ?? null` compared with `IS NULL OR =`)
+   * rather than a second query branch, so a future edit can't accidentally
+   * touch the docId path and skip the ACL check.
    */
-  private async docVectorRows(userId: string, userEmail: string, text: string, limit: number, docId?: string) {
-    const [qvec] = await this.embedder.embed([text]);
-    const vecText = `[${qvec.join(',')}]`;
+  private async docVectorRows(userId: string, userEmail: string, vecText: string, limit: number, docId?: string) {
     type Row = { documentId: string; chunkText: string; title: string; emoji: string | null; updatedAt: Date; distance: number };
-    if (docId) {
-      return this.prisma.$queryRaw<Row[]>`
-        SELECT e."documentId", e."chunkText", d."title", d."emoji", d."updatedAt",
-               (e."embedding" <=> ${vecText}::vector) AS distance
-        FROM "document_embeddings" e
-        JOIN "documents" d ON d."id" = e."documentId"
-        WHERE e."failed" = false AND e."embedding" IS NOT NULL AND e."model" = ${this.embedder.model}
-          AND (d."userId" = ${userId} OR EXISTS (
-                SELECT 1 FROM "document_invites" i
-                WHERE i."documentId" = d."id" AND i."invitedEmail" = ${userEmail}))
-          AND e."documentId" = ${docId}
-        ORDER BY e."embedding" <=> ${vecText}::vector
-        LIMIT ${limit}`;
-    }
+    const docIdParam = docId ?? null;
     return this.prisma.$queryRaw<Row[]>`
       SELECT e."documentId", e."chunkText", d."title", d."emoji", d."updatedAt",
              (e."embedding" <=> ${vecText}::vector) AS distance
@@ -213,12 +217,13 @@ export class RetrievalService {
         AND (d."userId" = ${userId} OR EXISTS (
               SELECT 1 FROM "document_invites" i
               WHERE i."documentId" = d."id" AND i."invitedEmail" = ${userEmail}))
+        AND (${docIdParam}::text IS NULL OR e."documentId" = ${docIdParam})
       ORDER BY e."embedding" <=> ${vecText}::vector
       LIMIT ${limit}`;
   }
 
-  private async docVectorLeg(userId: string, userEmail: string, question: string, docId?: string): Promise<FusableHit[]> {
-    const rows = await this.docVectorRows(userId, userEmail, question, VECTOR_TOP_K, docId);
+  private async docVectorLeg(userId: string, userEmail: string, vecPromise: Promise<string>, docId?: string): Promise<FusableHit[]> {
+    const rows = await this.docVectorRows(userId, userEmail, await vecPromise, VECTOR_TOP_K, docId);
     const seen = new Set<string>();
     const hits: FusableHit[] = [];
     for (const r of rows) {

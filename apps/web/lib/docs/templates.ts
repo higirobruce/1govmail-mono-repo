@@ -8,16 +8,16 @@ export interface Template {
   content: object;
 }
 
-const T = (text: string) => ({ type: 'text', text });
-const B = (text: string) => ({ type: 'text', marks: [{ type: 'bold' }], text });
-const P = (...content: object[]) => ({ type: 'paragraph', content });
-const H = (level: number, text: string) => ({ type: 'heading', attrs: { level }, content: [T(text)] });
-const HR = () => ({ type: 'horizontalRule' });
-const BL = (...items: string[]) => ({ type: 'bulletList', content: items.map((t) => ({ type: 'listItem', content: [P(T(t))] })) });
-const OL = (...items: string[]) => ({ type: 'orderedList', content: items.map((t) => ({ type: 'listItem', content: [P(T(t))] })) });
-const TH = (...cols: string[]) => ({ type: 'tableRow', content: cols.map((c) => ({ type: 'tableHeader', content: [c ? P(T(c)) : P()] })) });
-const TR = (...cols: string[]) => ({ type: 'tableRow', content: cols.map((c) => ({ type: 'tableCell', content: [c ? P(T(c)) : P()] })) });
-const TABLE = (...rows: object[]) => ({ type: 'table', content: rows });
+export const T = (text: string) => ({ type: 'text', text });
+export const B = (text: string) => ({ type: 'text', marks: [{ type: 'bold' }], text });
+export const P = (...content: object[]) => ({ type: 'paragraph', content });
+export const H = (level: number, text: string) => ({ type: 'heading', attrs: { level }, content: [T(text)] });
+export const HR = () => ({ type: 'horizontalRule' });
+export const BL = (...items: string[]) => ({ type: 'bulletList', content: items.map((t) => ({ type: 'listItem', content: [P(T(t))] })) });
+export const OL = (...items: string[]) => ({ type: 'orderedList', content: items.map((t) => ({ type: 'listItem', content: [P(T(t))] })) });
+export const TH = (...cols: string[]) => ({ type: 'tableRow', content: cols.map((c) => ({ type: 'tableHeader', content: [c ? P(T(c)) : P()] })) });
+export const TR = (...cols: string[]) => ({ type: 'tableRow', content: cols.map((c) => ({ type: 'tableCell', content: [c ? P(T(c)) : P()] })) });
+export const TABLE = (...rows: object[]) => ({ type: 'table', content: rows });
 
 export const TEMPLATES: Template[] = [
   {

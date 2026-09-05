@@ -26,6 +26,7 @@ import {
 import { api, type Doc } from '@/lib/api';
 import { sanitizeEmailHtml } from '@/lib/sanitize';
 import { generateDocPdfBlob } from '@/lib/docExport';
+import { textToHtml } from '@/lib/ai/textToHtml';
 import { EmailChipInput } from './EmailChipInput';
 import { DocPickerDialog, type DocAttachMode } from './DocPickerDialog';
 import { useAuthStore } from '@/stores/auth.store';
@@ -761,11 +762,7 @@ export default function ComposeModal({
   const applyRewrite = useCallback(() => {
     if (!editor || !rewriteText_.trim()) return;
     // Insert as plain paragraphs so we don't accidentally drop unsanitized HTML.
-    const paragraphs = rewriteText_
-      .trim()
-      .split(/\n\n+/)
-      .map((p) => `<p>${p.replace(/\n/g, '<br/>').replace(/</g, '&lt;')}</p>`)
-      .join('');
+    const paragraphs = textToHtml(rewriteText_);
     if (aiAction === 'suggest') {
       // Suggestions go at the very top of the doc so the signature (at the
       // bottom) is preserved. If the user already typed something, the

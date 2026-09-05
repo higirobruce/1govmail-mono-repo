@@ -39,6 +39,9 @@ import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
 import { summarizeMessage, summarizeThread } from '@/lib/ai/tasks';
 import { useCharStream } from '@/lib/ai/useCharStream';
+import { gatherThreadContent } from '@/lib/ai/threadContent';
+import { draftFromThread, assembleDocContent, templateEmoji } from '@/lib/ai/draftDoc';
+import { fetchBodyCached } from '@/lib/mailBodyCache';
 import { Sparkles, X as XIconSmall } from 'lucide-react';
 import ThreadMessage, { type ThreadMessageMeta } from './ThreadMessage';
 import MailDetail from './MailDetail';
@@ -143,6 +146,7 @@ export default function ThreadView({
   onSnooze,
 }: Props) {
   const user = useAuthStore((s) => s.user);
+  const router = useRouter();
 
   const [threadMessages, setThreadMessages] = useState<ThreadMessageMeta[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -243,6 +247,76 @@ export default function ThreadView({
     setSummarizing(false);
   }, [resetSummary]);
 
+  // ── AI draft doc state ───────────────────────────────────────────────────
+  // null = idle; a non-null string is the current step shown in the small
+  // popover anchored to the "Draft doc" button (mirrors the summarize
+  // popover's step/abort idioms above).
+  const [draftStep, setDraftStep] = useState<string | null>(null);
+  const draftAbortRef = useRef<AbortController | null>(null);
+
+  // Switching threads aborts any in-flight draft for the previous thread and
+  // hides the popover, same convention as the summary reset effect above.
+  useEffect(() => {
+    draftAbortRef.current?.abort();
+    draftAbortRef.current = null;
+    setDraftStep(null);
+  }, [message?.id]);
+
+  // True unmount-only cleanup (the effect above only fires on thread switch,
+  // not on ThreadView itself unmounting).
+  useEffect(() => () => { draftAbortRef.current?.abort(); }, []);
+
+  const handleDraftDoc = useCallback(async () => {
+    draftAbortRef.current?.abort();
+    const abort = new AbortController();
+    draftAbortRef.current = abort;
+    setDraftStep('Reading thread');
+
+    try {
+      const client = new AIClient();
+      const { text } = await gatherThreadContent(message?.id, {
+        getConversation: api.mail.getConversation,
+        getBody: (id: string) => fetchBodyCached(id, api.mail.getMessage),
+      });
+      if (abort.signal.aborted) return;
+
+      setDraftStep('Choosing template');
+      const draft = await draftFromThread(client, text, {
+        model: aiModel,
+        subject: message?.subject ?? '',
+        customInstructions: aiCustomInstructions,
+        signal: abort.signal,
+      });
+      if (abort.signal.aborted) return;
+
+      setDraftStep('Drafting');
+      const content = assembleDocContent(draft.markdown);
+      const doc = await api.docs.create({
+        title: draft.title,
+        emoji: templateEmoji(draft.templateId),
+        content,
+      });
+      if (abort.signal.aborted) return;
+
+      setDraftStep(null);
+      router.push(`/docs?open=${doc.id}`);
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') {
+        setDraftStep(null);
+        return;
+      }
+      const m = err instanceof Error ? err.message : String(err);
+      toast.error(m);
+      setDraftStep(null);
+    }
+  }, [message, aiModel, aiCustomInstructions, router]);
+
+  const cancelDraftDoc = useCallback(() => {
+    draftAbortRef.current?.abort();
+    draftAbortRef.current = null;
+    setDraftStep(null);
+  }, []);
+
   // Overview tab: linked tasks
   const [linkedTasks, setLinkedTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
@@ -253,8 +327,6 @@ export default function ThreadView({
   // then downloading, never re-downloads the file.
   const [previewState, setPreviewState] = useState<{ id: string; filename: string; mimeType: string; url: string } | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
-
-  const router = useRouter();
 
   const handleAttachmentPreview = useCallback(async (att: AttachmentWithSource) => {
     if (previewState?.id === att.id) {
@@ -730,6 +802,29 @@ export default function ThreadView({
                   <ExternalLink className="w-3.5 h-3.5" />
                   Forward
                 </button>
+                {aiEnabled && (
+                  <div className="relative">
+                    <button
+                      onClick={handleDraftDoc}
+                      disabled={!!draftStep}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-ui text-ink-2 hover:bg-muted/40 hover:text-foreground transition-colors disabled:opacity-60"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      Draft doc
+                    </button>
+                    {draftStep && (
+                      <div className="absolute z-30 top-full left-0 mt-2 w-64 rounded-xl border border-border bg-card shadow-xl p-3 flex flex-col gap-2">
+                        <AIWorkingIndicator step={draftStep} />
+                        <button
+                          onClick={cancelDraftDoc}
+                          className="self-start text-micro font-medium text-ink-3 hover:text-foreground underline"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
 import { Sparkles, Loader2, AlertTriangle, RefreshCw, Minimize2 } from 'lucide-react';
 import { AIClient } from '@/lib/ai/client';
 import { api } from '@/lib/api';
@@ -34,7 +36,7 @@ function phaseLabel(p: BriefingProgress): string {
  * in-flight run keeps going while collapsed (the pill shows its progress).
  */
 export default function BriefingPanel({
-  open, expanded, onToggleExpanded, onOpenMessage, openCommitmentsCount, onOpenCommitments,
+  open, expanded, onToggleExpanded, onOpenMessage, openCommitmentsCount, onOpenCommitments, commitmentsSplit,
 }: {
   /** Mounted — the page sets this true on first use and keeps it true. */
   open: boolean;
@@ -44,6 +46,8 @@ export default function BriefingPanel({
   /** Count from the same React Query the commitments badge uses — passed in rather than double-fetched. */
   openCommitmentsCount?: number;
   onOpenCommitments?: () => void;
+  /** Promised/waiting split for the same commitments data — shown in the workload strip. */
+  commitmentsSplit?: { promised: number; waiting: number };
 }) {
   const model = useAIStore((s) => s.model);
   const [window_, setWindow] = useState<BriefingWindow>('24h');
@@ -53,6 +57,29 @@ export default function BriefingPanel({
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const hasRunRef = useRef(false);
+
+  // Deterministic workload strip — no model call. Same open/expanded gating as
+  // the panel itself; a stale 60s cache is fine since these are just counts.
+  const { data: workTasks } = useQuery({
+    queryKey: ['tasks', 'workload'],
+    queryFn: () => api.tasks.getAll(),
+    enabled: open && expanded,
+    staleTime: 60_000,
+  });
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const weekAhead = new Date(today);
+  weekAhead.setDate(weekAhead.getDate() + 7);
+  const openWorkTasks = (workTasks ?? []).filter(
+    (t: any) => t.status === 'TODO' || t.status === 'IN_PROGRESS',
+  );
+  const openTasksCount = openWorkTasks.length;
+  const overdueCount = openWorkTasks.filter(
+    (t: any) => t.dueDate && new Date(t.dueDate) < today,
+  ).length;
+  const dueThisWeekCount = openWorkTasks.filter(
+    (t: any) => t.dueDate && new Date(t.dueDate) >= today && new Date(t.dueDate) < weekAhead,
+  ).length;
 
   const run = useCallback(async (win: BriefingWindow) => {
     abortRef.current?.abort();
@@ -167,6 +194,27 @@ export default function BriefingPanel({
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[0.75rem]">
+        {expanded && (
+          <div className="mb-3 rounded-lg border border-border-faint bg-muted/30 px-3 py-2.5">
+            <p className="text-micro uppercase tracking-[0.06em] text-ink-3 mb-1">Your workload</p>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-ui">
+              {workTasks && (
+                <Link href="/tasks" className="text-foreground hover:text-primary transition-colors">
+                  <strong>{openTasksCount}</strong> open task{openTasksCount === 1 ? '' : 's'}
+                  {overdueCount > 0 && <span className="text-destructive"> · {overdueCount} overdue</span>}
+                  {dueThisWeekCount > 0 && <span className="text-ink-2"> · {dueThisWeekCount} due this week</span>}
+                </Link>
+              )}
+              {typeof openCommitmentsCount === 'number' && (
+                <button type="button" onClick={onOpenCommitments} className="text-foreground hover:text-primary transition-colors text-left">
+                  <strong>{openCommitmentsCount}</strong> commitment{openCommitmentsCount === 1 ? '' : 's'}
+                  {commitmentsSplit && <span className="text-ink-2"> ({commitmentsSplit.promised} promised · {commitmentsSplit.waiting} waiting)</span>}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {running && (
           <div className="flex items-center justify-center gap-2 py-6 text-[0.75rem] text-muted-foreground/70">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />

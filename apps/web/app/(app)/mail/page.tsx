@@ -1587,6 +1587,7 @@ export default function MailPage() {
         onOpenMessage={(id) => void openMessage(id)}
         openCommitmentsCount={commitmentsData?.openCount}
         onOpenCommitments={() => setCommitmentsOpen(true)}
+        commitmentsSplit={commitmentsData ? { promised: commitmentsData.promised.length, waiting: commitmentsData.waiting.length } : undefined}
       />
 
       <CommitmentsPanel

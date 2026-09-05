@@ -9,16 +9,31 @@
  * Layout rules:
  * - Block nodes (paragraph, heading, blockquote, codeBlock, and by default
  *   any node whose content isn't otherwise handled specially) each become
- *   one text block; blocks are joined with a blank line ("\n\n").
- * - `listItem`s within a list are joined one-per-line ("\n").
+ *   one text block. Top-level blocks are joined with a blank line ("\n\n");
+ *   nested block children (e.g. two paragraphs inside a blockquote, or a
+ *   sub-list inside a listItem) are joined with a single newline ("\n") so
+ *   distinct blocks never fuse into one run-on line, however deep they're
+ *   nested.
+ * - `listItem`s within a list are joined one-per-line ("\n"), recursively —
+ *   a list nested inside a listItem renders as further lines, not glued
+ *   onto its parent's text.
  * - Tables flatten row-wise: cells within a row join with " | ", rows join
- *   with "\n".
+ *   with "\n". A cell's own content (including a nested list) uses the same
+ *   nested block rendering as everywhere else.
  * - Marks (bold/italic/link/etc.) are ignored — only `text` fields count.
  * - Unknown node types and leaf nodes with no text (image, embed, etc.) are
  *   skipped silently.
+ * - Recursion depth is capped (~200) as a safety net against pathological
+ *   input; `docJsonToText` also wraps the whole walk in try/catch so a
+ *   surprising shape degrades to `null` rather than throwing.
  */
 
 type JsonNode = { type?: unknown; content?: unknown; attrs?: unknown; text?: unknown };
+
+const MAX_DEPTH = 200;
+
+const LIST_TYPES = new Set(['bulletList', 'orderedList', 'taskList']);
+const CELL_TYPES = new Set(['tableCell', 'tableHeader']);
 
 function isNode(value: unknown): value is JsonNode {
   return typeof value === 'object' && value !== null;
@@ -28,53 +43,78 @@ function childArray(node: JsonNode): JsonNode[] {
   return Array.isArray(node.content) ? node.content.filter(isNode) : [];
 }
 
-/** Depth-first concatenation of `text` fields within a subtree (marks ignored). */
-function collectInlineText(node: JsonNode): string {
-  let text = typeof node.text === 'string' ? node.text : '';
+/**
+ * Render one node as text, dispatching structurally-distinct node types
+ * (table, list) to their specialized renderers at ANY depth, not just at
+ * the top level — this is what keeps a nested list or table (inside a
+ * blockquote, listItem, or table cell) from being flattened into a single
+ * glued-together run of words.
+ */
+function renderNode(node: JsonNode, depth: number): string {
+  if (depth > MAX_DEPTH) return '';
+  if (node.type === 'text') return typeof node.text === 'string' ? node.text : '';
+  if (node.type === 'table') return renderTable(node, depth);
+  if (typeof node.type === 'string' && LIST_TYPES.has(node.type)) return renderList(node, depth);
+  return renderChildren(node, depth, '\n');
+}
+
+/**
+ * Render a node's children in order. Consecutive `text` children are
+ * concatenated directly (they're one inline run, e.g. bold + plain text
+ * within the same paragraph); any other child type is rendered as its own
+ * block via `renderNode` and joined to its neighbors with `separator`.
+ */
+function renderChildren(node: JsonNode, depth: number, separator: string): string {
+  if (depth > MAX_DEPTH) return '';
+  const segments: string[] = [];
+  let inline = '';
   for (const child of childArray(node)) {
-    text += collectInlineText(child);
+    if (child.type === 'text') {
+      inline += typeof child.text === 'string' ? child.text : '';
+      continue;
+    }
+    if (inline) {
+      segments.push(inline);
+      inline = '';
+    }
+    const rendered = renderNode(child, depth + 1);
+    if (rendered) segments.push(rendered);
   }
-  return text;
+  if (inline) segments.push(inline);
+  return segments.join(separator);
 }
 
 /** Render a table as row-joined, cell-separated text. */
-function renderTable(table: JsonNode): string {
+function renderTable(table: JsonNode, depth: number): string {
+  if (depth > MAX_DEPTH) return '';
   const rows = childArray(table)
     .filter((row) => row.type === 'tableRow')
     .map((row) =>
       childArray(row)
-        .map((cell) => collectInlineText(cell))
+        .filter((cell) => typeof cell.type === 'string' && CELL_TYPES.has(cell.type))
+        .map((cell) => renderChildren(cell, depth + 1, '\n'))
         .join(' | '),
     );
   return rows.join('\n');
 }
 
-/** Render a list as one line per `listItem`. */
-function renderList(list: JsonNode): string {
+/** Render a list as one line per `listItem`, recursively. */
+function renderList(list: JsonNode, depth: number): string {
+  if (depth > MAX_DEPTH) return '';
   return childArray(list)
     .filter((item) => item.type === 'listItem')
-    .map((item) => collectInlineText(item))
+    .map((item) => renderChildren(item, depth + 1, '\n'))
     .join('\n');
 }
 
 /**
- * Collect the top-level block strings from a doc's content array. Table and
- * list nodes get their specialized rendering; everything else (paragraph,
- * heading, blockquote, codeBlock, and any other block-ish node) falls back
- * to a plain inline-text concat. Nodes that produce no text (images, unknown
- * leaves, empty blocks) are dropped.
+ * Collect the top-level block strings from a doc's content array. Nodes
+ * that produce no text (images, unknown leaves, empty blocks) are dropped.
  */
 function collectBlocks(nodes: JsonNode[]): string[] {
   const blocks: string[] = [];
   for (const node of nodes) {
-    let block: string;
-    if (node.type === 'table') {
-      block = renderTable(node);
-    } else if (node.type === 'bulletList' || node.type === 'orderedList' || node.type === 'taskList') {
-      block = renderList(node);
-    } else {
-      block = collectInlineText(node);
-    }
+    const block = renderNode(node, 0);
     if (block) blocks.push(block);
   }
   return blocks;
@@ -89,7 +129,10 @@ export function docJsonToText(contentJson: string): string | null {
   }
   if (!isNode(parsed)) return null;
 
-  const blocks = collectBlocks(childArray(parsed));
-  const joined = blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
-  return joined;
+  try {
+    const blocks = collectBlocks(childArray(parsed));
+    return blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+  } catch {
+    return null;
+  }
 }

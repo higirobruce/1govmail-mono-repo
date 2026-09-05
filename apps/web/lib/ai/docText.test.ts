@@ -46,4 +46,54 @@ describe('docJsonToText', () => {
   it('returns empty string for an empty doc', () => {
     expect(docJsonToText(doc([]))).toBe('');
   });
+  it('joins two paragraphs nested inside a blockquote with a single newline (no fusion)', () => {
+    const out = docJsonToText(doc([{ type: 'blockquote', content: [p('foo'), p('bar')] }]));
+    expect(out).toBe('foo\nbar');
+  });
+  it('renders a bulletList nested inside a listItem with each sub-item on its own line', () => {
+    const out = docJsonToText(doc([{
+      type: 'bulletList', content: [
+        {
+          type: 'listItem', content: [
+            p('parent'),
+            { type: 'bulletList', content: [
+              { type: 'listItem', content: [p('child1')] },
+              { type: 'listItem', content: [p('child2')] },
+            ] },
+          ],
+        },
+      ],
+    }]));
+    expect(out).toBe('parent\nchild1\nchild2');
+  });
+  it('renders a list nested inside a table cell without fusing its words', () => {
+    const listCell = {
+      type: 'tableCell', content: [{
+        type: 'bulletList', content: [
+          { type: 'listItem', content: [p('x')] },
+          { type: 'listItem', content: [p('y')] },
+        ],
+      }],
+    };
+    const out = docJsonToText(doc([{
+      type: 'table', content: [{ type: 'tableRow', content: [listCell] }],
+    }]));
+    expect(out).toContain('x\ny');
+    expect(out).not.toContain('xy');
+  });
+  it('never throws on a pathologically deep nested structure', () => {
+    // Built as raw JSON text, not via JSON.stringify(nestedObject) — stringify
+    // itself is recursive and overflows the stack well before 10,000 levels,
+    // which would fail in the test's input construction rather than exercise
+    // docJsonToText's own depth guard. JSON.parse (used inside docJsonToText)
+    // handles this depth fine; it's the walker's own recursion we're guarding.
+    const depth = 10000;
+    const json =
+      '{"type":"doc","content":[' +
+      '{"type":"paragraph","content":['.repeat(depth) +
+      '{"type":"text","text":"leaf"}' +
+      ']}'.repeat(depth) +
+      ']}';
+    expect(() => docJsonToText(json)).not.toThrow();
+  });
 });

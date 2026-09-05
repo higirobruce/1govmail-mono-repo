@@ -551,7 +551,7 @@ export default function ThreadView({
 
         {/* ── Overview tab ─────────────────────────────────────────────────── */}
         {activeTab === 'overview' && (
-          <div className="p-4 flex flex-col gap-5 overflow-y-auto w-full max-w-4xl">
+          <div className="p-4 flex flex-col gap-5 overflow-y-auto w-full">
 
             {/* Stats row */}
             <div className="flex items-center gap-3 px-1">
@@ -757,7 +757,7 @@ export default function ThreadView({
               </div>
             )}
             {/* Timeline spine — centered behind the 28px-wide avatars in px-4 rows */}
-            <div className="relative py-3 w-full max-w-4xl">
+            <div className="relative py-3 w-full">
               <div className="absolute left-[30px] top-0 bottom-0 w-px bg-border-faint pointer-events-none" />
               {visibleMessages.map((msg) => (
               <div key={msg.id}>
@@ -845,7 +845,7 @@ export default function ThreadView({
 
         {/* ── Attachments tab ───────────────────────────────────────────────── */}
         {activeTab === 'attachments' && (
-          <div className="p-4 w-full max-w-4xl">
+          <div className="p-4 w-full">
             {allAttachments.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-2">
                 <Paperclip className="w-8 h-8 text-ink-4" />

@@ -206,7 +206,7 @@ export default function BriefingPanel({
                 </Link>
               )}
               {typeof openCommitmentsCount === 'number' && (
-                <button type="button" onClick={onOpenCommitments} className="text-foreground hover:text-primary transition-colors text-left">
+                <button type="button" onClick={() => { onToggleExpanded(false); onOpenCommitments?.(); }} className="text-foreground hover:text-primary transition-colors text-left">
                   <strong>{openCommitmentsCount}</strong> commitment{openCommitmentsCount === 1 ? '' : 's'}
                   {commitmentsSplit && <span className="text-ink-2"> ({commitmentsSplit.promised} promised · {commitmentsSplit.waiting} waiting)</span>}
                 </button>

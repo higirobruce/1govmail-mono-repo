@@ -1274,8 +1274,14 @@ export function DocsEditor({
           </div>
           <div className="max-h-48 overflow-y-auto text-ui text-foreground leading-relaxed [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mb-0.5 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h1]:mt-2 [&_h2]:mt-2 [&_h3]:mt-1.5 [&_code]:font-mono [&_pre]:bg-muted [&_pre]:rounded-md [&_pre]:p-2 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-2 [&_blockquote]:text-ink-2">
             {aiPreview ? (
-              // Sanitized by markdownToHtml (escape-first + DOMPurify) — safe to inject.
-              <div dangerouslySetInnerHTML={{ __html: markdownToHtml(aiPreview) }} />
+              aiBusy ? (
+                // While streaming: cheap plain-text render — re-parsing markdown
+                // (+ DOMPurify) on every stream tick locks the main thread.
+                <div className="whitespace-pre-wrap">{aiPreview}</div>
+              ) : (
+                // Sanitized by markdownToHtml (escape-first + DOMPurify) — safe to inject.
+                <div dangerouslySetInnerHTML={{ __html: markdownToHtml(aiPreview) }} />
+              )
             ) : aiBusy ? (
               <AIWorkingIndicator step={aiAction === 'rewrite' ? 'Rewriting' : 'Summarizing'} />
             ) : null}

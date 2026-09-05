@@ -523,10 +523,35 @@ model Document {
   comments  DocComment[]
   versions  DocVersion[]
   activity  DocActivity[]
+  embeddings DocumentEmbedding[]
 
   @@index([userId])
   @@index([userId, isFavorite])
   @@map("documents")
+}
+
+// The `embedding` column has a hand-written HNSW index (see migration
+// 20260905214403_add_document_embeddings) that Prisma cannot represent on an
+// Unsupported() column. Running `prisma migrate dev` again will therefore
+// offer a migration that DROPS "document_embeddings_embedding_hnsw_idx" —
+// always decline that offer; it is spurious drift detection, not a real
+// schema change.
+model DocumentEmbedding {
+  id              String                       @id @default(cuid())
+  documentId      String
+  chunkIndex      Int                          // 0-based chunk within the document
+  model           String                       // embed-model tag; model change => re-embed
+  chunkText       String                       // the embedded text
+  embedding       Unsupported("vector(1024)")? // null on tombstone rows; written via $executeRaw
+  failed          Boolean  @default(false)     // tombstone: embedding gave up; invisible to reads
+  sourceUpdatedAt DateTime                     // Document.updatedAt at extraction time; staleness check
+  extractedAt     DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex, model])
+  @@index([documentId])
+  @@map("document_embeddings")
 }
 
 enum InviteRole {

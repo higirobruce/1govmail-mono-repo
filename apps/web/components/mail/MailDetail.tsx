@@ -654,7 +654,7 @@ export default function MailDetail({
 
             {/* Subject title + sender subtitle — outside the card */}
             <div>
-              <h1 className="text-title text-foreground leading-snug mb-1.5">
+              <h1 className="text-display text-foreground mb-1.5">
                 {message.subject ?? '(no subject)'}
               </h1>
               <div className="flex items-center gap-2 flex-wrap">

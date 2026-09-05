@@ -1233,7 +1233,7 @@ export default function MailPage() {
               >
                 <Menu className="w-4 h-4" />
               </button>
-              <h2 className="text-[0.875rem] font-semibold text-foreground">
+              <h2 className="text-display text-foreground">
                 {isSearchMode
                   ? 'Search'
                   : (folders.find((f) => f.id === activeFolderId)?.name ?? 'Inbox')}

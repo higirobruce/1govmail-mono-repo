@@ -314,7 +314,7 @@ function MailRow({
         className={cn(
           'group relative rounded-2xl transition-all',
           active
-            ? 'bg-muted/60 ring-1 ring-border'
+            ? 'bg-muted ring-1 ring-border-strong'
             : selected
             ? 'bg-primary/5 ring-1 ring-primary/20'
             : 'hover:bg-muted/40',

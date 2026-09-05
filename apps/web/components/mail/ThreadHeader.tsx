@@ -103,7 +103,7 @@ export default function ThreadHeader({
         {/* Subject + meta */}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-3">
-            <h1 className="text-title text-foreground leading-snug">
+            <h1 className="text-display text-foreground">
               {subject ?? '(no subject)'}
             </h1>
             <span

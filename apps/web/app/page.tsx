@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { LiveBackground } from '@/components/landing/LiveBackground';
 import {
   Sparkles,
   ClipboardCheck,
@@ -138,7 +139,8 @@ function AppMiniature() {
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
+    <div className="relative min-h-screen bg-background text-foreground flex flex-col">
+      <LiveBackground />
       {/* ── Nav ───────────────────────────────────────────────────── */}
       <header className="border-b border-border-faint sticky top-0 z-30 bg-background/80 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
@@ -165,9 +167,9 @@ export default function LandingPage() {
           Government email that reads itself
         </h1>
         <p className="text-[1.0625rem] text-ink-2 max-w-xl leading-relaxed text-balance mb-10">
-          Built on Zimbra, run on your own infrastructure. 1Gov Mail briefs you every
+          Fully self-hosted on government infrastructure. 1Gov Mail briefs you every
           morning, tracks every commitment, and answers questions about your inbox —
-          without a single message leaving government servers.
+          without a single message ever leaving government servers.
         </p>
 
         <div className="flex items-center gap-3 mb-16">
@@ -236,7 +238,7 @@ export default function LandingPage() {
       {/* ── Footer ────────────────────────────────────────────────── */}
       <footer className="border-t border-border-faint py-6 text-center">
         <p className="text-micro font-normal text-ink-4">
-          1Gov Mail &mdash; built on Zimbra, run on your infrastructure
+          1Gov Mail &mdash; proudly crafted by the RISA Software Team
         </p>
       </footer>
     </div>

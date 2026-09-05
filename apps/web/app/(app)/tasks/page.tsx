@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { format, parseISO } from 'date-fns';
 import { useConfirmStore } from '@/stores/confirm.store';
@@ -301,6 +301,12 @@ export default function TasksPage() {
   const aiModel = useAIStore((s) => s.model);
   const [quickAdd, setQuickAdd] = useState('');
   const [quickAdding, setQuickAdding] = useState(false);
+  // Cancels a stale quick-add parse when a new one is submitted, or on unmount —
+  // otherwise a fallback parse resolving after the fact could still create a task.
+  const quickAddAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => { quickAddAbortRef.current?.abort(); };
+  }, []);
 
   // Auth guard
   useEffect(() => {
@@ -401,6 +407,9 @@ export default function TasksPage() {
   const handleQuickAdd = async () => {
     const input = quickAdd.trim();
     if (!input || quickAdding) return;
+    quickAddAbortRef.current?.abort();
+    const controller = new AbortController();
+    quickAddAbortRef.current = controller;
     setQuickAdding(true);
     try {
       const { task, parsed } = await quickAddTask(input, {
@@ -408,7 +417,9 @@ export default function TasksPage() {
         model: aiModel,
         client: new AIClient(),
         create: api.tasks.create,
+        signal: controller.signal,
       });
+      if (controller.signal.aborted) return;
       setTasks((prev) => [task as Task, ...prev]);
       setQuickAdd('');
       toast.success(
@@ -416,9 +427,10 @@ export default function TasksPage() {
         { action: { label: 'Edit', onClick: () => { setModalTask(task as Task); setShowModal(true); } } },
       );
     } catch (err: any) {
+      if (err?.name === 'AbortError') return;
       toast.error('Failed to add task', { description: err?.message });
     } finally {
-      setQuickAdding(false);
+      if (quickAddAbortRef.current === controller) setQuickAdding(false);
     }
   };
 
@@ -633,7 +645,7 @@ export default function TasksPage() {
                 {quickAdding ? 'Adding…' : 'Add'}
               </Button>
             </form>
-            {quickAdding && <AIWorkingIndicator step="Parsing your task" />}
+            {quickAdding && aiEnabled && <AIWorkingIndicator step="Parsing your task" />}
           </div>
         )}
 

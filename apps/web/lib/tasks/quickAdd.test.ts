@@ -55,4 +55,23 @@ describe('quickAddTask', () => {
 
     expect(create).toHaveBeenCalledWith({ title: 'buy stamps' });
   });
+
+  it('aborted signal: create is never called', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const chat = vi.fn(async () => JSON.stringify({ title: 'buy stamps', dueDate: null, priority: null }));
+    const create = vi.fn(async (p: any) => ({ id: 't4', ...p }));
+
+    await expect(
+      quickAddTask('buy stamps', {
+        enabled: true,
+        model: 'm',
+        client: { chat },
+        create,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(create).not.toHaveBeenCalled();
+  });
 });

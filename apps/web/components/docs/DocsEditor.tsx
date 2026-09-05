@@ -809,19 +809,47 @@ export function DocsEditor({
 
   const applyAi = useCallback(() => {
     if (!editor || !aiPreview.trim() || !aiRange) return;
+    // The doc may have changed since aiRange was snapshotted (local typing or
+    // a remote Yjs peer editing while the preview streamed) — clamp against
+    // the current doc size so a shrunk doc can't send insertContentAt out of
+    // bounds and throw.
+    const size = editor.state.doc.content.size;
+    const from = Math.min(aiRange.from, size);
+    const to = Math.min(aiRange.to, size);
     const html = textToHtml(aiPreview);
-    if (aiAction === 'rewrite') {
-      editor.chain().focus().insertContentAt({ from: aiRange.from, to: aiRange.to }, html).run();
-    } else {
-      editor.chain().focus().insertContentAt(aiRange.to, html).run(); // summary lands BELOW the selection
-    }
+    const action = aiAction;
+    // Close the popover before our own edit lands so the doc-change watcher
+    // below doesn't treat this insert as an external change (harmless no-op
+    // if it fires anyway — closeAi is idempotent).
     closeAi();
+    if (action === 'rewrite') {
+      editor.chain().focus().insertContentAt({ from, to }, html).run();
+    } else {
+      // Insert AFTER the enclosing block rather than at the raw (clamped) end
+      // of the selection — landing at `to` directly would split the block in
+      // two when the selection ends mid-paragraph.
+      const $to = editor.state.doc.resolve(to);
+      const insertPos = $to.depth === 0 ? to : Math.min($to.end($to.depth) + 1, size);
+      editor.chain().focus().insertContentAt(insertPos, html).run(); // summary lands BELOW the selection's block
+    }
   }, [editor, aiPreview, aiRange, aiAction, closeAi]);
 
   // Abort any in-flight AI request on unmount (component remounts per doc via `key={docId}`).
   useEffect(() => {
     return () => { aiAbortRef.current?.abort(); };
   }, []);
+
+  // Close the AI preview popover if the doc changes underneath it — local
+  // typing or a remote Yjs peer editing while the preview streams would
+  // otherwise leave `aiRange` pointing at the wrong span for Apply.
+  useEffect(() => {
+    if (!editor || !aiOpen) return;
+    const onDocChange = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (transaction.docChanged) closeAi();
+    };
+    editor.on('update', onDocChange);
+    return () => { editor.off('update', onDocChange); };
+  }, [editor, aiOpen, closeAi]);
 
   if (!editor) return null;
 

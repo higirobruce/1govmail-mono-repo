@@ -342,12 +342,23 @@ export default function MailPage() {
   // parses it into a concrete date first (row spinner covers this wait —
   // no separate AIWorkingIndicator needed here).
   const [commitmentTask, setCommitmentTask] = useState<{ c: Commitment; dueDate: string | null } | null>(null);
+  // Cancels a stale due-date parse when the user clicks another commitment
+  // before the previous one resolves, or on unmount — otherwise a modal
+  // could pop open for a commitment the user already navigated away from.
+  const commitmentTaskAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => { commitmentTaskAbortRef.current?.abort(); };
+  }, []);
   const openTaskFromCommitment = useCallback(async (c: Commitment) => {
+    commitmentTaskAbortRef.current?.abort();
+    const controller = new AbortController();
+    commitmentTaskAbortRef.current = controller;
     let dueDate: string | null = null;
     if (aiEnabled && c.dueHint) {
-      const parsed = await parseTaskInput(new AIClient(), `${c.text} — due: ${c.dueHint}`, { model: aiModel });
+      const parsed = await parseTaskInput(new AIClient(), `${c.text} — due: ${c.dueHint}`, { model: aiModel, signal: controller.signal });
       dueDate = parsed.dueDate;
     }
+    if (controller.signal.aborted) return;
     setCommitmentTask({ c, dueDate });
   }, [aiEnabled, aiModel]);
 

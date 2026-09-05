@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { formatDistanceToNowStrict, parseISO, startOfDay, subDays } from 'date-fns';
+import { format, parseISO, startOfDay, subDays } from 'date-fns';
 import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MailAvatar } from './MailAvatar';
@@ -78,10 +78,16 @@ interface MailListProps {
 type Tab = 'all' | 'unread' | 'starred';
 
 
+// Image-3-style compact absolute dates: clock time today, "Yesterday",
+// then month + day (with year once it differs).
 function formatDate(dateStr: string): string {
   try {
     const d = typeof dateStr === 'string' ? parseISO(dateStr) : new Date(dateStr);
-    return formatDistanceToNowStrict(d, { addSuffix: false });
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) return format(d, 'HH:mm');
+    if (d >= subDays(startOfDay(now), 1)) return 'Yesterday';
+    if (d.getFullYear() === now.getFullYear()) return format(d, 'MMM d');
+    return format(d, 'dd/MM/yyyy');
   } catch { return ''; }
 }
 
@@ -284,6 +290,7 @@ function MailRow({
   selected,
   onSelect,
   card,
+  selectionActive,
 }: {
   message: Message;
   active: boolean;
@@ -293,6 +300,8 @@ function MailRow({
   selected?: boolean;
   onSelect?: () => void;
   card?: TriageCard;
+  /** True while any row is checkbox-selected — keeps all checkboxes visible. */
+  selectionActive?: boolean;
 }) {
   const classification = useMemo(() => pickClassificationFromTags(message.tags), [message.tags]);
   const labelMeta = card ? TRIAGE_LABEL_META[card.label] : undefined;
@@ -332,7 +341,9 @@ function MailRow({
             aria-label={selected ? 'Deselect message' : 'Select message'}
             className={cn(
               'shrink-0 mt-[3px] transition-opacity',
-              selected || active ? 'opacity-100' : 'opacity-50 group-hover:opacity-100',
+              selected || active || selectionActive
+                ? 'opacity-100'
+                : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
             )}
           />
 
@@ -642,6 +653,7 @@ export default function MailList({
                   onContextMenu={(e) => handleContextMenu(e, msg)}
                   selected={selectedIds.has(msg.id)}
                   onSelect={() => toggleSelect(msg.id)}
+                  selectionActive={selectedIds.size > 0}
                   card={cardsById?.[msg.id]}
                 />
               ))}

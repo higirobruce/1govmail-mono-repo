@@ -650,15 +650,15 @@ export default function MailDetail({
 
         {/* Overview tab */}
         {activeTab === 'overview' && (
-          <div className="p-6 space-y-5">
+          <div className="p-6 space-y-5 mx-auto w-full max-w-3xl">
 
             {/* Subject title + sender subtitle — outside the card */}
             <div>
-              <h1 className="text-display text-foreground mb-1.5">
+              <h1 className="text-display text-balance text-foreground mb-1.5">
                 {message.subject ?? '(no subject)'}
               </h1>
               <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-ui text-ink-3">
+                <p className="text-body font-medium text-ink-2">
                   {message.fromName ?? message.fromEmail}
                 </p>
                 {classification && <ClassificationChip value={classification.label} size="sm" withIcon />}

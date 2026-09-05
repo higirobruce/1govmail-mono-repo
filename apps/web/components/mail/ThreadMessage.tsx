@@ -657,7 +657,7 @@ export default function ThreadMessage({
         >
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-ui text-foreground font-semibold">{displayName}</span>
+              <span className="text-body font-semibold text-foreground">{displayName}</span>
               <div className="flex items-center gap-1.5 shrink-0">
                 {message.hasAttachments && (
                   <Paperclip className="w-3 h-3 text-ink-3" />

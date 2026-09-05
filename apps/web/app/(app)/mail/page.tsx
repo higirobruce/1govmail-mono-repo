@@ -1219,7 +1219,7 @@ export default function MailPage() {
           from md (tablet portrait) up; the nav sidebar joins at lg. */}
       <div className={cn(
         'shrink-0 flex flex-col h-full border-r border-border/50',
-        'w-full md:w-[300px]',
+        'w-full md:w-[300px] lg:w-[340px] xl:w-[400px]',
         activeMessageId ? 'hidden md:flex' : 'flex',
       )}>
         {/* List header */}
@@ -1350,9 +1350,9 @@ export default function MailPage() {
           />
         ) : (
           <>
-            {hasAnyTriageCard && (
+            {hasAnyTriageCard && TRIAGE_CHIPS.some((c) => (triageLabelCounts[c.id] ?? 0) > 0) && (
               <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border/25 shrink-0 overflow-x-auto">
-                {TRIAGE_CHIPS.map((chip) => (
+                {TRIAGE_CHIPS.filter((chip) => (triageLabelCounts[chip.id] ?? 0) > 0 || triageLabelFilter === chip.id).map((chip) => (
                   <button
                     key={chip.id}
                     onClick={() => toggleTriageLabelFilter(chip.id)}

@@ -548,15 +548,7 @@ export default function Sidebar({
 
       {/* User / org header + collapse toggle */}
       <div className={cn('pt-4 pb-2', railMode ? 'px-2' : 'px-3')}>
-        <div className={cn('flex items-center gap-2.5 py-1.5 rounded-lg', railMode ? 'flex-col px-0' : 'px-2')}>
-          <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0" title={displayName}>
-            <span className="text-micro font-bold text-white leading-none">{initials}</span>
-          </div>
-          {!railMode && (
-            <span className="flex-1 text-ui font-semibold text-foreground truncate">
-              {displayName}
-            </span>
-          )}
+        <div className={cn('flex items-center py-1.5 rounded-lg', railMode ? 'justify-center px-0' : 'px-2')}>
           {!isTablet && (
             railMode ? (
               <Tooltip>
@@ -826,6 +818,17 @@ export default function Sidebar({
 
       {/* Footer */}
       <div className="px-2 py-2 border-t border-sidebar-border space-y-0.5">
+        <div
+          className={cn('flex items-center gap-2.5 py-1.5', railMode ? 'justify-center px-0' : 'px-3')}
+          title={displayName}
+        >
+          <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center shrink-0">
+            <span className="text-micro font-bold text-white leading-none">{initials}</span>
+          </div>
+          <span className="flex-1 text-ui font-semibold text-foreground truncate group-data-[collapsed=true]/sidebar:hidden">
+            {displayName}
+          </span>
+        </div>
         <OfflineStatusPill />
         <NotificationsBell />
         <NavItem icon={Settings} label="Settings" onClick={() => { router.push('/settings'); onClose?.(); }} collapsed={railMode} />

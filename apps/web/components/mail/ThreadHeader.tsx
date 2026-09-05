@@ -83,77 +83,33 @@ export default function ThreadHeader({
 
   return (
     <div className="border-b border-border-faint bg-background shrink-0">
-      <div className="flex items-start gap-2 px-6 pt-6 pb-4">
-        {/* Close */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onClose}
-              className="mt-0.5 text-ink-3 hover:bg-muted hover:text-foreground shrink-0"
-              aria-label="Close thread"
-            >
-              <X className="w-4 h-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="text-xs">Close</TooltipContent>
-        </Tooltip>
-
-        {/* Subject + meta */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-3">
-            <h1 className="text-display text-balance text-foreground">
-              {subject ?? '(no subject)'}
-            </h1>
-            <span
-              className={cn(
-                'text-micro px-2 py-0.5 rounded-full shrink-0 font-medium whitespace-nowrap',
-                status.className,
-              )}
-            >
-              {status.label}
-            </span>
-          </div>
-
-          {/* Participants + stats */}
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <div className="flex -space-x-1.5">
-              {visibleParticipants.map((p, i) => (
-                <Tooltip key={p.email}>
-                  <TooltipTrigger asChild>
-                    <div
-                      className="cursor-default"
-                      style={{ zIndex: visibleParticipants.length - i }}
-                    >
-                      <MailAvatar
-                        name={p.name}
-                        email={p.email}
-                        size="xs"
-                        className="ring-1 ring-background"
-                      />
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="text-xs">
-                    {p.name ? `${p.name} <${p.email}>` : p.email}
-                  </TooltipContent>
-                </Tooltip>
-              ))}
-              {extraParticipantCount > 0 && (
-                <div className="w-6 h-6 rounded-full bg-muted text-ink-2 text-micro leading-none font-medium flex items-center justify-center ring-1 ring-background">
-                  +{extraParticipantCount}
-                </div>
-              )}
-            </div>
-            <span className="text-micro font-normal text-ink-3">
-              {messageCount} message{messageCount !== 1 ? 's' : ''}
-              {unreadCount > 0 && ` · ${unreadCount} unread`}
-              {lastActivity && ` · ${lastActivity}`}
-            </span>
-          </div>
-        </div>
-
-        {/* Actions */}
+      <div className="px-6 pt-4 pb-4">
+        {/* Toolbar row — close on the left, status + quick actions on the right;
+            the title gets its own uncrowded line below (Image-3 pattern) */}
+        <div className="flex items-center gap-2 mb-3">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onClose}
+                className="-ml-2 text-ink-3 hover:bg-muted hover:text-foreground shrink-0"
+                aria-label="Close thread"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">Close</TooltipContent>
+          </Tooltip>
+          <div className="flex-1" />
+          <span
+            className={cn(
+              'text-micro px-2 py-0.5 rounded-full shrink-0 font-medium whitespace-nowrap',
+              status.className,
+            )}
+          >
+            {status.label}
+          </span>
         <div className="flex items-center gap-0 shrink-0">
           {[
             { icon: Reply,    label: 'Reply',     onClick: onReply },
@@ -208,6 +164,52 @@ export default function ThreadHeader({
             </Tooltip>
           )}
         </div>
+        </div>
+
+        {/* Title — alone on its line */}
+        <h1 className="text-display text-balance text-foreground">
+          {subject ?? '(no subject)'}
+        </h1>
+
+        <div className="min-w-0">
+
+          {/* Participants + stats */}
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            <div className="flex -space-x-1.5">
+              {visibleParticipants.map((p, i) => (
+                <Tooltip key={p.email}>
+                  <TooltipTrigger asChild>
+                    <div
+                      className="cursor-default"
+                      style={{ zIndex: visibleParticipants.length - i }}
+                    >
+                      <MailAvatar
+                        name={p.name}
+                        email={p.email}
+                        size="xs"
+                        className="ring-1 ring-background"
+                      />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs">
+                    {p.name ? `${p.name} <${p.email}>` : p.email}
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+              {extraParticipantCount > 0 && (
+                <div className="w-6 h-6 rounded-full bg-muted text-ink-2 text-micro leading-none font-medium flex items-center justify-center ring-1 ring-background">
+                  +{extraParticipantCount}
+                </div>
+              )}
+            </div>
+            <span className="text-micro font-normal text-ink-3">
+              {messageCount} message{messageCount !== 1 ? 's' : ''}
+              {unreadCount > 0 && ` · ${unreadCount} unread`}
+              {lastActivity && ` · ${lastActivity}`}
+            </span>
+          </div>
+        </div>
+
       </div>
     </div>
   );

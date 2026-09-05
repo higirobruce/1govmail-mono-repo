@@ -20,7 +20,7 @@ export interface ChatTurn { role: 'user' | 'assistant'; content: string }
 
 // Deliberately small, high-frequency-only lists: over-stripping kills recall
 // on short questions. Kinyarwanda list covers the same closed-class ground.
-const STOPWORDS = new Set([
+export const STOPWORDS: ReadonlySet<string> = new Set([
   // EN
   'a','an','and','are','about','at','be','by','can','did','do','does','for','from','had','has','have',
   'how','i','in','is','it','me','my','of','on','or','say','said','she','he','the','their','them','they',
@@ -154,7 +154,7 @@ export function splitByCitations(text: string, valid: ReadonlySet<string>): Answ
  * answer sourceless. Keyed by the existing DetectedLanguage literals.
  */
 export const NO_SOURCES_REPLY: Record<'English' | 'French' | 'Kinyarwanda', string> = {
-  English: "I couldn't find anything in your mailbox matching that question. Try different wording, or use the search bar for exact terms.",
-  French: "Je n'ai rien trouvé dans votre boîte mail correspondant à cette question. Essayez une autre formulation, ou utilisez la barre de recherche pour des termes exacts.",
-  Kinyarwanda: "Nta kintu nabonye mu butumwa bwawe gihuye n'icyo kibazo. Gerageza andi magambo, cyangwa ukoreshe agasanduku k'ubushakashatsi ku magambo nyayo.",
+  English: "I couldn't find anything in your mail, documents or calendar matching that question. Try different wording, or use the search bar for exact terms.",
+  French: "Je n'ai rien trouvé dans vos e-mails, vos documents ou votre agenda correspondant à cette question. Essayez une autre formulation, ou utilisez la barre de recherche pour des termes exacts.",
+  Kinyarwanda: "Nta kintu nabonye mu butumwa, inyandiko cyangwa kalendari yawe gihuye n'icyo kibazo. Gerageza andi magambo, cyangwa ukoreshe agasanduku k'ubushakashatsi ku magambo nyayo.",
 };

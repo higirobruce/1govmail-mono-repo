@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
+import { useAskStore } from '@/stores/ask.store';
 import { api, type Doc, type InvitedDoc } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
@@ -132,6 +133,19 @@ export default function DocsPage() {
     void selectDoc(openId);
     router.replace('/docs');
   }, [hydrated, isAuthenticated, loadingList, selectDoc, router]);
+
+  // Same-route chip clicks from the Ask panel: /docs?open=<id> is the
+  // cross-route mechanism, but pushing it while already on /docs can't
+  // re-trigger the consume-once effect above, so the panel publishes an
+  // openTarget instead. Consume-and-clear whenever the type is ours.
+  const askOpenTarget = useAskStore((s) => s.openTarget);
+  const clearAskOpenTarget = useAskStore((s) => s.clearOpenTarget);
+  useEffect(() => {
+    if (askOpenTarget?.type !== 'doc') return;
+    const { id } = askOpenTarget;
+    clearAskOpenTarget();
+    void selectDoc(id);
+  }, [askOpenTarget, clearAskOpenTarget, selectDoc]);
 
   // Open template picker (optionally scoped to a parent)
   const openTemplatePicker = useCallback((parentId?: string) => {

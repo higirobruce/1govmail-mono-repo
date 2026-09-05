@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square,
   Mail, FileText, Calendar,
@@ -69,11 +69,22 @@ function DegradedNotice({ degraded }: { degraded: AskDegraded }) {
   );
 }
 
+const FLAGGED_NOUN: Record<AskSourceType, string> = {
+  mail: 'emails',
+  doc: 'documents',
+  event: 'calendar events',
+};
+
 function InjectionBanner({ sources }: { sources: AskSource[] }) {
-  if (!sources.some((s) => s.injectionSuspected)) return null;
+  const flagged = sources.filter((s) => s.injectionSuspected);
+  if (flagged.length === 0) return null;
+  // Name the kind only when every flagged source is the same kind — otherwise
+  // the generic "sources", never "emails" for a doc or an event.
+  const types = new Set(flagged.map((s) => s.type));
+  const noun = types.size === 1 ? FLAGGED_NOUN[[...types][0]] : 'sources';
   return (
     <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[0.719rem] leading-relaxed text-amber-800 dark:text-amber-300">
-      One of the emails used for this answer looks like it may be trying to manipulate the AI.
+      One of the {noun} used for this answer looks like it may be trying to manipulate the AI.
       Verify against the sources before acting.
     </div>
   );
@@ -184,17 +195,23 @@ function AnswerBody({
 /**
  * Ask 1Gov — app-wide "ask a question grounded in your own mail/docs/calendar"
  * panel. Fully store-driven (see stores/ask.store.ts): a single instance is
- * mounted by AskLauncher in the app layout.
+ * mounted by AskLauncher in the app layout, after {children}.
  *
- * On the mail page, the mail page registers `handlers` on the store (an
- * effect, set on mount / cleared on unmount) so this panel docks as an xl
- * split-pane and routes mail-source clicks through the mail page's in-page
- * open/reply — exactly today's behavior. Everywhere else (handlers unset)
- * it renders as a fixed right overlay and every source-chip click, mail
- * included, navigates via `router.push(sourceHref(s))`.
+ * Because of that single mount the panel is ALWAYS `fixed inset-y-0 right-0`;
+ * it never becomes an in-flow flex child of a page. A page that wants its
+ * content to reflow beside it (the mail page) reserves the width with its own
+ * padding while the panel is open and expanded — see mail/page.tsx.
+ *
+ * On the mail page, the page registers `handlers` on the store (an effect, set
+ * on mount / cleared on unmount) so mail-source clicks route through its
+ * in-page open/reply. Everywhere else (handlers unset) a source-chip click
+ * navigates via `router.push(sourceHref(s))` — unless the user is already on
+ * that source's route, where a navigation would be a no-op and the click is
+ * published as an `openTarget` for that page to consume instead.
  */
 export default function AskPanel() {
   const router = useRouter();
+  const pathname = usePathname();
   const open = useAskStore((s) => s.open);
   const collapsed = useAskStore((s) => s.collapsed);
   const prefill = useAskStore((s) => s.prefill);
@@ -203,8 +220,7 @@ export default function AskPanel() {
   const collapseStore = useAskStore((s) => s.collapse);
   const closeStore = useAskStore((s) => s.close);
   const clearScope = useAskStore((s) => s.clearScope);
-
-  const dockedInPage = !!handlers; // mail page has registered its handlers
+  const setOpenTarget = useAskStore((s) => s.setOpenTarget);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
@@ -234,7 +250,11 @@ export default function AskPanel() {
 
   function onOpenSource(s: AskSource) {
     if (s.type === 'mail' && handlers) { handlers.onOpenMessage(s.id); return; }
-    router.push(sourceHref(s));
+    const href = sourceHref(s);
+    // Same route: the target page's deep-link effect is consume-once and
+    // mount-gated, so pushing the same pathname would do nothing at all.
+    if (pathname === href.split('?')[0]) { setOpenTarget({ type: s.type, id: s.id }); return; }
+    router.push(href);
   }
 
   function onReplyToMessage(messageId: string) {
@@ -299,24 +319,25 @@ export default function AskPanel() {
   return (
     <aside
       role="complementary"
-      aria-label="Ask your inbox"
+      aria-label="Ask 1Gov"
       aria-hidden={collapsed}
       className={cn(
         // z-[41]: same layer as the other AI drawers — only one is ever open.
+        // Always fixed: this panel is mounted once in the app layout, outside
+        // any page's flex row, so `xl:static` would drop it below the fold of
+        // an h-screen page. Pages reserve the width with padding instead.
         'fixed inset-y-0 right-0 z-[41] w-full max-w-[420px]',
-        // Mail page only: ≥xl docks as an in-flow split pane so mail content reflows beside it.
-        dockedInPage && 'xl:static xl:z-auto xl:w-96 xl:max-w-none xl:shrink-0 xl:shadow-none',
         'border-l border-border/40 bg-card shadow-xl',
         'flex flex-col overflow-hidden',
         'transition-transform duration-200 ease-out',
-        // collapsed: slide out; stays in the flex row at xl only when docked in-page (state kept — display:none, not unmount)
-        collapsed ? cn('translate-x-full pointer-events-none', dockedInPage && 'xl:hidden') : 'translate-x-0',
+        // collapsed: slide out of view, state kept (not unmounted)
+        collapsed ? 'translate-x-full pointer-events-none' : 'translate-x-0',
       )}
     >
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
         <MessageCircleQuestion className="w-4 h-4 text-primary" />
-        <span className="text-[0.75rem] font-semibold text-foreground">Ask your inbox</span>
+        <span className="text-[0.75rem] font-semibold text-foreground">Ask 1Gov</span>
         <button
           type="button"
           onClick={collapseStore}
@@ -362,7 +383,7 @@ export default function AskPanel() {
             <p className="text-[0.75rem] leading-relaxed text-muted-foreground/70">
               {scope
                 ? 'Ask a question about this document and get an answer grounded in its content.'
-                : 'Ask a question about your mailbox and get an answer grounded in your own messages, with clickable citations back to the source emails.'}
+                : 'Ask a question about your mail, documents and calendar and get an answer grounded in your own content, with clickable citations back to each source.'}
             </p>
             <div className="flex flex-wrap gap-1.5">
               {exampleQuestions.map((q) => (
@@ -411,7 +432,7 @@ export default function AskPanel() {
                 <Loader2 className="ml-1 inline h-3 w-3 animate-spin align-middle text-muted-foreground/60" />
               </p>
             ) : (
-              <AIWorkingIndicator step="Searching your mail" />
+              <AIWorkingIndicator step={scope ? 'Searching this document' : 'Searching your mail, docs and calendar'} />
             )}
             <DegradedNotice degraded={pendingDegraded} />
             <SourcesRail
@@ -440,7 +461,7 @@ export default function AskPanel() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={streaming}
-            placeholder="Ask about your mail…"
+            placeholder={scope ? 'Ask about this document…' : 'Ask about your mail, docs or calendar…'}
             rows={2}
             className={cn(
               'flex-1 resize-none rounded-md border border-border/40 bg-background px-2.5 py-1.5 text-[0.75rem]',
@@ -475,7 +496,7 @@ export default function AskPanel() {
           )}
         </div>
         <p className="text-[0.625rem] text-muted-foreground/45">
-          Answers are AI-generated from your mail — check the cited sources.
+          Answers are AI-generated from your mail, documents and calendar — check the cited sources.
         </p>
       </div>
     </aside>

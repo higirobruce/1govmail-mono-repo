@@ -4,6 +4,16 @@ import { create } from 'zustand';
 
 export interface AskScope { docId: string; docTitle: string }
 
+/**
+ * A "open this source here" signal for the page the user is already on.
+ * Cross-route chip clicks navigate (`/docs?open=…`, `/calendar?event=…`) and
+ * the target page's deep-link effect consumes the param. Those effects are
+ * consume-once and mount-gated, though, so a same-route `router.push` of the
+ * same URL shape never re-fires them — the panel publishes this instead, and
+ * the docs/calendar pages consume-and-clear it whenever the type is theirs.
+ */
+export interface AskOpenTarget { type: 'mail' | 'doc' | 'event'; id: string }
+
 export interface LinkedCommitment { id: string; messageId: string; text: string }
 
 /**
@@ -26,15 +36,21 @@ interface AskState {
   prefill: string | null;
   scope: AskScope | null;
   handlers: AskHandlers | null;
+  /** Pending same-route "open this source" signal; the owning page consumes and clears it. */
+  openTarget: AskOpenTarget | null;
   /** Opens + un-collapses; sets whichever of prefill/scope are passed, leaving the other untouched. */
   openAsk: (opts?: { prefill?: string; scope?: AskScope }) => void;
   collapse: () => void;
-  /** Clears BOTH scope and prefill; keeps the panel closed/open as it was — pair with openAsk() for a fresh unscoped open. */
+  /** Sets open:false (leaving collapsed:false) and clears BOTH scope and prefill — pair with openAsk() for a fresh unscoped open. */
   close: () => void;
   /** Clears scope only — keeps the panel open. */
   clearScope: () => void;
   /** Registers (or clears, with null) the mail page's in-page handlers. */
   setHandlers: (handlers: AskHandlers | null) => void;
+  /** Publishes a same-route open request; replaces any unconsumed one. */
+  setOpenTarget: (target: AskOpenTarget) => void;
+  /** Consumes the signal — called by the page that acted on it. */
+  clearOpenTarget: () => void;
 }
 
 export const useAskStore = create<AskState>((set) => ({
@@ -43,6 +59,7 @@ export const useAskStore = create<AskState>((set) => ({
   prefill: null,
   scope: null,
   handlers: null,
+  openTarget: null,
   openAsk: (opts) => set((s) => ({
     open: true,
     collapsed: false,
@@ -53,4 +70,6 @@ export const useAskStore = create<AskState>((set) => ({
   close: () => set({ open: false, collapsed: false, scope: null, prefill: null }),
   clearScope: () => set({ scope: null }),
   setHandlers: (handlers) => set({ handlers }),
+  setOpenTarget: (target) => set({ openTarget: target }),
+  clearOpenTarget: () => set({ openTarget: null }),
 }));

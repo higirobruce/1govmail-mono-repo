@@ -9,21 +9,12 @@ import { pickFairBatch } from '../mail/card-worker.service';
 const DOC_EMBED_BATCH_PER_TICK = Number(process.env.DOC_EMBED_BATCH_PER_TICK ?? 8);
 const DOC_EMBED_PER_USER_PER_TICK = Number(process.env.DOC_EMBED_PER_USER_PER_TICK ?? 2);
 
-interface DocEmbedCandidateRow {
-  id: string;
-  userId: string;
-  title: string;
-  updatedAt: Date;
-  content: string | null;
-  embeddings: Array<{ sourceUpdatedAt: Date }>;
-}
-
+/** Candidate identity — content is fetched later, only for the picked batch. */
 interface DocEmbedCandidate {
   id: string;
   userId: string;
   title: string;
   updatedAt: Date;
-  content: string;
 }
 
 /**
@@ -32,7 +23,8 @@ interface DocEmbedCandidate {
  * in-memory failure counter -> tombstone. Unlike the mail worker there is no
  * time-window backfill or purge: a document lives until its owner deletes it,
  * and re-embedding is driven purely by staleness (`updatedAt` vs. the current
- * model's `sourceUpdatedAt`), not by an age cutoff.
+ * model's `sourceUpdatedAt`), not by an age cutoff. That staleness test is
+ * evaluated in SQL, so the per-tick LIMIT bounds work rather than eligibility.
  */
 @Injectable()
 export class DocEmbedWorkerService {
@@ -56,51 +48,50 @@ export class DocEmbedWorkerService {
     }
   }
 
-  async processTick(): Promise<{ embedded: number; tombstoned: number; skipped: number }> {
-    // Prisma can't compare two columns (document.updatedAt vs. the embedding
-    // row's sourceUpdatedAt) in a `where`, so we select broadly here — newest
-    // first, with headroom for fairness trimming — and do the staleness
-    // comparison in JS below.
-    const rows = (await this.prisma.document.findMany({
-      where: {
-        content: { not: null },
-        NOT: { content: '' },
-        user: { authToken: { not: null }, tokenExpiry: { gt: new Date() } },
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: DOC_EMBED_BATCH_PER_TICK * 4,
-      select: {
-        id: true,
-        userId: true,
-        title: true,
-        updatedAt: true,
-        content: true,
-        embeddings: { where: { model: this.embedder.model }, select: { sourceUpdatedAt: true }, take: 1 },
-      },
-    })) as unknown as DocEmbedCandidateRow[];
-
-    const candidates: DocEmbedCandidate[] = rows
-      .filter((doc) => {
-        const row = doc.embeddings[0];
-        return !row || doc.updatedAt > row.sourceUpdatedAt;
-      })
-      .map((doc) => ({
-        id: doc.id,
-        userId: doc.userId,
-        title: doc.title,
-        updatedAt: doc.updatedAt,
-        content: doc.content as string,
-      }));
+  async processTick(): Promise<{ embedded: number; tombstoned: number; skipped: number; refreshed: number }> {
+    // Staleness lives in SQL. Prisma's query builder can't compare two columns
+    // (document.updatedAt vs. the embedding row's sourceUpdatedAt), and doing
+    // it in JS after a bounded `take` permanently starved every document
+    // outside the globally-newest window — once those were embedded the
+    // filter emptied the batch and nothing else was ever selected. The NOT
+    // EXISTS predicate below excludes already-current documents in the
+    // database, so the LIMIT applies to genuinely-stale candidates only.
+    const model = this.embedder.model;
+    const candidates = await this.prisma.$queryRaw<DocEmbedCandidate[]>`
+      SELECT d."id", d."userId", d."title", d."updatedAt"
+      FROM "documents" d
+      JOIN "users" u ON u."id" = d."userId"
+      WHERE d."content" IS NOT NULL AND d."content" <> ''
+        AND u."authToken" IS NOT NULL AND u."tokenExpiry" > NOW()
+        AND NOT EXISTS (
+          SELECT 1 FROM "document_embeddings" e
+          WHERE e."documentId" = d."id"
+            AND e."model" = ${model}
+            AND e."sourceUpdatedAt" >= d."updatedAt")
+      ORDER BY d."updatedAt" DESC
+      LIMIT ${DOC_EMBED_BATCH_PER_TICK * 4}`;
 
     const batch = pickFairBatch(candidates, DOC_EMBED_PER_USER_PER_TICK, DOC_EMBED_BATCH_PER_TICK);
 
     let embedded = 0;
     let tombstoned = 0;
     let skipped = 0;
+    let refreshed = 0;
+
+    // Content is pulled only for the picked batch — the candidate query above
+    // deliberately carries no `content` so the discarded 3/4 of the headroom
+    // never ships document bodies over the wire.
+    const contentRows = batch.length
+      ? await this.prisma.document.findMany({
+          where: { id: { in: batch.map((d) => d.id) } },
+          select: { id: true, content: true },
+        })
+      : [];
+    const contentById = new Map(contentRows.map((r) => [r.id, r.content]));
 
     for (const doc of batch) {
       try {
-        const text = docJsonToText(doc.content);
+        const text = docJsonToText(contentById.get(doc.id) ?? '');
         if (!text) {
           // No extractable text — a permanent condition, tombstone without retries.
           await this.tombstone(doc);
@@ -108,6 +99,19 @@ export class DocEmbedWorkerService {
           continue;
         }
         const chunks = chunkDocForEmbedding(text, doc.title);
+
+        // Live collaboration bumps Document.updatedAt (@updatedAt) every ~2s
+        // while an editor is open, even when nothing textual changed. Rather
+        // than re-embedding identical text once a minute, compare the freshly
+        // extracted chunks against what's already stored for this model and,
+        // when they match, just move `sourceUpdatedAt` forward so the SQL
+        // staleness predicate stops selecting the document.
+        if (await this.refreshIfUnchanged(doc, chunks)) {
+          this.failures.delete(doc.id);
+          refreshed++;
+          continue;
+        }
+
         const vectors = await this.embedder.embed(chunks);
         await this.prisma.$transaction([
           this.prisma.documentEmbedding.deleteMany({ where: { documentId: doc.id } }),
@@ -135,31 +139,59 @@ export class DocEmbedWorkerService {
       }
     }
 
-    if (embedded || tombstoned || skipped) {
-      this.logger.log(`doc embeddings: +${embedded} tombstoned ${tombstoned} skipped ${skipped}`);
+    if (embedded || tombstoned || skipped || refreshed) {
+      this.logger.log(
+        `doc embeddings: +${embedded} refreshed ${refreshed} tombstoned ${tombstoned} skipped ${skipped}`,
+      );
     }
 
-    return { embedded, tombstoned, skipped };
+    return { embedded, tombstoned, skipped, refreshed };
   }
 
+  /**
+   * True when the document's current-model rows already hold exactly these
+   * chunk texts, in this order, with no tombstone among them. In that case the
+   * rows are left untouched apart from `sourceUpdatedAt`/`extractedAt`, which
+   * move forward to the document's current `updatedAt` so the staleness
+   * predicate stops re-selecting it.
+   */
+  private async refreshIfUnchanged(doc: DocEmbedCandidate, chunks: string[]): Promise<boolean> {
+    const existing = await this.prisma.documentEmbedding.findMany({
+      where: { documentId: doc.id, model: this.embedder.model },
+      orderBy: { chunkIndex: 'asc' },
+      select: { chunkText: true, failed: true },
+    });
+    if (existing.length !== chunks.length) return false;
+    if (existing.some((row, i) => row.failed || row.chunkText !== chunks[i])) return false;
+
+    await this.prisma.documentEmbedding.updateMany({
+      where: { documentId: doc.id, model: this.embedder.model },
+      data: { sourceUpdatedAt: doc.updatedAt, extractedAt: new Date() },
+    });
+    return true;
+  }
+
+  /**
+   * Replace every embedding row for this document with a single current-model
+   * tombstone, atomically. Deleting only other-model rows used to leave a
+   * previously-embedded document's live chunks retrievable forever once it
+   * later failed or lost its text; the delete is unqualified by model so the
+   * document ends with exactly one row: the failed marker.
+   */
   private async tombstone(doc: { id: string; updatedAt: Date }): Promise<void> {
-    // A model switch plus a 3-strike failure could otherwise leave stale
-    // other-model rows behind for this document — clear them before upserting
-    // the current-model tombstone.
-    await this.prisma.documentEmbedding.deleteMany({
-      where: { documentId: doc.id, model: { not: this.embedder.model } },
-    });
-    await this.prisma.documentEmbedding.upsert({
-      where: { documentId_chunkIndex_model: { documentId: doc.id, chunkIndex: 0, model: this.embedder.model } },
-      create: {
-        documentId: doc.id,
-        chunkIndex: 0,
-        model: this.embedder.model,
-        chunkText: '',
-        failed: true,
-        sourceUpdatedAt: doc.updatedAt,
-      },
-      update: { failed: true, sourceUpdatedAt: doc.updatedAt, extractedAt: new Date() },
-    });
+    await this.prisma.$transaction([
+      this.prisma.documentEmbedding.deleteMany({ where: { documentId: doc.id } }),
+      this.prisma.documentEmbedding.create({
+        data: {
+          documentId: doc.id,
+          chunkIndex: 0,
+          model: this.embedder.model,
+          chunkText: '',
+          failed: true,
+          sourceUpdatedAt: doc.updatedAt,
+          extractedAt: new Date(),
+        },
+      }),
+    ]);
   }
 }

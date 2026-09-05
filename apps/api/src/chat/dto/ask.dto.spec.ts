@@ -40,6 +40,15 @@ describe('AskRequestDto', () => {
     expect(errors.length).toBeGreaterThan(0);
   });
 
+  it('rejects an empty scope.docId — it would silently widen a "this document" ask to the whole corpus', async () => {
+    const errors = await errorsFor({
+      messages: [{ role: 'user', content: 'hi' }],
+      scope: { docId: '' },
+    });
+    expect(errors.length).toBeGreaterThan(0);
+    expect(JSON.stringify(errors)).toContain('docId');
+  });
+
   it('rejects an empty messages array', async () => {
     const errors = await errorsFor({ messages: [] });
     expect(errors.length).toBeGreaterThan(0);

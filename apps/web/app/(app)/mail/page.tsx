@@ -1227,11 +1227,19 @@ export default function MailPage() {
 
   if (!isAuthenticated) return null;
 
+  // The Ask panel is mounted once, app-wide (AskLauncher in the route-group
+  // layout), so it is a fixed overlay rather than a flex child of this row.
+  // Reserve its width here from xl up — the same breakpoint at which it used
+  // to dock — so mail content reflows beside it instead of sitting under it.
+  const askDocked = askOpen && !askCollapsed;
   const aiPanelVisible =
-    (briefingOpen && briefingExpanded) || commitmentsOpen || (askOpen && !askCollapsed);
+    (briefingOpen && briefingExpanded) || commitmentsOpen || askDocked;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className={cn(
+      'flex h-screen overflow-hidden bg-background',
+      askDocked && 'xl:pr-[420px]', // == AskPanel's max-w-[420px]
+    )}>
       <Sidebar
         folders={folders}
         activeFolderId={activeFolderId}

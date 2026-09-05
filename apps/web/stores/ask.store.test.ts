@@ -5,7 +5,7 @@ const SCOPE = { docId: 'doc-1', docTitle: 'Budget Memo' };
 
 describe('useAskStore', () => {
   beforeEach(() => {
-    useAskStore.setState({ open: false, collapsed: false, prefill: null, scope: null, handlers: null });
+    useAskStore.setState({ open: false, collapsed: false, prefill: null, scope: null, handlers: null, openTarget: null });
   });
 
   it('starts closed, expanded, unscoped, unprefilled', () => {
@@ -86,6 +86,44 @@ describe('useAskStore', () => {
     useAskStore.getState().openAsk();
     expect(useAskStore.getState().scope).toBeNull();
     expect(useAskStore.getState().prefill).toBeNull();
+  });
+
+  describe('openTarget — the same-route "open this source here" signal', () => {
+    it('starts null', () => {
+      expect(useAskStore.getState().openTarget).toBeNull();
+    });
+
+    it('setOpenTarget() publishes a typed target the owning page can consume', () => {
+      useAskStore.getState().setOpenTarget({ type: 'doc', id: 'doc-9' });
+      expect(useAskStore.getState().openTarget).toEqual({ type: 'doc', id: 'doc-9' });
+    });
+
+    it('clearOpenTarget() consumes it', () => {
+      useAskStore.getState().setOpenTarget({ type: 'event', id: 'ev-1' });
+      useAskStore.getState().clearOpenTarget();
+      expect(useAskStore.getState().openTarget).toBeNull();
+    });
+
+    it('a second setOpenTarget replaces an unconsumed one', () => {
+      useAskStore.getState().setOpenTarget({ type: 'doc', id: 'doc-1' });
+      useAskStore.getState().setOpenTarget({ type: 'doc', id: 'doc-2' });
+      expect(useAskStore.getState().openTarget).toEqual({ type: 'doc', id: 'doc-2' });
+    });
+
+    it('re-publishing the SAME target is a new object identity, so a subscribing effect re-fires', () => {
+      useAskStore.getState().setOpenTarget({ type: 'doc', id: 'doc-1' });
+      const first = useAskStore.getState().openTarget;
+      useAskStore.getState().clearOpenTarget();
+      useAskStore.getState().setOpenTarget({ type: 'doc', id: 'doc-1' });
+      expect(useAskStore.getState().openTarget).not.toBe(first);
+      expect(useAskStore.getState().openTarget).toEqual({ type: 'doc', id: 'doc-1' });
+    });
+
+    it('close() leaves a pending openTarget alone — it is a navigation signal, not panel state', () => {
+      useAskStore.getState().setOpenTarget({ type: 'event', id: 'ev-2' });
+      useAskStore.getState().close();
+      expect(useAskStore.getState().openTarget).toEqual({ type: 'event', id: 'ev-2' });
+    });
   });
 
   it('setHandlers() registers and clears the mail page\'s in-page handlers', () => {

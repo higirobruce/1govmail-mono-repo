@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { extractEmailText, extractKeywords, rrfFuse, detectInjectionAttempt, type SourceType } from '@email-client/shared';
+import { extractEmailText, extractKeywords, rrfFuse, detectInjectionAttempt, STOPWORDS, type SourceType } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { EmbedderService } from '../mail/embedder.service';
@@ -240,7 +240,14 @@ export class RetrievalService {
   private async calendarLeg(userId: string, question: string): Promise<FusableHit[]> {
     const raw = extractKeywords(question);
     if (!raw) return [];
-    const terms = raw.split(/\s+/).map((t) => t.replace(/^"|"$/g, '').toLowerCase()).filter(Boolean);
+    // Quoted phrases survive extractKeywords un-filtered ("the budget" comes
+    // back whole), and splitting them here would otherwise reintroduce the
+    // stopwords it strips — so apply the same length/stopword test to the
+    // split terms.
+    const terms = raw
+      .split(/\s+/)
+      .map((t) => t.replace(/^"|"$/g, '').toLowerCase())
+      .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
     if (!terms.length) return [];
 
     const now = Date.now();

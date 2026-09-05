@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 
 export class AskTurnDto {
   /** Deliberately NO 'system' — the server owns the system prompt entirely. */
@@ -24,6 +24,7 @@ export class AskScopeDto {
 
   @IsOptional()
   @IsString()
+  @IsNotEmpty() // an empty docId would silently widen a "this document" ask back to the whole corpus
   docId?: string;
 }
 

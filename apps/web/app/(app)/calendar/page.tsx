@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useAIStore } from '@/stores/ai.store';
+import { useAskStore } from '@/stores/ask.store';
 import { AIClient } from '@/lib/ai/client';
 import { parseEventFromEmail } from '@/lib/ai/eventParse';
 import { mergeParsedEvent, sameAttendees, toFormDateTime } from '@/lib/calendar/eventPrefill';
@@ -1975,6 +1976,19 @@ export default function CalendarPage() {
   // loaded events, falls back to fetching it directly; a 404/failure warns
   // quietly rather than crashing. Consume-once via ref so it doesn't re-fire
   // as `events`/`loading` change on later range navigation.
+  const openEventById = useCallback((eventId: string) => {
+    const found = events.find((e) => e.id === eventId);
+    if (found) {
+      setSelectedEvent(found);
+      return;
+    }
+    // Outside the loaded range — fetch it directly; a 404/failure warns
+    // quietly rather than crashing.
+    api.calendar.getEvent(eventId)
+      .then((full) => { if (full) setSelectedEvent(full as CalEvent); })
+      .catch((err) => console.warn('Failed to load event by id', err));
+  }, [events]);
+
   const eventParamConsumedRef = useRef(false);
   useEffect(() => {
     if (!hydrated || !isAuthenticated || loading) return;
@@ -1982,16 +1996,22 @@ export default function CalendarPage() {
     const eventId = new URLSearchParams(window.location.search).get('event');
     if (!eventId) return;
     eventParamConsumedRef.current = true;
-    const found = events.find((e) => e.id === eventId);
-    if (found) {
-      setSelectedEvent(found);
-    } else {
-      api.calendar.getEvent(eventId)
-        .then((full) => { if (full) setSelectedEvent(full as CalEvent); })
-        .catch((err) => console.warn('Failed to load event from deep link', err));
-    }
+    openEventById(eventId);
     router.replace('/calendar');
-  }, [hydrated, isAuthenticated, loading, events, router]);
+  }, [hydrated, isAuthenticated, loading, openEventById, router]);
+
+  // Same-route chip clicks from the Ask panel: /calendar?event=<id> is the
+  // cross-route mechanism, but pushing it while already on /calendar can't
+  // re-trigger the consume-once effect above, so the panel publishes an
+  // openTarget instead. Consume-and-clear whenever the type is ours.
+  const askOpenTarget = useAskStore((s) => s.openTarget);
+  const clearAskOpenTarget = useAskStore((s) => s.clearOpenTarget);
+  useEffect(() => {
+    if (askOpenTarget?.type !== 'event') return;
+    const { id } = askOpenTarget;
+    clearAskOpenTarget();
+    openEventById(id);
+  }, [askOpenTarget, clearAskOpenTarget, openEventById]);
 
   // When an event is selected, fetch full details from Zimbra (complete attendee list)
   useEffect(() => {

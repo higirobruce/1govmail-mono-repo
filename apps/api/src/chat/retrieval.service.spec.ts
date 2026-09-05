@@ -273,6 +273,22 @@ describe('RetrievalService.retrieve — calendar leg', () => {
     expect(e1.meta).toBe(e1.context.split('\n')[1].replace('When: ', ''));
   });
 
+  it('stopword-filters the terms split out of a quoted phrase: "the budget" matches on budget only', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    const now = Date.now();
+    prisma.calendarEvent.findMany.mockResolvedValue([
+      eventRow('e1', { title: 'Budget review', startAt: new Date(now + 2 * DAY_MS), endAt: new Date(now + 2 * DAY_MS) }),
+      // Contains "the" but nothing about the budget — must not match, i.e. the
+      // phrase's leading stopword is dropped rather than matched as a term.
+      eventRow('e2', { title: 'Weekly sync', description: 'Walk through the roadmap', startAt: new Date(now + 3 * DAY_MS), endAt: new Date(now + 3 * DAY_MS) }),
+    ]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', '"the budget"', { types: ['event'] });
+
+    expect(result.sources.map((s) => s.id)).toEqual(['e1']);
+  });
+
   it('orders matches by proximity to now and caps at 5', async () => {
     const { prisma, embedder, mailService } = makeFakes();
     const now = Date.now();

@@ -8,4 +8,5 @@ dist
 .DS_Store
 release
 *.db
-.superpowers.build-out/
+.superpowers
+.build-out/

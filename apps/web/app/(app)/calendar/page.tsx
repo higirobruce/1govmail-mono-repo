@@ -8,6 +8,7 @@ import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
 import { parseEventFromEmail } from '@/lib/ai/eventParse';
 import { mergeParsedEvent } from '@/lib/calendar/eventPrefill';
+import { quickAddEventPrefill } from '@/lib/calendar/quickAddEvent';
 import type { EventFormValues, EventFieldKey } from '@/lib/calendar/eventPrefill';
 import { parseMailDragPayload, dropPrefillFromPayload } from '@/lib/calendar/dropPrefill';
 import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
@@ -1871,6 +1872,18 @@ export default function CalendarPage() {
   const [dragPrefill, setDragPrefill] = useState<CreateEventPrefillData | null>(null);
   const [deleting, setDeleting]     = useState(false);
 
+  // Natural-language event quick-add
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiModel   = useAIStore((s) => s.model);
+  const [quickAdd, setQuickAdd] = useState('');
+  const [quickAdding, setQuickAdding] = useState(false);
+  // Cancels a stale quick-add parse when a new one is submitted, or on unmount —
+  // otherwise a fallback parse resolving after the fact could still open the modal.
+  const quickAddAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => { quickAddAbortRef.current?.abort(); };
+  }, []);
+
   // Availability
   const [showAvailability, setShowAvailability] = useState(false);
   const [freeBusyList, setFreeBusyList] = useState<FreeBusyData[]>([]);
@@ -2022,6 +2035,31 @@ export default function CalendarPage() {
     }
   }, []);
 
+  const handleQuickAddEvent = async () => {
+    const input = quickAdd.trim();
+    if (!input || quickAdding) return;
+    quickAddAbortRef.current?.abort();
+    const controller = new AbortController();
+    quickAddAbortRef.current = controller;
+    setQuickAdding(true);
+    try {
+      const prefill = await quickAddEventPrefill(input, {
+        enabled: aiEnabled,
+        model: aiModel,
+        client: new AIClient(),
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      setDragPrefill(prefill);
+      setShowCreate(true);
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      toast.error('Failed to parse event', { description: err?.message });
+    } finally {
+      if (quickAddAbortRef.current === controller) setQuickAdding(false);
+    }
+  };
+
   const handleMailDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const raw = e.dataTransfer.getData('application/x-govmail-msg');
@@ -2132,6 +2170,26 @@ export default function CalendarPage() {
           </div>
         </div>
 
+        {/* ── Natural-language quick-add ── */}
+        <div className="px-3 lg:px-6 py-2 flex items-center gap-2 shrink-0 border-b border-border/30">
+          <form
+            onSubmit={(e) => { e.preventDefault(); void handleQuickAddEvent(); }}
+            className="flex-1 flex items-center gap-2"
+          >
+            <Input
+              value={quickAdd}
+              onChange={(e) => setQuickAdd(e.target.value)}
+              placeholder='Try "Steering committee Tuesday 10–11 with Erick and Tricia"'
+              className="h-9 text-ui"
+              disabled={quickAdding}
+            />
+            <Button type="submit" size="sm" disabled={quickAdding || !quickAdd.trim()}>
+              {quickAdding ? 'Parsing…' : 'Add'}
+            </Button>
+          </form>
+          {quickAdding && aiEnabled && <AIWorkingIndicator step="Parsing your event" />}
+        </div>
+
         {/* ── Main content area ── */}
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Calendar view area */}
@@ -2222,6 +2280,7 @@ export default function CalendarPage() {
             setCreateForDay(undefined);
             setDragPrefill(null);
             setSelectedEvent(event);
+            setQuickAdd('');
           }}
         />
       )}

@@ -40,7 +40,7 @@ import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { AIClient } from '@/lib/ai/client';
 import { rewriteText, summarizeMessage, type RewriteMode } from '@/lib/ai/tasks';
-import { textToHtml } from '@/lib/ai/textToHtml';
+import { markdownToHtml } from '@/lib/ai/markdownToHtml';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { useAIStore } from '@/stores/ai.store';
 import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
@@ -816,7 +816,7 @@ export function DocsEditor({
     const size = editor.state.doc.content.size;
     const from = Math.min(aiRange.from, size);
     const to = Math.min(aiRange.to, size);
-    const html = textToHtml(aiPreview);
+    const html = markdownToHtml(aiPreview);
     const action = aiAction;
     // Close the popover before our own edit lands so the doc-change watcher
     // below doesn't treat this insert as an external change (harmless no-op
@@ -1266,8 +1266,13 @@ export function DocsEditor({
               <X />
             </Button>
           </div>
-          <div className="max-h-48 overflow-y-auto text-ui text-foreground whitespace-pre-wrap leading-relaxed">
-            {aiPreview || (aiBusy ? <AIWorkingIndicator step={aiAction === 'rewrite' ? 'Rewriting' : 'Summarizing'} /> : null)}
+          <div className="max-h-48 overflow-y-auto text-ui text-foreground leading-relaxed [&_p]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mb-0.5 [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_h1]:mt-2 [&_h2]:mt-2 [&_h3]:mt-1.5 [&_code]:font-mono [&_pre]:bg-muted [&_pre]:rounded-md [&_pre]:p-2 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-2 [&_blockquote]:text-ink-2">
+            {aiPreview ? (
+              // Sanitized by markdownToHtml (escape-first + DOMPurify) — safe to inject.
+              <div dangerouslySetInnerHTML={{ __html: markdownToHtml(aiPreview) }} />
+            ) : aiBusy ? (
+              <AIWorkingIndicator step={aiAction === 'rewrite' ? 'Rewriting' : 'Summarizing'} />
+            ) : null}
           </div>
           {aiError && <p className="text-micro font-normal text-destructive">{aiError}</p>}
           <div className="flex justify-end gap-2">

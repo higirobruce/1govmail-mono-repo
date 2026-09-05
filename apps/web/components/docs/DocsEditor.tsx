@@ -39,7 +39,7 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { AIClient } from '@/lib/ai/client';
-import { rewriteText, summarizeMessage, type RewriteMode } from '@/lib/ai/tasks';
+import { rewriteText, summarizeSelection, type RewriteMode } from '@/lib/ai/tasks';
 import { markdownToHtml } from '@/lib/ai/markdownToHtml';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { useAIStore } from '@/stores/ai.store';
@@ -795,10 +795,10 @@ export function DocsEditor({
                 { model: aiModel, customInstructions: docsAiInstructions, signal: abort.signal },
                 pushAi,
               )
-            : await summarizeMessage(
+            : await summarizeSelection(
                 client,
                 original,
-                { model: aiModel, subject: title, customInstructions: docsAiInstructions, signal: abort.signal },
+                { model: aiModel, subject: title, customInstructions: aiCustomInstructions, signal: abort.signal },
                 pushAi,
               );
         if (!abort.signal.aborted) replaceAi(final);

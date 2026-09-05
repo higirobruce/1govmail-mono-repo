@@ -340,3 +340,54 @@ Draft the reply body now. Output ONLY the reply text.`;
   );
   return scrubOutput(full);
 }
+
+// ── Docs: summarize a selected passage ────────────────────────────────────────
+// Unlike summarizeMessage this takes raw document text (no email extraction —
+// no signature stripping or quote removal) and asks for Markdown structure,
+// which the docs editor renders via lib/ai/markdownToHtml.
+
+const SUMMARIZE_SELECTION_SYSTEM = (source: string) => `${UNTRUSTED_CONTENT_RULE}
+
+You summarize a passage from a working document for a busy reader. Start with a one- or two-sentence overview, then use Markdown "- " bullet points for the key facts, decisions, and action items when the passage contains several. Use **bold** for names of people who own an action. No preamble, no meta-commentary.
+
+${languageRule(source)}`;
+
+export interface SummarizeSelectionOptions {
+  model: string;
+  /** Document title, shown to the model as context. */
+  subject?: string;
+  customInstructions?: string | null;
+  signal?: AbortSignal;
+}
+
+export async function summarizeSelection(
+  client: AIClient,
+  text: string,
+  opts: SummarizeSelectionOptions,
+  onChunk: (delta: string) => void,
+): Promise<string> {
+  const plain = truncate(text.trim(), 6000);
+  if (!plain) return '';
+
+  const userPrompt = `${opts.subject ? `Document: ${opts.subject}\n\n` : ''}${fenceUntrusted('PASSAGE', plain)}
+
+Summarize the passage above. Output only the summary.`;
+
+  const full = await client.chatStream(
+    {
+      model: opts.model,
+      messages: [
+        {
+          role: 'system',
+          content: withCustomInstructions(SUMMARIZE_SELECTION_SYSTEM(plain), opts.customInstructions ?? undefined),
+        },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.2,
+      maxTokens: 400,
+      signal: opts.signal,
+    },
+    onChunk,
+  );
+  return scrubOutput(full);
+}

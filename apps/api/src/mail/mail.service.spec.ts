@@ -780,7 +780,7 @@ describe('MailService.promoteCommitment', () => {
       where: { id: 'c1' },
       data: { status: 'promoted', taskId: 'task-1', resolvedAt: expect.any(Date) },
     });
-    expect(result).toEqual({ taskId: 'task-1' });
+    expect(result).toEqual({ taskId: 'task-1', task: { id: 'task-1' } });
   });
 
   it('omits the due-hint prefix and falls back to no linkedSubject when the source message is gone', async () => {
@@ -834,6 +834,43 @@ describe('MailService.promoteCommitment', () => {
 
     await expect(service.promoteCommitment('u1', 'c1')).rejects.toBe(dbError);
     expect(prisma.task.delete).toHaveBeenCalledWith({ where: { id: 'task-1' } });
+  });
+
+  it('merges overrides into the create payload — an explicit title wins over the commitment text, while an empty overrides object preserves the derived defaults', async () => {
+    const { service, prisma, tasksService } = makeService();
+    prisma.commitment.findUnique.mockResolvedValue(openCommitment);
+    prisma.message.findFirst.mockResolvedValue({ subject: 'Q3 report thread' });
+    tasksService.create.mockResolvedValue({ id: 'task-3' });
+    prisma.commitment.update.mockResolvedValue({});
+
+    await service.promoteCommitment('u1', 'c1', {
+      title: 'Custom title',
+      description: 'Custom description',
+      dueDate: '2026-09-10',
+      priority: 'HIGH',
+    });
+
+    expect(tasksService.create).toHaveBeenCalledWith('u1', {
+      title: 'Custom title',
+      description: 'Custom description',
+      dueDate: '2026-09-10',
+      priority: 'HIGH',
+      linkedMessageId: 'm1',
+      linkedSubject: 'Q3 report thread',
+    });
+
+    tasksService.create.mockClear();
+
+    await service.promoteCommitment('u1', 'c1', {});
+
+    expect(tasksService.create).toHaveBeenCalledWith('u1', {
+      title: 'Send the report',
+      description: 'Due hint: Friday. Extracted from email.',
+      dueDate: undefined,
+      priority: undefined,
+      linkedMessageId: 'm1',
+      linkedSubject: 'Q3 report thread',
+    });
   });
 });
 

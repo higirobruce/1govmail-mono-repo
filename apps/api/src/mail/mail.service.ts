@@ -5,6 +5,7 @@ import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { TasksService } from '../tasks/tasks.service';
 import { matchSenderRule, type SenderRuleLike } from './sender-rule-matcher';
+import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
 
 const CARD_WINDOWS = ['today', '24h', 'week'] as const;
 type CardWindow = (typeof CARD_WINDOWS)[number];
@@ -1783,8 +1784,14 @@ export class MailService {
     return rest;
   }
 
-  /** Promotes an open commitment to a real Task; the ledger row is then a historical pointer. */
-  async promoteCommitment(userId: string, id: string): Promise<{ taskId: string }> {
+  /** Promotes an open commitment to a real Task; the ledger row is then a historical pointer.
+   * `overrides` (all optional) let the caller override title/description/dueDate/priority on
+   * the created Task — an empty/absent body preserves the prior default derivation. */
+  async promoteCommitment(
+    userId: string,
+    id: string,
+    overrides?: PromoteCommitmentDto,
+  ): Promise<{ taskId: string; task: Awaited<ReturnType<TasksService['create']>> }> {
     const commitment = await this.prisma.commitment.findUnique({ where: { id } });
     if (!commitment || commitment.userId !== userId) throw new NotFoundException('Commitment not found');
     if (commitment.status !== 'open') throw new ConflictException('Only an open commitment can be promoted');
@@ -1795,8 +1802,10 @@ export class MailService {
     });
 
     const task = await this.tasksService.create(userId, {
-      title: commitment.text,
-      description: `${commitment.dueHint ? `Due hint: ${commitment.dueHint}. ` : ''}Extracted from email.`,
+      title: overrides?.title?.trim() || commitment.text,
+      description: overrides?.description ?? `${commitment.dueHint ? `Due hint: ${commitment.dueHint}. ` : ''}Extracted from email.`,
+      dueDate: overrides?.dueDate,
+      priority: overrides?.priority,
       linkedMessageId: commitment.messageId,
       linkedSubject: sourceMessage?.subject ?? undefined,
     });
@@ -1816,6 +1825,6 @@ export class MailService {
       throw err;
     }
 
-    return { taskId: task.id };
+    return { taskId: task.id, task };
   }
 }

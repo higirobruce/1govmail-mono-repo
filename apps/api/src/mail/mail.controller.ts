@@ -31,6 +31,7 @@ import { CreateTemplateDto } from './dto/create-template.dto';
 import { CreateRuleDto } from './dto/create-rule.dto';
 import { CreateSenderRuleDto } from './dto/create-sender-rule.dto';
 import { UpdateCommitmentDto } from './dto/update-commitment.dto';
+import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 
 @UseGuards(JwtAuthGuard)
@@ -410,7 +411,11 @@ export class MailController {
 
   @Post('commitments/:id/promote')
   @HttpCode(HttpStatus.OK)
-  promoteCommitment(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.mailService.promoteCommitment(req.user.sub, id);
+  promoteCommitment(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: PromoteCommitmentDto,
+  ) {
+    return this.mailService.promoteCommitment(req.user.sub, id, dto);
   }
 }

@@ -511,9 +511,15 @@ export const api = {
         body: JSON.stringify({ status }),
       });
     },
-    promoteCommitment: (id: string) => {
-      if (USE_MOCK) return delay({ taskId: `mock-task-${Date.now()}` });
-      return request<{ taskId: string }>(`/mail/commitments/${id}/promote`, { method: 'POST' });
+    promoteCommitment: (
+      id: string,
+      overrides?: { title?: string; description?: string; dueDate?: string; priority?: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT' },
+    ) => {
+      if (USE_MOCK) return delay({ taskId: `mock-task-${Date.now()}`, task: {} });
+      return request<{ taskId: string; task: any }>(`/mail/commitments/${id}/promote`, {
+        method: 'POST',
+        body: JSON.stringify(overrides ?? {}),
+      });
     },
   },
 

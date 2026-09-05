@@ -25,7 +25,7 @@ import {
   Trash2, Columns2, Rows3, History, Activity, Play, MoreHorizontal,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Code,
   Link2, Type, Heading1, Heading2, Heading3, ChevronDown, RemoveFormatting,
-  Sparkles,
+  PenLine,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -1236,7 +1236,7 @@ export function DocsEditor({
                 onMouseDown={(e) => { e.preventDefault(); setAiMenuOpen((v) => !v); }}
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-micro text-ink-2 hover:text-foreground hover:bg-muted transition-colors"
               >
-                <Sparkles className="w-3 h-3 text-primary" /> Rewrite <ChevronDown className="w-2.5 h-2.5" />
+                <PenLine className="w-3 h-3 text-primary" /> Rewrite <ChevronDown className="w-2.5 h-2.5" />
               </button>
               {aiMenuOpen && (
                 <div className="absolute bottom-full left-1.5 mb-1 rounded-lg border border-border bg-popover shadow-lg p-1 flex flex-col min-w-[130px]">

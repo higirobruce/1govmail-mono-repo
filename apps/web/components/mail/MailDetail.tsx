@@ -7,7 +7,7 @@ import {
   Paperclip, Download, Loader2, MoreHorizontal,
   ChevronLeft, ChevronRight, X, Mail, User, Calendar,
   Eye, File, FileText, Image as ImageIcon, Printer, BellOff, Bell, AlarmClock,
-  Sparkles, X as XIcon,
+  ScrollText, X as XIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -566,7 +566,7 @@ export default function MailDetail({
             <>
               <span className="mx-1 h-4 w-px bg-border-faint" aria-hidden />
               <ActionBtn
-                icon={Sparkles}
+                icon={ScrollText}
                 label="Summarize"
                 onClick={handleSummarize}
                 highlight={summaryOpen}
@@ -971,7 +971,7 @@ export default function MailDetail({
           )}
         >
           <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border-faint shrink-0">
-            <Sparkles className="w-3.5 h-3.5 text-primary" />
+            <ScrollText className="w-3.5 h-3.5 text-primary" />
             <span className="text-ui font-semibold text-foreground">Summary</span>
             {summarizing && (
               <Loader2 className="w-3 h-3 animate-spin text-ink-3" />

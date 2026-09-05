@@ -21,7 +21,7 @@ import { DateTimePicker } from '@/components/ui/date-time-picker';
 import {
   X, Send, Loader2, ChevronDown, ChevronUp, Minus,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Link2, Paperclip,
-  Clock, FileText, Calendar, Files, Sparkles,
+  Clock, FileText, Calendar, Files, PenLine,
 } from 'lucide-react';
 import { api, type Doc } from '@/lib/api';
 import { sanitizeEmailHtml } from '@/lib/sanitize';
@@ -1305,7 +1305,7 @@ export default function ComposeModal({
                           : 'bg-primary/10 text-primary hover:bg-primary/20',
                       )}
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
+                      <PenLine className="w-3.5 h-3.5" />
                       AI
                     </button>
                     {showRewrite && (
@@ -1385,7 +1385,7 @@ export default function ComposeModal({
                     )}
                   >
                     <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border-faint shrink-0">
-                      <Sparkles className="w-3.5 h-3.5 text-primary" />
+                      <PenLine className="w-3.5 h-3.5 text-primary" />
                       <span className="text-ui font-semibold text-foreground capitalize">
                         {aiAction === 'suggest'
                           ? 'Reply suggestion'

@@ -42,7 +42,7 @@ import { useCharStream } from '@/lib/ai/useCharStream';
 import { gatherThreadContent } from '@/lib/ai/threadContent';
 import { draftFromThread, assembleDocContent, templateEmoji } from '@/lib/ai/draftDoc';
 import { fetchBodyCached } from '@/lib/mailBodyCache';
-import { Sparkles, X as XIconSmall } from 'lucide-react';
+import { ScrollText, X as XIconSmall } from 'lucide-react';
 import ThreadMessage, { type ThreadMessageMeta } from './ThreadMessage';
 import MailDetail from './MailDetail';
 import ComposeModal from './ComposeModal';
@@ -585,6 +585,8 @@ export default function ThreadView({
         onForward={() => onComposeWith('forward', lastMessage)}
         onSummarize={aiEnabled ? handleSummarize : undefined}
         summarizing={summarizing}
+        onDraftDoc={aiEnabled ? handleDraftDoc : undefined}
+        drafting={!!draftStep}
         onQuickReply={aiEnabled && onQuickReply ? () => onQuickReply(lastMessage) : undefined}
       />
 
@@ -812,29 +814,6 @@ export default function ThreadView({
                   <ExternalLink className="w-3.5 h-3.5" />
                   Forward
                 </button>
-                {aiEnabled && (
-                  <div className="relative">
-                    <button
-                      onClick={handleDraftDoc}
-                      disabled={!!draftStep}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-ui text-ink-2 hover:bg-muted/40 hover:text-foreground transition-colors disabled:opacity-60"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      Draft doc
-                    </button>
-                    {draftStep && (
-                      <div className="absolute z-30 top-full left-0 mt-2 w-64 rounded-xl border border-border bg-card shadow-xl p-3 flex flex-col gap-2">
-                        <AIWorkingIndicator step={draftStep} />
-                        <button
-                          onClick={cancelDraftDoc}
-                          className="self-start text-micro font-medium text-ink-3 hover:text-foreground underline"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
 
@@ -1107,6 +1086,27 @@ export default function ThreadView({
         )}
       </div>
 
+      {/* Draft-doc progress card — floats top-right (bottom sheet on mobile) so
+          the step indicator and Cancel stay reachable from every tab, since the
+          trigger now lives in the always-visible thread header. */}
+      {draftStep && (
+        <div
+          className={cn(
+            'fixed inset-x-2 bottom-2 z-[46]',
+            'lg:absolute lg:inset-x-auto lg:bottom-auto lg:top-3 lg:right-3 lg:w-64',
+            'rounded-xl border border-border bg-card shadow-xl p-3 flex flex-col gap-2',
+          )}
+        >
+          <AIWorkingIndicator step={draftStep} />
+          <button
+            onClick={cancelDraftDoc}
+            className="self-start text-micro font-medium text-ink-3 hover:text-foreground underline"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {aiEnabled && (
         <aside
           aria-hidden={!summaryOpen}
@@ -1126,7 +1126,7 @@ export default function ThreadView({
           )}
         >
           <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border-faint shrink-0">
-            <Sparkles className="w-3.5 h-3.5 text-primary" />
+            <ScrollText className="w-3.5 h-3.5 text-primary" />
             <span className="text-ui font-semibold text-foreground">
               {threadMessages.length > 1 ? 'Thread summary' : 'Summary'}
             </span>

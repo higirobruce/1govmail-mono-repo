@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import {
-  Sparkles, ClipboardCheck, MessageCircleQuestion, Settings, Sun, Moon, Monitor,
+  Newspaper, ClipboardCheck, MessageCircleQuestion, Settings, Sun, Moon, Monitor,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -79,7 +79,7 @@ export function AIRail({
       {aiEnabled && (
         <>
           <RailButton label="Brief me" active={briefingOpen} onClick={onBriefing}>
-            <Sparkles className="size-4" />
+            <Newspaper className="size-4" />
           </RailButton>
           <RailButton label="Commitments" active={commitmentsOpen} onClick={onCommitments} badge={commitmentsCount}>
             <ClipboardCheck className="size-4" />

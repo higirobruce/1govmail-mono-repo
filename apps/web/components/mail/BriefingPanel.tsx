@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { Sparkles, Loader2, AlertTriangle, RefreshCw, Minimize2 } from 'lucide-react';
+import { Newspaper, Loader2, AlertTriangle, RefreshCw, Minimize2 } from 'lucide-react';
 import { AIClient } from '@/lib/ai/client';
 import { api } from '@/lib/api';
 import { useAIStore } from '@/stores/ai.store';
@@ -145,7 +145,7 @@ export default function BriefingPanel({
     >
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
-        <Sparkles className="w-4 h-4 text-primary" />
+        <Newspaper className="w-4 h-4 text-primary" />
         <span className="text-[0.75rem] font-semibold text-foreground">Executive briefing</span>
         <button
           type="button"

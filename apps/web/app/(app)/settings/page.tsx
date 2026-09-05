@@ -23,7 +23,7 @@ import { toast } from 'sonner';
 import {
   User, Pen, Shield, Mail, Loader2, Plus, Trash2,
   Check, ChevronRight, ArrowLeft, RotateCcw, FileSignature,
-  Palmtree, Settings2, Sparkles, AlertTriangle, Ban,
+  Palmtree, Settings2, Bot, AlertTriangle, Ban,
   Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
   Monitor, LogOut,
 } from 'lucide-react';
@@ -478,7 +478,7 @@ export default function SettingsPage() {
         <NavItem icon={Ban}           label="Blocked Senders" active={section === 'blocked-senders'} onClick={() => setSection('blocked-senders')} />
         <NavItem icon={Settings2}     label="Preferences"   active={section === 'preferences'} onClick={() => setSection('preferences')} />
         {!AI_LOCKED && (
-          <NavItem icon={Sparkles}      label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
+          <NavItem icon={Bot}           label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
         )}
         <NavItem icon={Shield}        label="Security"      active={section === 'security'}    onClick={() => setSection('security')} />
       </div>

@@ -27,7 +27,7 @@ import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { Input } from '@/components/ui/input';
-import { Search, RefreshCw, Sparkles, ClipboardCheck, MessageCircleQuestion, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
+import { Search, RefreshCw, Newspaper, ClipboardCheck, MessageCircleQuestion, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOffline } from '@/lib/offline/provider';
 import { toast } from 'sonner';
@@ -1329,7 +1329,7 @@ export default function MailPage() {
                 onClick={() => { if (briefingOpen && briefingExpanded) { setBriefingExpanded(false); return; } setCommitmentsOpen(false); if (askOpen) setAskCollapsed(true); setBriefingOpen(true); setBriefingExpanded(true); }}
                 className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
               >
-                <Sparkles className="w-3.5 h-3.5" />
+                <Newspaper className="w-3.5 h-3.5" />
                 Brief me
               </button>
               <button

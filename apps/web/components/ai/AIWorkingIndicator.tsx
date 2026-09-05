@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /** CLI-style working indicator: a pulsing spark, a rotating gerund (or the
@@ -26,7 +26,7 @@ export function AIWorkingIndicator({ step, className }: { step?: string; classNa
 
   return (
     <span className={cn('inline-flex items-baseline gap-1.5 text-ui', className)} role="status">
-      <Sparkles className="w-3.5 h-3.5 text-primary animate-pulse self-center shrink-0" />
+      <Loader2 className="w-3.5 h-3.5 text-primary animate-spin self-center shrink-0" />
       <span className="font-medium text-foreground">{step ?? word}…</span>
       {seconds >= 2 && (
         <span className="text-micro font-normal text-ink-4 tabular-nums">({seconds}s)</span>

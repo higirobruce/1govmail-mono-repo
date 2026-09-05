@@ -7,7 +7,7 @@ import { useConfirmStore } from '@/stores/confirm.store';
 import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
 import { parseEventFromEmail } from '@/lib/ai/eventParse';
-import { mergeParsedEvent, sameAttendees } from '@/lib/calendar/eventPrefill';
+import { mergeParsedEvent, sameAttendees, toFormDateTime } from '@/lib/calendar/eventPrefill';
 import { quickAddEventPrefill } from '@/lib/calendar/quickAddEvent';
 import type { EventFormValues, EventFieldKey } from '@/lib/calendar/eventPrefill';
 import { parseMailDragPayload, dropPrefillFromPayload } from '@/lib/calendar/dropPrefill';
@@ -26,7 +26,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
   Clock, MapPin, Calendar as CalendarIcon, Trash2, Users,
   Video, Repeat, ExternalLink, Pencil, CheckCircle2,
-  HelpCircle, XCircle, Menu, Mail, Sparkles,
+  HelpCircle, XCircle, Menu, Mail, CalendarSearch,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth,
@@ -537,7 +537,11 @@ export function CreateEventModal({
             <X className="w-4 h-4" />
           </Button>
         </div>
-        <ScrollArea className="flex-1 min-h-0">
+        {/* Plain scroller (not Radix ScrollArea): its intrinsic-width viewport
+            let a long focused title push the whole form wider than the dialog
+            and strand it on a horizontal scroll. overflow-x-hidden pins the
+            form to the dialog width; the title input scrolls internally. */}
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           <div className="px-5 py-4 space-y-3">
             <Input
               autoFocus
@@ -560,7 +564,7 @@ export function CreateEventModal({
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Start</Label>
                 <DateTimePicker
                   value={allDay ? startAt.split('T')[0] : startAt}
-                  onChange={(v) => { setStart(v); dirtyRef.current.add('startAt'); }}
+                  onChange={(v) => { setStart(toFormDateTime(v, 'start')); dirtyRef.current.add('startAt'); }}
                   dateOnly={allDay}
                 />
               </div>
@@ -568,7 +572,7 @@ export function CreateEventModal({
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">End</Label>
                 <DateTimePicker
                   value={allDay ? endAt.split('T')[0] : endAt}
-                  onChange={(v) => { setEnd(v); dirtyRef.current.add('endAt'); }}
+                  onChange={(v) => { setEnd(toFormDateTime(v, 'end')); dirtyRef.current.add('endAt'); }}
                   dateOnly={allDay}
                 />
               </div>
@@ -586,7 +590,7 @@ export function CreateEventModal({
                 >
                   {fbLoading
                     ? <><Loader2 className="w-3 h-3 animate-spin" /> Checking…</>
-                    : <><Sparkles className="w-3 h-3" /> Find a time</>}
+                    : <><CalendarSearch className="w-3 h-3" /> Find a time</>}
                 </Button>
                 {showFindTime && (
                   <button
@@ -666,7 +670,7 @@ export function CreateEventModal({
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
         <div className="flex justify-end gap-2 px-5 py-3 border-t border-border/40 shrink-0">
           <Button variant="ghost" size="sm" onClick={onClose} className="text-muted-foreground/60 h-8">Cancel</Button>
           <Button size="sm" onClick={handleSave} disabled={saving || !title.trim()}

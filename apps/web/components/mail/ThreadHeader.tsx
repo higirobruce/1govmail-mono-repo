@@ -1,7 +1,7 @@
 'use client';
 
 import { formatDistanceToNow, parseISO } from 'date-fns';
-import { X, Reply, ReplyAll, Forward, Sparkles, MessageSquareReply } from 'lucide-react';
+import { X, Reply, ReplyAll, Forward, ScrollText, FileText, MessageSquareReply } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,8 @@ interface Props {
   onForward: () => void;
   onSummarize?: () => void;
   summarizing?: boolean;
+  onDraftDoc?: () => void;
+  drafting?: boolean;
   onQuickReply?: () => void;
 }
 
@@ -66,6 +68,8 @@ export default function ThreadHeader({
   onForward,
   onSummarize,
   summarizing,
+  onDraftDoc,
+  drafting,
   onQuickReply,
 }: Props) {
   const status = deriveStatus(lastSenderEmail, currentUserEmail, unreadCount);
@@ -143,8 +147,24 @@ export default function ThreadHeader({
               )}
               aria-label="Summarize"
             >
-              <Sparkles className={cn('w-3.5 h-3.5', summarizing && 'animate-pulse')} />
+              <ScrollText className={cn('w-3.5 h-3.5', summarizing && 'animate-pulse')} />
               Summarize
+            </button>
+          )}
+          {onDraftDoc && (
+            <button
+              onClick={onDraftDoc}
+              disabled={drafting}
+              className={cn(
+                'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-ui font-medium transition-colors',
+                drafting
+                  ? 'bg-primary/15 text-primary'
+                  : 'bg-primary/10 text-primary hover:bg-primary/20',
+              )}
+              aria-label="Draft doc"
+            >
+              <FileText className={cn('w-3.5 h-3.5', drafting && 'animate-pulse')} />
+              Draft doc
             </button>
           )}
           {onQuickReply && (

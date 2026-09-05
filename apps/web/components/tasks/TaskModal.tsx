@@ -141,12 +141,23 @@ export default function TaskModal({
   onClose,
   onSaved,
   prefill,
+  onCreateOverride,
 }: {
   open: boolean;
   task: Task | null;
   onClose: () => void;
   onSaved: (t: Task) => void;
-  prefill?: { linkedMessageId?: string; linkedSubject?: string };
+  prefill?: {
+    linkedMessageId?: string;
+    linkedSubject?: string;
+    title?: string;
+    description?: string;
+    dueDate?: string; // ISO or YYYY-MM-DD
+    priority?: TaskPriority;
+  };
+  /** When set, create-mode save goes through this instead of api.tasks.create.
+   *  (Edit mode ignores it.) Caller returns the created Task. */
+  onCreateOverride?: (payload: Record<string, unknown>) => Promise<Task>;
 }) {
   const currentUser = useAuthStore((s) => s.user);
 
@@ -179,6 +190,10 @@ export default function TaskModal({
       ...EMPTY_FORM,
       ...(prefill?.linkedMessageId ? { linkedMessageId: prefill.linkedMessageId } : {}),
       ...(prefill?.linkedSubject ? { linkedSubject: prefill.linkedSubject } : {}),
+      ...(prefill?.title ? { title: prefill.title } : {}),
+      ...(prefill?.description ? { description: prefill.description } : {}),
+      ...(prefill?.dueDate ? { dueDate: prefill.dueDate.slice(0, 10) } : {}),
+      ...(prefill?.priority ? { priority: prefill.priority } : {}),
     };
   });
   const [saving, setSaving] = useState(false);
@@ -431,7 +446,7 @@ export default function TaskModal({
         toast.success(newlyAdded.length > 0 ? 'Task updated and assignees notified' : 'Task updated');
         saved = { ...saved, subtasks, comments, assignees };
       } else {
-        saved = (await api.tasks.create(payload)) as Task;
+        saved = (await (onCreateOverride ?? api.tasks.create)(payload)) as Task;
         // Create buffered subtasks
         const createdSubtasks: Subtask[] = [];
         for (const title of pendingSubtasks) {

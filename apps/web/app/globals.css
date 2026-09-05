@@ -102,10 +102,10 @@
 :root {
   --radius: 0.625rem;
 
-  /* App canvas — slight warm off-white so white cards (active row, reader,
-   * popovers) stand out without harsh contrast. Matches the soft-card aesthetic
-   * of the reference mockup. */
-  --background:           oklch(0.975 0.003 250);
+  /* App canvas — pure white, per the email-native reference direction.
+   * Card-on-canvas float is gone by design; row emphasis comes from rings,
+   * shadows, the unread rail, and muted tints instead. */
+  --background:           oklch(1 0 0);
   --foreground:           oklch(0.18 0.03 258);    /* deep navy-black text     */
   --card:                 oklch(1 0 0);            /* white cards on the canvas */
   --card-foreground:      oklch(0.18 0.03 258);

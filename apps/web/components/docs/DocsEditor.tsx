@@ -39,7 +39,7 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { AIClient } from '@/lib/ai/client';
-import { rewriteText, summarizeSelection, type RewriteMode } from '@/lib/ai/tasks';
+import { formatMinutes, rewriteText, summarizeSelection, type RewriteMode } from '@/lib/ai/tasks';
 import { markdownToHtml } from '@/lib/ai/markdownToHtml';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { useAIStore } from '@/stores/ai.store';
@@ -164,7 +164,7 @@ export function DocsEditor({
   const [aiOpen, setAiOpen] = useState(false); // preview popover
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [aiAction, setAiAction] = useState<'rewrite' | 'summarize'>('rewrite');
+  const [aiAction, setAiAction] = useState<'rewrite' | 'summarize' | 'minutes'>('rewrite');
   const [aiRange, setAiRange] = useState<{ from: number; to: number } | null>(null);
   const [aiAnchor, setAiAnchor] = useState<{ top: number; left: number } | null>(null);
   const [aiMenuOpen, setAiMenuOpen] = useState(false); // rewrite-mode dropdown
@@ -764,7 +764,7 @@ export function DocsEditor({
   }, [resetAi]);
 
   const runAi = useCallback(
-    async (action: 'rewrite' | 'summarize', mode?: RewriteMode) => {
+    async (action: 'rewrite' | 'summarize' | 'minutes', mode?: RewriteMode) => {
       if (!editor) return;
       const { from, to } = editor.state.selection;
       const original = editor.state.doc.textBetween(from, to, '\n').trim();
@@ -795,12 +795,19 @@ export function DocsEditor({
                 { model: aiModel, customInstructions: docsAiInstructions, signal: abort.signal },
                 pushAi,
               )
-            : await summarizeSelection(
-                client,
-                original,
-                { model: aiModel, subject: title, customInstructions: aiCustomInstructions, signal: abort.signal },
-                pushAi,
-              );
+            : action === 'summarize'
+              ? await summarizeSelection(
+                  client,
+                  original,
+                  { model: aiModel, subject: title, customInstructions: aiCustomInstructions, signal: abort.signal },
+                  pushAi,
+                )
+              : await formatMinutes(
+                  client,
+                  original,
+                  { model: aiModel, subject: title, customInstructions: aiCustomInstructions, signal: abort.signal },
+                  pushAi,
+                );
         if (!abort.signal.aborted) replaceAi(final);
       } catch (err: unknown) {
         if ((err as { name?: string })?.name === 'AbortError') return;
@@ -813,32 +820,37 @@ export function DocsEditor({
     [editor, selBubble, aiModel, aiCustomInstructions, title, resetAi, replaceAi, pushAi],
   );
 
-  const applyAi = useCallback(() => {
-    if (!editor || !aiPreview.trim() || !aiRange) return;
-    // The doc may have changed since aiRange was snapshotted (local typing or
-    // a remote Yjs peer editing while the preview streamed) — clamp against
-    // the current doc size so a shrunk doc can't send insertContentAt out of
-    // bounds and throw.
-    const size = editor.state.doc.content.size;
-    const from = Math.min(aiRange.from, size);
-    const to = Math.min(aiRange.to, size);
-    const html = markdownToHtml(aiPreview);
-    const action = aiAction;
-    // Close the popover before our own edit lands so the doc-change watcher
-    // below doesn't treat this insert as an external change (harmless no-op
-    // if it fires anyway — closeAi is idempotent).
-    closeAi();
-    if (action === 'rewrite') {
-      editor.chain().focus().insertContentAt({ from, to }, html).run();
-    } else {
-      // Insert AFTER the enclosing block rather than at the raw (clamped) end
-      // of the selection — landing at `to` directly would split the block in
-      // two when the selection ends mid-paragraph.
-      const $to = editor.state.doc.resolve(to);
-      const insertPos = $to.depth === 0 ? to : Math.min($to.end($to.depth) + 1, size);
-      editor.chain().focus().insertContentAt(insertPos, html).run(); // summary lands BELOW the selection's block
-    }
-  }, [editor, aiPreview, aiRange, aiAction, closeAi]);
+  // Apply modes are independent of `aiAction`: rewrite only ever offers
+  // "replace", summarize only ever offers "insert below", but minutes offers
+  // both buttons at once, so the mode has to be passed explicitly.
+  const applyAi = useCallback(
+    (applyMode: 'replace' | 'insert') => {
+      if (!editor || !aiPreview.trim() || !aiRange) return;
+      // The doc may have changed since aiRange was snapshotted (local typing or
+      // a remote Yjs peer editing while the preview streamed) — clamp against
+      // the current doc size so a shrunk doc can't send insertContentAt out of
+      // bounds and throw.
+      const size = editor.state.doc.content.size;
+      const from = Math.min(aiRange.from, size);
+      const to = Math.min(aiRange.to, size);
+      const html = markdownToHtml(aiPreview);
+      // Close the popover before our own edit lands so the doc-change watcher
+      // below doesn't treat this insert as an external change (harmless no-op
+      // if it fires anyway — closeAi is idempotent).
+      closeAi();
+      if (applyMode === 'replace') {
+        editor.chain().focus().insertContentAt({ from, to }, html).run();
+      } else {
+        // Insert AFTER the enclosing block rather than at the raw (clamped) end
+        // of the selection — landing at `to` directly would split the block in
+        // two when the selection ends mid-paragraph.
+        const $to = editor.state.doc.resolve(to);
+        const insertPos = $to.depth === 0 ? to : Math.min($to.end($to.depth) + 1, size);
+        editor.chain().focus().insertContentAt(insertPos, html).run(); // lands BELOW the selection's block
+      }
+    },
+    [editor, aiPreview, aiRange, closeAi],
+  );
 
   // Abort any in-flight AI request on unmount (component remounts per doc via `key={docId}`).
   useEffect(() => {
@@ -1247,6 +1259,13 @@ export function DocsEditor({
               >
                 Summarize
               </button>
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); void runAi('minutes'); }}
+                className="px-2 py-1 rounded-md text-micro text-ink-2 hover:text-foreground hover:bg-muted transition-colors"
+              >
+                Minutes
+              </button>
             </div>
           )}
         </div>
@@ -1266,7 +1285,7 @@ export function DocsEditor({
         >
           <div className="flex items-center gap-2">
             <span className="text-micro uppercase tracking-[0.06em] text-ink-3">
-              {aiAction === 'rewrite' ? 'Rewrite' : 'Summary'}
+              {aiAction === 'rewrite' ? 'Rewrite' : aiAction === 'summarize' ? 'Summary' : 'Minutes'}
             </span>
             <Button variant="ghost" size="icon-xs" className="ml-auto text-ink-3" aria-label="Discard" onClick={closeAi}>
               <X />
@@ -1283,15 +1302,39 @@ export function DocsEditor({
                 <div dangerouslySetInnerHTML={{ __html: markdownToHtml(aiPreview) }} />
               )
             ) : aiBusy ? (
-              <AIWorkingIndicator step={aiAction === 'rewrite' ? 'Rewriting' : 'Summarizing'} />
+              <AIWorkingIndicator
+                step={aiAction === 'rewrite' ? 'Rewriting' : aiAction === 'summarize' ? 'Summarizing' : 'Formatting minutes'}
+              />
             ) : null}
           </div>
           {aiError && <p className="text-micro font-normal text-destructive">{aiError}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="xs" onClick={closeAi}>Discard</Button>
-            <Button size="xs" onClick={applyAi} disabled={aiBusy || !aiPreview.trim() || !!aiError}>
-              {aiAction === 'rewrite' ? 'Replace selection' : 'Insert below'}
-            </Button>
+            {aiAction === 'rewrite' && (
+              <Button size="xs" onClick={() => applyAi('replace')} disabled={aiBusy || !aiPreview.trim() || !!aiError}>
+                Replace selection
+              </Button>
+            )}
+            {aiAction === 'summarize' && (
+              <Button size="xs" onClick={() => applyAi('insert')} disabled={aiBusy || !aiPreview.trim() || !!aiError}>
+                Insert below
+              </Button>
+            )}
+            {aiAction === 'minutes' && (
+              <>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => applyAi('replace')}
+                  disabled={aiBusy || !aiPreview.trim() || !!aiError}
+                >
+                  Replace selection
+                </Button>
+                <Button size="xs" onClick={() => applyAi('insert')} disabled={aiBusy || !aiPreview.trim() || !!aiError}>
+                  Insert below
+                </Button>
+              </>
+            )}
           </div>
         </div>
       )}

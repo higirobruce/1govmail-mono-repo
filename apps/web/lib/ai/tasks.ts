@@ -391,3 +391,55 @@ Summarize the passage above. Output only the summary.`;
   );
   return scrubOutput(full);
 }
+
+// ── Docs: format raw notes as structured minutes ──────────────────────────
+// Same shape as summarizeSelection, but the output is a fixed Markdown
+// structure (## Attendees / Agenda / Decisions / Action items) rather than
+// free prose, so the docs editor's markdownToHtml render shows real sections.
+
+const FORMAT_MINUTES_SYSTEM = (source: string) => `${UNTRUSTED_CONTENT_RULE}
+
+You turn raw meeting notes into structured minutes. Output Markdown with "##" sections in this order, including a section ONLY if the notes contain material for it: Attendees, Agenda, Decisions, Action items. In Action items, bold the owner's name (**Name**). Never invent names, decisions, or dates. No preamble, no meta-commentary.
+
+${languageRule(source)}`;
+
+export interface FormatMinutesOptions {
+  model: string;
+  /** Document title, shown to the model as context. */
+  subject?: string;
+  customInstructions?: string | null;
+  signal?: AbortSignal;
+}
+
+/** Turn raw meeting notes into structured Markdown minutes. */
+export async function formatMinutes(
+  client: AIClient,
+  text: string,
+  opts: FormatMinutesOptions,
+  onChunk: (delta: string) => void,
+): Promise<string> {
+  const plain = truncate(text.trim(), 8000);
+  if (!plain) return '';
+
+  const userPrompt = `${opts.subject ? `Document: ${opts.subject}\n\n` : ''}${fenceUntrusted('NOTES', plain)}
+
+Format the notes above as minutes. Output only the minutes.`;
+
+  const full = await client.chatStream(
+    {
+      model: opts.model,
+      messages: [
+        {
+          role: 'system',
+          content: withCustomInstructions(FORMAT_MINUTES_SYSTEM(plain), opts.customInstructions ?? undefined),
+        },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.2,
+      maxTokens: 700,
+      signal: opts.signal,
+    },
+    onChunk,
+  );
+  return scrubOutput(full);
+}

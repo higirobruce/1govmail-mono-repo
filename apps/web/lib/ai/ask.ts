@@ -1,39 +1,48 @@
 /**
- * Client for POST /ai/inbox-chat — like AIClient.chatStream but with one
- * extra protocol element: a leading `event: sources` SSE frame carrying the
- * retrieved sources. Those sources are the ONLY place citation deep-links
- * come from; model text never mints a link (see splitByCitations).
+ * Client for POST /ai/ask — Ask 1Gov: chat grounded in the user's own mail,
+ * docs, and calendar. Protocol: a leading `event: sources` SSE frame carrying
+ * the retrieved sources, then normal OpenAI-shaped delta chunks. Those
+ * sources are the ONLY place citation deep-links come from; model text never
+ * mints a link (see splitByCitations).
  */
 import { authedFetch } from '../authed-fetch';
 import { AIHttpError } from './client';
 
-export interface InboxChatSource {
+export type AskSourceType = 'mail' | 'doc' | 'event';
+
+export interface AskSource {
   alias: string;
-  messageId: string;
-  subject: string | null;
-  fromEmail: string;
-  fromName: string | null;
-  receivedAt: string;
+  type: AskSourceType;
+  id: string;
+  title: string | null;
+  fromEmail?: string; // mail only
+  fromName?: string | null; // mail only
+  date: string; // ISO
+  meta?: string | null; // event when/where line, doc emoji
   injectionSuspected: boolean;
   snippet: string;
 }
 
-export interface InboxChatDegraded { vector: boolean; keyword: boolean }
+export interface AskDegraded { vector: boolean; keyword: boolean; docs: boolean; calendar: boolean }
 
-export type InboxChatTurn = { role: 'user' | 'assistant'; content: string };
+export type AskTurn = { role: 'user' | 'assistant'; content: string };
 
-export async function streamInboxChat(
-  turns: InboxChatTurn[],
-  handlers: {
-    onSources: (sources: InboxChatSource[], degraded: InboxChatDegraded) => void;
+export async function streamAsk(
+  turns: AskTurn[],
+  opts: {
+    scope?: { docId: string } | null;
+    onSources: (sources: AskSource[], degraded: AskDegraded) => void;
     onChunk: (delta: string) => void;
     signal?: AbortSignal;
   },
 ): Promise<string> {
-  const res = await authedFetch('/ai/inbox-chat', {
+  const res = await authedFetch('/ai/ask', {
     method: 'POST',
-    body: JSON.stringify({ messages: turns.map(({ role, content }) => ({ role, content })) }),
-    signal: handlers.signal,
+    body: JSON.stringify({
+      messages: turns.map(({ role, content }) => ({ role, content })),
+      ...(opts.scope ? { scope: { docId: opts.scope.docId } } : {}),
+    }),
+    signal: opts.signal,
   });
   if (!res.ok || !res.body) {
     let message = `AI request failed (${res.status})`;
@@ -69,14 +78,17 @@ export async function streamInboxChat(
       try {
         const parsed = JSON.parse(payload);
         if (eventName === 'sources') {
-          handlers.onSources(parsed?.sources ?? [], parsed?.degraded ?? { vector: false, keyword: false });
+          opts.onSources(
+            parsed?.sources ?? [],
+            parsed?.degraded ?? { vector: false, keyword: false, docs: false, calendar: false },
+          );
           eventName = 'message';
           continue;
         }
         const delta: string = parsed?.choices?.[0]?.delta?.content ?? '';
         if (delta) {
           full += delta;
-          handlers.onChunk(delta);
+          opts.onChunk(delta);
         }
       } catch {
         // keep-alive / non-JSON line — tolerate

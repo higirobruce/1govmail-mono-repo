@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square } from 'lucide-react';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
-import { streamInboxChat, type InboxChatSource, type InboxChatDegraded, type InboxChatTurn } from '@/lib/ai/inboxChat';
+import { streamAsk, type AskSource, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
 import { scrubOutput } from '@/lib/ai/prompt';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { AIHttpError } from '@/lib/ai/client';
@@ -13,8 +13,8 @@ import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 interface AnswerTurn {
   role: 'assistant';
   content: string;                 // scrubbed final text
-  sources: InboxChatSource[];      // THE alias→message map for this answer's chips
-  degraded: InboxChatDegraded;
+  sources: AskSource[];      // THE alias→message map for this answer's chips
+  degraded: AskDegraded;
 }
 interface QuestionTurn { role: 'user'; content: string }
 type Turn = QuestionTurn | AnswerTurn;
@@ -29,7 +29,7 @@ const EXAMPLE_QUESTIONS = [
 
 interface LinkedCommitment { id: string; messageId: string; text: string }
 
-function DegradedNotice({ degraded }: { degraded: InboxChatDegraded }) {
+function DegradedNotice({ degraded }: { degraded: AskDegraded }) {
   if (!degraded.vector && !degraded.keyword) return null;
   if (degraded.vector && degraded.keyword) {
     return (
@@ -47,7 +47,7 @@ function DegradedNotice({ degraded }: { degraded: InboxChatDegraded }) {
   );
 }
 
-function InjectionBanner({ sources }: { sources: InboxChatSource[] }) {
+function InjectionBanner({ sources }: { sources: AskSource[] }) {
   if (!sources.some((s) => s.injectionSuspected)) return null;
   return (
     <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[0.719rem] leading-relaxed text-amber-800 dark:text-amber-300">
@@ -60,7 +60,7 @@ function InjectionBanner({ sources }: { sources: InboxChatSource[] }) {
 function SourcesRail({
   sources, onOpenMessage, onReplyToMessage, openCommitments,
 }: {
-  sources: InboxChatSource[];
+  sources: AskSource[];
   onOpenMessage: (messageId: string) => void;
   onReplyToMessage: (messageId: string) => void;
   openCommitments: LinkedCommitment[];
@@ -69,7 +69,7 @@ function SourcesRail({
   return (
     <ul className="space-y-1.5">
       {sources.map((s) => {
-        const linked = openCommitments.filter((c) => c.messageId === s.messageId);
+        const linked = openCommitments.filter((c) => c.messageId === s.id);
         return (
           <li key={s.alias} className="rounded-md border border-border/30 p-2 space-y-1">
             <div className="flex items-center gap-1.5">
@@ -86,19 +86,19 @@ function SourcesRail({
                 />
               )}
             </div>
-            {s.subject && <p className="truncate text-[0.719rem] text-foreground/90">{s.subject}</p>}
+            {s.title && <p className="truncate text-[0.719rem] text-foreground/90">{s.title}</p>}
             <p className="line-clamp-2 text-[0.6875rem] text-muted-foreground/70">{s.snippet}</p>
             <div className="flex items-center gap-2 pt-0.5">
               <button
                 type="button"
-                onClick={() => onOpenMessage(s.messageId)}
+                onClick={() => onOpenMessage(s.id)}
                 className="text-[0.656rem] font-medium text-primary hover:underline"
               >
                 Open
               </button>
               <button
                 type="button"
-                onClick={() => onReplyToMessage(s.messageId)}
+                onClick={() => onReplyToMessage(s.id)}
                 className="inline-flex items-center gap-0.5 text-[0.656rem] font-medium text-primary hover:underline"
               >
                 <CornerUpRight className="h-3 w-3" />
@@ -121,7 +121,7 @@ function AnswerBody({
   content, sources, onOpenMessage,
 }: {
   content: string;
-  sources: InboxChatSource[];
+  sources: AskSource[];
   onOpenMessage: (messageId: string) => void;
 }) {
   const validAliases = new Set(sources.map((s) => s.alias));
@@ -136,8 +136,8 @@ function AnswerBody({
           <button
             key={i}
             type="button"
-            title={source.subject ?? source.fromEmail}
-            onClick={() => onOpenMessage(source.messageId)}
+            title={source.title ?? source.fromEmail}
+            onClick={() => onOpenMessage(source.id)}
             className="mx-0.5 inline-flex items-center rounded bg-primary/10 px-1 text-[0.625rem] font-semibold text-primary hover:bg-primary/20 align-baseline"
           >
             {seg.alias}
@@ -164,15 +164,15 @@ export default function AskInboxPanel({
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [pendingSources, setPendingSources] = useState<InboxChatSource[]>([]);
-  const [pendingDegraded, setPendingDegraded] = useState<InboxChatDegraded>({ vector: false, keyword: false });
+  const [pendingSources, setPendingSources] = useState<AskSource[]>([]);
+  const [pendingDegraded, setPendingDegraded] = useState<AskDegraded>({ vector: false, keyword: false, docs: false, calendar: false });
   const [error, setError] = useState<string | null>(null);
   const stream = useCharStream();
   const abortRef = useRef<AbortController | null>(null);
   // Refs mirror the pending state so the completed turn captures the sources
   // without a stale-closure race (same pattern as the suggest-reply chips).
-  const pendingSourcesRef = useRef<InboxChatSource[]>([]);
-  const pendingDegradedRef = useRef<InboxChatDegraded>({ vector: false, keyword: false });
+  const pendingSourcesRef = useRef<AskSource[]>([]);
+  const pendingDegradedRef = useRef<AskDegraded>({ vector: false, keyword: false, docs: false, calendar: false });
 
   useEffect(() => { if (open && prefill) setInput(prefill); }, [open, prefill]);
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -192,18 +192,18 @@ export default function AskInboxPanel({
     if (!q || streaming) return;
     setError(null);
     setInput('');
-    const history: InboxChatTurn[] = [...turns.map((t) => ({ role: t.role, content: t.content.slice(0, 4000) })), { role: 'user', content: q }]
-      .slice(-MAX_SENT_TURNS) as InboxChatTurn[];
+    const history: AskTurn[] = [...turns.map((t) => ({ role: t.role, content: t.content.slice(0, 4000) })), { role: 'user', content: q }]
+      .slice(-MAX_SENT_TURNS) as AskTurn[];
     setTurns((prev) => [...prev, { role: 'user', content: q }]);
     setStreaming(true);
     setPendingSources([]);
-    setPendingDegraded({ vector: false, keyword: false });
-    pendingDegradedRef.current = { vector: false, keyword: false };
+    setPendingDegraded({ vector: false, keyword: false, docs: false, calendar: false });
+    pendingDegradedRef.current = { vector: false, keyword: false, docs: false, calendar: false };
     stream.reset();
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      const raw = await streamInboxChat(history, {
+      const raw = await streamAsk(history, {
         signal: ac.signal,
         onSources: (sources, degraded) => {
           pendingSourcesRef.current = sources;

@@ -25,7 +25,7 @@ import {
   Trash2, Columns2, Rows3, History, Activity, Play, MoreHorizontal,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Code,
   Link2, Type, Heading1, Heading2, Heading3, ChevronDown, RemoveFormatting,
-  PenLine,
+  PenLine, MessageCircleQuestion,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -43,6 +43,7 @@ import { formatMinutes, rewriteText, summarizeSelection, type RewriteMode } from
 import { markdownToHtml } from '@/lib/ai/markdownToHtml';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { useAIStore } from '@/stores/ai.store';
+import { useAskStore } from '@/stores/ask.store';
 import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import {
   SlashCommandMenu,
@@ -154,6 +155,17 @@ export function DocsEditor({
   const aiEnabled = useAIStore((s) => s.enabled);
   const aiModel = useAIStore((s) => s.model);
   const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  const openAsk = useAskStore((s) => s.openAsk);
+  // "Ask this document" is only offered on authenticated access — the anonymous
+  // share route (app/docs/share/[token]/page.tsx) passes a `{ type: 'share' }`
+  // collaborationToken with no logged-in user to scope the Ask panel to.
+  const canAsk = useMemo(() => {
+    try {
+      return (JSON.parse(collaborationToken) as { type?: string }).type === 'jwt';
+    } catch {
+      return false;
+    }
+  }, [collaborationToken]);
   // Docs render markdown (lib/ai/markdownToHtml) — invite the model to use it.
   // Ours first so it survives the 500-char customInstructions truncation.
   const docsAiInstructions = [
@@ -953,6 +965,18 @@ export function DocsEditor({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+
+                  {/* Ask this document */}
+                  {aiEnabled && canAsk && (
+                    <button
+                      type="button"
+                      title="Ask this document"
+                      onClick={() => openAsk({ scope: { docId, docTitle: title } })}
+                      className="p-1.5 rounded-md transition-colors text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                    >
+                      <MessageCircleQuestion className="w-4 h-4" />
+                    </button>
+                  )}
 
                   {/* Table of contents */}
                   <button

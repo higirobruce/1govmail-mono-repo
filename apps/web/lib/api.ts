@@ -143,6 +143,8 @@ export const api = {
       endAt: string;
       allDay?: boolean;
       attendees?: string[];
+      linkedMessageId?: string;
+      linkedSubject?: string;
     }) => {
       if (USE_MOCK) return delay({ id: `e-${Date.now()}`, ...data });
       return request<any>('/calendar/events', { method: 'POST', body: JSON.stringify(data) });
@@ -155,6 +157,8 @@ export const api = {
       endAt: string;
       allDay?: boolean;
       attendees?: string[];
+      linkedMessageId?: string;
+      linkedSubject?: string;
     }) => {
       if (USE_MOCK) return delay({ id, ...data });
       return request<any>(`/calendar/events/${id}`, { method: 'PATCH', body: JSON.stringify(data) });

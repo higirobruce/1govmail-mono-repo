@@ -4,6 +4,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
+import { useAIStore } from '@/stores/ai.store';
+import { AIClient } from '@/lib/ai/client';
+import { parseEventFromEmail } from '@/lib/ai/eventParse';
+import { mergeParsedEvent } from '@/lib/calendar/eventPrefill';
+import type { EventFormValues, EventFieldKey } from '@/lib/calendar/eventPrefill';
+import { parseMailDragPayload, dropPrefillFromPayload } from '@/lib/calendar/dropPrefill';
+import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
@@ -304,6 +311,20 @@ function AttendeePicker({
 
 // ── Create / Edit event modal ──────────────────────────────────────────────────
 
+export interface CreateEventPrefillData {
+  title?: string;
+  description?: string;
+  startAt?: string; // "yyyy-MM-dd'T'HH:mm" LOCAL
+  endAt?: string;
+  allDay?: boolean;
+  location?: string;
+  attendees?: string[];
+  linkedMessageId?: string;
+  linkedSubject?: string;
+  /** Message id to live-fill the form from via AI once the modal opens. */
+  aiFillMessageId?: string;
+}
+
 function CreateEventModal({
   initialDate,
   initialData,
@@ -315,7 +336,7 @@ function CreateEventModal({
 }: {
   initialDate?: Date;
   initialData?: CalEvent;
-  prefillData?: { title?: string; description?: string; linkedMessageId?: string; linkedSubject?: string };
+  prefillData?: CreateEventPrefillData;
   isEdit?: boolean;
   onClose: () => void;
   onCreated: (event: CalEvent) => void;
@@ -326,19 +347,75 @@ function CreateEventModal({
   const endStr   = format(new Date(base.getTime() + 3_600_000), "yyyy-MM-dd'T'HH:mm");
 
   const [title, setTitle]       = useState(initialData?.title ?? prefillData?.title ?? '');
-  const [location, setLocation] = useState(initialData?.location ?? '');
+  const [location, setLocation] = useState(initialData?.location ?? prefillData?.location ?? '');
   const [description, setDesc]  = useState(initialData?.description ?? prefillData?.description ?? '');
   const [startAt, setStart]     = useState(
-    initialData ? format(parseISO(initialData.startAt), "yyyy-MM-dd'T'HH:mm") : todayStr,
+    initialData ? format(parseISO(initialData.startAt), "yyyy-MM-dd'T'HH:mm") : prefillData?.startAt ?? todayStr,
   );
   const [endAt, setEnd]         = useState(
-    initialData ? format(parseISO(initialData.endAt), "yyyy-MM-dd'T'HH:mm") : endStr,
+    initialData ? format(parseISO(initialData.endAt), "yyyy-MM-dd'T'HH:mm") : prefillData?.endAt ?? endStr,
   );
-  const [allDay, setAllDay]     = useState(initialData?.allDay ?? false);
+  const [allDay, setAllDay]     = useState(initialData?.allDay ?? prefillData?.allDay ?? false);
   const [attendees, setAttendees] = useState<string[]>(
-    initialData?.attendees?.map((a) => a.email) ?? [],
+    initialData?.attendees?.map((a) => a.email) ?? prefillData?.attendees ?? [],
   );
   const [saving, setSaving]     = useState(false);
+
+  // ── AI live-fill from the linked email (drag/right-click entry paths) ──
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiModel   = useAIStore((s) => s.model);
+  const [aiFilling, setAiFilling] = useState(false);
+  const dirtyRef = useRef<Set<EventFieldKey>>(new Set());
+  const fillAbortRef = useRef<AbortController | null>(null);
+  // Mirrors the six merge-eligible fields so the async fill can read the
+  // latest values (not the ones captured when the effect first ran).
+  const currentRef = useRef<EventFormValues>({ title, startAt, endAt, allDay, location, attendees });
+  currentRef.current = { title, startAt, endAt, allDay, location, attendees };
+
+  useEffect(() => {
+    const messageId = prefillData?.aiFillMessageId;
+    if (!messageId || !aiEnabled) return;
+
+    const abort = new AbortController();
+    fillAbortRef.current = abort;
+    setAiFilling(true);
+
+    (async () => {
+      try {
+        const msg = await api.mail.getMessage(messageId, { signal: abort.signal }) as {
+          subject?: string; fromEmail?: string; fromName?: string;
+          bodyText?: string | null; bodyHtml?: string | null;
+        };
+        if (abort.signal.aborted) return;
+
+        const client = new AIClient();
+        const from = msg.fromName ? `${msg.fromName} <${msg.fromEmail ?? ''}>` : (msg.fromEmail ?? '');
+        const parsed = await parseEventFromEmail(
+          client,
+          { subject: msg.subject ?? '', from, bodyText: msg.bodyText, bodyHtml: msg.bodyHtml },
+          { model: aiModel, signal: abort.signal },
+        );
+        if (abort.signal.aborted || !parsed) return;
+
+        const current = currentRef.current;
+        const merged = mergeParsedEvent(current, parsed, dirtyRef.current);
+        if (merged.title !== current.title) setTitle(merged.title);
+        if (merged.startAt !== current.startAt) setStart(merged.startAt);
+        if (merged.endAt !== current.endAt) setEnd(merged.endAt);
+        if (merged.allDay !== current.allDay) setAllDay(merged.allDay);
+        if (merged.location !== current.location) setLocation(merged.location);
+        if (merged.attendees !== current.attendees) setAttendees([...merged.attendees]);
+      } catch (err) {
+        if ((err as { name?: string })?.name !== 'AbortError') {
+          console.warn('AI event fill failed', err);
+        }
+      } finally {
+        if (!abort.signal.aborted) setAiFilling(false);
+      }
+    })();
+
+    return () => { abort.abort(); };
+  }, [prefillData?.aiFillMessageId, aiEnabled]); // eslint-disable-line
 
   // ── Find-a-time (scheduling assistant inline in the event modal) ────────
   const [showFindTime, setShowFindTime] = useState(false);
@@ -384,6 +461,8 @@ function CreateEventModal({
   const applySlot = (slot: SuggestedSlot) => {
     setStart(format(slot.start, "yyyy-MM-dd'T'HH:mm"));
     setEnd(format(slot.end, "yyyy-MM-dd'T'HH:mm"));
+    dirtyRef.current.add('startAt');
+    dirtyRef.current.add('endAt');
     setShowFindTime(false);
   };
 
@@ -393,6 +472,7 @@ function CreateEventModal({
 
   const handleSave = async () => {
     if (!title.trim()) { toast.error('Title is required'); return; }
+    fillAbortRef.current?.abort();
     setSaving(true);
     try {
       const startIso = allDay
@@ -434,8 +514,11 @@ function CreateEventModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-card border border-border/60 rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border/40 shrink-0">
-          <h2 className="text-sm font-semibold text-foreground">{isEdit ? 'Edit Event' : 'New Event'}</h2>
-          <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-foreground">{isEdit ? 'Edit Event' : 'New Event'}</h2>
+            {aiFilling && <AIWorkingIndicator step="Reading the email" className="mt-0.5" />}
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0 shrink-0">
             <X className="w-4 h-4" />
           </Button>
         </div>
@@ -444,7 +527,7 @@ function CreateEventModal({
             <Input
               autoFocus
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => { setTitle(e.target.value); dirtyRef.current.add('title'); }}
               placeholder="Event title"
               className="text-base font-medium h-10 bg-transparent border-0 border-b border-border/50 rounded-none px-0 focus-visible:ring-0 focus-visible:border-primary/60"
               onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
@@ -453,7 +536,7 @@ function CreateEventModal({
               <Checkbox
                 id="allday"
                 checked={allDay}
-                onCheckedChange={(v) => setAllDay(v === true)}
+                onCheckedChange={(v) => { setAllDay(v === true); dirtyRef.current.add('allDay'); }}
               />
               <Label htmlFor="allday" className="text-sm text-muted-foreground/70 cursor-pointer">All day</Label>
             </div>
@@ -462,7 +545,7 @@ function CreateEventModal({
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Start</Label>
                 <DateTimePicker
                   value={allDay ? startAt.split('T')[0] : startAt}
-                  onChange={setStart}
+                  onChange={(v) => { setStart(v); dirtyRef.current.add('startAt'); }}
                   dateOnly={allDay}
                 />
               </div>
@@ -470,7 +553,7 @@ function CreateEventModal({
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">End</Label>
                 <DateTimePicker
                   value={allDay ? endAt.split('T')[0] : endAt}
-                  onChange={setEnd}
+                  onChange={(v) => { setEnd(v); dirtyRef.current.add('endAt'); }}
                   dateOnly={allDay}
                 />
               </div>
@@ -542,7 +625,7 @@ function CreateEventModal({
             )}
             <div>
               <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Location</Label>
-              <Input value={location} onChange={(e) => setLocation(e.target.value)}
+              <Input value={location} onChange={(e) => { setLocation(e.target.value); dirtyRef.current.add('location'); }}
                 placeholder="Add location" className="h-8 text-sm bg-muted/30 border-border/50" />
             </div>
             <div>
@@ -550,7 +633,10 @@ function CreateEventModal({
               <Input value={description} onChange={(e) => setDesc(e.target.value)}
                 placeholder="Add description" className="h-8 text-sm bg-muted/30 border-border/50" />
             </div>
-            <AttendeePicker attendees={attendees} onChange={setAttendees} />
+            <AttendeePicker
+              attendees={attendees}
+              onChange={(next) => { setAttendees(next); dirtyRef.current.add('attendees'); }}
+            />
             {linkedMessageId && linkedSubject && (
               <div>
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Linked email</Label>
@@ -1772,7 +1858,7 @@ export default function CalendarPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createForDay, setCreateForDay]  = useState<Date | undefined>();
   const [editingEvent, setEditingEvent]  = useState<CalEvent | null>(null);
-  const [dragPrefill, setDragPrefill] = useState<{ title?: string; description?: string; linkedMessageId?: string; linkedSubject?: string } | null>(null);
+  const [dragPrefill, setDragPrefill] = useState<CreateEventPrefillData | null>(null);
   const [deleting, setDeleting]     = useState(false);
 
   // Availability
@@ -1835,7 +1921,12 @@ export default function CalendarPage() {
     if (!createFromEmail) return;
     window.history.replaceState({}, '', window.location.pathname);
     const subject = params.get('subject') ?? '';
-    setDragPrefill({ title: subject, linkedMessageId: createFromEmail, linkedSubject: subject });
+    setDragPrefill({
+      title: subject,
+      linkedMessageId: createFromEmail,
+      linkedSubject: subject,
+      aiFillMessageId: createFromEmail,
+    });
     setShowCreate(true);
   }, [hydrated, isAuthenticated]); // eslint-disable-line
 
@@ -1862,14 +1953,10 @@ export default function CalendarPage() {
     const raw = sessionStorage.getItem('govmail-prefill-calendar');
     if (!raw) return;
     sessionStorage.removeItem('govmail-prefill-calendar');
-    try {
-      const msg = JSON.parse(raw);
-      setDragPrefill({
-        title: msg.subject ?? '',
-        description: msg.snippet ? `From: ${msg.from}\n\n${msg.snippet}` : `From: ${msg.from}`,
-      });
-      setShowCreate(true);
-    } catch { /* ignore */ }
+    const payload = parseMailDragPayload(raw);
+    if (!payload) return;
+    setDragPrefill(dropPrefillFromPayload(payload));
+    setShowCreate(true);
   }, [hydrated]); // eslint-disable-line
 
   // Fetch free/busy for a list of emails in one batch call
@@ -1927,16 +2014,12 @@ export default function CalendarPage() {
 
   const handleMailDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    try {
-      const raw = e.dataTransfer.getData('application/x-govmail-msg');
-      if (!raw) return;
-      const msg = JSON.parse(raw);
-      setDragPrefill({
-        title: msg.subject ?? '',
-        description: msg.snippet ? `From: ${msg.from}\n\n${msg.snippet}` : `From: ${msg.from}`,
-      });
-      setShowCreate(true);
-    } catch { /* ignore */ }
+    const raw = e.dataTransfer.getData('application/x-govmail-msg');
+    if (!raw) return;
+    const payload = parseMailDragPayload(raw);
+    if (!payload) return;
+    setDragPrefill(dropPrefillFromPayload(payload));
+    setShowCreate(true);
   };
 
   if (!hydrated) return null;

@@ -5,7 +5,7 @@ const SCOPE = { docId: 'doc-1', docTitle: 'Budget Memo' };
 
 describe('useAskStore', () => {
   beforeEach(() => {
-    useAskStore.setState({ open: false, collapsed: false, prefill: null, scope: null });
+    useAskStore.setState({ open: false, collapsed: false, prefill: null, scope: null, handlers: null });
   });
 
   it('starts closed, expanded, unscoped, unprefilled', () => {
@@ -86,5 +86,14 @@ describe('useAskStore', () => {
     useAskStore.getState().openAsk();
     expect(useAskStore.getState().scope).toBeNull();
     expect(useAskStore.getState().prefill).toBeNull();
+  });
+
+  it('setHandlers() registers and clears the mail page\'s in-page handlers', () => {
+    expect(useAskStore.getState().handlers).toBeNull();
+    const handlers = { onOpenMessage: () => {}, onReplyToMessage: () => {} };
+    useAskStore.getState().setHandlers(handlers);
+    expect(useAskStore.getState().handlers).toBe(handlers);
+    useAskStore.getState().setHandlers(null);
+    expect(useAskStore.getState().handlers).toBeNull();
   });
 });

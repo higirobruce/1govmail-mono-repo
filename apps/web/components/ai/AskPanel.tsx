@@ -1,14 +1,20 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import {
+  MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square,
+  Mail, FileText, Calendar,
+} from 'lucide-react';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
-import { streamAsk, type AskSource, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
+import { streamAsk, type AskSource, type AskSourceType, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
+import { sourceHref } from '@/lib/ai/sourceNav';
 import { scrubOutput } from '@/lib/ai/prompt';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { AIHttpError } from '@/lib/ai/client';
 import { cn } from '@/lib/utils';
 import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
+import { useAskStore, type LinkedCommitment } from '@/stores/ask.store';
 
 interface AnswerTurn {
   role: 'assistant';
@@ -27,23 +33,39 @@ const EXAMPLE_QUESTIONS = [
   'Any deadlines this week?',
 ];
 
-interface LinkedCommitment { id: string; messageId: string; text: string }
+const SCOPED_EXAMPLE_QUESTIONS = [
+  'Summarize the key decisions',
+  'What action items are in here?',
+];
+
+const SOURCE_TYPE_ICON: Record<AskSourceType, typeof Mail> = {
+  mail: Mail,
+  doc: FileText,
+  event: Calendar,
+};
 
 function DegradedNotice({ degraded }: { degraded: AskDegraded }) {
-  if (!degraded.vector && !degraded.keyword) return null;
+  const lines: string[] = [];
   if (degraded.vector && degraded.keyword) {
-    return (
-      <p className="text-[0.656rem] italic text-muted-foreground/60">
-        Search backends unavailable — the answer may be incomplete.
-      </p>
-    );
+    lines.push('Search backends unavailable — the answer may be incomplete.');
+  } else if (degraded.keyword) {
+    lines.push('Keyword search unavailable — answered from semantic matches only.');
+  } else if (degraded.vector) {
+    lines.push('Semantic index unavailable — answered from keyword matches only.');
   }
+  if (degraded.docs) {
+    lines.push('Document search unavailable — the answer may be missing doc sources.');
+  }
+  if (degraded.calendar) {
+    lines.push('Calendar search unavailable — the answer may be missing event sources.');
+  }
+  if (lines.length === 0) return null;
   return (
-    <p className="text-[0.656rem] italic text-muted-foreground/60">
-      {degraded.keyword
-        ? 'Keyword search unavailable — answered from semantic matches only.'
-        : 'Semantic index unavailable — answered from keyword matches only.'}
-    </p>
+    <>
+      {lines.map((line, i) => (
+        <p key={i} className="text-[0.656rem] italic text-muted-foreground/60">{line}</p>
+      ))}
+    </>
   );
 }
 
@@ -57,11 +79,18 @@ function InjectionBanner({ sources }: { sources: AskSource[] }) {
   );
 }
 
+/** Second line under a source row: mail = from/date (unchanged), doc = "Document · updated <date>", event = its meta (When line). */
+function sourceSubtitle(s: AskSource): string {
+  if (s.type === 'mail') return s.fromName ?? s.fromEmail ?? '';
+  if (s.type === 'doc') return `Document · updated ${new Date(s.date).toLocaleDateString()}`;
+  return s.meta ?? '';
+}
+
 function SourcesRail({
-  sources, onOpenMessage, onReplyToMessage, openCommitments,
+  sources, onOpenSource, onReplyToMessage, openCommitments,
 }: {
   sources: AskSource[];
-  onOpenMessage: (messageId: string) => void;
+  onOpenSource: (s: AskSource) => void;
   onReplyToMessage: (messageId: string) => void;
   openCommitments: LinkedCommitment[];
 }) {
@@ -69,15 +98,17 @@ function SourcesRail({
   return (
     <ul className="space-y-1.5">
       {sources.map((s) => {
-        const linked = openCommitments.filter((c) => c.messageId === s.id);
+        const linked = s.type === 'mail' ? openCommitments.filter((c) => c.messageId === s.id) : [];
+        const Icon = SOURCE_TYPE_ICON[s.type];
         return (
           <li key={s.alias} className="rounded-md border border-border/30 p-2 space-y-1">
             <div className="flex items-center gap-1.5">
               <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[0.625rem] font-semibold text-muted-foreground/80">
                 {s.alias}
               </span>
+              <Icon className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-hidden />
               <span className="min-w-0 flex-1 truncate text-[0.719rem] font-medium text-foreground">
-                {s.fromName ?? s.fromEmail}
+                {sourceSubtitle(s)}
               </span>
               {s.injectionSuspected && (
                 <TriangleAlert
@@ -91,19 +122,21 @@ function SourcesRail({
             <div className="flex items-center gap-2 pt-0.5">
               <button
                 type="button"
-                onClick={() => onOpenMessage(s.id)}
+                onClick={() => onOpenSource(s)}
                 className="text-[0.656rem] font-medium text-primary hover:underline"
               >
                 Open
               </button>
-              <button
-                type="button"
-                onClick={() => onReplyToMessage(s.id)}
-                className="inline-flex items-center gap-0.5 text-[0.656rem] font-medium text-primary hover:underline"
-              >
-                <CornerUpRight className="h-3 w-3" />
-                Reply
-              </button>
+              {s.type === 'mail' && (
+                <button
+                  type="button"
+                  onClick={() => onReplyToMessage(s.id)}
+                  className="inline-flex items-center gap-0.5 text-[0.656rem] font-medium text-primary hover:underline"
+                >
+                  <CornerUpRight className="h-3 w-3" />
+                  Reply
+                </button>
+              )}
             </div>
             {linked.map((c) => (
               <p key={c.id} className="text-[0.656rem] text-muted-foreground/60">
@@ -118,11 +151,11 @@ function SourcesRail({
 }
 
 function AnswerBody({
-  content, sources, onOpenMessage,
+  content, sources, onOpenSource,
 }: {
   content: string;
   sources: AskSource[];
-  onOpenMessage: (messageId: string) => void;
+  onOpenSource: (s: AskSource) => void;
 }) {
   const validAliases = new Set(sources.map((s) => s.alias));
   const segments: AnswerSegment[] = splitByCitations(content, validAliases);
@@ -136,8 +169,8 @@ function AnswerBody({
           <button
             key={i}
             type="button"
-            title={source.title ?? source.fromEmail}
-            onClick={() => onOpenMessage(source.id)}
+            title={source.title ?? source.fromEmail ?? undefined}
+            onClick={() => onOpenSource(source)}
             className="mx-0.5 inline-flex items-center rounded bg-primary/10 px-1 text-[0.625rem] font-semibold text-primary hover:bg-primary/20 align-baseline"
           >
             {seg.alias}
@@ -148,19 +181,31 @@ function AnswerBody({
   );
 }
 
-export default function AskInboxPanel({
-  open, collapsed = false, onCollapse, onClose, onOpenMessage, onReplyToMessage, prefill, openCommitments = [],
-}: {
-  open: boolean;
-  /** Slide the panel away while keeping it mounted (conversation preserved). */
-  collapsed?: boolean;
-  onCollapse?: () => void;
-  onClose: () => void;
-  onOpenMessage: (messageId: string) => void;
-  onReplyToMessage: (messageId: string) => void;
-  prefill?: string | null;
-  openCommitments?: LinkedCommitment[];
-}) {
+/**
+ * Ask 1Gov — app-wide "ask a question grounded in your own mail/docs/calendar"
+ * panel. Fully store-driven (see stores/ask.store.ts): a single instance is
+ * mounted by AskLauncher in the app layout.
+ *
+ * On the mail page, the mail page registers `handlers` on the store (an
+ * effect, set on mount / cleared on unmount) so this panel docks as an xl
+ * split-pane and routes mail-source clicks through the mail page's in-page
+ * open/reply — exactly today's behavior. Everywhere else (handlers unset)
+ * it renders as a fixed right overlay and every source-chip click, mail
+ * included, navigates via `router.push(sourceHref(s))`.
+ */
+export default function AskPanel() {
+  const router = useRouter();
+  const open = useAskStore((s) => s.open);
+  const collapsed = useAskStore((s) => s.collapsed);
+  const prefill = useAskStore((s) => s.prefill);
+  const scope = useAskStore((s) => s.scope);
+  const handlers = useAskStore((s) => s.handlers);
+  const collapseStore = useAskStore((s) => s.collapse);
+  const closeStore = useAskStore((s) => s.close);
+  const clearScope = useAskStore((s) => s.clearScope);
+
+  const dockedInPage = !!handlers; // mail page has registered its handlers
+
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -181,11 +226,21 @@ export default function AskInboxPanel({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') closeStore();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+  }, [open, closeStore]);
+
+  function onOpenSource(s: AskSource) {
+    if (s.type === 'mail' && handlers) { handlers.onOpenMessage(s.id); return; }
+    router.push(sourceHref(s));
+  }
+
+  function onReplyToMessage(messageId: string) {
+    if (handlers) { handlers.onReplyToMessage(messageId); return; }
+    router.push(sourceHref({ type: 'mail', id: messageId }));
+  }
 
   async function ask(question: string) {
     const q = question.trim();
@@ -204,6 +259,7 @@ export default function AskInboxPanel({
     abortRef.current = ac;
     try {
       const raw = await streamAsk(history, {
+        scope: scope ? { docId: scope.docId } : null,
         signal: ac.signal,
         onSources: (sources, degraded) => {
           pendingSourcesRef.current = sources;
@@ -237,6 +293,9 @@ export default function AskInboxPanel({
 
   if (!open) return null;
 
+  const exampleQuestions = scope ? SCOPED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS;
+  const openCommitments = handlers?.linkedCommitments ?? [];
+
   return (
     <aside
       role="complementary"
@@ -245,34 +304,32 @@ export default function AskInboxPanel({
       className={cn(
         // z-[41]: same layer as the other AI drawers — only one is ever open.
         'fixed inset-y-0 right-0 z-[41] w-full max-w-[420px]',
-        // ≥xl: dock as an in-flow split pane so mail content reflows beside it
-        'xl:static xl:z-auto xl:w-96 xl:max-w-none xl:shrink-0 xl:shadow-none',
+        // Mail page only: ≥xl docks as an in-flow split pane so mail content reflows beside it.
+        dockedInPage && 'xl:static xl:z-auto xl:w-96 xl:max-w-none xl:shrink-0 xl:shadow-none',
         'border-l border-border/40 bg-card shadow-xl',
         'flex flex-col overflow-hidden',
         'transition-transform duration-200 ease-out',
-        // collapsed: slide out below xl; leave the flex row entirely at xl (state kept — display:none, not unmount)
-        collapsed ? 'translate-x-full pointer-events-none xl:hidden' : 'translate-x-0',
+        // collapsed: slide out; stays in the flex row at xl only when docked in-page (state kept — display:none, not unmount)
+        collapsed ? cn('translate-x-full pointer-events-none', dockedInPage && 'xl:hidden') : 'translate-x-0',
       )}
     >
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
         <MessageCircleQuestion className="w-4 h-4 text-primary" />
         <span className="text-[0.75rem] font-semibold text-foreground">Ask your inbox</span>
-        {onCollapse && (
-          <button
-            type="button"
-            onClick={onCollapse}
-            className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
-            aria-label="Minimize"
-            title="Minimize"
-          >
-            <Minus className="w-3.5 h-3.5" />
-          </button>
-        )}
         <button
           type="button"
-          onClick={onClose}
-          className={cn('p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors', !onCollapse && 'ml-auto')}
+          onClick={collapseStore}
+          className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
+          aria-label="Minimize"
+          title="Minimize"
+        >
+          <Minus className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={closeStore}
+          className="p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
           aria-label="Close"
           title="Close"
         >
@@ -280,16 +337,35 @@ export default function AskInboxPanel({
         </button>
       </div>
 
+      {/* Scope chip */}
+      {scope && (
+        <div className="flex items-center gap-1.5 px-4 pt-2.5 shrink-0">
+          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-border/40 bg-muted/50 px-2 py-0.5 text-[0.6875rem] text-foreground">
+            <span className="truncate">This document: {scope.docTitle}</span>
+            <button
+              type="button"
+              onClick={clearScope}
+              aria-label="Clear document scope"
+              title="Clear document scope"
+              className="shrink-0 text-muted-foreground/70 hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+      )}
+
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[0.75rem]">
         {turns.length === 0 && !streaming && (
           <div className="space-y-3 py-2">
             <p className="text-[0.75rem] leading-relaxed text-muted-foreground/70">
-              Ask a question about your mailbox and get an answer grounded in your own messages,
-              with clickable citations back to the source emails.
+              {scope
+                ? 'Ask a question about this document and get an answer grounded in its content.'
+                : 'Ask a question about your mailbox and get an answer grounded in your own messages, with clickable citations back to the source emails.'}
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {EXAMPLE_QUESTIONS.map((q) => (
+              {exampleQuestions.map((q) => (
                 <button
                   key={q}
                   type="button"
@@ -314,11 +390,11 @@ export default function AskInboxPanel({
           return (
             <div key={i} className="space-y-2">
               <InjectionBanner sources={t.sources} />
-              <AnswerBody content={t.content} sources={t.sources} onOpenMessage={onOpenMessage} />
+              <AnswerBody content={t.content} sources={t.sources} onOpenSource={onOpenSource} />
               <DegradedNotice degraded={t.degraded} />
               <SourcesRail
                 sources={t.sources}
-                onOpenMessage={onOpenMessage}
+                onOpenSource={onOpenSource}
                 onReplyToMessage={onReplyToMessage}
                 openCommitments={openCommitments}
               />
@@ -340,7 +416,7 @@ export default function AskInboxPanel({
             <DegradedNotice degraded={pendingDegraded} />
             <SourcesRail
               sources={pendingSources}
-              onOpenMessage={onOpenMessage}
+              onOpenSource={onOpenSource}
               onReplyToMessage={onReplyToMessage}
               openCommitments={openCommitments}
             />

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
+import { useAskStore } from '@/stores/ask.store';
 import { api, type Commitment } from '@/lib/api';
 import { parseTaskInput } from '@/lib/ai/taskParse';
 import { AIClient } from '@/lib/ai/client';
@@ -21,7 +22,6 @@ import ThreadView from '@/components/mail/ThreadView';
 import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
 import BriefingPanel from '@/components/mail/BriefingPanel';
 import CommitmentsPanel from '@/components/mail/CommitmentsPanel';
-import AskInboxPanel from '@/components/mail/AskInboxPanel';
 import TaskModal, { type Task } from '@/components/tasks/TaskModal';
 import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
 import { GlobalSearch } from '@/components/GlobalSearch';
@@ -253,11 +253,13 @@ export default function MailPage() {
   // ── Create-task-from-email state ───────────────────────────────────────────
   const [createTaskPrefill, setCreateTaskPrefill] = useState<{ linkedMessageId: string; linkedSubject: string } | null>(null);
 
-  // ── Ask your inbox state (declared here so the ?ask= deep-link effect below
-  //    can set it — panel toggle/prefill only, no async data of its own) ─────
-  const [askOpen, setAskOpen] = useState(false);
-  const [askCollapsed, setAskCollapsed] = useState(false);
-  const [askPrefill, setAskPrefill] = useState<string | null>(null);
+  // ── Ask your inbox — store-driven (Ask panel is mounted once, app-wide, by
+  //    AskLauncher); this page only reads open/collapsed and calls openAsk() ──
+  const askOpen = useAskStore((s) => s.open);
+  const askCollapsed = useAskStore((s) => s.collapsed);
+  const openAsk = useAskStore((s) => s.openAsk);
+  const collapseAsk = useAskStore((s) => s.collapse);
+  const setAskHandlers = useAskStore((s) => s.setHandlers);
 
   // ── Deep-link: open specific message via ?open=<messageId> ────────────────
   useEffect(() => {
@@ -278,9 +280,7 @@ export default function MailPage() {
     if (!ask) return;
     // Clean up the URL without navigating
     window.history.replaceState({}, '', window.location.pathname);
-    setAskPrefill(ask);
-    setAskOpen(true);
-    setAskCollapsed(false);
+    openAsk({ prefill: ask });
   }, [hydrated, isAuthenticated]); // eslint-disable-line
 
   // ── Compose state ──────────────────────────────────────────────────────────
@@ -368,7 +368,7 @@ export default function MailPage() {
   useEffect(() => {
     if (!composeOpen) return;
     if (typeof window === 'undefined' || window.innerWidth >= 1024) return;
-    setAskOpen(false);
+    useAskStore.setState({ open: false }); // hide only — leaves prefill/scope untouched, same as before
     setCommitmentsOpen(false);
     setBriefingExpanded(false);
   }, [composeOpen]);
@@ -846,7 +846,7 @@ export default function MailPage() {
     [],
   );
 
-  /** Called from AskInboxPanel's per-source Reply button — fetches the full
+  /** Called from AskPanel's per-source Reply button — fetches the full
    *  message (the panel only holds a snippet) then opens compose in reply
    *  mode against it, falling back to just opening the message on failure. */
   const openReplyTo = useCallback(async (messageId: string) => {
@@ -857,6 +857,20 @@ export default function MailPage() {
       void openMessage(messageId); // fall back to just opening it
     }
   }, [openComposeWith, openMessage]);
+
+  // Register this page's in-page open/reply handlers on the app-wide Ask
+  // store so the single <AskPanel/> (mounted by AskLauncher) docks as a
+  // split pane and opens mail sources in-page instead of navigating —
+  // cleared on unmount so other pages fall back to router navigation.
+  useEffect(() => {
+    setAskHandlers({
+      onOpenMessage: (id) => void openMessage(id),
+      onReplyToMessage: (id) => void openReplyTo(id),
+      linkedCommitments: (commitmentsData ? [...commitmentsData.promised, ...commitmentsData.waiting] : [])
+        .map((c) => ({ id: c.id, messageId: c.messageId, text: c.text })),
+    });
+    return () => setAskHandlers(null);
+  }, [setAskHandlers, openMessage, openReplyTo, commitmentsData]);
 
   /** Called from ThreadView's Quick Reply (AI) button. Opens compose in
    *  reply mode and tells ComposeModal to auto-run the suggestReply task. */
@@ -1326,14 +1340,14 @@ export default function MailPage() {
           {aiEnabled && !isSearchMode && (
             <div className="flex items-center gap-1.5 mt-2 overflow-x-auto scrollbar-none md:hidden">
               <button
-                onClick={() => { if (briefingOpen && briefingExpanded) { setBriefingExpanded(false); return; } setCommitmentsOpen(false); if (askOpen) setAskCollapsed(true); setBriefingOpen(true); setBriefingExpanded(true); }}
+                onClick={() => { if (briefingOpen && briefingExpanded) { setBriefingExpanded(false); return; } setCommitmentsOpen(false); if (askOpen) collapseAsk(); setBriefingOpen(true); setBriefingExpanded(true); }}
                 className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
               >
                 <Newspaper className="w-3.5 h-3.5" />
                 Brief me
               </button>
               <button
-                onClick={() => { setBriefingOpen(false); if (askOpen) setAskCollapsed(true); setCommitmentsOpen(true); }}
+                onClick={() => { setBriefingOpen(false); if (askOpen) collapseAsk(); setCommitmentsOpen(true); }}
                 className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
               >
                 <ClipboardCheck className="w-3.5 h-3.5" />
@@ -1587,7 +1601,7 @@ export default function MailPage() {
       <GlobalSearch
         open={globalSearchOpen}
         onClose={() => setGlobalSearchOpen(false)}
-        onAsk={(q) => { setCommitmentsOpen(false); setBriefingExpanded(false); setAskPrefill(q); setAskOpen(true); setAskCollapsed(false); }}
+        onAsk={(q) => { setCommitmentsOpen(false); setBriefingExpanded(false); openAsk({ prefill: q }); }}
         onOpenMessage={(id) => void openMessage(id)}
       />
 
@@ -1611,11 +1625,12 @@ export default function MailPage() {
         onCreateTask={openTaskFromCommitment}
       />
 
-      {/* Floating Ask-your-inbox trigger — hidden while the panel is expanded */}
+      {/* Floating Ask-your-inbox trigger — hidden while the panel is expanded.
+          The panel itself is mounted once, app-wide, by AskLauncher. */}
       {aiEnabled && (!askOpen || askCollapsed) && (
         <button
           type="button"
-          onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); setAskOpen(true); setAskCollapsed(false); }}
+          onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); openAsk(); }}
           className="md:hidden fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 transition-colors"
           aria-label="Ask your inbox"
           title="Ask your inbox"
@@ -1623,17 +1638,6 @@ export default function MailPage() {
           <MessageCircleQuestion className="w-5 h-5" />
         </button>
       )}
-
-      <AskInboxPanel
-        open={askOpen}
-        collapsed={askCollapsed}
-        onCollapse={() => setAskCollapsed(true)}
-        onClose={() => { setAskOpen(false); setAskCollapsed(false); setAskPrefill(null); }}
-        onOpenMessage={(id) => void openMessage(id)}
-        onReplyToMessage={(id) => void openReplyTo(id)}
-        prefill={askPrefill}
-        openCommitments={(commitmentsData ? [...commitmentsData.promised, ...commitmentsData.waiting] : []).map((c) => ({ id: c.id, messageId: c.messageId, text: c.text }))}
-      />
 
       {/* Intelligence rail — AI triggers + utilities; panels dock beside it at xl */}
       <AIRail
@@ -1645,22 +1649,21 @@ export default function MailPage() {
         onBriefing={() => {
           if (briefingOpen && briefingExpanded) { setBriefingExpanded(false); return; }
           setCommitmentsOpen(false);
-          if (askOpen) setAskCollapsed(true);
+          if (askOpen) collapseAsk();
           setBriefingOpen(true);
           setBriefingExpanded(true);
         }}
         onCommitments={() => {
           if (commitmentsOpen) { setCommitmentsOpen(false); return; }
           setBriefingOpen(false);
-          if (askOpen) setAskCollapsed(true);
+          if (askOpen) collapseAsk();
           setCommitmentsOpen(true);
         }}
         onAsk={() => {
-          if (askOpen && !askCollapsed) { setAskCollapsed(true); return; }
+          if (askOpen && !askCollapsed) { collapseAsk(); return; }
           setBriefingOpen(false);
           setCommitmentsOpen(false);
-          setAskOpen(true);
-          setAskCollapsed(false);
+          openAsk();
         }}
       />
     </div>

@@ -134,6 +134,8 @@ export default function BriefingPanel({
       aria-label="Executive briefing"
       className={cn(
         'fixed inset-y-0 right-0 z-40 w-full max-w-[420px]',
+        // ≥xl: dock as an in-flow split pane so mail content reflows beside it
+        'xl:static xl:z-auto xl:w-[400px] xl:max-w-none xl:shrink-0 xl:shadow-none',
         'border-l border-border/40 bg-card shadow-xl',
         'flex flex-col overflow-hidden',
       )}

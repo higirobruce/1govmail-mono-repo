@@ -1293,14 +1293,14 @@ export default function MailPage() {
           {aiEnabled && !isSearchMode && (
             <div className="flex items-center gap-1.5 mt-2 overflow-x-auto scrollbar-none">
               <button
-                onClick={() => { setBriefingOpen(true); setBriefingExpanded((e) => !e); }}
+                onClick={() => { setCommitmentsOpen(false); if (askOpen) setAskCollapsed(true); setBriefingOpen(true); setBriefingExpanded((e) => !e); }}
                 className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 Brief me
               </button>
               <button
-                onClick={() => setCommitmentsOpen(true)}
+                onClick={() => { setBriefingOpen(false); if (askOpen) setAskCollapsed(true); setCommitmentsOpen(true); }}
                 className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
               >
                 <ClipboardCheck className="w-3.5 h-3.5" />

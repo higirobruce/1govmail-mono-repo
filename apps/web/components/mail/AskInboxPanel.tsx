@@ -244,10 +244,13 @@ export default function AskInboxPanel({
       className={cn(
         // z-[41]: same layer as the other AI drawers — only one is ever open.
         'fixed inset-y-0 right-0 z-[41] w-full max-w-[420px]',
+        // ≥xl: dock as an in-flow split pane so mail content reflows beside it
+        'xl:static xl:z-auto xl:w-[400px] xl:max-w-none xl:shrink-0 xl:shadow-none',
         'border-l border-border/40 bg-card shadow-xl',
         'flex flex-col overflow-hidden',
         'transition-transform duration-200 ease-out',
-        collapsed ? 'translate-x-full pointer-events-none' : 'translate-x-0',
+        // collapsed: slide out below xl; leave the flex row entirely at xl (state kept — display:none, not unmount)
+        collapsed ? 'translate-x-full pointer-events-none xl:hidden' : 'translate-x-0',
       )}
     >
       {/* Header */}

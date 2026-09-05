@@ -154,6 +154,12 @@ export function DocsEditor({
   const aiEnabled = useAIStore((s) => s.enabled);
   const aiModel = useAIStore((s) => s.model);
   const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  // Docs render markdown (lib/ai/markdownToHtml) — invite the model to use it.
+  // Ours first so it survives the 500-char customInstructions truncation.
+  const docsAiInstructions = [
+    'You may use Markdown formatting — ## headings, **bold**, and "- " bullet lists — whenever it makes the result clearer.',
+    aiCustomInstructions,
+  ].filter(Boolean).join('\n');
   const { text: aiPreview, push: pushAi, reset: resetAi, replace: replaceAi } = useCharStream();
   const [aiOpen, setAiOpen] = useState(false); // preview popover
   const [aiBusy, setAiBusy] = useState(false);
@@ -786,13 +792,13 @@ export function DocsEditor({
                 client,
                 original,
                 mode!,
-                { model: aiModel, customInstructions: aiCustomInstructions, signal: abort.signal },
+                { model: aiModel, customInstructions: docsAiInstructions, signal: abort.signal },
                 pushAi,
               )
             : await summarizeMessage(
                 client,
                 original,
-                { model: aiModel, subject: title, customInstructions: aiCustomInstructions, signal: abort.signal },
+                { model: aiModel, subject: title, customInstructions: docsAiInstructions, signal: abort.signal },
                 pushAi,
               );
         if (!abort.signal.aborted) replaceAi(final);

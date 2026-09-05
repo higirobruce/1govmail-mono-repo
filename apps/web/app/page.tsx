@@ -139,7 +139,7 @@ function AppMiniature() {
 
 export default function LandingPage() {
   return (
-    <div className="relative min-h-screen bg-background text-foreground flex flex-col">
+    <div className="relative isolate min-h-screen bg-background text-foreground flex flex-col">
       <LiveBackground />
       {/* ── Nav ───────────────────────────────────────────────────── */}
       <header className="border-b border-border-faint sticky top-0 z-30 bg-background/80 backdrop-blur-sm">

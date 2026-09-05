@@ -7,7 +7,7 @@ import { useConfirmStore } from '@/stores/confirm.store';
 import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
 import { parseEventFromEmail } from '@/lib/ai/eventParse';
-import { mergeParsedEvent } from '@/lib/calendar/eventPrefill';
+import { mergeParsedEvent, sameAttendees } from '@/lib/calendar/eventPrefill';
 import { quickAddEventPrefill } from '@/lib/calendar/quickAddEvent';
 import type { EventFormValues, EventFieldKey } from '@/lib/calendar/eventPrefill';
 import { parseMailDragPayload, dropPrefillFromPayload } from '@/lib/calendar/dropPrefill';
@@ -326,7 +326,7 @@ export interface CreateEventPrefillData {
   aiFillMessageId?: string;
 }
 
-function CreateEventModal({
+export function CreateEventModal({
   initialDate,
   initialData,
   prefillData,
@@ -369,9 +369,13 @@ function CreateEventModal({
   const dirtyRef = useRef<Set<EventFieldKey>>(new Set());
   const fillAbortRef = useRef<AbortController | null>(null);
   // Mirrors the six merge-eligible fields so the async fill can read the
-  // latest values (not the ones captured when the effect first ran).
+  // latest values (not the ones captured when the effect first ran). Written
+  // after commit, never during render: a concurrent render that React discards
+  // must not leave the mirror holding values the form never actually took.
   const currentRef = useRef<EventFormValues>({ title, startAt, endAt, allDay, location, attendees });
-  currentRef.current = { title, startAt, endAt, allDay, location, attendees };
+  useEffect(() => {
+    currentRef.current = { title, startAt, endAt, allDay, location, attendees };
+  });
 
   useEffect(() => {
     const messageId = prefillData?.aiFillMessageId;
@@ -405,7 +409,7 @@ function CreateEventModal({
         if (merged.endAt !== current.endAt) setEnd(merged.endAt);
         if (merged.allDay !== current.allDay) setAllDay(merged.allDay);
         if (merged.location !== current.location) setLocation(merged.location);
-        if (merged.attendees !== current.attendees) setAttendees([...merged.attendees]);
+        if (!sameAttendees(merged.attendees, current.attendees)) setAttendees([...merged.attendees]);
       } catch (err) {
         if ((err as { name?: string })?.name !== 'AbortError') {
           console.warn('AI event fill failed', err);

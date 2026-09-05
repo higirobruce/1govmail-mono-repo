@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeParsedEvent } from './eventPrefill';
+import { mergeParsedEvent, sameAttendees, toFormDateTime } from './eventPrefill';
 import type { EventFormValues, EventFieldKey } from './eventPrefill';
 import type { ParsedEvent } from '@/lib/ai/eventParse';
 
@@ -219,6 +219,112 @@ describe('mergeParsedEvent', () => {
 
     const result = mergeParsedEvent(current, parsed, dirty);
     expect(result.allDay).toBe(true);
+  });
+
+  // ── Picker-safe shapes: the form's date fields are always full local
+  //    datetimes, so no consumer has to cope with two string shapes.
+  it('widens an all-day parse\'s bare dates to full local datetimes', () => {
+    const current: EventFormValues = {
+      title: '', startAt: '2026-09-05T10:00', endAt: '2026-09-05T11:00',
+      allDay: false, location: '', attendees: [],
+    };
+    const parsed: ParsedEvent = {
+      title: 'Workshop',
+      startAt: '2026-09-12',
+      endAt: '2026-09-12',
+      allDay: true,
+      location: 'RISA HQ',
+      attendees: [],
+    };
+
+    const result = mergeParsedEvent(current, parsed, new Set<EventFieldKey>());
+    expect(result.allDay).toBe(true);
+    expect(result.startAt).toBe('2026-09-12T00:00');
+    expect(result.endAt).toBe('2026-09-12T23:59');
+    // What the DateTimePicker is handed in each mode stays well-formed.
+    expect(result.startAt.split('T')[0]).toBe('2026-09-12');
+    expect(Number.isNaN(new Date(result.startAt).getTime())).toBe(false);
+    expect(Number.isNaN(new Date(result.endAt).getTime())).toBe(false);
+  });
+
+  it('widens a bare endAt that arrives without a startAt (validate() cannot repair that shape)', () => {
+    const current: EventFormValues = {
+      title: '', startAt: '2026-09-05T10:00', endAt: '2026-09-05T11:00',
+      allDay: false, location: '', attendees: [],
+    };
+    const parsed: ParsedEvent = {
+      title: 'Workshop', startAt: null, endAt: '2026-09-12',
+      allDay: false, location: null, attendees: [],
+    };
+
+    const result = mergeParsedEvent(current, parsed, new Set<EventFieldKey>());
+    expect(result.endAt).toBe('2026-09-12T23:59');
+  });
+
+  it('leaves already-timed values untouched', () => {
+    expect(toFormDateTime('2026-09-12T14:30', 'start')).toBe('2026-09-12T14:30');
+    expect(toFormDateTime('2026-09-12T14:30', 'end')).toBe('2026-09-12T14:30');
+    expect(toFormDateTime('', 'start')).toBe('');
+  });
+
+  // ── Re-running the fill must be a no-op: the modal's write-back only calls
+  //    setState for fields whose value actually changed, so a second run (a
+  //    remount, or the effect re-firing) can never ping-pong form state.
+  it('is a fixed point — merging the merged result again changes nothing', () => {
+    const current: EventFormValues = {
+      title: 'Invitation: Digital Skills Workshop',
+      startAt: '2026-09-05T10:00',
+      endAt: '2026-09-05T11:00',
+      allDay: false,
+      location: '',
+      attendees: [],
+    };
+    const parsed: ParsedEvent = {
+      title: 'Digital Skills Workshop',
+      startAt: '2026-09-12',
+      endAt: '2026-09-12',
+      allDay: true,
+      location: 'RISA HQ',
+      attendees: ['erick@risa.gov.rw', 'jean@risa.gov.rw'],
+    };
+    const dirty = new Set<EventFieldKey>();
+
+    const first = mergeParsedEvent(current, parsed, dirty);
+    const second = mergeParsedEvent(first, parsed, dirty);
+
+    expect(second).toEqual(first);
+    // Identity matters as much as equality: the write-back compares values,
+    // and `attendees` must not come back as a fresh array every run.
+    expect(second.attendees).toBe(first.attendees);
+    expect(sameAttendees(second.attendees, first.attendees)).toBe(true);
+    // Every scalar field compares equal, so no setState fires on the re-run.
+    expect(second.title).toBe(first.title);
+    expect(second.startAt).toBe(first.startAt);
+    expect(second.endAt).toBe(first.endAt);
+    expect(second.allDay).toBe(first.allDay);
+    expect(second.location).toBe(first.location);
+  });
+
+  it('still returns a new attendees array when the parse adds someone', () => {
+    const current: EventFormValues = {
+      title: '', startAt: '', endAt: '', allDay: false, location: '',
+      attendees: ['erick@risa.gov.rw'],
+    };
+    const parsed: ParsedEvent = {
+      title: '', startAt: null, endAt: null, allDay: false, location: null,
+      attendees: ['jean@risa.gov.rw'],
+    };
+
+    const result = mergeParsedEvent(current, parsed, new Set<EventFieldKey>());
+    expect(result.attendees).not.toBe(current.attendees);
+    expect(result.attendees).toEqual(['erick@risa.gov.rw', 'jean@risa.gov.rw']);
+  });
+
+  it('sameAttendees compares element-wise', () => {
+    expect(sameAttendees([], [])).toBe(true);
+    expect(sameAttendees(['a@x.rw'], ['a@x.rw'])).toBe(true);
+    expect(sameAttendees(['a@x.rw'], ['b@x.rw'])).toBe(false);
+    expect(sameAttendees(['a@x.rw'], ['a@x.rw', 'b@x.rw'])).toBe(false);
   });
 
   it('returns a new object', () => {

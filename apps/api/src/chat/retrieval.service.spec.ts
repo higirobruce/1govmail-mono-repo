@@ -1,6 +1,7 @@
 import { RetrievalService } from './retrieval.service';
 
 const vec = Array.from({ length: 1024 }, () => 0.5);
+const DAY_MS = 86_400_000;
 
 function vecRow(id: string, over: Record<string, unknown> = {}) {
   return {
@@ -10,10 +11,25 @@ function vecRow(id: string, over: Record<string, unknown> = {}) {
   };
 }
 
+function docRow(id: string, over: Record<string, unknown> = {}) {
+  return {
+    documentId: id, chunkText: `doc chunk for ${id}`, title: `Doc ${id}`,
+    emoji: null, updatedAt: new Date(), distance: 0.2, ...over,
+  };
+}
+
+function eventRow(id: string, over: Record<string, unknown> = {}) {
+  return {
+    id, title: `Event ${id}`, description: null, location: null, organizer: null,
+    attendees: [], startAt: new Date(), endAt: new Date(), ...over,
+  };
+}
+
 function makeFakes() {
   const prisma = {
     $queryRaw: jest.fn().mockResolvedValue([]),
     messageCard: { findMany: jest.fn().mockResolvedValue([]) },
+    calendarEvent: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const embedder = { model: 'bge-m3:latest', dims: 1024, embed: jest.fn().mockResolvedValue([vec]) };
   const mailService = {
@@ -23,18 +39,32 @@ function makeFakes() {
   return { prisma, embedder, mailService };
 }
 
-describe('RetrievalService.retrieve', () => {
+/** Routes $queryRaw by which table appears in the tagged-template SQL text. */
+function routeQueryRaw(prisma: ReturnType<typeof makeFakes>['prisma'], opts: { mail?: any[]; doc?: any[] | Error }) {
+  prisma.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
+    const sql = strings.join('');
+    if (sql.includes('document_embeddings')) {
+      if (opts.doc instanceof Error) return Promise.reject(opts.doc);
+      return Promise.resolve(opts.doc ?? []);
+    }
+    return Promise.resolve(opts.mail ?? []);
+  });
+}
+
+describe('RetrievalService.retrieve — mail legs (scoped to mail so docs/calendar stay inert)', () => {
+  const MAIL_ONLY = { types: ['mail'] as ('mail' | 'doc' | 'event')[] };
+
   it('embeds the question and runs a per-user cosine query', async () => {
     const { prisma, embedder, mailService } = makeFakes();
     prisma.$queryRaw.mockResolvedValue([vecRow('m1')]);
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
 
-    const result = await svc.retrieve('user1', 'what did finance say about the budget?');
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'what did finance say about the budget?', MAIL_ONLY);
 
     expect(embedder.embed).toHaveBeenCalledWith(['what did finance say about the budget?']);
     expect(prisma.$queryRaw).toHaveBeenCalled();
-    expect(result.sources[0]).toMatchObject({ messageId: 'm1', context: 'chunk for m1' });
-    expect(result.degraded).toEqual({ vector: false, keyword: false });
+    expect(result.sources[0]).toMatchObject({ type: 'mail', id: 'm1', context: 'chunk for m1' });
+    expect(result.degraded).toEqual({ vector: false, keyword: false, docs: false, calendar: false });
   });
 
   it('scopes the vector query to the embedder\'s current model, excluding stale other-model rows', async () => {
@@ -42,12 +72,9 @@ describe('RetrievalService.retrieve', () => {
     prisma.$queryRaw.mockResolvedValue([vecRow('m1')]);
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
 
-    await svc.retrieve('user1', 'budget');
+    await svc.retrieve('user1', 'user1@x.rw', 'budget', MAIL_ONLY);
 
     const [strings, ...values] = prisma.$queryRaw.mock.calls[0];
-    // Tagged-template call: strings has an interpolation slot right after
-    // "embedding IS NOT NULL AND e.\"model\" =" and the current model is one
-    // of the interpolated values.
     expect(strings.join('')).toContain('e."model" =');
     expect(values).toContain(embedder.model);
   });
@@ -56,7 +83,7 @@ describe('RetrievalService.retrieve', () => {
     const { prisma, embedder, mailService } = makeFakes();
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
 
-    await svc.retrieve('user1', 'what did finance say about the budget?');
+    await svc.retrieve('user1', 'user1@x.rw', 'what did finance say about the budget?', MAIL_ONLY);
 
     const [, query, limit] = mailService.searchMessages.mock.calls[0];
     expect(query).toContain('finance');
@@ -69,11 +96,11 @@ describe('RetrievalService.retrieve', () => {
   it('skips the keyword leg entirely when no keywords survive', async () => {
     const { prisma, embedder, mailService } = makeFakes();
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
-    await svc.retrieve('user1', 'what is the');
+    await svc.retrieve('user1', 'user1@x.rw', 'what is the', MAIL_ONLY);
     expect(mailService.searchMessages).not.toHaveBeenCalled();
   });
 
-  it('fuses both legs, ranking a double-hit first, and keeps the vector chunkText as context', async () => {
+  it('fuses both mail legs, ranking a double-hit first, and keeps the vector chunkText as context', async () => {
     const { prisma, embedder, mailService } = makeFakes();
     prisma.$queryRaw.mockResolvedValue([vecRow('m1'), vecRow('m2')]);
     mailService.searchMessages.mockResolvedValue({
@@ -84,12 +111,12 @@ describe('RetrievalService.retrieve', () => {
     });
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
 
-    const result = await svc.retrieve('user1', 'budget finance');
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget finance', MAIL_ONLY);
 
-    expect(result.sources[0].messageId).toBe('m2'); // hit by both legs
-    const m2 = result.sources.find((s) => s.messageId === 'm2')!;
+    expect(result.sources[0].id).toBe('m2'); // hit by both legs
+    const m2 = result.sources.find((s) => s.id === 'm2')!;
     expect(m2.context).toBe('chunk for m2'); // vector payload wins dedupe
-    expect(result.sources.map((s) => s.messageId)).toContain('m9');
+    expect(result.sources.map((s) => s.id)).toContain('m9');
   });
 
   it('uses cached bodyText via extractEmailText for keyword-only hits, snippet as last resort', async () => {
@@ -103,10 +130,10 @@ describe('RetrievalService.retrieve', () => {
     mailService.getMessage.mockRejectedValue(new Error('hydration down')); // degrade to snippet
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
 
-    const result = await svc.retrieve('user1', 'budget finance');
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget finance', MAIL_ONLY);
 
-    expect(result.sources.find((s) => s.messageId === 'k1')!.context).toContain('A cached body.');
-    expect(result.sources.find((s) => s.messageId === 'k2')!.context).toBe('only snippet');
+    expect(result.sources.find((s) => s.id === 'k1')!.context).toContain('A cached body.');
+    expect(result.sources.find((s) => s.id === 'k2')!.context).toBe('only snippet');
   });
 
   it('flags injectionSuspected from the message card', async () => {
@@ -114,7 +141,7 @@ describe('RetrievalService.retrieve', () => {
     prisma.$queryRaw.mockResolvedValue([vecRow('m1')]);
     prisma.messageCard.findMany.mockResolvedValue([{ messageId: 'm1', injectionSuspected: true }]);
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
-    const result = await svc.retrieve('user1', 'budget');
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget', MAIL_ONLY);
     expect(result.sources[0].injectionSuspected).toBe(true);
   });
 
@@ -126,13 +153,157 @@ describe('RetrievalService.retrieve', () => {
     });
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
 
-    const result = await svc.retrieve('user1', 'budget finance');
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget finance', MAIL_ONLY);
     expect(result.degraded.vector).toBe(true);
     expect(result.sources).toHaveLength(1);
 
     mailService.searchMessages.mockRejectedValue(new Error('zimbra down'));
-    const both = await svc.retrieve('user1', 'budget finance');
-    expect(both.degraded).toEqual({ vector: true, keyword: true });
+    const both = await svc.retrieve('user1', 'user1@x.rw', 'budget finance', MAIL_ONLY);
+    expect(both.degraded).toEqual({ vector: true, keyword: true, docs: false, calendar: false });
     expect(both.sources).toHaveLength(0);
+  });
+});
+
+describe('RetrievalService.retrieve — docs leg', () => {
+  it('runs the docs-leg SQL with userId AND userEmail params, including the invite EXISTS predicate', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    await svc.retrieve('user1', 'user1@x.rw', 'policy budget question', { types: ['doc'] });
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = prisma.$queryRaw.mock.calls[0];
+    const sql = strings.join('');
+    expect(sql).toContain('FROM "document_embeddings"');
+    expect(sql).toContain('JOIN "documents"');
+    expect(sql).toContain('EXISTS');
+    expect(sql).toContain('"document_invites"');
+    expect(sql).toContain('"invitedEmail"');
+    expect(values).toContain('user1');
+    expect(values).toContain('user1@x.rw');
+  });
+
+  it('scope.types=[doc] skips the mail vector/keyword legs and the calendar leg entirely', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    prisma.$queryRaw.mockResolvedValue([docRow('d1')]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'question', { types: ['doc'] });
+
+    expect(mailService.searchMessages).not.toHaveBeenCalled();
+    expect(prisma.calendarEvent.findMany).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1); // only the docs query — no mail vector query
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0]).toMatchObject({ type: 'doc', id: 'd1', context: 'doc chunk for d1' });
+  });
+
+  it('scope.docId narrows the docs-leg SQL with an e."documentId" filter and forces docs-only', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    prisma.$queryRaw.mockResolvedValue([docRow('doc123')]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    await svc.retrieve('user1', 'user1@x.rw', 'question', { docId: 'doc123' });
+
+    expect(mailService.searchMessages).not.toHaveBeenCalled();
+    expect(prisma.calendarEvent.findMany).not.toHaveBeenCalled();
+    const [strings, ...values] = prisma.$queryRaw.mock.calls[0];
+    expect(strings.join('')).toContain('e."documentId" =');
+    expect(values).toContain('doc123');
+  });
+
+  it('dedupes doc hits by documentId, keeping the best (first, distance-ordered) chunk', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    prisma.$queryRaw.mockResolvedValue([
+      docRow('d1', { chunkText: 'best chunk', distance: 0.1 }),
+      docRow('d1', { chunkText: 'worse chunk', distance: 0.5 }),
+    ]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'question', { types: ['doc'] });
+
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0].context).toBe('best chunk');
+  });
+});
+
+describe('RetrievalService.retrieve — calendar leg', () => {
+  it('skips the calendar leg entirely when no keywords survive', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+    await svc.retrieve('user1', 'user1@x.rw', 'what is the', { types: ['event'] });
+    expect(prisma.calendarEvent.findMany).not.toHaveBeenCalled();
+  });
+
+  it('queries the [-30d, +90d] window for the user and matches keyword in title or attendees JSON', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    const now = Date.now();
+    prisma.calendarEvent.findMany.mockResolvedValue([
+      eventRow('e1', { title: 'Budget review', startAt: new Date(now + 2 * DAY_MS), endAt: new Date(now + 2 * DAY_MS) }),
+      eventRow('e2', { title: 'Standup', attendees: [{ email: 'budget@x.rw', name: 'Budget Bot' }], startAt: new Date(now + 3 * DAY_MS), endAt: new Date(now + 3 * DAY_MS) }),
+      eventRow('e3', { title: 'Unrelated topic', startAt: new Date(now + 1 * DAY_MS), endAt: new Date(now + 1 * DAY_MS) }),
+    ]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget', { types: ['event'] });
+
+    const [args] = prisma.calendarEvent.findMany.mock.calls;
+    expect(args[0].where.userId).toBe('user1');
+    const gte: Date = args[0].where.startAt.gte;
+    const lte: Date = args[0].where.startAt.lte;
+    expect(Math.abs(now - gte.getTime() - 30 * DAY_MS)).toBeLessThan(60_000);
+    expect(Math.abs(lte.getTime() - now - 90 * DAY_MS)).toBeLessThan(60_000);
+
+    const ids = result.sources.map((s) => s.id);
+    expect(ids).toContain('e1'); // keyword in title
+    expect(ids).toContain('e2'); // keyword only in attendees JSON
+    expect(ids).not.toContain('e3');
+    const e1 = result.sources.find((s) => s.id === 'e1')!;
+    expect(e1.context).toMatch(/^Event: Budget review\nWhen: /);
+    expect(e1.meta).toBe(e1.context.split('\n')[1].replace('When: ', ''));
+  });
+
+  it('orders matches by proximity to now and caps at 5', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    const now = Date.now();
+    const offsetsDays = [40, 5, 60, 1, 20, 10]; // 6 matching rows, unsorted
+    prisma.calendarEvent.findMany.mockResolvedValue(
+      offsetsDays.map((d, i) => eventRow(`e${i}`, {
+        title: 'Budget sync', startAt: new Date(now + d * DAY_MS), endAt: new Date(now + d * DAY_MS),
+      })),
+    );
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget', { types: ['event'] });
+
+    expect(result.sources).toHaveLength(5);
+    const ordered = [...offsetsDays].sort((a, b) => a - b).slice(0, 5).map((d) => `e${offsetsDays.indexOf(d)}`);
+    expect(result.sources.map((s) => s.id)).toEqual(ordered);
+  });
+});
+
+describe('RetrievalService.retrieve — degraded flags and typed-key fusion', () => {
+  it('one leg (docs) rejecting sets only degraded.docs while mail/keyword sources still flow', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    routeQueryRaw(prisma, { mail: [vecRow('m1')], doc: new Error('doc query down') });
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget');
+
+    expect(result.degraded).toEqual({ vector: false, keyword: false, docs: true, calendar: false });
+    expect(result.sources.some((s) => s.type === 'mail' && s.id === 'm1')).toBe(true);
+  });
+
+  it('typed keys prevent collision — a mail hit and a doc hit sharing the same id both survive fusion', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    const sameId = 'shared123';
+    routeQueryRaw(prisma, { mail: [vecRow(sameId)], doc: [docRow(sameId)] });
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget');
+
+    const mailHit = result.sources.find((s) => s.type === 'mail' && s.id === sameId);
+    const docHit = result.sources.find((s) => s.type === 'doc' && s.id === sameId);
+    expect(mailHit).toBeDefined();
+    expect(docHit).toBeDefined();
   });
 });

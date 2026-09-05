@@ -29,7 +29,7 @@ function daysAgoLabel(commitment: Commitment): string {
  * keeps simple `open`/`onClose` state instead of BriefingPanel's pill pattern.
  */
 export default function CommitmentsPanel({
-  open, onClose, onOpenMessage, data, isLoading, onMutated,
+  open, onClose, onOpenMessage, data, isLoading, onMutated, onCreateTask,
 }: {
   open: boolean;
   onClose: () => void;
@@ -39,6 +39,8 @@ export default function CommitmentsPanel({
   isLoading: boolean;
   /** Called after any row mutation succeeds; the caller invalidates ['commitments']. */
   onMutated: () => void;
+  /** Opens the prefilled, editable task modal for this commitment (may parse the due hint). */
+  onCreateTask: (c: Commitment) => Promise<void>;
 }) {
   const [view, setView] = useState<View>('open');
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -243,9 +245,9 @@ export default function CommitmentsPanel({
                               <button
                                 type="button"
                                 disabled={mutating}
-                                onClick={() => void runAction(c.id, () => api.mail.promoteCommitment(c.id))}
-                                title="Make a task"
-                                aria-label="Make a task"
+                                onClick={() => { setPendingId(c.id); void onCreateTask(c).finally(() => setPendingId(null)); }}
+                                title="Create task…"
+                                aria-label="Create task…"
                                 className={cn(
                                   'p-1 rounded-md text-muted-foreground/50 hover:text-primary hover:bg-muted transition-colors',
                                   mutating && 'opacity-50 cursor-not-allowed',

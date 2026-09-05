@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
-import { api } from '@/lib/api';
+import { api, type Commitment } from '@/lib/api';
+import { parseTaskInput } from '@/lib/ai/taskParse';
+import { AIClient } from '@/lib/ai/client';
 import { getCachedBody, setCachedBody, fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import type { TriageLabel } from '@email-client/shared';
 import Sidebar from '@/components/layout/Sidebar';
@@ -20,7 +22,7 @@ import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
 import BriefingPanel from '@/components/mail/BriefingPanel';
 import CommitmentsPanel from '@/components/mail/CommitmentsPanel';
 import AskInboxPanel from '@/components/mail/AskInboxPanel';
-import TaskModal from '@/components/tasks/TaskModal';
+import TaskModal, { type Task } from '@/components/tasks/TaskModal';
 import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
@@ -316,6 +318,7 @@ export default function MailPage() {
 
   // ── Executive briefing panel ────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
+  const aiModel = useAIStore((s) => s.model);
   // Briefing drawer: `briefingOpen` = mounted (set once, kept — the generated
   // brief must survive collapses without re-analysis); `briefingExpanded`
   // toggles drawer vs floating pill.
@@ -333,6 +336,20 @@ export default function MailPage() {
     enabled: aiEnabled,
   });
   const [commitmentsOpen, setCommitmentsOpen] = useState(false);
+
+  // Promote-with-overrides: opens a prefilled, editable TaskModal for a
+  // commitment. When AI is enabled and the commitment carries a due hint,
+  // parses it into a concrete date first (row spinner covers this wait —
+  // no separate AIWorkingIndicator needed here).
+  const [commitmentTask, setCommitmentTask] = useState<{ c: Commitment; dueDate: string | null } | null>(null);
+  const openTaskFromCommitment = useCallback(async (c: Commitment) => {
+    let dueDate: string | null = null;
+    if (aiEnabled && c.dueHint) {
+      const parsed = await parseTaskInput(new AIClient(), `${c.text} — due: ${c.dueHint}`, { model: aiModel });
+      dueDate = parsed.dueDate;
+    }
+    setCommitmentTask({ c, dueDate });
+  }, [aiEnabled, aiModel]);
 
   // Compose (z-50) covers the AI drawers (z-40/41) outright on small screens —
   // collapse them when compose opens so nothing keeps streaming into a surface
@@ -1500,6 +1517,35 @@ export default function MailPage() {
         onSaved={() => setCreateTaskPrefill(null)}
       />
 
+      {/* Create task from commitment — promote-with-overrides via TaskModal's create branch */}
+      {commitmentTask && (
+        <TaskModal
+          key={commitmentTask.c.id}
+          open
+          task={null}
+          prefill={{
+            title: commitmentTask.c.text,
+            description: `From ${commitmentTask.c.counterparty ?? 'email'}${commitmentTask.c.dueHint ? ` · ${commitmentTask.c.dueHint}` : ''}`,
+            dueDate: commitmentTask.dueDate ?? undefined,
+            linkedMessageId: commitmentTask.c.messageId,
+          }}
+          onCreateOverride={(payload) =>
+            api.mail.promoteCommitment(commitmentTask.c.id, {
+              title: (payload as any).title,
+              description: (payload as any).description,
+              dueDate: (payload as any).dueDate,
+              priority: (payload as any).priority,
+            }).then((r) => r.task as Task)
+          }
+          onClose={() => setCommitmentTask(null)}
+          onSaved={() => {
+            setCommitmentTask(null);
+            queryClient.invalidateQueries({ queryKey: ['commitments'] });
+            toast.success('Task created from commitment');
+          }}
+        />
+      )}
+
       {/* Floating compose — rendered as a fixed overlay so the thread stays visible */}
       <ComposeModal
         open={composeOpen}
@@ -1550,6 +1596,7 @@ export default function MailPage() {
         data={commitmentsData}
         isLoading={commitmentsLoading}
         onMutated={() => queryClient.invalidateQueries({ queryKey: ['commitments'] })}
+        onCreateTask={openTaskFromCommitment}
       />
 
       {/* Floating Ask-your-inbox trigger — hidden while the panel is expanded */}

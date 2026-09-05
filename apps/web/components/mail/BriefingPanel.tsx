@@ -97,47 +97,22 @@ export default function BriefingPanel({
 
   if (!open) return null;
 
-  // Collapsed: a small floating pill that keeps the briefing one click away
-  // (and shows live progress while a run continues in the background).
-  if (!expanded) {
-    return (
-      <button
-        type="button"
-        onClick={() => onToggleExpanded(true)}
-        className={cn(
-          'fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full',
-          'border border-border/50 bg-card px-3.5 py-2 shadow-lg',
-          'text-[0.75rem] font-medium text-foreground hover:bg-muted/60 transition-colors',
-        )}
-        aria-label="Expand briefing"
-      >
-        {running
-          ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-          : <Sparkles className="w-3.5 h-3.5 text-primary" />}
-        <span>
-          {running ? (progress ? phaseLabel(progress) : 'Analyzing…') : 'Briefing'}
-        </span>
-        {!running && result && result.brief.needsDecision.length > 0 && (
-          <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[0.625rem] font-semibold text-destructive">
-            {result.brief.needsDecision.length}
-          </span>
-        )}
-      </button>
-    );
-  }
-
   const allEmpty = !!result && SECTIONS.every(([key]) => result.brief[key].length === 0);
 
   return (
     <aside
       role="complementary"
       aria-label="Executive briefing"
+      aria-hidden={!expanded}
       className={cn(
         'fixed inset-y-0 right-0 z-40 w-full max-w-[420px]',
         // ≥xl: dock as an in-flow split pane so mail content reflows beside it
-        'xl:static xl:z-auto xl:w-[400px] xl:max-w-none xl:shrink-0 xl:shadow-none',
+        'xl:static xl:z-auto xl:w-96 xl:max-w-none xl:shrink-0 xl:shadow-none',
         'border-l border-border/40 bg-card shadow-xl',
         'flex flex-col overflow-hidden',
+        'transition-transform duration-200 ease-out',
+        // hidden (not unmounted) when collapsed — the generated brief survives
+        expanded ? 'translate-x-0' : 'translate-x-full pointer-events-none xl:hidden',
       )}
     >
       {/* Header */}

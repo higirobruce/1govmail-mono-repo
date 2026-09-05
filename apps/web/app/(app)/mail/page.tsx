@@ -1185,6 +1185,9 @@ export default function MailPage() {
 
   if (!isAuthenticated) return null;
 
+  const aiPanelVisible =
+    (briefingOpen && briefingExpanded) || commitmentsOpen || (askOpen && !askCollapsed);
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar
@@ -1221,7 +1224,8 @@ export default function MailPage() {
           from md (tablet portrait) up; the nav sidebar joins at lg. */}
       <div className={cn(
         'shrink-0 flex flex-col h-full border-r border-border/50',
-        'w-full md:w-[300px] lg:w-[340px] xl:w-[400px]',
+        'w-full transition-[width] duration-200',
+        aiPanelVisible ? 'md:w-[300px] xl:w-[320px]' : 'md:w-[300px] lg:w-[340px] xl:w-[370px]',
         activeMessageId ? 'hidden md:flex' : 'flex',
       )}>
         {/* List header */}
@@ -1295,7 +1299,7 @@ export default function MailPage() {
           {aiEnabled && !isSearchMode && (
             <div className="flex items-center gap-1.5 mt-2 overflow-x-auto scrollbar-none md:hidden">
               <button
-                onClick={() => { setCommitmentsOpen(false); if (askOpen) setAskCollapsed(true); setBriefingOpen(true); setBriefingExpanded((e) => !e); }}
+                onClick={() => { if (briefingOpen && briefingExpanded) { setBriefingExpanded(false); return; } setCommitmentsOpen(false); if (askOpen) setAskCollapsed(true); setBriefingOpen(true); setBriefingExpanded(true); }}
                 className="inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 text-[0.75rem] font-medium transition-colors"
               >
                 <Sparkles className="w-3.5 h-3.5" />
@@ -1527,7 +1531,7 @@ export default function MailPage() {
       <GlobalSearch
         open={globalSearchOpen}
         onClose={() => setGlobalSearchOpen(false)}
-        onAsk={(q) => { setCommitmentsOpen(false); setBriefingOpen(false); setAskPrefill(q); setAskOpen(true); setAskCollapsed(false); }}
+        onAsk={(q) => { setCommitmentsOpen(false); setBriefingExpanded(false); setAskPrefill(q); setAskOpen(true); setAskCollapsed(false); }}
         onOpenMessage={(id) => void openMessage(id)}
       />
 
@@ -1576,15 +1580,16 @@ export default function MailPage() {
       {/* Intelligence rail — AI triggers + utilities; panels dock beside it at xl */}
       <AIRail
         aiEnabled={aiEnabled}
-        briefingOpen={briefingOpen}
+        briefingOpen={briefingOpen && briefingExpanded}
         commitmentsOpen={commitmentsOpen}
         askOpen={askOpen && !askCollapsed}
         commitmentsCount={commitmentsData?.openCount}
         onBriefing={() => {
-          if (briefingOpen) { setBriefingOpen(false); return; }
+          if (briefingOpen && briefingExpanded) { setBriefingExpanded(false); return; }
           setCommitmentsOpen(false);
           if (askOpen) setAskCollapsed(true);
           setBriefingOpen(true);
+          setBriefingExpanded(true);
         }}
         onCommitments={() => {
           if (commitmentsOpen) { setCommitmentsOpen(false); return; }

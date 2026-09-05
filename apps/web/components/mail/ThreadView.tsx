@@ -296,7 +296,17 @@ export default function ThreadView({
         emoji: templateEmoji(draft.templateId),
         content,
       });
-      if (abort.signal.aborted) return;
+      if (abort.signal.aborted) {
+        // The doc was already created server-side by the time Cancel landed —
+        // api.docs.create has no abort signal to race against. Surface that
+        // rather than leaving an orphaned doc with no trace of why it exists.
+        setDraftStep(null);
+        toast.info(`Draft saved to Docs: "${doc.title}"`, {
+          description: 'Cancelled before opening it.',
+          action: { label: 'Open', onClick: () => router.push(`/docs?open=${doc.id}`) },
+        });
+        return;
+      }
 
       setDraftStep(null);
       router.push(`/docs?open=${doc.id}`);

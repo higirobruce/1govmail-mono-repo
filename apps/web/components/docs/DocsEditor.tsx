@@ -25,6 +25,7 @@ import {
   Trash2, Columns2, Rows3, History, Activity, Play, MoreHorizontal,
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Code,
   Link2, Type, Heading1, Heading2, Heading3, ChevronDown, RemoveFormatting,
+  Sparkles,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -33,8 +34,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { toast } from 'sonner';
+import { AIClient } from '@/lib/ai/client';
+import { rewriteText, summarizeMessage, type RewriteMode } from '@/lib/ai/tasks';
+import { textToHtml } from '@/lib/ai/textToHtml';
+import { useCharStream } from '@/lib/ai/useCharStream';
+import { useAIStore } from '@/stores/ai.store';
+import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import {
   SlashCommandMenu,
   filterCommands,
@@ -140,6 +149,21 @@ export function DocsEditor({
   const [wordCount, setWordCount] = useState({ words: 0, chars: 0 });
   const [headingMenuOpen, setHeadingMenuOpen] = useState(false);
   const [selBubble, setSelBubble] = useState<{ top: number; left: number } | null>(null);
+
+  // ── AI writing assistant (rewrite + summarize from the selection bubble) ───
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiModel = useAIStore((s) => s.model);
+  const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  const { text: aiPreview, push: pushAi, reset: resetAi, replace: replaceAi } = useCharStream();
+  const [aiOpen, setAiOpen] = useState(false); // preview popover
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiAction, setAiAction] = useState<'rewrite' | 'summarize'>('rewrite');
+  const [aiRange, setAiRange] = useState<{ from: number; to: number } | null>(null);
+  const [aiAnchor, setAiAnchor] = useState<{ top: number; left: number } | null>(null);
+  const [aiMenuOpen, setAiMenuOpen] = useState(false); // rewrite-mode dropdown
+  const aiAbortRef = useRef<AbortController | null>(null);
+
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const destroyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -491,7 +515,7 @@ export function DocsEditor({
         setSelBubble(null);
       }
     };
-    const hide = () => { setSelBubble(null); setHeadingMenuOpen(false); };
+    const hide = () => { setSelBubble(null); setHeadingMenuOpen(false); setAiMenuOpen(false); };
     editor.on('selectionUpdate', update);
     editor.on('blur', hide);
     return () => {
@@ -720,6 +744,84 @@ export function DocsEditor({
     },
     [editor],
   );
+
+  // ── AI writing assistant handlers ──────────────────────────────────────────
+  const closeAi = useCallback(() => {
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
+    setAiOpen(false);
+    setAiBusy(false);
+    setAiError(null);
+    setAiRange(null);
+    setAiAnchor(null);
+    resetAi();
+  }, [resetAi]);
+
+  const runAi = useCallback(
+    async (action: 'rewrite' | 'summarize', mode?: RewriteMode) => {
+      if (!editor) return;
+      const { from, to } = editor.state.selection;
+      const original = editor.state.doc.textBetween(from, to, '\n').trim();
+      if (!original) {
+        toast.error('Select some text first.');
+        return;
+      }
+
+      aiAbortRef.current?.abort();
+      const abort = new AbortController();
+      aiAbortRef.current = abort;
+      resetAi();
+      setAiError(null);
+      setAiRange({ from, to });
+      setAiAnchor(selBubble);
+      setAiAction(action);
+      setAiOpen(true);
+      setAiBusy(true);
+
+      try {
+        const client = new AIClient();
+        const final =
+          action === 'rewrite'
+            ? await rewriteText(
+                client,
+                original,
+                mode!,
+                { model: aiModel, customInstructions: aiCustomInstructions, signal: abort.signal },
+                pushAi,
+              )
+            : await summarizeMessage(
+                client,
+                original,
+                { model: aiModel, subject: title, customInstructions: aiCustomInstructions, signal: abort.signal },
+                pushAi,
+              );
+        if (!abort.signal.aborted) replaceAi(final);
+      } catch (err: unknown) {
+        if ((err as { name?: string })?.name === 'AbortError') return;
+        const m = err instanceof Error ? err.message : String(err);
+        setAiError(m);
+      } finally {
+        setAiBusy(false);
+      }
+    },
+    [editor, selBubble, aiModel, aiCustomInstructions, title, resetAi, replaceAi, pushAi],
+  );
+
+  const applyAi = useCallback(() => {
+    if (!editor || !aiPreview.trim() || !aiRange) return;
+    const html = textToHtml(aiPreview);
+    if (aiAction === 'rewrite') {
+      editor.chain().focus().insertContentAt({ from: aiRange.from, to: aiRange.to }, html).run();
+    } else {
+      editor.chain().focus().insertContentAt(aiRange.to, html).run(); // summary lands BELOW the selection
+    }
+    closeAi();
+  }, [editor, aiPreview, aiRange, aiAction, closeAi]);
+
+  // Abort any in-flight AI request on unmount (component remounts per doc via `key={docId}`).
+  useEffect(() => {
+    return () => { aiAbortRef.current?.abort(); };
+  }, []);
 
   if (!editor) return null;
 
@@ -1078,6 +1180,73 @@ export function DocsEditor({
               <MessageSquare className="w-3.5 h-3.5" />
               Comment
             </button>
+          </div>
+
+          {/* ── Row 3: AI writing assistant ─────────────────────────────────── */}
+          {aiEnabled && (
+            <div className="flex items-center gap-0.5 border-t border-border-faint p-1.5 relative">
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); setAiMenuOpen((v) => !v); }}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-micro text-ink-2 hover:text-foreground hover:bg-muted transition-colors"
+              >
+                <Sparkles className="w-3 h-3 text-primary" /> Rewrite <ChevronDown className="w-2.5 h-2.5" />
+              </button>
+              {aiMenuOpen && (
+                <div className="absolute bottom-full left-1.5 mb-1 rounded-lg border border-border bg-popover shadow-lg p-1 flex flex-col min-w-[130px]">
+                  {(['paraphrase', 'formal', 'concise', 'friendly', 'grammar'] as RewriteMode[]).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); setAiMenuOpen(false); void runAi('rewrite', m); }}
+                      className="px-2 py-1 rounded text-micro font-normal text-ink-2 hover:bg-muted hover:text-foreground text-left capitalize"
+                    >
+                      {m === 'grammar' ? 'Fix grammar' : m}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); void runAi('summarize'); }}
+                className="px-2 py-1 rounded-md text-micro text-ink-2 hover:text-foreground hover:bg-muted transition-colors"
+              >
+                Summarize
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* AI writing assistant preview popover */}
+      {aiOpen && aiAnchor && (
+        <div
+          style={{
+            position: 'fixed',
+            top: aiAnchor.top + 8,
+            left: aiAnchor.left,
+            transform: 'translate(-50%, 0)',
+            zIndex: 9999,
+          }}
+          className="w-[340px] rounded-xl border border-border bg-popover shadow-xl p-3 flex flex-col gap-2"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-micro uppercase tracking-[0.06em] text-ink-3">
+              {aiAction === 'rewrite' ? 'Rewrite' : 'Summary'}
+            </span>
+            <Button variant="ghost" size="icon-xs" className="ml-auto text-ink-3" aria-label="Discard" onClick={closeAi}>
+              <X />
+            </Button>
+          </div>
+          <div className="max-h-48 overflow-y-auto text-ui text-foreground whitespace-pre-wrap leading-relaxed">
+            {aiPreview || (aiBusy ? <AIWorkingIndicator step={aiAction === 'rewrite' ? 'Rewriting' : 'Summarizing'} /> : null)}
+          </div>
+          {aiError && <p className="text-micro font-normal text-destructive">{aiError}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="xs" onClick={closeAi}>Discard</Button>
+            <Button size="xs" onClick={applyAi} disabled={aiBusy || !aiPreview.trim() || !!aiError}>
+              {aiAction === 'rewrite' ? 'Replace selection' : 'Insert below'}
+            </Button>
           </div>
         </div>
       )}

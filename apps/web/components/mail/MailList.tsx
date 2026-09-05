@@ -314,11 +314,9 @@ function MailRow({
         className={cn(
           'group relative rounded-2xl transition-all',
           active
-            ? 'bg-card shadow-active-row ring-1 ring-primary/15'
+            ? 'bg-muted/60 ring-1 ring-border'
             : selected
             ? 'bg-primary/5 ring-1 ring-primary/20'
-            : !message.isRead
-            ? 'bg-card hover:bg-card ring-1 ring-border/40'
             : 'hover:bg-muted/40',
         )}
       >
@@ -353,8 +351,8 @@ function MailRow({
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-2 mb-0.5">
                 <span className={cn(
-                  'text-body truncate',
-                  message.isRead ? 'text-foreground' : 'text-primary font-semibold',
+                  'text-body font-semibold truncate',
+                  message.isRead ? 'text-foreground' : 'text-primary',
                 )}>
                   {message.fromName ?? message.fromEmail}
                 </span>
@@ -368,8 +366,8 @@ function MailRow({
               </div>
 
               <p className={cn(
-                'text-ui truncate mb-0.5',
-                message.isRead ? 'text-ink-2' : 'text-foreground font-semibold',
+                'text-ui truncate mb-0.5 text-foreground',
+                message.isRead ? 'font-medium' : 'font-semibold',
               )}>
                 {message.subject ?? '(no subject)'}
               </p>

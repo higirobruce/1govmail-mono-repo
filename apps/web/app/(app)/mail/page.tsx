@@ -1223,7 +1223,7 @@ export default function MailPage() {
         activeMessageId ? 'hidden md:flex' : 'flex',
       )}>
         {/* List header */}
-        <div className="px-3 pt-3 pb-2.5 border-b border-border/25 shrink-0">
+        <div className="px-4 pt-6 pb-3 border-b border-border/25 shrink-0">
           {/* Title row */}
           <div className="flex items-center justify-between mb-2.5">
             <div className="flex items-center gap-1">

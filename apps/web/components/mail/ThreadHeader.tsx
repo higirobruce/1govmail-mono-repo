@@ -83,7 +83,7 @@ export default function ThreadHeader({
 
   return (
     <div className="border-b border-border-faint bg-background shrink-0">
-      <div className="flex items-start gap-2 px-4 pt-3.5 pb-3">
+      <div className="flex items-start gap-2 px-6 pt-6 pb-4">
         {/* Close */}
         <Tooltip>
           <TooltipTrigger asChild>

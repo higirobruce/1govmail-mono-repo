@@ -650,7 +650,7 @@ export default function MailDetail({
 
         {/* Overview tab */}
         {activeTab === 'overview' && (
-          <div className="p-6 space-y-5 mx-auto w-full max-w-3xl">
+          <div className="px-6 pt-8 pb-6 space-y-5 mx-auto w-full max-w-3xl">
 
             {/* Subject title + sender subtitle — outside the card */}
             <div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkForEmbedding, EMBED_CHUNK_MAX_CHARS, EMBED_MAX_CHUNKS } from '@email-client/shared';
+import { chunkDocForEmbedding, chunkForEmbedding, EMBED_CHUNK_MAX_CHARS, EMBED_MAX_CHUNKS } from '@email-client/shared';
 
 describe('chunkForEmbedding', () => {
   it('returns [] for an empty body', () => {
@@ -61,5 +61,22 @@ describe('chunkForEmbedding', () => {
     const body = `The new content is here.\n\nOn Mon, Jan 5, 2026 at 9:00 AM Someone <s@x.rw> wrote:\n> old quoted text`;
     const chunks = chunkForEmbedding({ bodyText: body, bodyHtml: null }, null);
     expect(chunks.join(' ')).not.toContain('old quoted text');
+  });
+});
+
+describe('chunkDocForEmbedding', () => {
+  it('prefixes the title to chunk 0 only', () => {
+    const chunks = chunkDocForEmbedding('para one\n\npara two', 'My Doc');
+    expect(chunks[0].startsWith('Title: My Doc\n')).toBe(true);
+    expect(chunks.length).toBe(1);
+  });
+  it('caps at DOC_EMBED_MAX_CHUNKS (12) for very long docs', () => {
+    const long = Array.from({ length: 40 }, (_, i) => `paragraph ${i} ${'x'.repeat(1400)}`).join('\n\n');
+    const chunks = chunkDocForEmbedding(long, null);
+    expect(chunks.length).toBe(12);
+    expect(Math.max(...chunks.map(c => c.length))).toBeLessThanOrEqual(1500 + 20);
+  });
+  it('returns [] for empty text', () => {
+    expect(chunkDocForEmbedding('   ', 'T')).toEqual([]);
   });
 });

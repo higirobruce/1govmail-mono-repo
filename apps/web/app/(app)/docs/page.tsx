@@ -119,6 +119,20 @@ export default function DocsPage() {
     }
   }, [selectedId]);
 
+  // Deep link: /docs?open=<id> selects a doc once the list has loaded, then
+  // cleans the URL. Read window.location.search (not useSearchParams) to
+  // avoid forcing a Suspense boundary on this client page at build time.
+  const openConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated || loadingList) return;
+    if (openConsumedRef.current) return;
+    const openId = new URLSearchParams(window.location.search).get('open');
+    if (!openId) return;
+    openConsumedRef.current = true;
+    void selectDoc(openId);
+    router.replace('/docs');
+  }, [hydrated, isAuthenticated, loadingList, selectDoc, router]);
+
   // Open template picker (optionally scoped to a parent)
   const openTemplatePicker = useCallback((parentId?: string) => {
     setPendingParentId(parentId ?? null);

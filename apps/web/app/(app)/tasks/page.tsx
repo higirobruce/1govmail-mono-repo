@@ -2,13 +2,19 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { format, parseISO } from 'date-fns';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useAuthStore } from '@/stores/auth.store';
+import { useAIStore } from '@/stores/ai.store';
 import { api } from '@/lib/api';
+import { AIClient } from '@/lib/ai/client';
+import { quickAddTask } from '@/lib/tasks/quickAdd';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import { toast } from 'sonner';
 import {
   Plus, Loader2, ListTodo, Pencil, Trash2, Check,
@@ -291,6 +297,10 @@ export default function TasksPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
   const confirm = useConfirmStore((s) => s.confirm);
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiModel = useAIStore((s) => s.model);
+  const [quickAdd, setQuickAdd] = useState('');
+  const [quickAdding, setQuickAdding] = useState(false);
 
   // Auth guard
   useEffect(() => {
@@ -385,6 +395,30 @@ export default function TasksPage() {
       setTasks((prev) => prev.map((t) => t.id === taskId ? { ...updated, subtasks: t.subtasks, comments: t.comments } : t));
     } catch (err: any) {
       toast.error('Failed to move task', { description: err?.message });
+    }
+  };
+
+  const handleQuickAdd = async () => {
+    const input = quickAdd.trim();
+    if (!input || quickAdding) return;
+    setQuickAdding(true);
+    try {
+      const { task, parsed } = await quickAddTask(input, {
+        enabled: aiEnabled,
+        model: aiModel,
+        client: new AIClient(),
+        create: api.tasks.create,
+      });
+      setTasks((prev) => [task as Task, ...prev]);
+      setQuickAdd('');
+      toast.success(
+        `Task added${parsed.dueDate ? ` · due ${format(parseISO(parsed.dueDate), 'EEE d MMM')}` : ''}`,
+        { action: { label: 'Edit', onClick: () => { setModalTask(task as Task); setShowModal(true); } } },
+      );
+    } catch (err: any) {
+      toast.error('Failed to add task', { description: err?.message });
+    } finally {
+      setQuickAdding(false);
     }
   };
 
@@ -578,6 +612,28 @@ export default function TasksPage() {
                 )}
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Quick-add (list view only) */}
+        {viewMode === 'list' && (
+          <div className="px-4 lg:px-6 pt-3 flex items-center gap-2 shrink-0">
+            <form
+              onSubmit={(e) => { e.preventDefault(); void handleQuickAdd(); }}
+              className="flex-1 flex items-center gap-2"
+            >
+              <Input
+                value={quickAdd}
+                onChange={(e) => setQuickAdd(e.target.value)}
+                placeholder='Add a task — try "Chase the TOR from Solange on Friday"'
+                className="h-9 text-ui"
+                disabled={quickAdding}
+              />
+              <Button type="submit" size="sm" disabled={quickAdding || !quickAdd.trim()}>
+                {quickAdding ? 'Adding…' : 'Add'}
+              </Button>
+            </form>
+            {quickAdding && <AIWorkingIndicator step="Parsing your task" />}
           </div>
         )}
 

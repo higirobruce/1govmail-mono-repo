@@ -52,7 +52,7 @@ async function gatherOne(meta: ThreadMessageMeta, getBody: ThreadContentDeps['ge
  * Gather up to the last 10 messages of a thread as full-body text blocks,
  * newest of the kept window last (thread order is preserved). `messageCount`
  * reports the true thread length, not the capped count, so callers can tell
- * the caller when older history was left out.
+ * the user when older history was left out.
  */
 export async function gatherThreadContent(
   messageId: string, deps: ThreadContentDeps,

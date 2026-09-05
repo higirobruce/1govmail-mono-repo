@@ -3,16 +3,17 @@ import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AiService } from '../ai/ai.service';
-import { InboxChatService } from './inbox-chat.service';
-import { InboxChatRequestDto } from './dto/inbox-chat.dto';
+import { AskService } from './ask.service';
+import { AskRequestDto } from './dto/ask.dto';
 
 interface AuthenticatedRequest extends Request {
   user: { sub: string };
 }
 
 /**
- * Ask-your-inbox chat. Stricter throttle than the general AI proxy: each call
- * fans out retrieval (pgvector + Zimbra) plus a 30B generation.
+ * Ask 1Gov: mail/doc/calendar chat over the user's own retrieved content.
+ * Stricter throttle than the general AI proxy: each call fans out retrieval
+ * (pgvector + Zimbra + docs + calendar) plus a 30B generation.
  *
  * READ-ONLY by design: no write action of any kind — see the phase-4 spec's
  * threat model. The client never supplies the system prompt (DTO restricts
@@ -24,15 +25,15 @@ interface AuthenticatedRequest extends Request {
 @Controller('ai')
 export class ChatController {
   constructor(
-    private readonly inboxChatService: InboxChatService,
+    private readonly askService: AskService,
     private readonly aiService: AiService,
   ) {}
 
-  @Post('inbox-chat')
-  async inboxChat(
+  @Post('ask')
+  async ask(
     @Req() req: AuthenticatedRequest,
     @Res() res: Response,
-    @Body() body: InboxChatRequestDto,
+    @Body() body: AskRequestDto,
   ): Promise<void> {
     const last = body.messages[body.messages.length - 1];
     if (last.role !== 'user') {
@@ -44,9 +45,12 @@ export class ChatController {
       if (!res.writableEnded) ac.abort();
     });
 
-    // Retrieval + prompt assembly BEFORE headers: a thrown error here still
-    // becomes a normal JSON error response the web client knows how to show.
-    const prepared = await this.inboxChatService.prepare(req.user.sub, body.messages);
+    // Retrieval + prompt assembly BEFORE headers — this includes the
+    // scope.docId read-access gate (AskService -> DocsService.verifyReadAccess).
+    // A thrown error here still becomes a normal JSON error response (e.g. a
+    // 403) the web client knows how to show, since no SSE headers have
+    // flushed yet.
+    const prepared = await this.askService.prepare(req.user.sub, body.messages, body.scope);
 
     res.status(200);
     res.setHeader('Content-Type', 'text/event-stream');

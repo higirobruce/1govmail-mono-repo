@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  extractKeywords, rrfFuse, buildAskPrompt, buildInboxChatPrompt, splitByCitations,
+  extractKeywords, rrfFuse, buildAskPrompt, splitByCitations,
   NO_SOURCES_REPLY, type ChatSource,
 } from '@email-client/shared';
 
@@ -144,32 +144,6 @@ describe('buildAskPrompt', () => {
     const idx = system.indexOf('SOURCES:\n');
     expect(idx).toBeGreaterThan(-1);
     expect(system.slice(idx)).toBe(OLD_MAIL_SOURCES_SNAPSHOT);
-  });
-});
-
-describe('buildInboxChatPrompt (deprecated alias)', () => {
-  const turns = [{ role: 'user' as const, content: 'What did finance say about the budget?' }];
-
-  it('delegates to buildAskPrompt for the system prompt', () => {
-    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(
-      'deadbeef-dead-beef-dead-beefdeadbeef' as `${string}-${string}-${string}-${string}-${string}`,
-    );
-    const { system } = buildInboxChatPrompt([mkMail(1)], turns);
-    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(
-      'deadbeef-dead-beef-dead-beefdeadbeef' as `${string}-${string}-${string}-${string}-${string}`,
-    );
-    expect(system).toBe(buildAskPrompt([mkMail(1)], turns));
-    vi.restoreAllMocks();
-  });
-
-  it('clamps prior turns to 1000 chars and the final question to 2000', () => {
-    const long = 'a'.repeat(5000);
-    const { turns: out } = buildInboxChatPrompt([mkMail(1)], [
-      { role: 'user', content: long }, { role: 'assistant', content: long }, { role: 'user', content: long },
-    ]);
-    expect(out[0].content.length).toBeLessThanOrEqual(1000);
-    expect(out[1].content.length).toBeLessThanOrEqual(1000);
-    expect(out[2].content.length).toBeLessThanOrEqual(2000);
   });
 });
 

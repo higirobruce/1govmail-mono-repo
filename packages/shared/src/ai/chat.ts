@@ -1,6 +1,5 @@
 import { UNTRUSTED_CONTENT_RULE, fenceUntrusted, neutralizeMarkers } from './promptCore';
 import { languageRule } from './language';
-import { clampText } from './extract';
 
 export type SourceType = 'mail' | 'doc' | 'event';
 
@@ -109,8 +108,8 @@ function formatSource(s: ChatSource): string {
 /**
  * Builds the system prompt for "Ask 1Gov" — mail, documents, and calendar
  * sources fused into one cited-answer prompt. Turn clamping is the caller's
- * responsibility (see `buildInboxChatPrompt` below for the legacy shape that
- * still does it internally).
+ * responsibility (AskService clamps via `clampText` before building the
+ * upstream body — see apps/api/src/chat/ask.service.ts).
  */
 export function buildAskPrompt(sources: ChatSource[], turns: ChatTurn[]): string {
   const question = turns[turns.length - 1]?.content ?? '';
@@ -126,24 +125,6 @@ Rules:
 
 SOURCES:
 ${sources.map(formatSource).join('\n\n')}`;
-}
-
-/**
- * @deprecated Use `buildAskPrompt`. Kept only so `apps/api`'s not-yet-migrated
- * inbox-chat service still compiles; the api call site moves to
- * `buildAskPrompt` in a later task, which deletes this alias.
- */
-export function buildInboxChatPrompt(
-  sources: ChatSource[],
-  turns: ChatTurn[],
-): { system: string; turns: ChatTurn[] } {
-  const system = buildAskPrompt(sources, turns);
-  const clamped = turns.map((t, i) => ({
-    role: t.role,
-    // clampText adds '\n\n[…truncated]' (14 chars), so subtract that from the limit
-    content: clampText(t.content, i === turns.length - 1 ? 2000 - 14 : 1000 - 14),
-  }));
-  return { system, turns: clamped };
 }
 
 export type AnswerSegment = { kind: 'text'; text: string } | { kind: 'cite'; alias: string };

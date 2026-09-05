@@ -10,5 +10,6 @@ import { DocEmbedWorkerService } from './doc-embed-worker.service';
   imports: [PrismaModule, ZimbraModule, MailModule],
   providers: [DocsService, DocEmbedWorkerService],
   controllers: [DocsController],
+  exports: [DocsService],
 })
 export class DocsModule {}

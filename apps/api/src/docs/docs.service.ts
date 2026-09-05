@@ -743,7 +743,13 @@ export class DocsService {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  private async verifyReadAccess(userId: string, id: string) {
+  /**
+   * Public: also called by AskService (apps/api/src/chat/ask.service.ts)
+   * BEFORE it invokes RetrievalService.retrieve() with a scope.docId — see
+   * that method's ACCESS CONTRACT note. Throws NotFoundException /
+   * ForbiddenException, which the Nest exception filter turns into 404/403.
+   */
+  async verifyReadAccess(userId: string, id: string) {
     const doc = await this.prisma.document.findUnique({ where: { id } });
     if (!doc) throw new NotFoundException('Document not found');
     if (doc.userId === userId) return doc;

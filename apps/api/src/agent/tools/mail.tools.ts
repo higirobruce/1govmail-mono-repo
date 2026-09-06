@@ -13,15 +13,20 @@ export function stripHtml(html: string): string {
     .trim();
 }
 
-// MailService rows carry `receivedAt` (Date), never `date` — the `m.date` branch
-// is kept only as a defensive fallback for any future/alternate caller shape.
+// MailService rows carry `receivedAt` (a native Date, since it's a Prisma
+// DateTime) — never `date` — the `m.date` branch is kept only as a defensive
+// fallback for any future/alternate caller shape. Dates are rendered as ISO
+// strings, not `String(Date)` (which would emit toString()'s locale-formatted
+// "Mon Sep 01 2026 00:00:00 GMT+0000 (…)" into every ref/prompt).
 function mailRef(ctx: ToolContext, m: any): ToolRef {
+  const raw = m.date ?? m.receivedAt;
+  const date = raw instanceof Date ? raw.toISOString() : String(raw ?? '');
   return {
     alias: ctx.nextAlias(),
     type: 'mail',
     id: String(m.id),
     title: m.subject ?? null,
-    date: String(m.date ?? m.receivedAt ?? ''),
+    date,
     snippet: stripHtml(m.snippet ?? m.bodyText ?? m.bodyHtml ?? '').slice(0, 160),
     injectionSuspected: false,
   };

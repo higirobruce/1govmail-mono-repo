@@ -8,14 +8,16 @@ function makeCtx(): ToolContext {
 
 // Mocks mirror the real MailService/RetrievalService return shapes:
 // - MailService.searchMessages/getConversation always wrap rows in `{ messages: [...] }`.
-// - Rows carry `receivedAt` (a Date in prod), never `date`.
+// - Rows carry `receivedAt` as a native Date (Prisma DateTime), never `date` and
+//   never a string — kept as real Date instances here so a regression to
+//   `String(Date)` (locale toString() instead of ISO) is caught.
 // - MailService.getMessage returns the cached Prisma Message row: body lives in
 //   `bodyHtml`/`bodyText` (never `body`), recipients in `toRecipients: {email,name}[]`
 //   (never `to: string[]`), attachments as `{id, filename, mimeType, size}[]`.
 // - RetrievalService.semantic returns a bare array of row-shaped objects.
 const mail = {
   searchMessages: jest.fn().mockResolvedValue({
-    messages: [{ id: 'm1', subject: 'MoU draft', fromEmail: 'a@b.rw', receivedAt: '2026-09-01T00:00:00Z', snippet: 'the draft' }],
+    messages: [{ id: 'm1', subject: 'MoU draft', fromEmail: 'a@b.rw', receivedAt: new Date('2026-09-01T00:00:00Z'), snippet: 'the draft' }],
     total: 1,
     offset: 0,
     limit: 5,
@@ -23,21 +25,21 @@ const mail = {
   }),
   getMessage: jest.fn().mockResolvedValue({
     id: 'm1', subject: 'MoU draft', fromEmail: 'a@b.rw', toRecipients: [{ email: 'u1@x.rw', name: null }],
-    receivedAt: '2026-09-01T00:00:00Z', bodyHtml: '<p>Hello <b>world</b></p>',
+    receivedAt: new Date('2026-09-01T00:00:00Z'), bodyHtml: '<p>Hello <b>world</b></p>',
     attachments: [{ id: '2', filename: 'MoU-final.pdf', mimeType: 'application/pdf', size: 12345 }],
   }),
   getConversation: jest.fn().mockResolvedValue({
     conversationId: 'c1',
     messages: [
-      { id: 'm1', subject: 'MoU draft', fromEmail: 'a@b.rw', receivedAt: '2026-09-01T00:00:00Z', snippet: 'first' },
-      { id: 'm2', subject: 'Re: MoU draft', fromEmail: 'u1@x.rw', receivedAt: '2026-09-02T00:00:00Z', snippet: 'second' },
+      { id: 'm1', subject: 'MoU draft', fromEmail: 'a@b.rw', receivedAt: new Date('2026-09-01T00:00:00Z'), snippet: 'first' },
+      { id: 'm2', subject: 'Re: MoU draft', fromEmail: 'u1@x.rw', receivedAt: new Date('2026-09-02T00:00:00Z'), snippet: 'second' },
     ],
   }),
 } as any;
 
 const retrieval = {
   semantic: jest.fn().mockResolvedValue([
-    { id: 'm9', subject: 'Budget', fromEmail: 'c@d.rw', receivedAt: '2026-08-01T00:00:00Z', snippet: 'numbers' },
+    { id: 'm9', subject: 'Budget', fromEmail: 'c@d.rw', receivedAt: new Date('2026-08-01T00:00:00Z'), snippet: 'numbers' },
   ]),
 } as any;
 
@@ -55,6 +57,7 @@ describe('mail read tools', () => {
     const res = await byName('search_emails').execute({ query: 'budget', mode: 'semantic', limit: 5 }, makeCtx());
     expect(retrieval.semantic).toHaveBeenCalledWith('u1', 'budget', 5);
     expect(res.refs![0]).toMatchObject({ alias: 's1', type: 'mail', id: 'm9' });
+    expect(res.refs![0].date).toBe('2026-08-01T00:00:00.000Z');
     expect(res.content).toContain('[s1]');
   });
 
@@ -72,6 +75,7 @@ describe('mail read tools', () => {
     expect(res.content).toContain('u1@x.rw');
     expect(res.content).toContain('MoU-final.pdf');
     expect(res.content).toContain('part 2');
+    expect(res.content).toContain('2026-09-01T00:00:00.000Z');
     expect(res.refs![0].id).toBe('m1');
   });
 

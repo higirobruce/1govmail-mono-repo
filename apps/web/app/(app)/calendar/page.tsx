@@ -6,6 +6,8 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useAIStore } from '@/stores/ai.store';
 import { useAskStore } from '@/stores/ask.store';
+import { usePeopleStore } from '@/stores/people.store';
+import { MeetingPrepView } from '@/components/calendar/MeetingPrepView';
 import { AIClient } from '@/lib/ai/client';
 import { parseEventFromEmail } from '@/lib/ai/eventParse';
 import { mergeParsedEvent, sameAttendees, toFormDateTime } from '@/lib/calendar/eventPrefill';
@@ -1636,6 +1638,7 @@ function EventDetailPanel({
     (a) => a.email.toLowerCase() === currentUserEmail?.toLowerCase(),
   );
   const showRsvp = !isOrganizer && (isAttendee || event.attendees.length === 0);
+  const aiEnabled = useAIStore((s) => s.enabled);
 
   const [rsvping, setRsvping] = useState<'ACCEPT' | 'DECLINE' | 'TENTATIVE' | null>(null);
 
@@ -1780,7 +1783,18 @@ function EventDetailPanel({
           {event.organizer && (
             <div>
               <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Organizer</p>
-              <p className="text-xs text-foreground/70 break-all">{event.organizer}</p>
+              {currentUserEmail && event.organizer.toLowerCase() === currentUserEmail.toLowerCase() ? (
+                <p className="text-xs text-foreground/70 break-all">{event.organizer}</p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => usePeopleStore.getState().openDossier({ email: event.organizer!, name: null })}
+                  title="Open dossier"
+                  className="text-xs text-foreground/70 break-all hover:underline cursor-pointer text-left"
+                >
+                  {event.organizer}
+                </button>
+              )}
             </div>
           )}
 
@@ -1816,6 +1830,7 @@ function EventDetailPanel({
                         : ptst === 'DE' ? 'text-rose-500'
                         : ptst === 'TE' ? 'text-amber-500'
                         : 'text-muted-foreground/40';
+                      const isSelf = a.email.toLowerCase() === currentUserEmail?.toLowerCase();
                       return (
                         <div key={a.email} className="flex items-start gap-2">
                           <div className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[0.5625rem] font-semibold flex items-center justify-center shrink-0 mt-0.5">
@@ -1824,7 +1839,18 @@ function EventDetailPanel({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {a.name && (
-                                <p className="text-xs font-medium text-foreground/80 truncate">{a.name}</p>
+                                isSelf ? (
+                                  <p className="text-xs font-medium text-foreground/80 truncate">{a.name}</p>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => usePeopleStore.getState().openDossier({ email: a.email, name: a.name })}
+                                    title="Open dossier"
+                                    className="text-xs font-medium text-foreground/80 truncate hover:underline cursor-pointer text-left"
+                                  >
+                                    {a.name}
+                                  </button>
+                                )
                               )}
                               {ptstLabel && (
                                 <span className={cn('text-[0.625rem] font-medium', ptstColor)}>
@@ -1832,7 +1858,18 @@ function EventDetailPanel({
                                 </span>
                               )}
                             </div>
-                            <p className="text-[0.6875rem] text-muted-foreground/55 break-all">{a.email}</p>
+                            {isSelf ? (
+                              <p className="text-[0.6875rem] text-muted-foreground/55 break-all">{a.email}</p>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => usePeopleStore.getState().openDossier({ email: a.email, name: a.name })}
+                                title="Open dossier"
+                                className="text-[0.6875rem] text-muted-foreground/55 break-all hover:underline cursor-pointer text-left"
+                              >
+                                {a.email}
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -1840,6 +1877,8 @@ function EventDetailPanel({
               </div>
             </div>
           )}
+
+          {aiEnabled && <MeetingPrepView eventId={event.id} />}
         </div>
       </ScrollArea>
 

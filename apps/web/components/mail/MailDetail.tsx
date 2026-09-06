@@ -25,6 +25,7 @@ import { ClassificationChip } from '@/components/mail/ClassificationChip';
 import { pickHighestClassification } from '@/lib/classification';
 import { AttachmentTile, fileTypeStyle } from '@/components/mail/AttachmentTile';
 import { useAIStore } from '@/stores/ai.store';
+import { usePeopleStore } from '@/stores/people.store';
 import { AIClient } from '@/lib/ai/client';
 import { summarizeMessage } from '@/lib/ai/tasks';
 import { useCharStream } from '@/lib/ai/useCharStream';
@@ -767,9 +768,20 @@ export default function MailDetail({
               <MailAvatar name={message.fromName} email={message.fromEmail} size="md" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-ui font-semibold text-foreground">
-                    {message.fromName ?? message.fromEmail}
-                  </span>
+                  {aiEnabled ? (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); usePeopleStore.getState().openDossier({ email: message.fromEmail, name: message.fromName }); }}
+                      title="Open dossier"
+                      className="text-ui font-semibold text-foreground hover:underline text-left"
+                    >
+                      {message.fromName ?? message.fromEmail}
+                    </button>
+                  ) : (
+                    <span className="text-ui font-semibold text-foreground">
+                      {message.fromName ?? message.fromEmail}
+                    </span>
+                  )}
                   {message.fromName && (
                     <span className="text-micro text-ink-3">
                       &lt;{message.fromEmail}&gt;

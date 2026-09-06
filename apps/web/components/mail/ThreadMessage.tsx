@@ -17,6 +17,8 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { usePeopleStore } from '@/stores/people.store';
+import { useAIStore } from '@/stores/ai.store';
 import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
@@ -462,6 +464,7 @@ export default function ThreadMessage({
   const [lightboxSelectedId, setLightboxSelectedId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const aiEnabled = useAIStore((s) => s.enabled);
 
   const handleDownloadAll = useCallback(async () => {
     if (downloadingAll || !fullMessage?.attachments?.length) return;
@@ -586,12 +589,26 @@ export default function ThreadMessage({
         )}
 
         {/* Sender name */}
-        <span className={cn(
-          'text-ui shrink-0',
-          !message.isRead && !message.isDraft ? 'text-foreground font-semibold' : 'text-ink-2',
-        )}>
-          {displayName}
-        </span>
+        {aiEnabled ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); usePeopleStore.getState().openDossier({ email: message.fromEmail, name: message.fromName }); }}
+            title="Open dossier"
+            className={cn(
+              'text-ui shrink-0 hover:underline text-left',
+              !message.isRead && !message.isDraft ? 'text-foreground font-semibold' : 'text-ink-2',
+            )}
+          >
+            {displayName}
+          </button>
+        ) : (
+          <span className={cn(
+            'text-ui shrink-0',
+            !message.isRead && !message.isDraft ? 'text-foreground font-semibold' : 'text-ink-2',
+          )}>
+            {displayName}
+          </span>
+        )}
 
         {/* Draft badge */}
         {message.isDraft && (
@@ -657,7 +674,18 @@ export default function ThreadMessage({
         >
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-body font-semibold text-foreground">{displayName}</span>
+              {aiEnabled ? (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); usePeopleStore.getState().openDossier({ email: message.fromEmail, name: message.fromName }); }}
+                  title="Open dossier"
+                  className="text-body font-semibold text-foreground hover:underline text-left"
+                >
+                  {displayName}
+                </button>
+              ) : (
+                <span className="text-body font-semibold text-foreground">{displayName}</span>
+              )}
               <div className="flex items-center gap-1.5 shrink-0">
                 {message.hasAttachments && (
                   <Paperclip className="w-3 h-3 text-ink-3" />

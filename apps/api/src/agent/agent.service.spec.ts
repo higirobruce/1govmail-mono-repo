@@ -19,6 +19,14 @@ const text = (s: string) => ({ choices: [{ delta: { content: s } }] });
 const toolCall = (name: string, args: string, id = 'c1') => ({
   choices: [{ delta: { tool_calls: [{ index: 0, id, function: { name, arguments: args } }] }, finish_reason: null }],
 });
+const multiToolCall = (calls: Array<{ name: string; args: string; id: string }>) => ({
+  choices: [{
+    delta: {
+      tool_calls: calls.map((c, index) => ({ index, id: c.id, function: { name: c.name, arguments: c.args } })),
+    },
+    finish_reason: null,
+  }],
+});
 
 function makeService(upstreamResponses: any[], tools: ToolDef[] = []) {
   const ai = { upstream: jest.fn() } as any;
@@ -26,7 +34,7 @@ function makeService(upstreamResponses: any[], tools: ToolDef[] = []) {
   const registry = new ToolRegistry();
   registry.registerAll(tools);
   const prisma = {
-    user: { findUnique: jest.fn().mockResolvedValue({ email: 'u1@x.rw', name: 'Bruce' }) },
+    user: { findUnique: jest.fn().mockResolvedValue({ email: 'u1@x.rw', displayName: 'Bruce' }) },
     agentToolLog: { create: jest.fn().mockResolvedValue({}) },
   } as any;
   const svc = new AgentService(ai, registry, prisma);
@@ -93,6 +101,31 @@ describe('AgentService.run', () => {
     expect(frames.find((f) => f.event === 'tool_result')!.data.ok).toBe(false);
     const toolMsg = ai.upstream.mock.calls[1][0].messages.find((m: any) => m.role === 'tool');
     expect(toolMsg.content).toMatch(/invalid arguments/);
+  });
+
+  it('caps tool_calls at MAX_CALLS_PER_ITERATION so the assistant message and tool replies match', async () => {
+    const calls = [
+      { name: 'echo', args: '{"message":"a"}', id: 'c1' },
+      { name: 'echo', args: '{"message":"b"}', id: 'c2' },
+      { name: 'echo', args: '{"message":"c"}', id: 'c3' },
+      { name: 'echo', args: '{"message":"d"}', id: 'c4' },
+    ];
+    const { svc, ai, emit } = makeService(
+      [sseResponse([multiToolCall(calls)]), sseResponse([text('Done')])],
+      [echoTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+
+    const secondBody = ai.upstream.mock.calls[1][0];
+    const assistantMsg = secondBody.messages.find((m: any) => m.role === 'assistant' && m.tool_calls);
+    const toolMsgs = secondBody.messages.filter((m: any) => m.role === 'tool');
+
+    expect(assistantMsg.tool_calls).toHaveLength(3);
+    expect(toolMsgs).toHaveLength(3);
+    const assistantIds = assistantMsg.tool_calls.map((c: any) => c.id);
+    const toolReplyIds = toolMsgs.map((m: any) => m.tool_call_id);
+    expect(assistantIds).toEqual(['c1', 'c2', 'c3']);
+    expect(toolReplyIds).toEqual(['c1', 'c2', 'c3']);
   });
 
   it('forces a final answer after MAX_ITERATIONS', async () => {

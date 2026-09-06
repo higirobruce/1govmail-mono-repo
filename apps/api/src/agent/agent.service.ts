@@ -36,12 +36,11 @@ export class AgentService {
   ) {}
 
   async run(userId: string, turns: ChatTurn[], emit: EmitFn, signal: AbortSignal): Promise<void> {
-    // The User model has no `name` field (only `email` + `displayName`, and
-    // AskService's precedent selects `email` only) — select just `email`
-    // and pass `userName: null` into buildAgentPrompt.
+    // The User model has no `name` field — it has `displayName String?` —
+    // select that and pass it through as userName (null when unset).
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true },
+      select: { email: true, displayName: true },
     });
     const turnId = randomUUID();
     const startedAt = Date.now();
@@ -58,7 +57,7 @@ export class AgentService {
         role: 'system',
         content: buildAgentPrompt({
           userEmail: user?.email ?? '',
-          userName: null,
+          userName: user?.displayName ?? null,
           nowIso: new Date().toISOString(),
         }),
       },
@@ -88,19 +87,26 @@ export class AgentService {
 
       if (!result.toolCalls.length || finalIteration) return;
 
+      // Cap BEFORE building the assistant message: an OpenAI-compat server
+      // rejects an assistant message whose tool_calls lack a matching
+      // tool reply for every id, so the assistant message's tool_calls and
+      // the role:'tool' replies below must be derived from the same
+      // (already-capped) list of calls, using the same ids for both.
+      const calls = result.toolCalls.slice(0, MAX_CALLS_PER_ITERATION);
+      const callIds = calls.map((c, i) => c.id || `call_${iter}_${i}`);
+
       transcript.push({
         role: 'assistant',
         content: result.text,
-        tool_calls: result.toolCalls.map((c, i) => ({
-          id: c.id || `call_${iter}_${i}`,
+        tool_calls: calls.map((c, i) => ({
+          id: callIds[i],
           type: 'function' as const,
           function: { name: c.name, arguments: c.arguments },
         })),
       });
 
-      const calls = result.toolCalls.slice(0, MAX_CALLS_PER_ITERATION);
       for (const [i, call] of calls.entries()) {
-        const callId = call.id || `call_${iter}_${i}`;
+        const callId = callIds[i];
         const content = await this.dispatch(call, callId, ctx, turnId, emit);
         transcript.push({ role: 'tool', tool_call_id: callId, content });
       }
@@ -116,7 +122,15 @@ export class AgentService {
   ): Promise<string> {
     const def = this.registry.get(call.name);
     if (!def) {
-      emit('tool_result', { id: callId, ok: false, summary: `Unknown tool ${call.name}`, refs: [] });
+      emit('tool_start', { id: callId, tool: call.name, argsSummary: '(unknown tool)' });
+      emit('tool_result', {
+        id: callId, ok: false, summary: `Unknown tool ${call.name}`, refs: [], injectionSuspected: false,
+      });
+      // NOTE: this error string is pushed verbatim into the transcript as a
+      // role:'tool' message content — it is NOT passed through fenceUntrusted.
+      // Never interpolate untrusted content (subjects, filenames, titles,
+      // tool output) into an error thrown/returned from here or below —
+      // only static, developer-controlled text belongs in these messages.
       return `Error: unknown tool "${call.name}".`;
     }
 
@@ -125,7 +139,9 @@ export class AgentService {
       args = this.registry.parseArgs(call.name, call.arguments);
     } catch (err: any) {
       emit('tool_start', { id: callId, tool: call.name, argsSummary: '(invalid arguments)' });
-      emit('tool_result', { id: callId, ok: false, summary: 'Invalid arguments', refs: [] });
+      emit('tool_result', {
+        id: callId, ok: false, summary: 'Invalid arguments', refs: [], injectionSuspected: false,
+      });
       return `Error: ${err instanceof ToolValidationError ? err.message : 'invalid arguments'}`;
     }
 
@@ -135,7 +151,9 @@ export class AgentService {
     if (def.mode === 'write-gated') {
       const proposalId = randomUUID();
       emit('proposal', { proposalId, tool: call.name, args, summary: summarizeArgs(call.name, args) });
-      emit('tool_result', { id: callId, ok: true, summary: 'Proposal shown for approval', refs: [] });
+      emit('tool_result', {
+        id: callId, ok: true, summary: 'Proposal shown for approval', refs: [], injectionSuspected: false,
+      });
       await this.log(ctx.userId, turnId, call.name, args, true, Date.now() - started);
       return 'A proposal card for this action has been shown to the user; it executes only if they approve. Do not call this tool again for the same action. Tell the user it is ready for their approval.';
     }
@@ -154,7 +172,9 @@ export class AgentService {
       return fenceUntrusted(`TOOL_${call.name.toUpperCase()}`, clipped);
     } catch (err: any) {
       const message = String(err?.message ?? 'tool failed').slice(0, 200);
-      emit('tool_result', { id: callId, ok: false, summary: message, refs: [] });
+      emit('tool_result', {
+        id: callId, ok: false, summary: message, refs: [], injectionSuspected: false,
+      });
       await this.log(ctx.userId, turnId, call.name, args, false, Date.now() - started);
       return `Error executing ${call.name}: ${message}`;
     }

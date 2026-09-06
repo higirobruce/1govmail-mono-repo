@@ -14,7 +14,7 @@ describe('buildGenerationPrompt', () => {
     expect(p).toContain('relationship brief');           // dossier task line
     expect(p).toMatch(/<<<EMAIL:[0-9a-f]{10}/);          // fenceUntrusted ran on the source
     expect(p).not.toMatch(/SUBJECT: .*\[s1\]/);          // markers neutralized in subject
-    expect(p).toContain('alias in square brackets');     // citation mandate
+    expect(p).toContain('Finance approved the budget [s1]');  // verbatim mandate example from buildAskPrompt
   });
 
   it('meeting_prep names the four pack sections', () => {

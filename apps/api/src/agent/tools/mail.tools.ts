@@ -36,7 +36,7 @@ function renderRefs(refs: ToolRef[], rows: any[]): string {
   return refs
     .map((r, i) => {
       const m = rows[i];
-      return `[${r.alias}] "${r.title ?? '(no subject)'}" — from ${m.fromEmail ?? m.fromName ?? 'unknown'} on ${r.date}\n${r.snippet}`;
+      return `[${r.alias}] (id ${r.id}) "${r.title ?? '(no subject)'}" — from ${m.fromEmail ?? m.fromName ?? 'unknown'} on ${r.date}\n${r.snippet}`;
     })
     .join('\n\n');
 }
@@ -85,7 +85,7 @@ export function buildMailReadTools(mail: MailService, retrieval: RetrievalServic
     {
       name: 'search_emails',
       description:
-        'Search the user\'s mailbox and get message ids for read_email/get_thread. Use mode "semantic" for meaning/topic questions; use mode "keyword" for exact names, addresses or Zimbra query syntax (e.g. from:x@y.rw subject:report). Date filters use Zimbra operators with M/D/YYYY dates: after:8/31/2026 before:9/7/2026. There is NO received: operator, no ISO dates, no .. ranges.',
+        'Search the user\'s mailbox. Each result line includes the message id — pass THAT id to read_email/get_thread, never the [sN] alias. Use mode "semantic" for meaning/topic questions; use mode "keyword" for Zimbra query syntax (e.g. from:x@y.rw subject:report) — but never invent an email address: to find mail from a person by name, search their name as plain keywords first. Date filters use Zimbra operators with M/D/YYYY dates: after:8/31/2026 before:9/7/2026. There is NO received: operator, no ISO dates, no .. ranges.',
       mode: 'read',
       resultBudget: 2000,
       schema: z.object({

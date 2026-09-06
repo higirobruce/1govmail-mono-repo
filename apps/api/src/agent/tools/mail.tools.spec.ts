@@ -59,6 +59,9 @@ describe('mail read tools', () => {
     expect(res.refs![0]).toMatchObject({ alias: 's1', type: 'mail', id: 'm9' });
     expect(res.refs![0].date).toBe('2026-08-01T00:00:00.000Z');
     expect(res.content).toContain('[s1]');
+    // The model can only call read_email with an id it can see — the alias
+    // alone is NOT enough (observed live: read_email("s1") guessed and failed).
+    expect(res.content).toContain('(id m9)');
   });
 
   it('search_emails keyword mode uses MailService', async () => {

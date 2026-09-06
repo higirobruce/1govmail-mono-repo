@@ -49,6 +49,7 @@ model User {
   commitments            Commitment[]
   messageEmbeddings      MessageEmbedding[]
   aiGenerations          AiGeneration[]
+  agentToolLogs          AgentToolLog[]
 
   @@map("users")
 }
@@ -240,6 +241,22 @@ model AiGeneration {
   @@unique([userId, kind, targetKey])
   @@index([userId, kind])
   @@map("ai_generations")
+}
+
+model AgentToolLog {
+  id         String   @id @default(cuid())
+  userId     String
+  turnId     String // groups all tool calls of one agent turn
+  tool       String
+  argsJson   Json
+  ok         Boolean
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("agent_tool_logs")
 }
 
 model Commitment {

@@ -52,7 +52,9 @@ describe('gated tools', () => {
     expect(gated.map((t) => `${t.name}:${t.mode}`)).toEqual([
       'send_email:write-gated', 'create_calendar_event:write-gated',
     ]);
-    await expect(gated[0].execute({} as any, makeCtx())).rejects.toThrow(/never executed/);
+    for (const tool of gated) {
+      await expect(tool.execute({} as any, makeCtx())).rejects.toThrow(/never executed/);
+    }
   });
 
   it('send_email schema matches SendMessageDto payload', () => {

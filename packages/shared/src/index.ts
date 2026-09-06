@@ -8,3 +8,4 @@ export * from './ai/chunk';
 export * from './ai/language';
 export * from './ai/chat';
 export * from './ai/docText';
+export * from './ai/mdDoc';

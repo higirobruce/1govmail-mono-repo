@@ -7,6 +7,7 @@
  */
 import { authedFetch } from '../authed-fetch';
 import { AIHttpError } from './client';
+import { readSse } from './sse';
 
 export type AskSourceType = 'mail' | 'doc' | 'event';
 
@@ -53,47 +54,5 @@ export async function streamAsk(
     throw new AIHttpError(message, res.status);
   }
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let full = '';
-  let eventName = 'message';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let nl: number;
-    while ((nl = buffer.indexOf('\n')) !== -1) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (line.startsWith('event:')) {
-        eventName = line.slice(6).trim();
-        continue;
-      }
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (payload === '[DONE]') return full;
-      try {
-        const parsed = JSON.parse(payload);
-        if (eventName === 'sources') {
-          opts.onSources(
-            parsed?.sources ?? [],
-            parsed?.degraded ?? { vector: false, keyword: false, docs: false, calendar: false },
-          );
-          eventName = 'message';
-          continue;
-        }
-        const delta: string = parsed?.choices?.[0]?.delta?.content ?? '';
-        if (delta) {
-          full += delta;
-          opts.onChunk(delta);
-        }
-      } catch {
-        // keep-alive / non-JSON line — tolerate
-      }
-    }
-  }
-  return full;
+  return readSse(res, { onSources: opts.onSources, onChunk: opts.onChunk });
 }

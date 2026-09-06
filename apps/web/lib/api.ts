@@ -70,6 +70,14 @@ function delay<T>(data: T, ms = 120): Promise<T> {
 }
 
 export const api = {
+  people: {
+    /** Deterministic per-person dossier facts — GET /people/dossier. */
+    dossier: (email: string): Promise<PersonDossier> => {
+      if (USE_MOCK) return delay(EMPTY_DOSSIER);
+      return request<PersonDossier>(`/people/dossier?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+    },
+  },
+
   contacts: {
     /**
      * Autocomplete email addresses / names from Zimbra contacts + GAL.
@@ -831,6 +839,54 @@ export const api = {
     update: (token: string, data: Partial<{ title: string; content: string }>) =>
       request<Doc>(`/docs/shared/${token}`, { method: 'PATCH', body: JSON.stringify(data) }),
   },
+};
+
+export interface PersonDossier {
+  profile: {
+    email: string;
+    name: string | null;
+    firstSeenAt: string | null;
+    lastSeenAt: string | null;
+    received90d: number;
+    sent90d: number;
+  };
+  recentConversations: Array<{
+    messageId: string;
+    conversationId: string | null;
+    subject: string | null;
+    snippet: string | null;
+    direction: 'in' | 'out';
+    at: string;
+  }>;
+  commitments: Array<{
+    id: string;
+    type: 'promised' | 'waiting';
+    text: string;
+    dueHint: string | null;
+    messageId: string;
+    lastActivityAt: string;
+  }>;
+  sharedEvents: Array<{
+    id: string;
+    title: string;
+    startAt: string;
+    endAt: string;
+    upcoming: boolean;
+  }>;
+  sharedDocs: Array<{
+    id: string;
+    title: string;
+    emoji: string | null;
+    direction: 'i-shared' | 'they-shared';
+  }>;
+}
+
+const EMPTY_DOSSIER: PersonDossier = {
+  profile: { email: '', name: null, firstSeenAt: null, lastSeenAt: null, received90d: 0, sent90d: 0 },
+  recentConversations: [],
+  commitments: [],
+  sharedEvents: [],
+  sharedDocs: [],
 };
 
 export interface Commitment {

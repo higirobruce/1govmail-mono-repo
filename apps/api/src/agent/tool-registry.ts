@@ -44,6 +44,27 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
 
 export class ToolValidationError extends Error {}
 
+/**
+ * Remove `pattern` keys from a JSON Schema, recursively. zod v4's .email()
+ * emits a regex with negative lookaheads, which llama.cpp-based servers
+ * (the Ollama host behind CHAT_MODEL) cannot convert to a sampling grammar —
+ * the request 400s with "Failed to initialize samplers: failed to parse
+ * grammar". The advertised schema only steers the model; real validation
+ * happens server-side in parseArgs, so dropping patterns loses nothing.
+ */
+function stripPatterns(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripPatterns);
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === 'pattern' && typeof value === 'string') continue;
+      out[key] = stripPatterns(value);
+    }
+    return out;
+  }
+  return node;
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDef>();
 
@@ -73,7 +94,7 @@ export class ToolRegistry {
       function: {
         name: t.name,
         description: t.description,
-        parameters: z.toJSONSchema(t.schema) as Record<string, unknown>,
+        parameters: stripPatterns(z.toJSONSchema(t.schema)) as Record<string, unknown>,
       },
     }));
   }

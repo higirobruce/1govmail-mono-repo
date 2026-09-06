@@ -42,3 +42,26 @@ describe('ToolRegistry', () => {
     expect(r.parseArgs('noargs', '')).toEqual({});
   });
 });
+
+describe('openAiTools grammar compatibility', () => {
+  it('strips regex patterns (llama.cpp grammar cannot express lookaheads)', () => {
+    const r = new ToolRegistry();
+    r.register({
+      name: 'mailer',
+      description: 'send',
+      mode: 'write-gated',
+      resultBudget: 0,
+      schema: z.object({
+        to: z.array(z.string().email()).min(1).max(20),
+        contact: z.string().email(),
+      }),
+      execute: async () => ({ summary: '', content: '' }),
+    } as ToolDef);
+    const json = JSON.stringify(r.openAiTools());
+    expect(json).not.toContain('"pattern"');
+    // structure the model needs is preserved
+    const params: any = r.openAiTools()[0].function.parameters;
+    expect(params.properties.to.items.type).toBe('string');
+    expect(params.properties.to.maxItems).toBe(20);
+  });
+});

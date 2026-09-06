@@ -17,7 +17,7 @@
 - Loop limits (verbatim from spec): max **8 iterations**, max **3 tool calls per iteration**, **60s** wall clock; per-tool result budget default **2000** chars, 4000 for `read_email`/`read_document`, 6000 for `compare_documents`.
 - Throttle on the agent endpoint: `@Throttle({ default: { limit: 10, ttl: 60_000 } })` (named bucket must be `default`).
 - Client may only send roles `user`/`assistant` (reuse `AskTurnDto`); server owns the system prompt.
-- Tool count ≤ 15. No delete/move/bulk tools. No web tools.
+- The v1 registry holds exactly 18 tools. No delete/move/bulk tools. No web tools.
 - Repo conventions: api tests = Jest, plain constructors + hand-rolled `jest.fn()` mocks (see `apps/api/src/chat/ask.service.spec.ts`), NOT `Test.createTestingModule`. Web tests = Vitest. Commits `feat(api):` / `feat(web):` / `feat(shared):` style, each ending with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 - After ANY change under `packages/shared/src/`, rebuild before running app tests: `pnpm --filter @email-client/shared exec tsc -p tsconfig.json`.
 - Prisma migration command: `cd apps/api && npx prisma migrate dev --name <name>`.
@@ -793,6 +793,7 @@ const mail = {
   getMessage: jest.fn().mockResolvedValue({
     id: 'm1', subject: 'MoU draft', fromEmail: 'a@b.rw', to: ['u1@x.rw'],
     date: '2026-09-01T00:00:00Z', body: '<p>Hello <b>world</b></p>',
+    attachments: [{ id: '2', filename: 'MoU-final.pdf', mimeType: 'application/pdf', size: 12345 }],
   }),
   getConversation: jest.fn().mockResolvedValue({
     messages: [
@@ -831,11 +832,13 @@ describe('mail read tools', () => {
     expect(res.summary).toContain('1');
   });
 
-  it('read_email strips HTML and includes headers', async () => {
+  it('read_email strips HTML, includes headers and lists attachments', async () => {
     const res = await byName('read_email').execute({ messageId: 'm1' }, makeCtx());
     expect(res.content).toContain('Hello world');
     expect(res.content).not.toContain('<b>');
     expect(res.content).toContain('a@b.rw');
+    expect(res.content).toContain('MoU-final.pdf');
+    expect(res.content).toContain('part 2');
     expect(res.refs![0].id).toBe('m1');
   });
 
@@ -936,9 +939,15 @@ export function buildMailReadTools(mail: MailService, retrieval: RetrievalServic
         const ref = mailRef(ctx, m);
         const to = Array.isArray(m.to) ? m.to.join(', ') : (m.to ?? '');
         const body = stripHtml(m.body ?? m.bodyHtml ?? m.snippet ?? '');
+        const atts: any[] = Array.isArray(m.attachments) ? m.attachments : [];
+        const attLine = atts.length
+          ? `\nAttachments: ${atts
+              .map((a: any) => `"${a.filename}" (part ${a.id}, ${a.mimeType})`)
+              .join('; ')} — use read_attachment to open one.`
+          : '';
         return {
           summary: `Read "${m.subject ?? '(no subject)'}"`,
-          content: `[${ref.alias}] EMAIL "${m.subject ?? ''}"\nFrom: ${m.fromEmail ?? ''}\nTo: ${to}\nDate: ${ref.date}\n\n${body}`,
+          content: `[${ref.alias}] EMAIL "${m.subject ?? ''}"\nFrom: ${m.fromEmail ?? ''}\nTo: ${to}\nDate: ${ref.date}${attLine}\n\n${body}`,
           refs: [ref],
         };
       },
@@ -976,6 +985,206 @@ Expected: PASS
 ```bash
 git add apps/api/src/agent/tools/mail.tools.ts apps/api/src/agent/tools/mail.tools.spec.ts
 git commit -m "feat(api): agent mail read tools (search_emails, read_email, get_thread)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 6b: `read_attachment` tool + attachment text extraction
+
+**Files:**
+- Create: `apps/api/src/agent/attachment-text.ts`, `apps/api/src/agent/tools/attachment.tools.ts`
+- Test: `apps/api/src/agent/attachment-text.spec.ts`, `apps/api/src/agent/tools/attachment.tools.spec.ts`
+
+**Interfaces:**
+- Consumes: `MailService.downloadAttachment(userId, messageId, part): Promise<{ stream, contentType, filename }>` (see `mail.controller.ts:193` for the call site shape).
+- Produces:
+
+```ts
+// attachment-text.ts
+export const MAX_ATTACHMENT_BYTES: number; // 10 * 1024 * 1024
+export function extractAttachmentText(buf: Buffer, mimeType: string, filename: string): Promise<string>; // throws on unsupported types
+export function streamToBuffer(stream: NodeJS.ReadableStream, maxBytes: number): Promise<Buffer>; // throws when over the cap
+
+// attachment.tools.ts
+export function buildAttachmentTool(mail: MailService): ToolDef; // name 'read_attachment', mode 'read', resultBudget 4000
+```
+
+- [ ] **Step 1: Install extraction dependencies**
+
+Run: `pnpm --filter api add pdf-parse mammoth && pnpm --filter api add -D @types/pdf-parse`
+Expected: deps in `apps/api/package.json`.
+
+- [ ] **Step 2: Write the failing tests**
+
+```ts
+// apps/api/src/agent/attachment-text.spec.ts
+import { Readable } from 'node:stream';
+import { extractAttachmentText, streamToBuffer } from './attachment-text';
+
+describe('extractAttachmentText', () => {
+  it('decodes plain text directly', async () => {
+    const text = await extractAttachmentText(Buffer.from('col1,col2\n1,2'), 'text/csv', 'data.csv');
+    expect(text).toBe('col1,col2\n1,2');
+  });
+
+  it('refuses unsupported types with a clear message', async () => {
+    await expect(
+      extractAttachmentText(Buffer.from([0xff, 0xd8]), 'image/jpeg', 'scan.jpg'),
+    ).rejects.toThrow(/only PDF, DOCX and plain text/);
+  });
+});
+
+describe('streamToBuffer', () => {
+  it('collects a stream into a buffer', async () => {
+    const buf = await streamToBuffer(Readable.from([Buffer.from('ab'), Buffer.from('cd')]), 100);
+    expect(buf.toString()).toBe('abcd');
+  });
+
+  it('throws when the stream exceeds maxBytes', async () => {
+    await expect(streamToBuffer(Readable.from([Buffer.alloc(200)]), 100)).rejects.toThrow(/10MB|limit/);
+  });
+});
+```
+
+```ts
+// apps/api/src/agent/tools/attachment.tools.spec.ts
+import { Readable } from 'node:stream';
+import { buildAttachmentTool } from './attachment.tools';
+import type { ToolContext } from '../tool-registry';
+
+function makeCtx(): ToolContext {
+  let n = 0;
+  return { userId: 'u1', userEmail: 'u1@x.rw', nextAlias: () => `s${++n}`, emitChart: jest.fn() };
+}
+
+describe('read_attachment', () => {
+  it('downloads, extracts and labels the text', async () => {
+    const mail = {
+      downloadAttachment: jest.fn().mockResolvedValue({
+        stream: Readable.from([Buffer.from('minutes of the meeting')]),
+        contentType: 'text/plain',
+        filename: 'minutes.txt',
+      }),
+    } as any;
+    const tool = buildAttachmentTool(mail);
+    const res = await tool.execute({ messageId: 'm1', part: '2' }, makeCtx());
+    expect(mail.downloadAttachment).toHaveBeenCalledWith('u1', 'm1', '2');
+    expect(res.summary).toContain('minutes.txt');
+    expect(res.content).toContain('minutes of the meeting');
+    expect(res.content).toContain('ATTACHMENT "minutes.txt"');
+  });
+
+  it('surfaces unsupported-type errors as tool errors', async () => {
+    const mail = {
+      downloadAttachment: jest.fn().mockResolvedValue({
+        stream: Readable.from([Buffer.from('x')]),
+        contentType: 'image/png',
+        filename: 'chart.png',
+      }),
+    } as any;
+    await expect(buildAttachmentTool(mail).execute({ messageId: 'm1', part: '3' }, makeCtx())).rejects.toThrow(
+      /only PDF, DOCX and plain text/,
+    );
+  });
+});
+```
+
+(PDF and DOCX branches are covered implicitly through `pdf-parse`/`mammoth`; unit tests don't need binary fixtures — the type routing and error paths are ours, the parsers are theirs. The manual sweep in Task 14 exercises a real PDF.)
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `pnpm --filter api test attachment`
+Expected: FAIL — modules not found.
+
+- [ ] **Step 4: Write the implementations**
+
+```ts
+// apps/api/src/agent/attachment-text.ts
+import pdfParse from 'pdf-parse';
+import mammoth from 'mammoth';
+
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+const TEXT_TYPES = /^(text\/|application\/(json|xml|csv))/;
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+export async function streamToBuffer(stream: NodeJS.ReadableStream, maxBytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of stream) {
+    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as any);
+    total += b.length;
+    if (total > maxBytes) throw new Error('attachment exceeds the 10MB read limit');
+    chunks.push(b);
+  }
+  return Buffer.concat(chunks);
+}
+
+export async function extractAttachmentText(buf: Buffer, mimeType: string, filename: string): Promise<string> {
+  const lower = (filename ?? '').toLowerCase();
+  if (mimeType === 'application/pdf' || lower.endsWith('.pdf')) {
+    const parsed = await pdfParse(buf);
+    return parsed.text ?? '';
+  }
+  if (mimeType === DOCX_MIME || lower.endsWith('.docx')) {
+    const { value } = await mammoth.extractRawText({ buffer: buf });
+    return value ?? '';
+  }
+  if (TEXT_TYPES.test(mimeType) || /\.(txt|csv|md|log)$/.test(lower)) {
+    return buf.toString('utf8');
+  }
+  throw new Error(
+    `unsupported attachment type "${mimeType || 'unknown'}" — only PDF, DOCX and plain text attachments are readable`,
+  );
+}
+```
+
+```ts
+// apps/api/src/agent/tools/attachment.tools.ts
+import { z } from 'zod';
+import type { MailService } from '../../mail/mail.service';
+import type { ToolDef } from '../tool-registry';
+import { extractAttachmentText, streamToBuffer, MAX_ATTACHMENT_BYTES } from '../attachment-text';
+
+export function buildAttachmentTool(mail: MailService): ToolDef {
+  return {
+    name: 'read_attachment',
+    description:
+      'Read the text of one email attachment by message id and MIME part (both listed by read_email). Supports PDF, DOCX and plain-text files up to 10MB. Images and spreadsheets are not readable.',
+    mode: 'read',
+    resultBudget: 4000,
+    schema: z.object({ messageId: z.string().min(1), part: z.string().min(1) }),
+    async execute(args: any, ctx) {
+      const { stream, contentType, filename } = await mail.downloadAttachment(
+        ctx.userId,
+        args.messageId,
+        args.part,
+      );
+      const buf = await streamToBuffer(stream, MAX_ATTACHMENT_BYTES);
+      const text = await extractAttachmentText(buf, contentType, filename);
+      return {
+        summary: `Read attachment "${filename}"`,
+        content: `ATTACHMENT "${filename}" (${contentType}) from message ${args.messageId}:\n\n${text || '(no extractable text)'}`,
+      };
+    },
+  };
+}
+```
+
+Verify `MailService.downloadAttachment`'s exact return field names in `apps/api/src/mail/mail.service.ts` (the controller at `mail.controller.ts:193` destructures `{ stream, contentType, filename }` — match it). If `pdf-parse`'s CJS default import trips ts-jest, use `import * as pdfParse from 'pdf-parse'` with a call-through, or `require` — match whatever the repo's `esModuleInterop` allows.
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `pnpm --filter api test attachment`
+Expected: PASS (6 tests)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/api/src/agent/attachment-text.ts apps/api/src/agent/attachment-text.spec.ts apps/api/src/agent/tools/attachment.tools.ts apps/api/src/agent/tools/attachment.tools.spec.ts apps/api/package.json pnpm-lock.yaml
+git commit -m "feat(api): read_attachment agent tool with PDF/DOCX/text extraction
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
@@ -1957,6 +2166,8 @@ export function summarizeArgs(tool: string, args: any): string {
     case 'read_email':
     case 'get_thread':
       return String(args.messageId);
+    case 'read_attachment':
+      return `${args.messageId} part ${args.part}`;
     case 'read_document':
       return String(args.docId);
     case 'compare_documents':
@@ -2382,6 +2593,7 @@ import { TasksService } from '../tasks/tasks.service';
 import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
 import { ToolRegistry } from './tool-registry';
+import { buildAttachmentTool } from './tools/attachment.tools';
 import { buildCalendarTools } from './tools/calendar.tools';
 import { buildDocsTools } from './tools/docs.tools';
 import { buildMailReadTools } from './tools/mail.tools';
@@ -2406,6 +2618,7 @@ import { buildChartTool, buildGatedTools, buildWriteTools } from './tools/write.
       ) => {
         const registry = new ToolRegistry();
         registry.registerAll(buildMailReadTools(mail, retrieval));
+        registry.register(buildAttachmentTool(mail));
         registry.registerAll(buildDocsTools(docs, retrieval));
         registry.registerAll(buildCalendarTools(calendar));
         registry.registerAll(buildPeopleTools(people, contacts, tasks));
@@ -3001,6 +3214,7 @@ const LABELS: Record<string, string> = {
   search_emails: 'Searched mail',
   read_email: 'Read email',
   get_thread: 'Read thread',
+  read_attachment: 'Read attachment',
   search_documents: 'Searched docs',
   read_document: 'Read document',
   compare_documents: 'Compared documents',
@@ -3100,6 +3314,7 @@ Boot api + web, then in the Ask panel verify:
 4. "Send an email to <colleague VM account> saying hello" → proposal card; Approve sends (verify in Sent); Dismiss leaves nothing.
 5. "Schedule a 30-min sync with <person> next week when we're both free" → freebusy step then event proposal card. **Per project rule: do NOT approve events with real attendees on the VMs — dismiss after verifying the card.**
 6. "Compare <doc A> and <doc B>" → comparison answer citing both.
+6b. "What does the PDF attached to <known email> say about <topic>?" → read_email lists the attachment, read_attachment extracts it, answer cites the email. Also try an image attachment → the agent relays the "not readable" error gracefully.
 7. "Chart my mail volume per day this week" → search/list steps then a rendered chart.
 8. Abort mid-loop → stream stops, no orphan writes.
 9. `agent_tool_logs` table has one row per executed tool (`SELECT tool, ok FROM agent_tool_logs ORDER BY "createdAt" DESC LIMIT 20;`).
@@ -3117,6 +3332,6 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ## Self-review notes (already applied)
 
-- Spec coverage: Section 1 → Tasks 5/10/11; Section 2 → Tasks 4/6/7/8/9; Section 3 → Tasks 9/13; Section 4 → Tasks 10/12/13/14; Section 5 → fencing/injection flags (Task 10), zod validation (Task 4), gated-never-execute (Tasks 9/10), audit table (Tasks 3/10), throttle (Task 11); Section 6 → error paths in Tasks 10/11; Section 7 → per-task tests + Task 14 sweep.
+- Spec coverage: Section 1 → Tasks 5/10/11; Section 2 → Tasks 4/6/6b/7/8/9; Section 3 → Tasks 9/13; Section 4 → Tasks 10/12/13/14; Section 5 → fencing/injection flags (Task 10), zod validation (Task 4), gated-never-execute (Tasks 9/10), audit table (Tasks 3/10), throttle (Task 11); Section 6 → error paths in Tasks 10/11; Section 7 → per-task tests + Task 14 sweep.
 - The spec's "oldest tool results elided beyond a rolling cap" is intentionally NOT implemented in v1 code: with ≤8 iterations × ≤3 calls × ≤2–6k chars and 16k context, the budget math holds without elision; revisit if real transcripts overflow (Ollama truncates at the context limit — watch for degraded final answers in the sweep).
 - Known verify-at-implementation points (flagged inline in their tasks): MailService return shapes (Task 6), `Document.invites` relation name (Task 7), `User.name` field (Task 10), `AIHttpError` constructor and web testing-library availability (Tasks 12/13).

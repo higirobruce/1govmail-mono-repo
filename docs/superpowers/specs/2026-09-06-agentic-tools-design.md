@@ -34,7 +34,7 @@ they execute through the existing REST endpoints.
 |---|---|
 | Surface | Ask 1Gov panel becomes the agent (no new chat product) |
 | Write safety | Confirm-gated: reads autonomous; safe writes (draft_email, create_document, create_task) autonomous; outward/irreversible writes proposal-gated |
-| V1 tools | Tier-1 set over existing endpoints + `create_chart` + `compare_documents` |
+| V1 tools | Tier-1 set over existing endpoints + `create_chart` + `compare_documents` + `read_attachment` (18 total) |
 | Web tools | Deferred (offline gov VMs; revisit when an online deployment is concrete) |
 | Loop | Server-side native tool calling (qwen3 via Ollama OpenAI-compat), Approach A |
 | Delete/move/bulk tools | Excluded from v1 entirely |
@@ -94,15 +94,19 @@ internal callers. The public `/ai/chat` DTO continues to strip them.
 Registry entry: `{ name, description, parameters (zod → JSON Schema),
 mode: 'read' | 'write-auto' | 'write-gated', execute(userId, args, ctx) }`.
 Descriptions are written for a 30B model: one sentence of purpose, one of
-when-to-use, explicit arg semantics. Tool count is deliberately ≤ 15.
+when-to-use, explicit arg semantics. The v1 registry holds exactly **18
+tools** — near the practical ceiling for reliable selection by qwen3-30b.
+Growth beyond this needs consolidation, not more rows; tool-selection
+accuracy is an explicit item in the manual sweep.
 
 **Read (autonomous):**
 
 | Tool | Backing |
 |---|---|
 | `search_emails(query, mode?: semantic\|keyword, limit?)` | `RetrievalService.semantic` / Zimbra keyword search |
-| `read_email(messageId)` | `MailService` message fetch (userId-scoped) |
+| `read_email(messageId)` | `MailService` message fetch (userId-scoped); lists the message's attachments (filename, part, type) so the model can follow up with `read_attachment` |
 | `get_thread(messageId)` | conversation endpoint logic |
+| `read_attachment(messageId, part)` | **new** text extraction over `MailService.downloadAttachment`: PDF (`pdf-parse`), DOCX (`mammoth`), plain text/CSV/MD direct decode; ≤10MB; other types (images, xlsx) refuse with a clear error |
 | `search_documents(query)` | docs vector leg + **new** title/keyword ILIKE search in `DocsService` (ACL: owner OR invite) |
 | `read_document(docId)` | `DocsService.verifyReadAccess` + `docText` extraction |
 | `compare_documents(docIdA, docIdB)` | reads both via `read_document` path; returns both texts fenced with labels A/B; the model performs the comparison |
@@ -143,12 +147,11 @@ must gather the numbers itself via read tools first.
   the SSE frame / client store. Dismissing a card discards it.
 - AskPanel renders per-tool cards:
   - `send_email` → recipient/subject/body preview; **Approve & Send**
-    (browser calls `POST /mail/send` with the payload), **Edit in Compose**
-    (opens ComposeModal prefilled — reuses the phase-2 draft-from-thread
-    prefill path), **Dismiss**.
-  - `create_calendar_event` → event preview with attendee chips and a
-    free/busy hint if the agent fetched one; **Approve & Create**
-    (`POST /calendar/events`), **Edit in Calendar**, **Dismiss**.
+    (browser calls `POST /mail/send` with the payload), **Save as draft
+    instead** (browser calls `POST /mail/drafts`; ComposeModal is local to
+    the mail page, so cross-page "edit in compose" is deferred), **Dismiss**.
+  - `create_calendar_event` → event preview with attendee chips;
+    **Approve & Create** (`POST /calendar/events`), **Dismiss**.
 - After execution the client appends a local status line under the card
   ("Sent ✓ " / error from the endpoint). No agent round-trip required.
 - Approval is per-proposal; there is no "always allow" in v1.
@@ -247,4 +250,7 @@ Web search / open_webpage (deferred); spreadsheets, presentations,
 server-side PDF (no backend exists); delete/move/bulk mail tools; "always
 allow" per-tool autonomy settings; server-persisted proposals; folding
 `/ai/ask` into `/ai/agent`; multi-agent / background agents; per-tool user
-permissions UI.
+permissions UI; attachment-content **search** (embedding attachment text in
+the ingest workers so `search_emails` finds content inside attachments —
+phase 4b; in v1 the agent finds the email first, then reads its attachment);
+OCR of scanned/image attachments.

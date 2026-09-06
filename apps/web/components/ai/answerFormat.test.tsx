@@ -33,3 +33,11 @@ describe('renderInline', () => {
     expect(html('plain')).toBe('plain');
   });
 });
+
+describe('heading blocks', () => {
+  it('renders ### headings as heading blocks, not raw hashes', () => {
+    const blocks = splitBlocks('### Key Differences:\n- a');
+    expect(blocks[0]).toMatchObject({ kind: 'h', text: 'Key Differences:' });
+    expect(blocks[1].kind).toBe('li');
+  });
+});

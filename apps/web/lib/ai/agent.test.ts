@@ -75,3 +75,28 @@ describe('streamAgent', () => {
     vi.doUnmock('../authed-fetch');
   });
 });
+
+describe('readEventSse robustness', () => {
+  it('handles a data line split across two stream chunks', async () => {
+    const encoder = new TextEncoder();
+    const part1 = 'data: {"choices":[{"delta":{"con';
+    const part2 = 'tent":"Hi"}}]}\n\ndata: [DONE]\n\n';
+    const res = new Response(new ReadableStream({
+      start(c) { c.enqueue(encoder.encode(part1)); c.enqueue(encoder.encode(part2)); c.close(); },
+    }));
+    const chunks: string[] = [];
+    const text = await readEventSse(res, { onChunk: (d) => chunks.push(d) });
+    expect(text).toBe('Hi');
+  });
+
+  it('does not misroute the next delta after an unparseable named-event payload', async () => {
+    const raw = 'event: tool_start\ndata: {broken\n\ndata: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n';
+    const events: string[] = [];
+    const text = await readEventSse(new Response(raw), {
+      onChunk: () => {},
+      onEvent: (name) => events.push(name),
+    });
+    expect(text).toBe('ok');
+    expect(events).toEqual([]);
+  });
+});

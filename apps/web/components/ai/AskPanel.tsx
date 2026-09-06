@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square,
-  Mail, FileText, Calendar,
+  Mail, FileText, Calendar, SquarePen,
 } from 'lucide-react';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
 import { renderInline, splitBlocks } from './answerFormat';
@@ -35,6 +35,10 @@ interface QuestionTurn { role: 'user'; content: string }
 type Turn = QuestionTurn | AnswerTurn;
 
 const MAX_SENT_TURNS = 12; // mirror of the API's ArrayMaxSize — last 6 exchanges
+// Agent turns get a shorter history: long transcripts are what push qwen3 into
+// answering from context without calling tools (observed live 2026-09-06 —
+// fabricated docs/ids/addresses). 6 turns = 3 exchanges is plenty for follow-ups.
+const MAX_AGENT_TURNS = 6;
 
 const EXAMPLE_QUESTIONS = [
   'What did finance say about the budget?',
@@ -203,7 +207,7 @@ function AnswerBody({
       {blocks.map((block, i) => (
         <div
           key={i}
-          className={`${block.gapBefore ? 'mt-2 ' : ''}${block.kind === 'li' ? 'flex gap-1.5 pl-1' : ''}`}
+          className={`${block.gapBefore ? 'mt-2 ' : ''}${block.kind === 'li' ? 'flex gap-1.5 pl-1' : ''}${block.kind === 'h' ? 'font-semibold' : ''}`}
         >
           {block.kind === 'li' && <span aria-hidden className="select-none text-muted-foreground">•</span>}
           <span>{renderLine(block.text, `b${i}`)}</span>
@@ -262,6 +266,7 @@ export default function AskPanel() {
   const liveProposalsRef = useRef<AgentProposal[]>([]);
   const liveChartsRef = useRef<AgentChartSpec[]>([]);
   const [liveSteps, setLiveSteps] = useState<AgentStep[]>([]);
+  const [liveProposals, setLiveProposals] = useState<AgentProposal[]>([]);
 
   useEffect(() => { if (open && prefill) setInput(prefill); }, [open, prefill]);
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -296,7 +301,7 @@ export default function AskPanel() {
     setError(null);
     setInput('');
     const history: AskTurn[] = [...turns.map((t) => ({ role: t.role, content: t.content.slice(0, 4000) })), { role: 'user', content: q }]
-      .slice(-MAX_SENT_TURNS) as AskTurn[];
+      .slice(-(scope ? MAX_SENT_TURNS : MAX_AGENT_TURNS)) as AskTurn[];
     setTurns((prev) => [...prev, { role: 'user', content: q }]);
     setStreaming(true);
     setPendingSources([]);
@@ -310,6 +315,7 @@ export default function AskPanel() {
     liveProposalsRef.current = [];
     liveChartsRef.current = [];
     setLiveSteps([]);
+    setLiveProposals([]);
     stream.reset();
     // Text streamed since the last tool_start. Iteration narration ("Let me
     // search…") belongs to the step that follows it, not the answer: on each
@@ -366,7 +372,12 @@ export default function AskPanel() {
                 setPendingSources(pendingSourcesRef.current);
               }
             },
-            onProposal: (p) => { liveProposalsRef.current = [...liveProposalsRef.current, p]; },
+            onProposal: (p) => {
+              // Render proposals live: a Stop after the frame arrives must not
+              // discard an approval card the server already proposed.
+              liveProposalsRef.current = [...liveProposalsRef.current, p];
+              setLiveProposals(liveProposalsRef.current);
+            },
             onChart: (c) => { liveChartsRef.current = [...liveChartsRef.current, c]; },
           });
       // Agent turns: the answer is the FINAL segment only — earlier segments
@@ -393,6 +404,27 @@ export default function AskPanel() {
       setStreaming(false);
       stream.reset();
     }
+  }
+
+  /**
+   * Clear the conversation: turns, sources, steps, proposals, charts, errors.
+   * A failed turn poisons follow-ups (the model repeats "couldn't find" from
+   * history without re-searching) and long histories push the model into
+   * fabricating tool results — this is the escape hatch.
+   */
+  function startNewConversation() {
+    setTurns([]);
+    setError(null);
+    setPendingSources([]);
+    setPendingDegraded({ vector: false, keyword: false, docs: false, calendar: false });
+    pendingSourcesRef.current = [];
+    pendingDegradedRef.current = { vector: false, keyword: false, docs: false, calendar: false };
+    liveStepsRef.current = [];
+    liveProposalsRef.current = [];
+    liveChartsRef.current = [];
+    setLiveSteps([]);
+    setLiveProposals([]);
+    stream.reset();
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -431,8 +463,18 @@ export default function AskPanel() {
         <span className="text-[0.75rem] font-semibold text-foreground">Ask 1Gov</span>
         <button
           type="button"
+          onClick={startNewConversation}
+          disabled={streaming}
+          className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40"
+          aria-label="New conversation"
+          title="New conversation — clears this chat's history"
+        >
+          <SquarePen className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
           onClick={collapseStore}
-          className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
+          className="p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
           aria-label="Minimize"
           title="Minimize"
         >
@@ -521,13 +563,16 @@ export default function AskPanel() {
           <div className="space-y-2">
             <InjectionBanner sources={pendingSources} />
             <AgentSteps steps={liveSteps} />
+            {liveProposals.map((p) => (
+              <ProposalCard key={p.proposalId} proposal={p} />
+            ))}
             {stream.text ? (
               <p className="whitespace-pre-wrap text-[0.75rem] leading-relaxed text-foreground">
                 {stream.text}
                 <Loader2 className="ml-1 inline h-3 w-3 animate-spin align-middle text-muted-foreground/60" />
               </p>
             ) : (
-              <AIWorkingIndicator step={scope ? 'Searching this document' : 'Searching your mail, docs and calendar'} />
+              <AIWorkingIndicator step={scope ? 'Searching this document' : liveSteps.length ? 'Working with your mail, docs and calendar' : 'Thinking'} />
             )}
             <DegradedNotice degraded={pendingDegraded} />
             <SourcesRail

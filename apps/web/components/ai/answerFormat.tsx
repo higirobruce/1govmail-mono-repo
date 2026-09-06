@@ -9,7 +9,7 @@ import type { ReactNode } from 'react';
  */
 
 export interface AnswerBlock {
-  kind: 'p' | 'li';
+  kind: 'p' | 'li' | 'h';
   text: string;
   /** true when this block starts a new paragraph group (adds top margin) */
   gapBefore: boolean;
@@ -23,6 +23,12 @@ export function splitBlocks(content: string): AnswerBlock[] {
     const line = raw.trimEnd();
     if (!line.trim()) {
       pendingGap = blocks.length > 0;
+      continue;
+    }
+    const heading = /^#{1,4}\s+(.*)$/.exec(line.trim());
+    if (heading) {
+      blocks.push({ kind: 'h', text: heading[1].replace(/:$/, '') + ':', gapBefore: blocks.length > 0 });
+      pendingGap = false;
       continue;
     }
     const bullet = /^\s*[-•*]\s+(.*)$/.exec(line);

@@ -16,7 +16,10 @@ const PAD = { top: 8, right: 8, bottom: 24, left: 32 };
 export default function AgentChart({ spec }: { spec: AgentChartSpec }) {
   const iw = W - PAD.left - PAD.right;
   const ih = H - PAD.top - PAD.bottom;
-  const max = Math.max(1, ...spec.series.flatMap((s) => s.data));
+  // Negative values are meaningless for these chart types and break the SVG
+  // math — clamp to zero rather than drawing outside the plot area.
+  const clamp = (v: number) => Math.max(0, v);
+  const max = Math.max(1, ...spec.series.flatMap((s) => s.data.map(clamp)));
   const n = spec.labels.length;
 
   return (
@@ -31,14 +34,14 @@ export default function AgentChart({ spec }: { spec: AgentChartSpec }) {
         className="text-foreground"
       >
         {spec.type === 'pie' ? (
-          <PieSlices data={spec.series[0].data.slice(0, n)} cx={W / 2} cy={H / 2} r={Math.min(W, H) / 2 - 12} />
+          <PieSlices data={spec.series[0].data.slice(0, n).map(clamp)} cx={W / 2} cy={H / 2} r={Math.min(W, H) / 2 - 12} />
         ) : (
           <>
             <line x1={PAD.left} y1={PAD.top + ih} x2={PAD.left + iw} y2={PAD.top + ih} stroke="currentColor" opacity={0.3} />
             {spec.series.map((s, si) =>
               spec.type === 'bar' ? (
                 <g key={s.name}>
-                  {s.data.slice(0, n).map((v, i) => {
+                  {s.data.slice(0, n).map(clamp).map((v, i) => {
                     const bw = iw / n / spec.series.length - 2;
                     const x = PAD.left + (iw / n) * i + bw * si + 2;
                     const h = (v / max) * ih;
@@ -83,6 +86,12 @@ export default function AgentChart({ spec }: { spec: AgentChartSpec }) {
 
 function PieSlices({ data, cx, cy, r }: { data: number[]; cx: number; cy: number; r: number }) {
   const total = data.reduce((a, b) => a + b, 0) || 1;
+  // A slice holding the whole total degenerates to a zero-area arc (start and
+  // end points coincide) — draw a full circle instead.
+  const dominant = data.findIndex((v) => v === total && v > 0);
+  if (dominant !== -1) {
+    return <circle cx={cx} cy={cy} r={r} fill={PALETTE[dominant % 3]} opacity={0.9} />;
+  }
   // Cumulative start angle per slice, computed without mutating a shared
   // loop variable across iterations.
   const starts = data.reduce<number[]>((acc, v, i) => {

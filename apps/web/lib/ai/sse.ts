@@ -76,15 +76,19 @@ export async function readEventSse(
     if (!line.startsWith('data:')) return;
     const payload = line.slice(5).trim();
     if (payload === '[DONE]') return 'done';
+    // Consume the pending event name BEFORE parsing: an unparseable data line
+    // for a named event must not leave eventName sticky and misroute the next
+    // default delta into onEvent.
+    const pendingEvent = eventName;
+    eventName = 'message';
     let parsed: any;
     try {
       parsed = JSON.parse(payload);
     } catch {
       return;
     }
-    if (eventName !== 'message') {
-      opts.onEvent?.(eventName, parsed);
-      eventName = 'message';
+    if (pendingEvent !== 'message') {
+      opts.onEvent?.(pendingEvent, parsed);
       return;
     }
     const delta = parsed?.choices?.[0]?.delta?.content;

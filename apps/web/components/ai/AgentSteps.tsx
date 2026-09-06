@@ -16,6 +16,7 @@ const LABELS: Record<string, string> = {
   get_person: 'Looked up person',
   search_contacts: 'Searched contacts',
   list_tasks: 'Checked tasks',
+  get_mail_stats: 'Counted mail',
   draft_email: 'Saved a draft',
   create_document: 'Created a document',
   create_task: 'Created a task',

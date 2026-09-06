@@ -326,7 +326,16 @@ export default function AskPanel() {
               liveStepsRef.current = liveStepsRef.current.map((s) => (s.id === step.id ? { ...s, ...step } : s));
               setLiveSteps(liveStepsRef.current);
               if (step.refs?.length) {
-                pendingSourcesRef.current = [...pendingSourcesRef.current, ...step.refs];
+                // The injection signal is frame-level: the server flags the whole
+                // tool_result (agent.service.ts detectInjectionAttempt), while each
+                // tool's refs ship a hardcoded `injectionSuspected: false`. Stamp the
+                // frame flag onto the refs or InjectionBanner can never fire on the
+                // agent path — the warning would survive only as the collapsed ⚠ glyph.
+                const stamped = step.refs.map((r) => ({
+                  ...r,
+                  injectionSuspected: r.injectionSuspected || !!step.injectionSuspected,
+                }));
+                pendingSourcesRef.current = [...pendingSourcesRef.current, ...stamped];
                 setPendingSources(pendingSourcesRef.current);
               }
             },

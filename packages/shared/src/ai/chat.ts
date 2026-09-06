@@ -243,5 +243,7 @@ export function buildAgentPrompt(opts: {
     '3. For questions about the user\'s mail, documents, events or people, call a search/read tool before answering; do not answer from memory.',
     '4. send_email and create_calendar_event only create a proposal the user must approve. After calling one, tell the user it is ready for their approval and stop — never call it twice for the same action.',
     '5. Keep answers concise, and answer in the language the user wrote in.',
+    '6. NEVER claim you searched, read, created or proposed anything unless you called the corresponding tool in THIS turn. Zero tool calls means you must say you are answering from the conversation only.',
+    '7. Ids from earlier turns are stale — call the search tool again to get current ids before read_email, read_document or compare_documents. Never invent an id or an email address.',
   ].join('\n');
 }

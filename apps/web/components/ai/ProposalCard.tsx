@@ -21,10 +21,11 @@ const ENDPOINTS: Record<AgentProposal['tool'], { url: string; verb: string; done
  */
 export default function ProposalCard({ proposal }: { proposal: AgentProposal }) {
   const [status, setStatus] = useState<Status>('idle');
+  const [doneLabel, setDoneLabel] = useState<string>('Done ✓');
   const [error, setError] = useState<string | null>(null);
   const meta = ENDPOINTS[proposal.tool];
 
-  const post = async (url: string, payload: unknown, doneStatus: Status = 'done') => {
+  const post = async (url: string, payload: unknown, label: string) => {
     setStatus('working');
     setError(null);
     try {
@@ -33,7 +34,8 @@ export default function ProposalCard({ proposal }: { proposal: AgentProposal }) 
       // Functional update: a Dismiss click that lands while this request is
       // still in flight must win — a late resolution must never resurrect a
       // dismissed card as "done" or "error". Dismiss is a sticky terminal state.
-      setStatus((s) => (s === 'dismissed' ? s : doneStatus));
+      setDoneLabel(label);
+      setStatus((s) => (s === 'dismissed' ? s : 'done'));
     } catch (err: any) {
       setError(err?.message ?? 'failed');
       setStatus((s) => (s === 'dismissed' ? s : 'error'));
@@ -78,13 +80,13 @@ export default function ProposalCard({ proposal }: { proposal: AgentProposal }) 
         </div>
       )}
       {status === 'done' ? (
-        <div className="text-[0.6875rem] text-green-600 dark:text-green-400">{meta.doneLabel}</div>
+        <div className="text-[0.6875rem] text-green-600 dark:text-green-400">{doneLabel}</div>
       ) : (
         <div className="flex gap-2 items-center flex-wrap">
           <button
             type="button"
             disabled={status === 'working'}
-            onClick={() => post(meta.url, args)}
+            onClick={() => post(meta.url, args, meta.doneLabel)}
             className={cn(
               'rounded-md bg-primary px-2 py-1 text-[0.6875rem] text-primary-foreground transition-colors',
               status === 'working' ? 'opacity-50' : 'hover:bg-primary/90',
@@ -96,7 +98,7 @@ export default function ProposalCard({ proposal }: { proposal: AgentProposal }) 
             <button
               type="button"
               disabled={status === 'working'}
-              onClick={() => post('/mail/drafts', { to: args.to, cc: args.cc, subject: args.subject, body: args.body })}
+              onClick={() => post('/mail/drafts', { to: args.to, cc: args.cc, subject: args.subject, body: args.body }, 'Saved to Drafts ✓')}
               className={cn(
                 'rounded-md border border-border/40 px-2 py-1 text-[0.6875rem] text-foreground transition-colors',
                 status === 'working' ? 'opacity-50' : 'hover:bg-muted/60',

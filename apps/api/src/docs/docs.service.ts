@@ -816,4 +816,31 @@ export class DocsService {
       inviter.csrfToken ?? undefined,
     );
   }
+
+  /**
+   * Agent tool support: title search under the same owner-OR-invite ACL as
+   * verifyReadAccess/getInviteForUser. NOTE the schema's Document→
+   * DocumentInvite relation field is `invites`, and its email column is
+   * `invitedEmail` (NOT `email` — see the `DocumentInvite` model in
+   * prisma/schema.prisma). This mirrors the ACL shape (owner OR invite row
+   * for the caller's email) used by the docs vector leg in
+   * RetrievalService.docVectorRows, but — unlike that raw-SQL leg and
+   * getInviteForUser (both of which compare `invitedEmail` unnormalized) —
+   * this uses `mode: 'insensitive'` plus a lowercased input so title search
+   * isn't defeated by case differences in how an invite email was typed.
+   */
+  async searchByTitle(userId: string, userEmail: string, query: string, limit = 8) {
+    return this.prisma.document.findMany({
+      where: {
+        title: { contains: query, mode: 'insensitive' },
+        OR: [
+          { userId },
+          { invites: { some: { invitedEmail: { equals: userEmail.toLowerCase(), mode: 'insensitive' } } } },
+        ],
+      },
+      select: { id: true, title: true, emoji: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+    });
+  }
 }

@@ -56,3 +56,54 @@ export async function readSse(
   }
   return full;
 }
+
+/** Like readSse, but dispatches ALL named events to onEvent (agent protocol). */
+export async function readEventSse(
+  res: Response,
+  opts: { onChunk: (delta: string) => void; onEvent?: (name: string, data: any) => void },
+): Promise<string> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let eventName = 'message';
+  let full = '';
+
+  const handleLine = (line: string) => {
+    if (line.startsWith('event:')) {
+      eventName = line.slice(6).trim();
+      return;
+    }
+    if (!line.startsWith('data:')) return;
+    const payload = line.slice(5).trim();
+    if (payload === '[DONE]') return 'done';
+    let parsed: any;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      return;
+    }
+    if (eventName !== 'message') {
+      opts.onEvent?.(eventName, parsed);
+      eventName = 'message';
+      return;
+    }
+    const delta = parsed?.choices?.[0]?.delta?.content;
+    if (typeof delta === 'string' && delta) {
+      full += delta;
+      opts.onChunk(delta);
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const result = handleLine(buffer.slice(0, nl).trimEnd());
+      buffer = buffer.slice(nl + 1);
+      if (result === 'done') return full;
+    }
+  }
+  return full;
+}

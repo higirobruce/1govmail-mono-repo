@@ -6,6 +6,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
 import { useAskStore } from '@/stores/ask.store';
+import { usePeopleStore } from '@/stores/people.store';
 import { api, type Commitment } from '@/lib/api';
 import { parseTaskInput } from '@/lib/ai/taskParse';
 import { AIClient } from '@/lib/ai/client';
@@ -260,6 +261,7 @@ export default function MailPage() {
   const openAsk = useAskStore((s) => s.openAsk);
   const collapseAsk = useAskStore((s) => s.collapse);
   const setAskHandlers = useAskStore((s) => s.setHandlers);
+  const dossierOpen = usePeopleStore((s) => s.open);
 
   // ── Deep-link: open specific message via ?open=<messageId> ────────────────
   useEffect(() => {
@@ -1238,7 +1240,7 @@ export default function MailPage() {
   return (
     <div className={cn(
       'flex h-screen overflow-hidden bg-background',
-      askDocked && 'xl:pr-[420px]', // == AskPanel's max-w-[420px]
+      (askDocked || dossierOpen) && 'xl:pr-[420px]', // == AskPanel's/PersonDossierPanel's max-w-[420px]
     )}>
       <Sidebar
         folders={folders}

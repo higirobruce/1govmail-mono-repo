@@ -14,6 +14,7 @@
  */
 import { OfflineProvider } from '@/lib/offline/provider';
 import { AskLauncher } from '@/components/ai/AskLauncher';
+import PersonDossierPanel from '@/components/people/PersonDossierPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,7 @@ export default function AppLayout({
     <OfflineProvider>
       {children}
       <AskLauncher />
+      <PersonDossierPanel />
     </OfflineProvider>
   );
 }

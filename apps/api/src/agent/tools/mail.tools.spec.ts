@@ -1,4 +1,4 @@
-import { buildMailReadTools, normalizeZimbraQuery, stripHtml } from './mail.tools';
+import { buildMailReadTools, buildMailStatsTool, normalizeZimbraQuery, stripHtml } from './mail.tools';
 import type { ToolContext } from '../tool-registry';
 
 function makeCtx(): ToolContext {
@@ -107,5 +107,33 @@ describe('normalizeZimbraQuery', () => {
   it('leaves valid Zimbra queries untouched', () => {
     expect(normalizeZimbraQuery('from:a@b.rw subject:report')).toBe('from:a@b.rw subject:report');
     expect(normalizeZimbraQuery('after:8/31/2026 in:inbox')).toBe('after:8/31/2026 in:inbox');
+  });
+});
+
+describe('get_mail_stats', () => {
+  const statsMail = {
+    searchMessages: jest.fn(async (_u: string, q: string) => {
+      // pretend each day has a total equal to the day-of-month for easy assertions
+      const m = /before:(\d+)\/(\d+)\/(\d+)/.exec(q)!;
+      return { messages: [], total: Number(m[2]) - 1, offset: 0, limit: 1, hasMore: false };
+    }),
+  } as any;
+  const tool = buildMailStatsTool(statsMail);
+
+  it('counts per day with exact-bounds Zimbra queries', async () => {
+    const res = await tool.execute({ startDate: '2026-09-01', endDate: '2026-09-03' }, {
+      userId: 'u1', userEmail: 'u1@x.rw', nextAlias: () => 's1', emitChart: jest.fn(),
+    } as any);
+    expect(statsMail.searchMessages).toHaveBeenCalledWith('u1', 'after:8/31/2026 before:9/2/2026', 1, 0);
+    expect(statsMail.searchMessages).toHaveBeenCalledWith('u1', 'after:9/2/2026 before:9/4/2026', 1, 0);
+    expect(res.content).toContain('2026-09-01: 1');
+    expect(res.content).toContain('2026-09-03: 3');
+    expect(res.summary).toContain('3 day');
+  });
+
+  it('rejects ranges over 31 days or inverted', async () => {
+    const ctx = { userId: 'u1', userEmail: '', nextAlias: () => 's1', emitChart: jest.fn() } as any;
+    await expect(tool.execute({ startDate: '2026-01-01', endDate: '2026-03-01' }, ctx)).rejects.toThrow(/31/);
+    await expect(tool.execute({ startDate: '2026-09-05', endDate: '2026-09-01' }, ctx)).rejects.toThrow(/before/);
   });
 });

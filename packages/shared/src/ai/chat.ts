@@ -223,6 +223,13 @@ export function extractSseText(raw: string): string {
   return out;
 }
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+/** " (Sunday)" suffix for the prompt — qwen3's weekday arithmetic is unreliable without it. */
+function weekdayOf(nowIso: string): string {
+  const d = new Date(nowIso);
+  return Number.isNaN(d.getTime()) ? '' : ` (${WEEKDAYS[d.getUTCDay()]})`;
+}
+
 /** System prompt for the phase-4 agent loop. Mirrors buildAskPrompt's security posture. */
 export function buildAgentPrompt(opts: {
   userEmail: string;
@@ -234,7 +241,7 @@ export function buildAgentPrompt(opts: {
     '',
     UNTRUSTED_CONTENT_RULE,
     '',
-    `Current date/time: ${opts.nowIso}.`,
+    `Current date/time: ${opts.nowIso}${weekdayOf(opts.nowIso)}.`,
     `You are acting for ${opts.userName ?? 'the user'} <${opts.userEmail}>. Tools already enforce this user's access; you have exactly their permissions, never more.`,
     '',
     'MANDATES:',
@@ -242,7 +249,7 @@ export function buildAgentPrompt(opts: {
     '2. Cite evidence with the bracketed aliases provided in tool results, e.g. [s1]. Never invent an alias.',
     '3. For questions about the user\'s mail, documents, events or people, call a search/read tool before answering; do not answer from memory.',
     '4. send_email and create_calendar_event only create a proposal the user must approve. After calling one, tell the user it is ready for their approval and stop — never call it twice for the same action.',
-    '5. Keep answers concise, and answer in the language the user wrote in.',
+    '5. Keep answers concise, and answer in the language the user wrote in. Format with bullet lists and **bold** — never markdown tables or # headings.',
     '6. NEVER claim you searched, read, created or proposed anything unless you called the corresponding tool in THIS turn. Zero tool calls means you must say you are answering from the conversation only.',
     '7. Ids from earlier turns are stale — call the search tool again to get current ids before read_email, read_document or compare_documents. Never invent an id or an email address.',
   ].join('\n');

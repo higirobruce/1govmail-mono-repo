@@ -24,6 +24,7 @@ export function summarizeArgs(tool: string, args: any): string {
     case 'create_chart':
       return `"${args.title}"`;
     case 'list_events':
+    case 'get_mail_stats':
       return `${args.startDate} → ${args.endDate}`;
     case 'get_freebusy':
       return (args.emails ?? []).join(', ');

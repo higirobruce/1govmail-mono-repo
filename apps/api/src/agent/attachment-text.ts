@@ -1,5 +1,9 @@
 import mammoth from 'mammoth';
 
+// DO NOT upgrade pdf-parse: it is pinned EXACT 1.1.1 in package.json because
+// v2 is a breaking class-based rewrite incompatible with this call style and
+// with @types/pdf-parse. `pnpm add pdf-parse@latest` will silently break the
+// PDF branch.
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 const TEXT_TYPES = /^(text\/|application\/(json|xml|csv))/;

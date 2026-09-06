@@ -34,7 +34,7 @@ they execute through the existing REST endpoints.
 |---|---|
 | Surface | Ask 1Gov panel becomes the agent (no new chat product) |
 | Write safety | Confirm-gated: reads autonomous; safe writes (draft_email, create_document, create_task) autonomous; outward/irreversible writes proposal-gated |
-| V1 tools | Tier-1 set over existing endpoints + `create_chart` + `compare_documents` + `read_attachment` (18 total) |
+| V1 tools | Tier-1 set over existing endpoints + `create_chart` + `compare_documents` + `read_attachment` + `get_mail_stats` (19 total) |
 | Web tools | Deferred (offline gov VMs; revisit when an online deployment is concrete) |
 | Loop | Server-side native tool calling (qwen3 via Ollama OpenAI-compat), Approach A |
 | Delete/move/bulk tools | Excluded from v1 entirely |
@@ -94,8 +94,7 @@ internal callers. The public `/ai/chat` DTO continues to strip them.
 Registry entry: `{ name, description, parameters (zod → JSON Schema),
 mode: 'read' | 'write-auto' | 'write-gated', execute(userId, args, ctx) }`.
 Descriptions are written for a 30B model: one sentence of purpose, one of
-when-to-use, explicit arg semantics. The v1 registry holds exactly **18
-tools** — near the practical ceiling for reliable selection by qwen3-30b.
+when-to-use, explicit arg semantics. The registry holds **19 tools** (get_mail_stats added post-ship for deterministic per-day counts) — near the practical ceiling for reliable selection by qwen3-30b.
 Growth beyond this needs consolidation, not more rows; tool-selection
 accuracy is an explicit item in the manual sweep.
 

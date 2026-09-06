@@ -21,7 +21,7 @@ import { ToolRegistry } from './tool-registry';
 import { buildAttachmentTool } from './tools/attachment.tools';
 import { buildCalendarTools } from './tools/calendar.tools';
 import { buildDocsTools } from './tools/docs.tools';
-import { buildMailReadTools } from './tools/mail.tools';
+import { buildMailReadTools, buildMailStatsTool } from './tools/mail.tools';
 import { buildPeopleTools } from './tools/people.tools';
 import { buildChartTool, buildGatedTools, buildWriteTools } from './tools/write.tools';
 
@@ -44,6 +44,7 @@ import { buildChartTool, buildGatedTools, buildWriteTools } from './tools/write.
         const registry = new ToolRegistry();
         registry.registerAll(buildMailReadTools(mail, retrieval));
         registry.register(buildAttachmentTool(mail));
+        registry.register(buildMailStatsTool(mail));
         registry.registerAll(buildDocsTools(docs, retrieval));
         registry.registerAll(buildCalendarTools(calendar));
         registry.registerAll(buildPeopleTools(people, contacts, tasks));

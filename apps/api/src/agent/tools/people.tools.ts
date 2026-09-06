@@ -3,10 +3,7 @@ import type { PeopleService } from '../../people/people.service';
 import type { ContactsService } from '../../contacts/contacts.service';
 import type { TasksService } from '../../tasks/tasks.service';
 import type { ToolDef, ToolRef } from '../tool-registry';
-
-function renderDate(raw: any): string {
-  return raw instanceof Date ? raw.toISOString() : String(raw ?? '');
-}
+import { toIsoDate } from '../dates';
 
 export function buildPeopleTools(
   people: PeopleService,
@@ -67,7 +64,7 @@ export function buildPeopleTools(
         return {
           summary: `${rows.length} task(s)`,
           content: rows.length
-            ? rows.map((t) => `- [${t.status}] "${t.title}"${t.dueDate ? ` due ${renderDate(t.dueDate)}` : ''} (id ${t.id})`).join('\n')
+            ? rows.map((t) => `- [${t.status}] "${t.title}"${t.dueDate ? ` due ${toIsoDate(t.dueDate)}` : ''} (id ${t.id})`).join('\n')
             : 'No tasks.',
         };
       },

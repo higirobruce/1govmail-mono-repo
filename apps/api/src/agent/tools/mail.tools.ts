@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { MailService } from '../../mail/mail.service';
 import type { RetrievalService } from '../../chat/retrieval.service';
 import type { ToolDef, ToolRef, ToolContext } from '../tool-registry';
+import { toIsoDate } from '../dates';
 
 export function stripHtml(html: string): string {
   return String(html ?? '')
@@ -19,8 +20,7 @@ export function stripHtml(html: string): string {
 // strings, not `String(Date)` (which would emit toString()'s locale-formatted
 // "Mon Sep 01 2026 00:00:00 GMT+0000 (…)" into every ref/prompt).
 function mailRef(ctx: ToolContext, m: any): ToolRef {
-  const raw = m.date ?? m.receivedAt;
-  const date = raw instanceof Date ? raw.toISOString() : String(raw ?? '');
+  const date = toIsoDate(m.date ?? m.receivedAt);
   return {
     alias: ctx.nextAlias(),
     type: 'mail',
@@ -152,4 +152,52 @@ export function buildMailReadTools(mail: MailService, retrieval: RetrievalServic
       },
     },
   ];
+}
+
+/**
+ * Deterministic per-day mail counts straight from the mail server's own
+ * totals — the model cannot count a week by paging 10-result searches
+ * (observed live: it burned all 8 iterations trying, then answered without
+ * a chart). One Zimbra query per day with exact date bounds; `total` comes
+ * from the server, not from counting rows.
+ */
+export function buildMailStatsTool(mail: MailService): ToolDef {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const us = (d: Date) => `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  return {
+    name: 'get_mail_stats',
+    description:
+      'Count received emails per day over a date range (max 31 days). Use this for statistics and charts — it returns exact per-day totals from the mail server, unlike search_emails which only pages a few results.',
+    mode: 'read',
+    resultBudget: 1500,
+    schema: z.object({
+      startDate: z.string().min(8).max(10),
+      endDate: z.string().min(8).max(10),
+    }),
+    async execute(args: any, ctx) {
+      const start = new Date(`${args.startDate}T00:00:00Z`);
+      const end = new Date(`${args.endDate}T00:00:00Z`);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        throw new Error('startDate/endDate must be YYYY-MM-DD dates');
+      }
+      if (end.getTime() < start.getTime()) throw new Error('startDate must be before endDate');
+      const days = Math.round((end.getTime() - start.getTime()) / DAY_MS) + 1;
+      if (days > 31) throw new Error('range too large — at most 31 days');
+      const lines: string[] = [];
+      let total = 0;
+      for (let i = 0; i < days; i++) {
+        const day = new Date(start.getTime() + i * DAY_MS);
+        const query = `after:${us(new Date(day.getTime() - DAY_MS))} before:${us(new Date(day.getTime() + DAY_MS))}`;
+        const res: any = await mail.searchMessages(ctx.userId, query, 1, 0);
+        const count = typeof res?.total === 'number' ? res.total : (res?.messages ?? []).length;
+        total += count;
+        lines.push(`${iso(day)}: ${count}`);
+      }
+      return {
+        summary: `Counted ${days} day(s), ${total} email(s)`,
+        content: `Emails received per day:\n${lines.join('\n')}\nTotal: ${total}`,
+      };
+    },
+  };
 }

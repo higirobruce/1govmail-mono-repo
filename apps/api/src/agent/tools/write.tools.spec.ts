@@ -57,6 +57,15 @@ describe('gated tools', () => {
     }
   });
 
+  it('create_calendar_event schema matches CalendarEventData payload', () => {
+    const cal = gated[1];
+    expect(cal.schema.safeParse({ title: 'T', startAt: '2026-09-08T10:00:00Z', endAt: '2026-09-08T10:30:00Z' }).success).toBe(true);
+    expect(cal.schema.safeParse({ title: 'T', startAt: '2026-09-08T10:00:00Z', endAt: '2026-09-08T10:30:00Z', attendees: ['a@b.rw'] }).success).toBe(true);
+    // start/end (spec draft names) must NOT validate — the card POSTs args verbatim as CalendarEventData
+    expect(cal.schema.safeParse({ title: 'T', start: 'x', end: 'y' }).success).toBe(false);
+    expect(cal.schema.safeParse({ title: 'T', startAt: '2026-09-08T10:00:00Z', endAt: '2026-09-08T10:30:00Z', attendees: ['not-an-email'] }).success).toBe(false);
+  });
+
   it('send_email schema matches SendMessageDto payload', () => {
     const ok = gated[0].schema.safeParse({ to: ['a@b.rw'], subject: 'S', body: 'B' });
     expect(ok.success).toBe(true);

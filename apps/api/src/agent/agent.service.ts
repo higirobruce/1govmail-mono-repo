@@ -147,6 +147,7 @@ export class AgentService {
       emit('tool_result', {
         id: callId, ok: false, summary: `Unknown tool ${call.name}`, refs: [], injectionSuspected: false,
       });
+      await this.log(ctx.userId, turnId, call.name, { raw: call.arguments.slice(0, 500) }, false, 0);
       // NOTE: this error string is pushed verbatim into the transcript as a
       // role:'tool' message content — it is NOT passed through fenceUntrusted.
       // Never interpolate untrusted content (subjects, filenames, titles,

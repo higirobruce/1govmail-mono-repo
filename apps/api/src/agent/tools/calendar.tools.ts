@@ -1,15 +1,12 @@
 import { z } from 'zod';
 import type { CalendarService } from '../../calendar/calendar.service';
 import type { ToolDef, ToolRef } from '../tool-registry';
+import { toIsoDate } from '../dates';
 
 function parseDate(value: string, field: string): Date {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) throw new Error(`${field} is not a valid ISO date`);
   return d;
-}
-
-function renderDate(raw: any): string {
-  return raw instanceof Date ? raw.toISOString() : String(raw ?? '');
 }
 
 export function buildCalendarTools(calendar: CalendarService): ToolDef[] {
@@ -31,13 +28,13 @@ export function buildCalendarTools(calendar: CalendarService): ToolDef[] {
           type: 'event',
           id: String(e.id),
           title: e.title ?? null,
-          date: renderDate(e.startAt),
-          snippet: `${renderDate(e.startAt)} → ${renderDate(e.endAt)}${e.location ? ` @ ${e.location}` : ''}`.slice(0, 160),
+          date: toIsoDate(e.startAt),
+          snippet: `${toIsoDate(e.startAt)} → ${toIsoDate(e.endAt)}${e.location ? ` @ ${e.location}` : ''}`.slice(0, 160),
           injectionSuspected: false,
         }));
         const content = events.length
           ? events
-              .map((e, i) => `[${refs[i].alias}] "${e.title}" ${renderDate(e.startAt)} → ${renderDate(e.endAt)}${e.location ? ` @ ${e.location}` : ''}${e.attendees?.length ? ` with ${e.attendees.map((a: any) => a?.name ?? a?.email ?? String(a)).join(', ')}` : ''}`)
+              .map((e, i) => `[${refs[i].alias}] "${e.title}" ${toIsoDate(e.startAt)} → ${toIsoDate(e.endAt)}${e.location ? ` @ ${e.location}` : ''}${e.attendees?.length ? ` with ${e.attendees.map((a: any) => a?.name ?? a?.email ?? String(a)).join(', ')}` : ''}`)
               .join('\n')
           : 'No events in that range.';
         return { summary: `${events.length} event(s)`, content, refs };

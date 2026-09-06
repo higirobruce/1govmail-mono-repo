@@ -51,12 +51,41 @@ function formatRecipients(m: any): string {
   return m.to ?? '';
 }
 
+/**
+ * Rewrite common LLM-invented date idioms into valid Zimbra query syntax.
+ * Zimbra's lexer rejects ISO dates, `..` ranges, and the nonexistent
+ * `received:` operator with mail.QUERY_PARSE_ERROR (observed live: the model
+ * retried `received:2026-09-01..2026-09-07` nine times before giving up).
+ * Valid Zimbra dates are M/D/YYYY on `after:`/`before:`/`date:`.
+ */
+const isoToUs = (iso: string): string => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${m}/${d}/${y}`;
+};
+
+export function normalizeZimbraQuery(query: string): string {
+  let q = query;
+  // field:YYYY-MM-DD..YYYY-MM-DD  →  after:M/D/YYYY before:M/D/YYYY
+  q = q.replace(
+    /\b\w+:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})/g,
+    (_, a: string, b: string) => `after:${isoToUs(a)} before:${isoToUs(b)}`,
+  );
+  // received: is not a Zimbra operator — treat a single date as after:
+  q = q.replace(/\breceived:(\d{4}-\d{2}-\d{2})/g, (_, a: string) => `after:${isoToUs(a)}`);
+  // ISO dates on real date operators → US format
+  q = q.replace(
+    /\b(after|before|date):(\d{4}-\d{2}-\d{2})/g,
+    (_, op: string, a: string) => `${op}:${isoToUs(a)}`,
+  );
+  return q;
+}
+
 export function buildMailReadTools(mail: MailService, retrieval: RetrievalService): ToolDef[] {
   return [
     {
       name: 'search_emails',
       description:
-        'Search the user\'s mailbox and get message ids for read_email/get_thread. Use mode "semantic" for meaning/topic questions; use mode "keyword" for exact names, addresses or Zimbra query syntax (e.g. from:x@y.rw subject:report).',
+        'Search the user\'s mailbox and get message ids for read_email/get_thread. Use mode "semantic" for meaning/topic questions; use mode "keyword" for exact names, addresses or Zimbra query syntax (e.g. from:x@y.rw subject:report). Date filters use Zimbra operators with M/D/YYYY dates: after:8/31/2026 before:9/7/2026. There is NO received: operator, no ISO dates, no .. ranges.',
       mode: 'read',
       resultBudget: 2000,
       schema: z.object({
@@ -67,7 +96,8 @@ export function buildMailReadTools(mail: MailService, retrieval: RetrievalServic
       async execute(args: any, ctx) {
         let rows: any[];
         if (args.mode === 'keyword') {
-          const res: any = await mail.searchMessages(ctx.userId, args.query, args.limit, 0);
+          const query = normalizeZimbraQuery(args.query);
+          const res: any = await mail.searchMessages(ctx.userId, query, args.limit, 0);
           rows = (Array.isArray(res) ? res : res?.messages ?? []).slice(0, args.limit);
         } else {
           rows = await retrieval.semantic(ctx.userId, args.query, args.limit);

@@ -1,4 +1,4 @@
-import { buildMailReadTools, stripHtml } from './mail.tools';
+import { buildMailReadTools, normalizeZimbraQuery, stripHtml } from './mail.tools';
 import type { ToolContext } from '../tool-registry';
 
 function makeCtx(): ToolContext {
@@ -87,5 +87,22 @@ describe('mail read tools', () => {
 
   it('stripHtml collapses tags and whitespace', () => {
     expect(stripHtml('<div>a</div><p>b  c</p>')).toBe('a b c');
+  });
+});
+
+describe('normalizeZimbraQuery', () => {
+  it('rewrites ISO range idioms into after/before with US dates', () => {
+    expect(normalizeZimbraQuery('received:2026-09-01..2026-09-07')).toBe('after:9/1/2026 before:9/7/2026');
+    expect(normalizeZimbraQuery('date:2026-09-01..2026-09-07 budget')).toBe('after:9/1/2026 before:9/7/2026 budget');
+  });
+
+  it('converts ISO dates after after:/before:/date: to US format', () => {
+    expect(normalizeZimbraQuery('after:2026-08-31 before:2026-09-07')).toBe('after:8/31/2026 before:9/7/2026');
+    expect(normalizeZimbraQuery('received:2026-09-01')).toBe('after:9/1/2026');
+  });
+
+  it('leaves valid Zimbra queries untouched', () => {
+    expect(normalizeZimbraQuery('from:a@b.rw subject:report')).toBe('from:a@b.rw subject:report');
+    expect(normalizeZimbraQuery('after:8/31/2026 in:inbox')).toBe('after:8/31/2026 in:inbox');
   });
 });

@@ -121,6 +121,10 @@ export class GenerationController {
     }
 
     if (completed && !ac.signal.aborted) {
+      // Flush any trailing bytes the streaming decode withheld — a final
+      // chunk split mid multi-byte UTF-8 character (routine for accented
+      // French/Kinyarwanda text) would otherwise be silently dropped.
+      transcript += decoder.decode();
       const content = extractSseText(transcript).trim();
       if (content) {
         await this.cache.upsert(userId, prepared.kind, prepared.targetKey, {

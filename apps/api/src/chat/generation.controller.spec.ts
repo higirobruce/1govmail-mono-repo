@@ -144,6 +144,48 @@ describe('GenerationController', () => {
       expect(cache.upsert).not.toHaveBeenCalled();
       expect(res.end).toHaveBeenCalled();
     });
+
+    it('mid-stream abort (res close fires after a chunk but before done): loop exits cleanly, no cache.upsert', async () => {
+      const prepared = {
+        kind: 'dossier', targetKey: 'jd@gov.rw',
+        sources: [{ alias: 's1', type: 'mail', id: 'm1' }],
+        degraded: { mail: false, commitments: false, events: false },
+        upstreamBody: { model: 'x', messages: [], stream: true },
+        fallbackReply: null,
+        sourceAnchor: new Date(),
+      };
+      const dossier = { prepare: jest.fn().mockResolvedValue(prepared), chatModel: 'x' };
+      const encoder = new TextEncoder();
+      let closeCb: (() => void) | undefined;
+      let call = 0;
+      const aiService = {
+        upstream: jest.fn().mockResolvedValue({
+          body: {
+            getReader: () => ({
+              read: async () => {
+                call += 1;
+                if (call === 1) {
+                  return { done: false, value: encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n') };
+                }
+                // Client disconnects mid-stream — abort fires, then the read rejects
+                // the way a real aborted fetch reader would.
+                closeCb?.();
+                throw new Error('The operation was aborted');
+              },
+            }),
+          },
+        }),
+      };
+      const { controller, cache } = makeController({ dossier, aiService });
+      const { res, writes } = fakeRes();
+      res.on = jest.fn((event: string, cb: () => void) => { if (event === 'close') closeCb = cb; });
+
+      await controller.streamDossier(req, res, { email: 'jd@gov.rw' } as any);
+
+      expect(writes.join('')).toContain('Hello');
+      expect(cache.upsert).not.toHaveBeenCalled();
+      expect(res.end).toHaveBeenCalled();
+    });
   });
 
   describe('GET /ai/dossier', () => {

@@ -7,12 +7,13 @@ import { RetrievalService } from './retrieval.service';
 import { AskService } from './ask.service';
 import { GenerationCacheService } from './generation-cache.service';
 import { DossierService } from './dossier.service';
+import { MeetingPrepService } from './meeting-prep.service';
 import { ChatController } from './chat.controller';
 import { SemanticSearchController } from './semantic-search.controller';
 
 @Module({
   imports: [PrismaModule, MailModule, AiModule, DocsModule],
-  providers: [RetrievalService, AskService, GenerationCacheService, DossierService],
+  providers: [RetrievalService, AskService, GenerationCacheService, DossierService, MeetingPrepService],
   controllers: [ChatController, SemanticSearchController],
 })
 export class ChatModule {}

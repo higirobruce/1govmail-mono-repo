@@ -48,6 +48,7 @@ model User {
   messageCards           MessageCard[]
   commitments            Commitment[]
   messageEmbeddings      MessageEmbedding[]
+  aiGenerations          AiGeneration[]
 
   @@map("users")
 }
@@ -167,6 +168,7 @@ model Message {
   @@index([userId, folderId])
   @@index([userId, conversationId])
   @@index([receivedAt])
+  @@index([userId, fromEmail, receivedAt])
   @@map("messages")
 }
 
@@ -215,6 +217,29 @@ model MessageEmbedding {
   @@unique([messageId, chunkIndex, model])
   @@index([userId, extractedAt])
   @@map("message_embeddings")
+}
+
+// Server-side cache for on-demand AI generations (phase 3b): relationship
+// dossiers (targetKey = lowercased counterparty email) and meeting prep packs
+// (targetKey = calendarEvent id). Staleness is computed at READ time against
+// sourceAnchor — never stored. One row per (user, kind, target); regeneration
+// upserts over it.
+model AiGeneration {
+  id           String   @id @default(cuid())
+  userId       String
+  kind         String   // 'dossier' | 'meeting_prep'
+  targetKey    String
+  content      String
+  sources      Json     @default("[]") // PublicAskSource[] snapshot for chip re-render
+  model        String
+  sourceAnchor DateTime // newest source timestamp considered at generation time
+  generatedAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, targetKey])
+  @@index([userId, kind])
+  @@map("ai_generations")
 }
 
 model Commitment {

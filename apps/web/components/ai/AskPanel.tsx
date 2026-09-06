@@ -8,12 +8,16 @@ import {
 } from 'lucide-react';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
 import { streamAsk, type AskSource, type AskSourceType, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
+import { streamAgent, type AgentStep, type AgentProposal, type AgentChartSpec } from '@/lib/ai/agent';
 import { sourceHref } from '@/lib/ai/sourceNav';
 import { scrubOutput } from '@/lib/ai/prompt';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { AIHttpError } from '@/lib/ai/client';
 import { cn } from '@/lib/utils';
 import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
+import AgentSteps from '@/components/ai/AgentSteps';
+import AgentChart from '@/components/ai/AgentChart';
+import ProposalCard from '@/components/ai/ProposalCard';
 import { useAskStore, type LinkedCommitment } from '@/stores/ask.store';
 
 interface AnswerTurn {
@@ -21,6 +25,10 @@ interface AnswerTurn {
   content: string;                 // scrubbed final text
   sources: AskSource[];      // THE alias→message map for this answer's chips
   degraded: AskDegraded;
+  // Agent-mode extras — absent on scoped (streamAsk) turns.
+  steps?: AgentStep[];
+  proposals?: AgentProposal[];
+  charts?: AgentChartSpec[];
 }
 interface QuestionTurn { role: 'user'; content: string }
 type Turn = QuestionTurn | AnswerTurn;
@@ -234,6 +242,13 @@ export default function AskPanel() {
   // without a stale-closure race (same pattern as the suggest-reply chips).
   const pendingSourcesRef = useRef<AskSource[]>([]);
   const pendingDegradedRef = useRef<AskDegraded>({ vector: false, keyword: false, docs: false, calendar: false });
+  // Agent-mode live collection. Same ref-mirrors-state pattern: the refs are
+  // what the completed turn captures, the state is what the live bubble renders.
+  // Proposals/charts have no live rendering, so they need no state mirror.
+  const liveStepsRef = useRef<AgentStep[]>([]);
+  const liveProposalsRef = useRef<AgentProposal[]>([]);
+  const liveChartsRef = useRef<AgentChartSpec[]>([]);
+  const [liveSteps, setLiveSteps] = useState<AgentStep[]>([]);
 
   useEffect(() => { if (open && prefill) setInput(prefill); }, [open, prefill]);
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -273,25 +288,62 @@ export default function AskPanel() {
     setStreaming(true);
     setPendingSources([]);
     setPendingDegraded({ vector: false, keyword: false, docs: false, calendar: false });
+    // The agent protocol has no `sources` frame — sources accumulate from each
+    // tool_result's refs — so the ref must be cleared here rather than relying
+    // on a whole-list overwrite the way the retrieval path does.
+    pendingSourcesRef.current = [];
     pendingDegradedRef.current = { vector: false, keyword: false, docs: false, calendar: false };
+    liveStepsRef.current = [];
+    liveProposalsRef.current = [];
+    liveChartsRef.current = [];
+    setLiveSteps([]);
     stream.reset();
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      const raw = await streamAsk(history, {
-        scope: scope ? { docId: scope.docId } : null,
-        signal: ac.signal,
-        onSources: (sources, degraded) => {
-          pendingSourcesRef.current = sources;
-          pendingDegradedRef.current = degraded;
-          setPendingSources(sources);
-          setPendingDegraded(degraded);
-        },
-        onChunk: (delta) => stream.push(delta),
-      });
+      // Routing: "Ask this document" keeps the scoped retrieval path — /ai/agent
+      // has no doc-scoped mode in v1. Every unscoped turn goes to the agent.
+      const raw = scope
+        ? await streamAsk(history, {
+            scope: { docId: scope.docId },
+            signal: ac.signal,
+            onSources: (sources, degraded) => {
+              pendingSourcesRef.current = sources;
+              pendingDegradedRef.current = degraded;
+              setPendingSources(sources);
+              setPendingDegraded(degraded);
+            },
+            onChunk: (delta) => stream.push(delta),
+          })
+        : await streamAgent(history, {
+            signal: ac.signal,
+            onChunk: (delta) => stream.push(delta),
+            onStep: (step) => {
+              liveStepsRef.current = [...liveStepsRef.current, step];
+              setLiveSteps(liveStepsRef.current);
+            },
+            onStepResult: (step) => {
+              liveStepsRef.current = liveStepsRef.current.map((s) => (s.id === step.id ? { ...s, ...step } : s));
+              setLiveSteps(liveStepsRef.current);
+              if (step.refs?.length) {
+                pendingSourcesRef.current = [...pendingSourcesRef.current, ...step.refs];
+                setPendingSources(pendingSourcesRef.current);
+              }
+            },
+            onProposal: (p) => { liveProposalsRef.current = [...liveProposalsRef.current, p]; },
+            onChart: (c) => { liveChartsRef.current = [...liveChartsRef.current, c]; },
+          });
       const clean = scrubOutput(raw);
       stream.replace(clean);
-      setTurns((prev) => [...prev, { role: 'assistant', content: clean, sources: pendingSourcesRef.current, degraded: pendingDegradedRef.current }]);
+      setTurns((prev) => [...prev, {
+        role: 'assistant',
+        content: clean,
+        sources: pendingSourcesRef.current,
+        degraded: pendingDegradedRef.current,
+        steps: liveStepsRef.current,
+        proposals: liveProposalsRef.current,
+        charts: liveChartsRef.current,
+      }]);
     } catch (err) {
       if (!ac.signal.aborted) {
         setError(err instanceof AIHttpError && err.status === 429
@@ -411,7 +463,10 @@ export default function AskPanel() {
           return (
             <div key={i} className="space-y-2">
               <InjectionBanner sources={t.sources} />
+              <AgentSteps steps={t.steps ?? []} />
               <AnswerBody content={t.content} sources={t.sources} onOpenSource={onOpenSource} />
+              {t.charts?.map((c, ci) => <AgentChart key={ci} spec={c} />)}
+              {t.proposals?.map((p) => <ProposalCard key={p.proposalId} proposal={p} />)}
               <DegradedNotice degraded={t.degraded} />
               <SourcesRail
                 sources={t.sources}
@@ -426,6 +481,7 @@ export default function AskPanel() {
         {streaming && (
           <div className="space-y-2">
             <InjectionBanner sources={pendingSources} />
+            <AgentSteps steps={liveSteps} />
             {stream.text ? (
               <p className="whitespace-pre-wrap text-[0.75rem] leading-relaxed text-foreground">
                 {stream.text}

@@ -75,6 +75,22 @@ describe('AgentService.run', () => {
     expect(prisma.agentToolLog.create).toHaveBeenCalledTimes(1);
   });
 
+  it('emits a separator delta between an iteration preamble and the next iteration text', async () => {
+    const { svc, frames, emit } = makeService(
+      [
+        sseResponse([text('Let me check that.'), toolCall('echo', '{"message":"hi"}')]),
+        sseResponse([text('Here you go.')]),
+      ],
+      [echoTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+
+    const contentDeltas = frames
+      .filter((f) => f.event === null)
+      .map((f) => f.data.choices[0].delta.content);
+    expect(contentDeltas).toEqual(['Let me check that.', '\n\n', 'Here you go.']);
+  });
+
   it('gated tool emits a proposal and never executes', async () => {
     const gated: ToolDef = {
       name: 'send_email', description: 'g', mode: 'write-gated', resultBudget: 0,
@@ -101,6 +117,24 @@ describe('AgentService.run', () => {
     expect(frames.find((f) => f.event === 'tool_result')!.data.ok).toBe(false);
     const toolMsg = ai.upstream.mock.calls[1][0].messages.find((m: any) => m.role === 'tool');
     expect(toolMsg.content).toMatch(/invalid arguments/);
+    expect(toolMsg.content).toContain('<<<'); // fenced, not raw
+  });
+
+  it('fences a tool execution error before it enters the transcript', async () => {
+    const throwingTool: ToolDef = {
+      name: 'boom', description: 'boom', mode: 'read', resultBudget: 100,
+      schema: z.object({}),
+      execute: jest.fn().mockRejectedValue(new Error('backend exploded')),
+    };
+    const { svc, ai, emit } = makeService(
+      [sseResponse([toolCall('boom', '{}')]), sseResponse([text('Recovered')])],
+      [throwingTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+    const toolMsg = ai.upstream.mock.calls[1][0].messages.find((m: any) => m.role === 'tool');
+    expect(toolMsg.content).toContain('<<<'); // fenced
+    expect(toolMsg.content).toContain('Error executing boom');
+    expect(toolMsg.content).toContain('backend exploded');
   });
 
   it('caps tool_calls at MAX_CALLS_PER_ITERATION so the assistant message and tool replies match', async () => {
@@ -126,6 +160,29 @@ describe('AgentService.run', () => {
     const toolReplyIds = toolMsgs.map((m: any) => m.tool_call_id);
     expect(assistantIds).toEqual(['c1', 'c2', 'c3']);
     expect(toolReplyIds).toEqual(['c1', 'c2', 'c3']);
+  });
+
+  it('forces a final answer once the cumulative transcript budget is exceeded', async () => {
+    const bigTool: ToolDef = {
+      name: 'big', description: 'big', mode: 'read', resultBudget: 20_000,
+      schema: z.object({}),
+      execute: jest.fn().mockResolvedValue({ summary: 'big', content: 'x'.repeat(15_000), refs: [] }),
+    };
+    // Provide enough tool-call frames to exhaust MAX_ITERATIONS if the budget
+    // never kicked in, plus one final text frame. Three ~15k-char tool
+    // results (45k) blow past MAX_TRANSCRIPT_CHARS (35k) well before
+    // iteration 8, so the budget — not the iteration cap — must be what
+    // forces the final answer.
+    const loopy = Array.from({ length: 8 }, (_, i) => sseResponse([toolCall('big', '{}', `c${i}`)]));
+    const { svc, ai, emit } = makeService([...loopy, sseResponse([text('Forced by budget')])], [bigTool]);
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+
+    expect(ai.upstream.mock.calls.length).toBeLessThan(9);
+    const lastCallIndex = ai.upstream.mock.calls.length - 1;
+    const lastBody = ai.upstream.mock.calls[lastCallIndex][0];
+    expect(lastBody.tools).toBeUndefined();
+    const nudge = lastBody.messages.find((m: any) => m.content === 'Answer now with what you have. Do not call any more tools.');
+    expect(nudge).toBeTruthy();
   });
 
   it('forces a final answer after MAX_ITERATIONS', async () => {

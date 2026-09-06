@@ -40,7 +40,8 @@ export async function extractAttachmentText(buf: Buffer, mimeType: string, filen
   if (TEXT_TYPES.test(mimeType) || /\.(txt|csv|md|log)$/.test(lower)) {
     return buf.toString('utf8');
   }
-  throw new Error(
-    `unsupported attachment type "${mimeType || 'unknown'}" — only PDF, DOCX and plain text attachments are readable`,
-  );
+  // Never interpolate the sender-controlled mimeType (a Zimbra Content-Type
+  // header) into this message — it flows verbatim into the model transcript
+  // via AgentService.dispatch's catch block, so it must stay static text.
+  throw new Error('unsupported attachment type — only PDF, DOCX and plain text attachments are readable');
 }

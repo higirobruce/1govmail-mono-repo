@@ -15,6 +15,11 @@ import { ToolRegistry, ToolValidationError, type ToolContext } from './tool-regi
 const MAX_ITERATIONS = 8;
 const MAX_CALLS_PER_ITERATION = 3;
 const WALL_CLOCK_MS = 60_000;
+// Cumulative transcript size (sum of all message content lengths) above which
+// we force a final answer. A tool-heavy turn can otherwise exceed the 16k
+// model context, and Ollama truncates oldest-first — silently dropping the
+// system prompt's security mandates rather than erroring.
+const MAX_TRANSCRIPT_CHARS = 35_000;
 
 export type EmitFn = (event: string | null, data: unknown) => void;
 
@@ -63,12 +68,20 @@ export class AgentService {
       },
       ...turns.slice(-12).map((t) => ({ role: t.role, content: t.content.slice(0, 4000) }) as AgentMessage),
     ];
+    let transcriptChars = transcript.reduce((sum, m) => sum + m.content.length, 0);
+    const pushMessage = (msg: AgentMessage): void => {
+      transcript.push(msg);
+      transcriptChars += msg.content.length;
+    };
 
     for (let iter = 1; iter <= MAX_ITERATIONS + 1; iter++) {
       if (signal.aborted) return;
-      const finalIteration = iter > MAX_ITERATIONS || Date.now() - startedAt > WALL_CLOCK_MS;
+      const finalIteration =
+        iter > MAX_ITERATIONS ||
+        Date.now() - startedAt > WALL_CLOCK_MS ||
+        transcriptChars > MAX_TRANSCRIPT_CHARS;
       if (finalIteration) {
-        transcript.push({ role: 'user', content: 'Answer now with what you have. Do not call any more tools.' });
+        pushMessage({ role: 'user', content: 'Answer now with what you have. Do not call any more tools.' });
       }
 
       const body: UpstreamChatBody = {
@@ -87,6 +100,14 @@ export class AgentService {
 
       if (!result.toolCalls.length || finalIteration) return;
 
+      // This iteration produced both a preamble ("Let me look that up.") and
+      // tool calls. Both the preamble and the next iteration's text stream to
+      // the client as raw deltas with no separator, so without this they glue
+      // together into one run-on string. Emit a paragraph break between them.
+      if (result.text) {
+        emit(null, { choices: [{ delta: { content: '\n\n' } }] });
+      }
+
       // Cap BEFORE building the assistant message: an OpenAI-compat server
       // rejects an assistant message whose tool_calls lack a matching
       // tool reply for every id, so the assistant message's tool_calls and
@@ -95,7 +116,7 @@ export class AgentService {
       const calls = result.toolCalls.slice(0, MAX_CALLS_PER_ITERATION);
       const callIds = calls.map((c, i) => c.id || `call_${iter}_${i}`);
 
-      transcript.push({
+      pushMessage({
         role: 'assistant',
         content: result.text,
         tool_calls: calls.map((c, i) => ({
@@ -108,7 +129,7 @@ export class AgentService {
       for (const [i, call] of calls.entries()) {
         const callId = callIds[i];
         const content = await this.dispatch(call, callId, ctx, turnId, emit);
-        transcript.push({ role: 'tool', tool_call_id: callId, content });
+        pushMessage({ role: 'tool', tool_call_id: callId, content });
       }
     }
   }
@@ -142,7 +163,8 @@ export class AgentService {
       emit('tool_result', {
         id: callId, ok: false, summary: 'Invalid arguments', refs: [], injectionSuspected: false,
       });
-      return `Error: ${err instanceof ToolValidationError ? err.message : 'invalid arguments'}`;
+      const argsMessage = err instanceof ToolValidationError ? err.message : 'invalid arguments';
+      return fenceUntrusted('TOOL_ERROR', `Error: ${argsMessage}`);
     }
 
     emit('tool_start', { id: callId, tool: call.name, argsSummary: summarizeArgs(call.name, args) });
@@ -176,7 +198,7 @@ export class AgentService {
         id: callId, ok: false, summary: message, refs: [], injectionSuspected: false,
       });
       await this.log(ctx.userId, turnId, call.name, args, false, Date.now() - started);
-      return `Error executing ${call.name}: ${message}`;
+      return fenceUntrusted('TOOL_ERROR', `Error executing ${call.name}: ${message}`);
     }
   }
 

@@ -17,6 +17,9 @@ export interface AgentStep {
   summary?: string;
   refs?: AskSource[];
   injectionSuspected?: boolean;
+  /** Client-enriched: the narration streamed before this tool call ("Let me
+   *  search…"). Folded out of the answer into the step timeline. */
+  preamble?: string;
 }
 
 export interface AgentProposal {

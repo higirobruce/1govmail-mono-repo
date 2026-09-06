@@ -47,6 +47,9 @@ export default function AgentSteps({ steps }: { steps: AgentStep[] }) {
         <ol className="mt-1 space-y-0.5 border-l border-border/40 pl-2 text-[0.6875rem] text-muted-foreground/80">
           {steps.map((s) => (
             <li key={s.id} className={s.ok === false ? 'text-red-600 dark:text-red-400' : ''}>
+              {s.preamble && (
+                <p className="italic text-muted-foreground/60">{s.preamble}</p>
+              )}
               {LABELS[s.tool] ?? s.tool} {s.argsSummary}
               {s.summary ? ` — ${s.summary}` : s.ok === undefined ? ' …' : ''}
               {s.injectionSuspected ? ' ⚠' : ''}

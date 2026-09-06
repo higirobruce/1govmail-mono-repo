@@ -7,6 +7,7 @@ import {
   Mail, FileText, Calendar,
 } from 'lucide-react';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
+import { renderInline, splitBlocks } from './answerFormat';
 import { streamAsk, type AskSource, type AskSourceType, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
 import { streamAgent, type AgentStep, type AgentProposal, type AgentChartSpec } from '@/lib/ai/agent';
 import { sourceHref } from '@/lib/ai/sourceNav';
@@ -177,26 +178,38 @@ function AnswerBody({
   onOpenSource: (s: AskSource) => void;
 }) {
   const validAliases = new Set(sources.map((s) => s.alias));
-  const segments: AnswerSegment[] = splitByCitations(content, validAliases);
+  const renderLine = (text: string, lineKey: string) => {
+    const segments: AnswerSegment[] = splitByCitations(text, validAliases);
+    return segments.map((seg, i) => {
+      if (seg.kind === 'text') return <span key={`${lineKey}-${i}`}>{renderInline(seg.text, `${lineKey}-${i}`)}</span>;
+      const source = sources.find((s) => s.alias === seg.alias);
+      if (!source) return null; // guarded by splitByCitations, but keep TS/render safe
+      return (
+        <button
+          key={`${lineKey}-${i}`}
+          type="button"
+          title={source.title ?? source.fromEmail ?? undefined}
+          onClick={() => onOpenSource(source)}
+          className="mx-0.5 inline-flex items-center rounded bg-primary/10 px-1 text-[0.625rem] font-semibold text-primary hover:bg-primary/20 align-baseline"
+        >
+          {seg.alias}
+        </button>
+      );
+    });
+  };
+  const blocks = splitBlocks(content);
   return (
-    <p className="whitespace-pre-wrap text-[0.75rem] leading-relaxed text-foreground">
-      {segments.map((seg, i) => {
-        if (seg.kind === 'text') return <span key={i}>{seg.text}</span>;
-        const source = sources.find((s) => s.alias === seg.alias);
-        if (!source) return null; // guarded by splitByCitations, but keep TS/render safe
-        return (
-          <button
-            key={i}
-            type="button"
-            title={source.title ?? source.fromEmail ?? undefined}
-            onClick={() => onOpenSource(source)}
-            className="mx-0.5 inline-flex items-center rounded bg-primary/10 px-1 text-[0.625rem] font-semibold text-primary hover:bg-primary/20 align-baseline"
-          >
-            {seg.alias}
-          </button>
-        );
-      })}
-    </p>
+    <div className="text-[0.75rem] leading-relaxed text-foreground">
+      {blocks.map((block, i) => (
+        <div
+          key={i}
+          className={`${block.gapBefore ? 'mt-2 ' : ''}${block.kind === 'li' ? 'flex gap-1.5 pl-1' : ''}`}
+        >
+          {block.kind === 'li' && <span aria-hidden className="select-none text-muted-foreground">•</span>}
+          <span>{renderLine(block.text, `b${i}`)}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -298,6 +311,12 @@ export default function AskPanel() {
     liveChartsRef.current = [];
     setLiveSteps([]);
     stream.reset();
+    // Text streamed since the last tool_start. Iteration narration ("Let me
+    // search…") belongs to the step that follows it, not the answer: on each
+    // tool_start the accumulated segment folds into that step's `preamble`
+    // and the live bubble resets, so only the final segment stands as the
+    // answer. This also kills the stacked-newline gaps between iterations.
+    const segRef = { current: '' };
     const ac = new AbortController();
     abortRef.current = ac;
     try {
@@ -317,9 +336,17 @@ export default function AskPanel() {
           })
         : await streamAgent(history, {
             signal: ac.signal,
-            onChunk: (delta) => stream.push(delta),
+            onChunk: (delta) => {
+              segRef.current += delta;
+              stream.push(delta);
+            },
             onStep: (step) => {
-              liveStepsRef.current = [...liveStepsRef.current, step];
+              const preamble = segRef.current.trim();
+              if (preamble) {
+                segRef.current = '';
+                stream.reset();
+              }
+              liveStepsRef.current = [...liveStepsRef.current, preamble ? { ...step, preamble } : step];
               setLiveSteps(liveStepsRef.current);
             },
             onStepResult: (step) => {
@@ -342,7 +369,10 @@ export default function AskPanel() {
             onProposal: (p) => { liveProposalsRef.current = [...liveProposalsRef.current, p]; },
             onChart: (c) => { liveChartsRef.current = [...liveChartsRef.current, c]; },
           });
-      const clean = scrubOutput(raw);
+      // Agent turns: the answer is the FINAL segment only — earlier segments
+      // were folded into the step timeline above. Scoped turns have no steps,
+      // so segRef never resets and this is a no-op there (raw === segment).
+      const clean = scrubOutput(scope ? raw : (segRef.current.trim() || raw));
       stream.replace(clean);
       setTurns((prev) => [...prev, {
         role: 'assistant',

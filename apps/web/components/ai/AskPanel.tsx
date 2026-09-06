@@ -119,22 +119,34 @@ function SourcesRail({
   openCommitments: LinkedCommitment[];
 }) {
   if (sources.length === 0) return null;
+  // The agent can surface the same message under several aliases across
+  // repeated searches (observed live: 35 cards, mostly duplicates). Group by
+  // identity for display — every alias stays valid for citation chips (those
+  // resolve against the flat sources array, not this grouping).
+  const groups = new Map<string, AskSource[]>();
+  for (const src of sources) {
+    const key = `${src.type}:${src.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), src]);
+  }
   return (
     <ul className="space-y-1.5">
-      {sources.map((s) => {
+      {[...groups.values()].map((group) => {
+        const s = group[0];
         const linked = s.type === 'mail' ? openCommitments.filter((c) => c.messageId === s.id) : [];
         const Icon = SOURCE_TYPE_ICON[s.type];
         return (
           <li key={s.alias} className="rounded-md border border-border/30 p-2 space-y-1">
             <div className="flex items-center gap-1.5">
-              <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[0.625rem] font-semibold text-muted-foreground/80">
-                {s.alias}
-              </span>
+              {group.map((g) => (
+                <span key={g.alias} className="shrink-0 rounded bg-muted px-1 py-0.5 text-[0.625rem] font-semibold text-muted-foreground/80">
+                  {g.alias}
+                </span>
+              ))}
               <Icon className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-hidden />
               <span className="min-w-0 flex-1 truncate text-[0.719rem] font-medium text-foreground">
                 {sourceSubtitle(s)}
               </span>
-              {s.injectionSuspected && (
+              {group.some((g) => g.injectionSuspected) && (
                 <TriangleAlert
                   className="h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400"
                   aria-label="This source may contain manipulative instructions"

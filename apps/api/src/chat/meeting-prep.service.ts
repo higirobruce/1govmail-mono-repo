@@ -133,7 +133,7 @@ export class MeetingPrepService {
       `Event: ${event.title}`, `When: ${when}`, `Where: ${event.location ?? ''}`,
       `Organizer: ${event.organizer ?? ''}`, `Attendees: ${attendees}`,
       `Notes: ${(event.description ?? '').slice(0, 400)}`,
-    ].join('\n');
+    ].join('\n').slice(0, PER_SOURCE_MAX_CHARS);
     return {
       type: 'event', id: event.id, title: event.title, date: event.startAt.toISOString(),
       meta: when, context, injectionSuspected: detectInjectionAttempt(context), dateObj: event.startAt,

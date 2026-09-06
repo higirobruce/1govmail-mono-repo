@@ -22,7 +22,6 @@ interface AuthenticatedRequest extends Request {
  * BEFORE headers flush, so failures are ordinary JSON 4xx.
  */
 @UseGuards(JwtAuthGuard)
-@Throttle({ default: { limit: 10, ttl: 60_000 } })
 @Controller('ai')
 export class GenerationController {
   constructor(
@@ -32,6 +31,7 @@ export class GenerationController {
     private readonly aiService: AiService,
   ) {}
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('dossier')
   async streamDossier(
     @Req() req: AuthenticatedRequest, @Res() res: Response, @Body() body: DossierRequestDto,
@@ -47,6 +47,7 @@ export class GenerationController {
     return { cached: await this.cache.get(req.user.sub, 'dossier', q.email.trim().toLowerCase()) };
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('meeting-prep')
   async streamMeetingPrep(
     @Req() req: AuthenticatedRequest, @Res() res: Response, @Body() body: MeetingPrepRequestDto,

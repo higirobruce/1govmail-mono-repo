@@ -7,6 +7,22 @@ import {
 import { ChatRequestDto } from './dto/chat.dto';
 
 /**
+ * Agent-only superset of ChatRequestDto: adds an agent transcript (incl.
+ * role:'tool' messages) and OpenAI-compat `tools`/`tool_choice` fields used
+ * to drive tool-calling upstream. The public /ai/chat route still validates
+ * with ChatRequestDto + global whitelist:true, so external callers cannot
+ * smuggle `tools` — only server-side agent callers (Task 10) construct this.
+ */
+export type UpstreamChatBody = Omit<ChatRequestDto, 'messages'> & {
+  messages: Array<Record<string, unknown>>;
+  tools?: Array<{
+    type: 'function';
+    function: { name: string; description: string; parameters: Record<string, unknown> };
+  }>;
+  tool_choice?: 'auto' | 'none';
+};
+
+/**
  * Forwards chat-completion calls to a local Ollama (or any OpenAI-compatible)
  * server reachable from the API host. The browser never contacts Ollama
  * directly — it goes through the JWT-guarded /ai/chat endpoint, so the
@@ -21,7 +37,7 @@ export class AiService {
     (process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434/v1').replace(/\/$/, '');
 
   /** Single fetch call used by both streaming and non-streaming paths. */
-  async upstream(body: ChatRequestDto, signal: AbortSignal): Promise<Response> {
+  async upstream(body: ChatRequestDto | UpstreamChatBody, signal: AbortSignal): Promise<Response> {
     // Thinking models (qwen3.5, deepseek-r1, …) spend the whole max_tokens
     // budget on hidden reasoning and return an empty `content` — the UI shows
     // a blank response. Ollama's OpenAI layer maps reasoning_effort:"none" to

@@ -28,6 +28,7 @@ vi.mock('next/navigation', () => ({
 import PersonDossierPanel from './PersonDossierPanel';
 import { usePeopleStore } from '@/stores/people.store';
 import { useAskStore } from '@/stores/ask.store';
+import { useAIStore } from '@/stores/ai.store';
 
 const FACTS = {
   profile: {
@@ -77,6 +78,7 @@ beforeEach(() => {
   dossier.mockResolvedValue(FACTS);
   getCachedDossier.mockResolvedValue(null);
   streamDossier.mockResolvedValue('Generated summary');
+  useAIStore.setState({ enabled: true });
   resetStores();
 });
 
@@ -150,5 +152,16 @@ describe('PersonDossierPanel', () => {
     fireEvent.click(row);
 
     await waitFor(() => expect(push).toHaveBeenCalledWith('/mail?open=m123'));
+  });
+
+  it('hides the AI narrative block (no Summarize button) when the app-wide AI switch is off', async () => {
+    useAIStore.setState({ enabled: false });
+    render(<PersonDossierPanel />);
+    act(() => usePeopleStore.getState().openDossier({ email: 'jd@gov.rw' }));
+
+    await waitFor(() => expect(dossier).toHaveBeenCalledWith('jd@gov.rw'));
+    // Facts still render — only the AI block is gated.
+    expect(await screen.findByText('Recent conversations')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Summarize relationship/i })).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ import type { AskSource, AskSourceType } from '@/lib/ai/ask';
 import { sourceHref } from '@/lib/ai/sourceNav';
 import { usePeopleStore } from '@/stores/people.store';
 import { useAskStore } from '@/stores/ask.store';
+import { useAIStore } from '@/stores/ai.store';
 import { MailAvatar } from '@/components/mail/MailAvatar';
 import { GenerationAnswer } from '@/components/ai/GenerationAnswer';
 import { cn } from '@/lib/utils';
@@ -41,6 +42,7 @@ export default function PersonDossierPanel() {
   const closeStore = usePeopleStore((s) => s.close);
   const askOpen = useAskStore((s) => s.open);
   const setAskOpenTarget = useAskStore((s) => s.setOpenTarget);
+  const aiEnabled = useAIStore((s) => s.enabled);
 
   const [facts, setFacts] = useState<PersonDossier | null>(null);
   const [factsLoading, setFactsLoading] = useState(false);
@@ -290,7 +292,12 @@ export default function PersonDossierPanel() {
           </section>
         )}
 
-        {/* AI block */}
+        {/* AI block — hidden entirely when the app-wide AI switch is off,
+            same as every other AI trigger (AskLauncher, mail-page rail). A
+            cached narrative fetched before AI was disabled is not shown
+            either, since its Regenerate action is itself a generation
+            trigger and must not render while the switch is off. */}
+        {aiEnabled && (
         <section className="space-y-2 border-t border-border/30 pt-3">
           {!narrative && !streaming && (
             <button
@@ -344,6 +351,7 @@ export default function PersonDossierPanel() {
             </div>
           )}
         </section>
+        )}
       </div>
     </aside>
   );

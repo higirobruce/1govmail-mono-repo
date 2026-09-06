@@ -16,6 +16,7 @@ import { PeopleModule } from './people/people.module';
 import { DocsModule } from './docs/docs.module';
 import { AiModule } from './ai/ai.module';
 import { ChatModule } from './chat/chat.module';
+import { AgentModule } from './agent/agent.module';
 import { AuditModule } from './common/audit/audit.module';
 
 @Module({
@@ -41,6 +42,7 @@ import { AuditModule } from './common/audit/audit.module';
     DocsModule,
     AiModule,
     ChatModule,
+    AgentModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

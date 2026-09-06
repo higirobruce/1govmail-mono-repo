@@ -16,5 +16,6 @@ import { SemanticSearchController } from './semantic-search.controller';
   imports: [PrismaModule, MailModule, AiModule, DocsModule],
   providers: [RetrievalService, AskService, GenerationCacheService, DossierService, MeetingPrepService],
   controllers: [ChatController, GenerationController, SemanticSearchController],
+  exports: [RetrievalService],
 })
 export class ChatModule {}

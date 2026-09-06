@@ -8,5 +8,6 @@ import { PrismaModule } from '../prisma/prisma.module';
   imports: [ZimbraModule, PrismaModule],
   providers: [ContactsService],
   controllers: [ContactsController],
+  exports: [ContactsService],
 })
 export class ContactsModule {}

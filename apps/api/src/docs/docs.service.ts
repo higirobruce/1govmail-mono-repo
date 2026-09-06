@@ -822,12 +822,17 @@ export class DocsService {
    * verifyReadAccess/getInviteForUser. NOTE the schema's Document→
    * DocumentInvite relation field is `invites`, and its email column is
    * `invitedEmail` (NOT `email` — see the `DocumentInvite` model in
-   * prisma/schema.prisma). This mirrors the ACL shape (owner OR invite row
-   * for the caller's email) used by the docs vector leg in
-   * RetrievalService.docVectorRows, but — unlike that raw-SQL leg and
-   * getInviteForUser (both of which compare `invitedEmail` unnormalized) —
-   * this uses `mode: 'insensitive'` plus a lowercased input so title search
-   * isn't defeated by case differences in how an invite email was typed.
+   * prisma/schema.prisma). The invite predicate deliberately mirrors
+   * RetrievalService.docVectorRows and verifyReadAccess/getInviteForUser
+   * exact-case: `invitedEmail` is compared verbatim, with no `.toLowerCase()`
+   * or `mode: 'insensitive'`, so a search hit here can never be broader than
+   * what those two ACL checks would allow (a case-insensitive compare would
+   * leak a document's title/id into search results for a user whose invite
+   * was stored with different casing than their JWT email, even though
+   * verifyReadAccess and the vector leg would both deny them). Invite-email
+   * casing normalization more broadly is known systemic debt tracked outside
+   * this task. Title matching itself stays `contains`/`insensitive` — only
+   * the ACL email comparison is exact-case.
    */
   async searchByTitle(userId: string, userEmail: string, query: string, limit = 8) {
     return this.prisma.document.findMany({
@@ -835,7 +840,7 @@ export class DocsService {
         title: { contains: query, mode: 'insensitive' },
         OR: [
           { userId },
-          { invites: { some: { invitedEmail: { equals: userEmail.toLowerCase(), mode: 'insensitive' } } } },
+          { invites: { some: { invitedEmail: userEmail } } },
         ],
       },
       select: { id: true, title: true, emoji: true, updatedAt: true },

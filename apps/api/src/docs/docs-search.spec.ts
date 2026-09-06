@@ -16,7 +16,13 @@ describe('DocsService.searchByTitle', () => {
     const arg = prisma.document.findMany.mock.calls[0][0];
     expect(arg.where.title).toEqual({ contains: 'mou', mode: 'insensitive' });
     expect(JSON.stringify(arg.where.OR)).toContain('u1');
-    expect(JSON.stringify(arg.where.OR)).toContain('u1@x.rw'); // lowercased email for invite match
+    // Exact-case: mirrors RetrievalService.docVectorRows and
+    // verifyReadAccess/getInviteForUser, which compare invitedEmail verbatim.
+    // A lowercased/case-insensitive match here would leak a doc's title/id
+    // into search results for a user whose invite was stored with different
+    // casing than their JWT email, even though those two ACL checks deny it.
+    expect(JSON.stringify(arg.where.OR)).toContain('U1@X.RW');
+    expect(JSON.stringify(arg.where.OR)).not.toContain('u1@x.rw');
     expect(arg.take).toBe(5);
   });
 });

@@ -8,7 +8,7 @@ function makeCtx(): ToolContext {
 
 const calendar = {
   getEvents: jest.fn().mockResolvedValue([
-    { id: 'e1', title: 'Standup', startAt: new Date('2026-09-07T08:00:00Z'), endAt: new Date('2026-09-07T08:30:00Z'), attendees: ['a@b.rw'] },
+    { id: 'e1', title: 'Standup', startAt: new Date('2026-09-07T08:00:00Z'), endAt: new Date('2026-09-07T08:30:00Z'), attendees: [{ email: 'a@b.rw' }] },
   ]),
   getFreeBusyBatch: jest.fn().mockResolvedValue([
     { email: 'a@b.rw', busy: [{ s: 1789200000000, e: 1789203600000 }], tentative: [], unavailable: [] },
@@ -26,6 +26,8 @@ describe('calendar tools', () => {
     expect(calendar.getEvents).toHaveBeenCalledWith('u1', expect.any(Date), expect.any(Date));
     expect(res.refs![0]).toMatchObject({ type: 'event', id: 'e1', alias: 's1' });
     expect(res.content).toContain('Standup');
+    expect(res.content).toContain('a@b.rw');
+    expect(res.content).not.toContain('[object Object]');
   });
 
   it('get_freebusy renders busy windows as ISO ranges', async () => {

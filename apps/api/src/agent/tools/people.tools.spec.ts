@@ -14,7 +14,7 @@ const people = {
   }),
 } as any;
 const contacts = { autocomplete: jest.fn().mockResolvedValue([{ email: 'a@b.rw', display: 'Alice' }]) } as any;
-const tasks = { findAll: jest.fn().mockResolvedValue([{ id: 't1', title: 'Report', status: 'TODO', dueDate: null }]) } as any;
+const tasks = { findAll: jest.fn().mockResolvedValue([{ id: 't1', title: 'Report', status: 'TODO', dueDate: new Date('2026-09-10T00:00:00Z') }]) } as any;
 
 const tools = buildPeopleTools(people, contacts, tasks);
 const byName = (n: string) => tools.find((t) => t.name === n)!;
@@ -37,5 +37,6 @@ describe('people/contacts/tasks tools', () => {
     const res = await byName('list_tasks').execute({ status: 'TODO' }, makeCtx());
     expect(tasks.findAll).toHaveBeenCalledWith('u1', 'TODO');
     expect(res.content).toContain('Report');
+    expect(res.content).toContain('2026-09-10T00:00:00.000Z');
   });
 });

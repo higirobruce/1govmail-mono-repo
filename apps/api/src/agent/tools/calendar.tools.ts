@@ -37,7 +37,7 @@ export function buildCalendarTools(calendar: CalendarService): ToolDef[] {
         }));
         const content = events.length
           ? events
-              .map((e, i) => `[${refs[i].alias}] "${e.title}" ${renderDate(e.startAt)} → ${renderDate(e.endAt)}${e.location ? ` @ ${e.location}` : ''}${e.attendees?.length ? ` with ${e.attendees.join(', ')}` : ''}`)
+              .map((e, i) => `[${refs[i].alias}] "${e.title}" ${renderDate(e.startAt)} → ${renderDate(e.endAt)}${e.location ? ` @ ${e.location}` : ''}${e.attendees?.length ? ` with ${e.attendees.map((a: any) => a?.name ?? a?.email ?? String(a)).join(', ')}` : ''}`)
               .join('\n')
           : 'No events in that range.';
         return { summary: `${events.length} event(s)`, content, refs };

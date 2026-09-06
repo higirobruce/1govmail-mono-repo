@@ -30,10 +30,13 @@ export default function ProposalCard({ proposal }: { proposal: AgentProposal }) 
     try {
       const res = await authedFetch(url, { method: 'POST', body: JSON.stringify(payload) });
       if (!res.ok) throw new Error(`failed (${res.status})`);
-      setStatus(doneStatus);
+      // Functional update: a Dismiss click that lands while this request is
+      // still in flight must win — a late resolution must never resurrect a
+      // dismissed card as "done" or "error". Dismiss is a sticky terminal state.
+      setStatus((s) => (s === 'dismissed' ? s : doneStatus));
     } catch (err: any) {
       setError(err?.message ?? 'failed');
-      setStatus('error');
+      setStatus((s) => (s === 'dismissed' ? s : 'error'));
     }
   };
 
@@ -104,8 +107,12 @@ export default function ProposalCard({ proposal }: { proposal: AgentProposal }) 
           )}
           <button
             type="button"
+            disabled={status === 'working'}
             onClick={() => setStatus('dismissed')}
-            className="rounded-md px-2 py-1 text-[0.6875rem] text-muted-foreground/70 hover:text-foreground transition-colors"
+            className={cn(
+              'rounded-md px-2 py-1 text-[0.6875rem] text-muted-foreground/70 transition-colors',
+              status === 'working' ? 'opacity-50' : 'hover:text-foreground',
+            )}
           >
             Dismiss
           </button>

@@ -18,6 +18,8 @@ import { useOffline } from '@/lib/offline/provider';
 import { cn } from '@/lib/utils';
 import { GlobalConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useUIStore } from '@/stores/ui.store';
+import { useResizable } from '@/hooks/useResizable';
+import { ResizeHandle } from '@/components/layout/ResizeHandle';
 import {
   Dialog,
   DialogContent,
@@ -516,6 +518,7 @@ export default function Sidebar({
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const isTablet = useIsTabletBand();
   const railMode = collapsed || isTablet; // effective collapsed state
+  const resize = useResizable({ key: 'sidebar', defaultWidth: 220, min: 180, max: 360, edge: 'right' });
 
   const initials = user?.displayName
     ?.split(' ')
@@ -529,12 +532,15 @@ export default function Sidebar({
   return (
     <div
       data-collapsed={railMode}
+      style={railMode ? undefined : { width: resize.width, transition: resize.dragging ? 'none' : undefined }}
       className={cn(
-        'group/sidebar shrink-0 hidden md:flex flex-col h-full bg-sidebar border-r border-sidebar-border transition-[width] duration-150',
-        railMode ? 'w-[60px]' : 'w-[220px]',
+        'group/sidebar relative shrink-0 hidden md:flex flex-col h-full bg-sidebar border-r border-sidebar-border transition-[width] duration-150',
+        railMode && 'w-[60px]',
         className,
       )}
     >
+      {/* Drag-resize the sidebar (expanded only; the icon rail is fixed-width). */}
+      {!railMode && <ResizeHandle edge="right" resizable={resize} label="Resize sidebar" />}
 
       {/* User / org header + collapse toggle */}
       <div className={cn('pt-4 pb-2', railMode ? 'px-2' : 'px-3')}>

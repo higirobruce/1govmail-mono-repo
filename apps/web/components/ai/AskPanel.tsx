@@ -20,6 +20,8 @@ import AgentSteps from '@/components/ai/AgentSteps';
 import AgentChart from '@/components/ai/AgentChart';
 import ProposalCard from '@/components/ai/ProposalCard';
 import { useAskStore, type LinkedCommitment } from '@/stores/ask.store';
+import { useResizable } from '@/hooks/useResizable';
+import { ResizeHandle } from '@/components/layout/ResizeHandle';
 
 interface AnswerTurn {
   role: 'assistant';
@@ -249,6 +251,7 @@ function AnswerBody({
 export default function AskPanel() {
   const router = useRouter();
   const pathname = usePathname();
+  const panelResize = useResizable({ key: 'aiPanel', defaultWidth: 420, min: 320, max: 640, edge: 'left' });
   const open = useAskStore((s) => s.open);
   const collapsed = useAskStore((s) => s.collapsed);
   const prefill = useAskStore((s) => s.prefill);
@@ -456,12 +459,14 @@ export default function AskPanel() {
       role="complementary"
       aria-label="Ask 1Gov"
       aria-hidden={collapsed}
+      style={{ '--ai-w': `${panelResize.width}px` } as React.CSSProperties}
       className={cn(
         // z-[41]: same layer as the other AI drawers — only one is ever open.
         // Always fixed: this panel is mounted once in the app layout, outside
         // any page's flex row, so `xl:static` would drop it below the fold of
         // an h-screen page. Pages reserve the width with padding instead.
-        'fixed inset-y-0 right-0 z-[41] w-full max-w-[420px]',
+        // Full width on mobile; user-resizable width (--ai-w) from md up.
+        'fixed inset-y-0 right-0 z-[41] w-full md:w-[var(--ai-w)] md:max-w-none',
         'border-l border-border/40 bg-card shadow-xl',
         'flex flex-col overflow-hidden',
         'transition-transform duration-200 ease-out',
@@ -469,6 +474,8 @@ export default function AskPanel() {
         collapsed ? 'translate-x-full pointer-events-none' : 'translate-x-0',
       )}
     >
+      {/* Drag the left edge to resize (shared width with the People dossier panel). */}
+      {!collapsed && <ResizeHandle edge="left" resizable={panelResize} label="Resize panel" />}
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 shrink-0">
         <MessageCircleQuestion className="w-4 h-4 text-primary" />

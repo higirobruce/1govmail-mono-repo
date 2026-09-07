@@ -27,6 +27,9 @@ import TaskModal, { type Task } from '@/components/tasks/TaskModal';
 import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useResizable, clampWidth } from '@/hooks/useResizable';
+import { ResizeHandle } from '@/components/layout/ResizeHandle';
+import { useUIStore } from '@/stores/ui.store';
 import { Input } from '@/components/ui/input';
 import { Search, RefreshCw, Newspaper, ClipboardCheck, MessageCircleQuestion, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -1237,11 +1240,20 @@ export default function MailPage() {
   const aiPanelVisible =
     (briefingOpen && briefingExpanded) || commitmentsOpen || askDocked;
 
+  // Resizable message-list column; the docked AI/Dossier panel width is read
+  // from the same store key those panels write, so the reserved padding tracks it.
+  const listResize = useResizable({ key: 'mailList', defaultWidth: 370, min: 280, max: 560, edge: 'right' });
+  const aiPanelWidth = clampWidth(useUIStore((s) => s.panelWidths['aiPanel']) ?? 420, 320, 640);
+
   return (
-    <div className={cn(
-      'flex h-screen overflow-hidden bg-background',
-      (askDocked || dossierOpen) && 'xl:pr-[420px]', // == AskPanel's/PersonDossierPanel's max-w-[420px]
-    )}>
+    <div
+      style={{ '--ai-w': `${aiPanelWidth}px`, '--list-w': `${listResize.width}px` } as React.CSSProperties}
+      className={cn(
+        'flex h-screen overflow-hidden bg-background',
+        // reserve the docked AI/Dossier panel's (resizable) width on wide screens
+        (askDocked || dossierOpen) && 'xl:pr-[var(--ai-w)]',
+      )}
+    >
       <Sidebar
         folders={folders}
         activeFolderId={activeFolderId}
@@ -1271,14 +1283,15 @@ export default function MailPage() {
         onClearLabelFilter={clearLabelFilter}
       />
 
-      {/* Mail list pane — full width on phones, fixed 300px beside the reader
-          from md (tablet portrait) up; the nav sidebar joins at lg. */}
+      {/* Mail list pane — full width on phones; from md up it takes the
+          user-resizable width (--list-w, default 370) beside the reader. */}
       <div className={cn(
-        'shrink-0 flex flex-col h-full border-r border-border/50',
-        'w-full transition-[width] duration-200',
-        aiPanelVisible ? 'md:w-[300px] xl:w-[320px]' : 'md:w-[300px] lg:w-[340px] xl:w-[370px]',
+        'relative shrink-0 flex flex-col h-full border-r border-border/50',
+        'w-full md:w-[var(--list-w)]',
+        listResize.dragging ? 'transition-none' : 'transition-[width] duration-200',
         activeMessageId ? 'hidden md:flex' : 'flex',
       )}>
+        <ResizeHandle edge="right" resizable={listResize} label="Resize message list" />
         {/* List header */}
         <div className="px-4 pt-6 pb-3 border-b border-border/25 shrink-0">
           {/* Title row */}

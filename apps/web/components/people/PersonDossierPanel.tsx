@@ -13,6 +13,8 @@ import { useAskStore } from '@/stores/ask.store';
 import { useAIStore } from '@/stores/ai.store';
 import { MailAvatar } from '@/components/mail/MailAvatar';
 import { GenerationAnswer } from '@/components/ai/GenerationAnswer';
+import { useResizable } from '@/hooks/useResizable';
+import { ResizeHandle } from '@/components/layout/ResizeHandle';
 import { cn } from '@/lib/utils';
 
 function relative(iso: string | null): string {
@@ -37,6 +39,7 @@ function relative(iso: string | null): string {
 export default function PersonDossierPanel() {
   const router = useRouter();
   const pathname = usePathname();
+  const panelResize = useResizable({ key: 'aiPanel', defaultWidth: 420, min: 320, max: 640, edge: 'left' });
   const open = usePeopleStore((s) => s.open);
   const target = usePeopleStore((s) => s.target);
   const closeStore = usePeopleStore((s) => s.close);
@@ -135,12 +138,15 @@ export default function PersonDossierPanel() {
     <aside
       role="complementary"
       aria-label="Person dossier"
+      style={{ '--ai-w': `${panelResize.width}px` } as React.CSSProperties}
       className={cn(
-        'fixed inset-y-0 right-0 z-[41] w-full max-w-[420px]',
+        'fixed inset-y-0 right-0 z-[41] w-full md:w-[var(--ai-w)] md:max-w-none',
         'border-l border-border/40 bg-card shadow-xl',
         'flex flex-col overflow-hidden',
       )}
     >
+      {/* Drag the left edge to resize (shared width with the Ask 1Gov panel). */}
+      <ResizeHandle edge="left" resizable={panelResize} label="Resize panel" />
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border/30 shrink-0">
         <MailAvatar name={displayName} email={target.email} size="md" />

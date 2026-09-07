@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
+import { useResizable } from '@/hooks/useResizable';
+import { ResizeHandle } from '@/components/layout/ResizeHandle';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useAIStore } from '@/stores/ai.store';
 import { useAskStore } from '@/stores/ask.store';
@@ -1639,6 +1641,7 @@ function EventDetailPanel({
   );
   const showRsvp = !isOrganizer && (isAttendee || event.attendees.length === 0);
   const aiEnabled = useAIStore((s) => s.enabled);
+  const resize = useResizable({ key: 'calendarDetail', defaultWidth: 320, min: 280, max: 560, edge: 'left' });
 
   const [rsvping, setRsvping] = useState<'ACCEPT' | 'DECLINE' | 'TENTATIVE' | null>(null);
 
@@ -1649,7 +1652,12 @@ function EventDetailPanel({
   };
 
   return (
-    <div className="w-80 shrink-0 border-l border-border/40 flex flex-col h-full bg-card/60 overflow-x-hidden">
+    <div
+      style={{ width: resize.width }}
+      className="relative shrink-0 border-l border-border/40 flex flex-col h-full bg-card/60 overflow-x-hidden"
+    >
+      {/* Drag the left edge to resize the event detail drawer. */}
+      <ResizeHandle edge="left" resizable={resize} label="Resize event details" />
       {/* Header */}
       <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-border/40 shrink-0">
         <h3 className="text-sm font-semibold text-foreground wrap-break-word min-w-0 leading-snug">{event.title}</h3>

@@ -1664,7 +1664,11 @@ function EventDetailPanel({
         </div>
       </div>
 
-      <ScrollArea className="flex-1 min-h-0">
+      {/* Radix ScrollArea wraps content in a `display:table; min-width:100%` div
+          that sizes to content — in this fixed 320px (w-80) drawer that lets long
+          meeting-prep lines and citation chips overflow and clip instead of
+          wrapping. Force that wrapper to block so it respects the viewport width. */}
+      <ScrollArea className="flex-1 min-h-0 [&_[data-radix-scroll-area-viewport]>div]:!block [&_[data-radix-scroll-area-viewport]>div]:!min-w-0">
         <div className="px-4 py-4 space-y-4 overflow-x-hidden">
 
           {/* Badges row */}

@@ -26,7 +26,8 @@ describe('buildAgentPrompt', () => {
   });
 
   it('forbids plain-text clarifying questions — they must go through ask_user', () => {
-    expect(prompt).toMatch(/never ask (?:the user )?(?:a clarifying question |for clarification )?in plain text/i);
+    expect(prompt).toMatch(/never ask the user anything in plain text/i);
+    expect(prompt).toMatch(/more than one result plausibly matches/i);
   });
 
   it('handles null userName', () => {

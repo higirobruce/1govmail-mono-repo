@@ -25,6 +25,10 @@ describe('buildAgentPrompt', () => {
     expect(prompt).toMatch(/at most one|once per turn/i);
   });
 
+  it('forbids plain-text clarifying questions — they must go through ask_user', () => {
+    expect(prompt).toMatch(/never ask (?:the user )?(?:a clarifying question |for clarification )?in plain text/i);
+  });
+
   it('handles null userName', () => {
     const p = buildAgentPrompt({ userEmail: 'x@y.rw', userName: null, nowIso: 'now' });
     expect(p).toContain('the user <x@y.rw>');

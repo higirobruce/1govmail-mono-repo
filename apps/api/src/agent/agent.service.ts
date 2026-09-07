@@ -15,6 +15,13 @@ import { ToolRegistry, ToolValidationError, type ToolContext } from './tool-regi
 const MAX_ITERATIONS = 8;
 const MAX_CALLS_PER_ITERATION = 3;
 const WALL_CLOCK_MS = 60_000;
+// Injected when the first iteration answers without calling any tool. The
+// Ollama host ignores tool_choice:'required' (verified live 2026-09-07 — even
+// a single-tool request enforces nothing), so probe-first is enforced by this
+// one-shot corrective retry instead. Conditional wording keeps greetings and
+// meta questions answerable without a junk tool call.
+const PROBE_NUDGE =
+  'Do not answer yet. If this request needs anything from the user\'s mail, documents, calendar, tasks or people, call the right search/read tool NOW. If it is ambiguous, call ask_user with 2-4 options — never ask in plain text. Only if it truly needs none of that (a greeting or a question about this conversation) answer directly.';
 // Cumulative transcript size (sum of all message content lengths) above which
 // we force a final answer. A tool-heavy turn can otherwise exceed the 16k
 // model context, and Ollama truncates oldest-first — silently dropping the
@@ -69,6 +76,7 @@ export class AgentService {
       ...turns.slice(-12).map((t) => ({ role: t.role, content: t.content.slice(0, 4000) }) as AgentMessage),
     ];
     let transcriptChars = transcript.reduce((sum, m) => sum + m.content.length, 0);
+    let probeNudged = false;
     const pushMessage = (msg: AgentMessage): void => {
       transcript.push(msg);
       transcriptChars += msg.content.length;
@@ -103,9 +111,24 @@ export class AgentService {
 
       const upstream = await this.ai.upstream(body, signal);
       const onDelta = (delta: string) => emit(null, { choices: [{ delta: { content: delta } }] });
-      const result = firstProbe
-        ? await consumeAgentJson(upstream, onDelta)
-        : await consumeAgentStream(upstream, onDelta);
+      let result;
+      if (firstProbe) {
+        // Buffer the probe's text: a zero-tool answer is withheld, corrected
+        // with PROBE_NUDGE, and retried once before anything reaches the
+        // client. The retry re-enters this branch (iter stays 1) but the
+        // probeNudged guard makes its outcome final either way.
+        result = await consumeAgentJson(upstream, () => {});
+        if (!result.toolCalls.length && !probeNudged) {
+          probeNudged = true;
+          pushMessage({ role: 'assistant', content: result.text });
+          pushMessage({ role: 'user', content: PROBE_NUDGE });
+          iter--;
+          continue;
+        }
+        if (result.text) onDelta(result.text);
+      } else {
+        result = await consumeAgentStream(upstream, onDelta);
+      }
 
       if (!result.toolCalls.length || finalIteration) return;
 

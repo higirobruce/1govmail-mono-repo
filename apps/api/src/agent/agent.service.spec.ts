@@ -63,10 +63,36 @@ const jsonToolCall = (name: string, args: string, id = 'c1') =>
   );
 
 describe('AgentService.run', () => {
-  it('streams a direct answer when no tools are called', async () => {
-    const { svc, frames, emit } = makeService([jsonText('Hello')]);
-    await svc.run('u1', [{ role: 'user', content: 'hi' }], emit, new AbortController().signal);
-    expect(frames).toEqual([{ event: null, data: { choices: [{ delta: { content: 'Hello' } }] } }]);
+  it('a zero-tool first response is held back, nudged once, and the retried tool call proceeds', async () => {
+    const { svc, ai, frames, emit } = makeService(
+      [jsonText('Which document do you mean?'), jsonToolCall('echo', '{"message":"hi"}'), sseResponse([text('Done')])],
+      [echoTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'summarize the document' }], emit, new AbortController().signal);
+
+    // The withheld prose must never reach the client.
+    const deltas = frames.filter((f) => f.event === null).map((f) => f.data.choices[0].delta.content);
+    expect(deltas.join('')).not.toContain('Which document do you mean?');
+    expect(deltas.join('')).toContain('Done');
+    // The retry request carries the nudge and runs non-streamed like the first
+    // probe. (messages is the live transcript array — shared by reference
+    // across calls — so assert membership, not position.)
+    const retryBody = ai.upstream.mock.calls[1][0];
+    expect(retryBody.stream).toBe(false);
+    const nudge = retryBody.messages.find((m: any) => m.role === 'user' && /ask_user/.test(m.content));
+    expect(nudge).toBeTruthy();
+    const withheld = retryBody.messages.find((m: any) => m.role === 'assistant' && m.content === 'Which document do you mean?');
+    expect(withheld).toBeTruthy();
+    expect(frames.some((f) => f.event === 'tool_start')).toBe(true);
+  });
+
+  it('a second zero-tool response is accepted and its text streamed', async () => {
+    const { svc, ai, frames, emit } = makeService([jsonText('First try'), jsonText('You are welcome!')]);
+    await svc.run('u1', [{ role: 'user', content: 'thanks' }], emit, new AbortController().signal);
+
+    expect(ai.upstream).toHaveBeenCalledTimes(2);
+    const deltas = frames.filter((f) => f.event === null).map((f) => f.data.choices[0].delta.content);
+    expect(deltas).toEqual(['You are welcome!']);
   });
 
   it('runs iteration 1 non-streamed with tool_choice required, later iterations streamed with auto', async () => {

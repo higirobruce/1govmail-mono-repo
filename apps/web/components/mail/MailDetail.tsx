@@ -232,7 +232,10 @@ function EmailBody({
     if (!html) return null;
     const body = prepareEmailHtml(html);
     const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${body}</body></html>`;
+    // <base target="_blank">: the frame is sandboxed without top-navigation, so
+    // an in-frame link click would otherwise be silently blocked — route every
+    // link to a new tab instead (pairs with allow-popups on the iframe).
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>${css}</style></head><body>${body}</body></html>`;
   }, [html, normalizeStyles]);
 
   if (!srcDoc) {
@@ -250,7 +253,7 @@ function EmailBody({
       onLoad={handleLoad}
       className="w-full border-0 block"
       style={{ height: 400 }}
-      sandbox="allow-same-origin"
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       title="Email message"
     />
   );

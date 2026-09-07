@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { Newspaper, Loader2, AlertTriangle, RefreshCw, Minimize2 } from 'lucide-react';
+import { Newspaper, AlertTriangle, RefreshCw, Minimize2 } from 'lucide-react';
 import { AIClient } from '@/lib/ai/client';
 import { api } from '@/lib/api';
 import { useAIStore } from '@/stores/ai.store';
@@ -188,7 +188,8 @@ export default function BriefingPanel({
             running && 'opacity-50 cursor-not-allowed',
           )}
         >
-          <RefreshCw className={cn('w-3.5 h-3.5', running && 'animate-spin')} />
+          {/* No spin while running — the body's AIWorkingIndicator is the one progress spinner */}
+          <RefreshCw className="w-3.5 h-3.5" />
         </button>
       </div>
 
@@ -215,9 +216,9 @@ export default function BriefingPanel({
           </div>
         )}
 
+        {/* AIWorkingIndicator renders its own spinner — no extra Loader2 here */}
         {running && (
           <div className="flex items-center justify-center gap-2 py-6 text-[0.75rem] text-muted-foreground/70">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
             <AIWorkingIndicator step={progress ? phaseLabel(progress) : undefined} />
           </div>
         )}

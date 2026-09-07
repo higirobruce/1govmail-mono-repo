@@ -313,8 +313,11 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
     if (!html) return null;
     const body = prepareEmailHtml(html);
     const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
+    // <base target="_blank">: the frame is sandboxed without top-navigation,
+    // so an in-frame link click would otherwise be silently blocked — route
+    // every link to a new tab instead (pairs with allow-popups on the iframe).
     const mkSrcDoc = (content: string, hideQuotes = false) =>
-      `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${hideQuotes ? HIDE_QUOTES_CSS : ''}</style></head><body>${content}</body></html>`;
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>${css}${hideQuotes ? HIDE_QUOTES_CSS : ''}</style></head><body>${content}</body></html>`;
     if (!stripQuotes) {
       const split = splitEmailBody(body);
       return { main: mkSrcDoc(split.main), quoted: split.quoted ? mkSrcDoc(split.quoted) : null };
@@ -340,7 +343,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
           onLoad={handleMainLoad}
           className="w-full border-0 block"
           style={{ height: 200 }}
-          sandbox="allow-same-origin"
+          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
           title="Email message"
         />
         {docs.quoted && (
@@ -361,7 +364,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
                 onLoad={handleQuotedLoad}
                 className="w-full border-0 block"
                 style={{ height: 200 }}
-                sandbox="allow-same-origin"
+                sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
                 title="Quoted message"
               />
             )}
@@ -379,7 +382,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
       onLoad={handleMainLoad}
       className="w-full border-0 block"
       style={{ height: 200 }}
-      sandbox="allow-same-origin"
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       title="Email message"
     />
   );

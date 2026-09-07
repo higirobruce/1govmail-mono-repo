@@ -10,6 +10,14 @@ export function clampWidth(width: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(width)));
 }
 
+/** How far past `min` a drag must overshoot before it reads as "collapse me". */
+export const COLLAPSE_SLACK = 48;
+
+/** True when an unclamped drag width has overshot min by more than the slack. */
+export function shouldCollapse(rawWidth: number, min: number): boolean {
+  return rawWidth < min - COLLAPSE_SLACK;
+}
+
 /**
  * New panel width given a horizontal drag delta. For a right-edge handle,
  * dragging right (+dx) widens the panel; for a left-edge handle (panel sits to
@@ -47,8 +55,14 @@ export function useResizable(opts: {
   min: number;
   max: number;
   edge: ResizeEdge;
+  /**
+   * When set, dragging the handle well past `min` (or pressing ArrowLeft at
+   * `min`) ends the drag and calls this instead of pinning at the clamp —
+   * lets a panel collapse to its rail by shoving the border to the edge.
+   */
+  onCollapse?: () => void;
 }): UseResizable {
-  const { key, defaultWidth, min, max, edge } = opts;
+  const { key, defaultWidth, min, max, edge, onCollapse } = opts;
   const stored = useUIStore((s) => s.panelWidths[key]);
   const setPanelWidth = useUIStore((s) => s.setPanelWidth);
   const resetPanelWidth = useUIStore((s) => s.resetPanelWidth);
@@ -71,7 +85,17 @@ export function useResizable(opts: {
         if (rafRef.current != null) return;
         rafRef.current = requestAnimationFrame(() => {
           rafRef.current = null;
-          setPanelWidth(key, nextWidth(startWidth, ev.clientX - startX, edge, min, max));
+          const dx = ev.clientX - startX;
+          // Shoving the border well past min collapses the panel (when the
+          // panel opts in) instead of pinning at the clamp.
+          const raw = edge === 'right' ? startWidth + dx : startWidth - dx;
+          if (onCollapse && shouldCollapse(raw, min)) {
+            up();
+            setPanelWidth(key, min); // reopen at min, not at a shoved width
+            onCollapse();
+            return;
+          }
+          setPanelWidth(key, nextWidth(startWidth, dx, edge, min, max));
         });
       };
       const up = () => {
@@ -88,7 +112,7 @@ export function useResizable(opts: {
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
     },
-    [width, key, edge, min, max, setPanelWidth],
+    [width, key, edge, min, max, setPanelWidth, onCollapse],
   );
 
   const onKeyDown = useCallback(
@@ -99,10 +123,15 @@ export function useResizable(opts: {
         setPanelWidth(key, nextWidth(width, step, edge, min, max));
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
+        // Keyboard parity with drag-to-collapse: ArrowLeft at min collapses.
+        if (onCollapse && width <= min) {
+          onCollapse();
+          return;
+        }
         setPanelWidth(key, nextWidth(width, -step, edge, min, max));
       }
     },
-    [width, key, edge, min, max, setPanelWidth],
+    [width, key, edge, min, max, setPanelWidth, onCollapse],
   );
 
   const reset = useCallback(() => resetPanelWidth(key), [key, resetPanelWidth]);

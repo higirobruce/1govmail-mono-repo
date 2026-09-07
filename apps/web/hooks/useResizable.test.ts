@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampWidth, nextWidth } from './useResizable';
+import { clampWidth, nextWidth, shouldCollapse, COLLAPSE_SLACK } from './useResizable';
 
 describe('clampWidth', () => {
   it('clamps to [min, max] and rounds', () => {
@@ -25,5 +25,14 @@ describe('nextWidth', () => {
     expect(nextWidth(300, 5000, 'right', 180, 360)).toBe(360);
     expect(nextWidth(300, -5000, 'right', 180, 360)).toBe(180);
     expect(nextWidth(420, 5000, 'left', 320, 640)).toBe(320);
+  });
+});
+
+describe('shouldCollapse', () => {
+  it('fires only once the drag overshoots min by more than the slack', () => {
+    expect(shouldCollapse(180, 180)).toBe(false);            // at min
+    expect(shouldCollapse(180 - COLLAPSE_SLACK, 180)).toBe(false); // exactly at slack
+    expect(shouldCollapse(180 - COLLAPSE_SLACK - 1, 180)).toBe(true);
+    expect(shouldCollapse(0, 180)).toBe(true);               // shoved to the edge
   });
 });

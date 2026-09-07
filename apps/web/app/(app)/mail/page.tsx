@@ -348,6 +348,25 @@ export default function MailPage() {
   });
   const [commitmentsOpen, setCommitmentsOpen] = useState(false);
 
+  // ── Sidebar auto-collapse while an AI pane is docked ─────────────────────
+  // Opening any AI pane (briefing, commitments, Ask, dossier) shrinks a
+  // fully-open sidebar to the icon rail (the sidebar's width transition
+  // animates the change); closing the last pane restores it — but only when
+  // this effect did the collapsing, so a manually collapsed sidebar stays put.
+  const sidebarAutoCollapsed = useRef(false);
+  const aiPaneDocked =
+    (briefingOpen && briefingExpanded) || commitmentsOpen || (askOpen && !askCollapsed) || dossierOpen;
+  useEffect(() => {
+    const { sidebarCollapsed } = useUIStore.getState();
+    if (aiPaneDocked && !sidebarCollapsed) {
+      sidebarAutoCollapsed.current = true;
+      useUIStore.setState({ sidebarCollapsed: true });
+    } else if (!aiPaneDocked && sidebarAutoCollapsed.current) {
+      sidebarAutoCollapsed.current = false;
+      useUIStore.setState({ sidebarCollapsed: false });
+    }
+  }, [aiPaneDocked]);
+
   // Promote-with-overrides: opens a prefilled, editable TaskModal for a
   // commitment. When AI is enabled and the commitment carries a due hint,
   // parses it into a concrete date first (row spinner covers this wait —

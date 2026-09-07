@@ -518,7 +518,15 @@ export default function Sidebar({
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const isTablet = useIsTabletBand();
   const railMode = collapsed || isTablet; // effective collapsed state
-  const resize = useResizable({ key: 'sidebar', defaultWidth: 220, min: 180, max: 360, edge: 'right' });
+  const resize = useResizable({
+    key: 'sidebar',
+    defaultWidth: 220,
+    min: 180,
+    max: 360,
+    edge: 'right',
+    // Shoving the border to the left edge collapses to the icon rail.
+    onCollapse: () => useUIStore.setState({ sidebarCollapsed: true }),
+  });
 
   const initials = user?.displayName
     ?.split(' ')

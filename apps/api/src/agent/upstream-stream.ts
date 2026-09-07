@@ -68,3 +68,33 @@ export async function consumeAgentStream(
 
   return { text, toolCalls: [...calls.values()].filter((c) => c.name), finishReason };
 }
+
+/**
+ * Reads a NON-streamed OpenAI-compat completion into the same result shape as
+ * consumeAgentStream. Iteration 1 of an agent turn runs non-streamed because
+ * the llama.cpp-based Ollama host honors tool_choice:'required' only for
+ * plain completions — under streaming it silently ignores it (verified live
+ * 2026-09-07). Content, when present, is forwarded as a single text delta so
+ * downstream emit/preamble handling stays identical.
+ */
+export async function consumeAgentJson(
+  upstream: globalThis.Response,
+  onTextDelta: (delta: string) => void,
+): Promise<AgentStreamResult> {
+  let body: any;
+  try {
+    body = await upstream.json();
+  } catch {
+    return { text: '', toolCalls: [], finishReason: null };
+  }
+  const choice = body?.choices?.[0];
+  const message = choice?.message ?? {};
+  const text = typeof message.content === 'string' ? message.content : '';
+  if (text) onTextDelta(text);
+  const toolCalls: UpstreamToolCall[] = (message.tool_calls ?? []).map((tc: any) => ({
+    id: String(tc?.id ?? ''),
+    name: String(tc?.function?.name ?? ''),
+    arguments: String(tc?.function?.arguments ?? ''),
+  }));
+  return { text, toolCalls, finishReason: choice?.finish_reason ?? null };
+}

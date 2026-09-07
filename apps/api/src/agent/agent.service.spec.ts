@@ -49,16 +49,44 @@ const echoTool: ToolDef = {
   execute: jest.fn().mockResolvedValue({ summary: 'echoed', content: 'ECHO RESULT', refs: [] }),
 };
 
+// Non-streamed JSON completion, the shape iteration 1 consumes (the llama.cpp
+// host ignores tool_choice:'required' under streaming, so iteration 1 is a
+// plain completion).
+function jsonResponse(message: any, finish = 'stop'): any {
+  return { json: async () => ({ choices: [{ message, finish_reason: finish }] }) };
+}
+const jsonText = (s: string) => jsonResponse({ content: s });
+const jsonToolCall = (name: string, args: string, id = 'c1') =>
+  jsonResponse(
+    { content: '', tool_calls: [{ id, type: 'function', function: { name, arguments: args } }] },
+    'tool_calls',
+  );
+
 describe('AgentService.run', () => {
   it('streams a direct answer when no tools are called', async () => {
-    const { svc, frames, emit } = makeService([sseResponse([text('Hello')])]);
+    const { svc, frames, emit } = makeService([jsonText('Hello')]);
     await svc.run('u1', [{ role: 'user', content: 'hi' }], emit, new AbortController().signal);
     expect(frames).toEqual([{ event: null, data: { choices: [{ delta: { content: 'Hello' } }] } }]);
   });
 
+  it('runs iteration 1 non-streamed with tool_choice required, later iterations streamed with auto', async () => {
+    const { svc, ai, emit } = makeService(
+      [jsonToolCall('echo', '{"message":"hi"}'), sseResponse([text('Done')])],
+      [echoTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+
+    const first = ai.upstream.mock.calls[0][0];
+    expect(first.stream).toBe(false);
+    expect(first.tool_choice).toBe('required');
+    const second = ai.upstream.mock.calls[1][0];
+    expect(second.stream).toBe(true);
+    expect(second.tool_choice).toBe('auto');
+  });
+
   it('executes a read tool, fences the result, then answers', async () => {
     const { svc, ai, prisma, frames, emit } = makeService(
-      [sseResponse([toolCall('echo', '{"message":"hi"}')]), sseResponse([text('Done')])],
+      [jsonToolCall('echo', '{"message":"hi"}'), sseResponse([text('Done')])],
       [echoTool],
     );
     await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
@@ -78,7 +106,7 @@ describe('AgentService.run', () => {
   it('emits a separator delta between an iteration preamble and the next iteration text', async () => {
     const { svc, frames, emit } = makeService(
       [
-        sseResponse([text('Let me check that.'), toolCall('echo', '{"message":"hi"}')]),
+        jsonResponse({ content: 'Let me check that.', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'echo', arguments: '{"message":"hi"}' } }] }, 'tool_calls'),
         sseResponse([text('Here you go.')]),
       ],
       [echoTool],
@@ -98,7 +126,7 @@ describe('AgentService.run', () => {
       execute: jest.fn(),
     };
     const { svc, frames, emit } = makeService(
-      [sseResponse([toolCall('send_email', '{"to":["a@b.rw"],"subject":"S","body":"B"}')]), sseResponse([text('Ready.')])],
+      [jsonToolCall('send_email', '{"to":["a@b.rw"],"subject":"S","body":"B"}'), sseResponse([text('Ready.')])],
       [gated],
     );
     await svc.run('u1', [{ role: 'user', content: 'send it' }], emit, new AbortController().signal);
@@ -110,7 +138,7 @@ describe('AgentService.run', () => {
 
   it('invalid args become a tool error message, loop continues', async () => {
     const { svc, ai, frames, emit } = makeService(
-      [sseResponse([toolCall('echo', '{"message":5}')]), sseResponse([text('Recovered')])],
+      [jsonToolCall('echo', '{"message":5}'), sseResponse([text('Recovered')])],
       [echoTool],
     );
     await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
@@ -127,7 +155,7 @@ describe('AgentService.run', () => {
       execute: jest.fn().mockRejectedValue(new Error('backend exploded')),
     };
     const { svc, ai, emit } = makeService(
-      [sseResponse([toolCall('boom', '{}')]), sseResponse([text('Recovered')])],
+      [jsonToolCall('boom', '{}'), sseResponse([text('Recovered')])],
       [throwingTool],
     );
     await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
@@ -145,7 +173,7 @@ describe('AgentService.run', () => {
       { name: 'echo', args: '{"message":"d"}', id: 'c4' },
     ];
     const { svc, ai, emit } = makeService(
-      [sseResponse([multiToolCall(calls)]), sseResponse([text('Done')])],
+      [jsonResponse({ content: '', tool_calls: calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.args } })) }, 'tool_calls'), sseResponse([text('Done')])],
       [echoTool],
     );
     await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
@@ -173,7 +201,9 @@ describe('AgentService.run', () => {
     // results (45k) blow past MAX_TRANSCRIPT_CHARS (35k) well before
     // iteration 8, so the budget — not the iteration cap — must be what
     // forces the final answer.
-    const loopy = Array.from({ length: 8 }, (_, i) => sseResponse([toolCall('big', '{}', `c${i}`)]));
+    const loopy = Array.from({ length: 8 }, (_, i) =>
+      i === 0 ? jsonToolCall('big', '{}', 'c0') : sseResponse([toolCall('big', '{}', `c${i}`)]),
+    );
     const { svc, ai, emit } = makeService([...loopy, sseResponse([text('Forced by budget')])], [bigTool]);
     await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
 
@@ -192,7 +222,7 @@ describe('AgentService.run', () => {
       execute: jest.fn(),
     };
     const { svc, ai, frames, emit } = makeService(
-      [sseResponse([toolCall('ask_user', '{"question":"Which document?","options":["Docs","Email attachment"]}')])],
+      [jsonToolCall('ask_user', '{"question":"Which document?","options":["Docs","Email attachment"]}')],
       [clarify],
     );
     await svc.run('u1', [{ role: 'user', content: 'open the doc' }], emit, new AbortController().signal);
@@ -214,10 +244,10 @@ describe('AgentService.run', () => {
       execute: jest.fn(),
     };
     const { svc, ai, frames, emit } = makeService(
-      [sseResponse([multiToolCall([
-        { name: 'ask_user', args: '{"question":"Q1?","options":["a","b"]}', id: 'c1' },
-        { name: 'ask_user', args: '{"question":"Q2?","options":["c","d"]}', id: 'c2' },
-      ])])],
+      [jsonResponse({ content: '', tool_calls: [
+        { id: 'c1', type: 'function', function: { name: 'ask_user', arguments: '{"question":"Q1?","options":["a","b"]}' } },
+        { id: 'c2', type: 'function', function: { name: 'ask_user', arguments: '{"question":"Q2?","options":["c","d"]}' } },
+      ] }, 'tool_calls')],
       [clarify],
     );
     await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
@@ -230,7 +260,7 @@ describe('AgentService.run', () => {
 
   it('forces a final answer after MAX_ITERATIONS', async () => {
     const loopy = Array.from({ length: 8 }, (_, i) =>
-      sseResponse([toolCall('echo', '{"message":"again"}', `c${i}`)]),
+      i === 0 ? jsonToolCall('echo', '{"message":"again"}', 'c0') : sseResponse([toolCall('echo', '{"message":"again"}', `c${i}`)]),
     );
     const { svc, ai, emit } = makeService([...loopy, sseResponse([text('Forced final')])], [echoTool]);
     await svc.run('u1', [{ role: 'user', content: 'loop' }], emit, new AbortController().signal);

@@ -19,7 +19,7 @@ export type UpstreamChatBody = Omit<ChatRequestDto, 'messages'> & {
     type: 'function';
     function: { name: string; description: string; parameters: Record<string, unknown> };
   }>;
-  tool_choice?: 'auto' | 'none';
+  tool_choice?: 'auto' | 'none' | 'required';
 };
 
 /**

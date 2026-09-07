@@ -8,7 +8,7 @@ import {
 } from '@email-client/shared';
 import { AiService, type UpstreamChatBody } from '../ai/ai.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { consumeAgentStream, type UpstreamToolCall } from './upstream-stream';
+import { consumeAgentJson, consumeAgentStream, type UpstreamToolCall } from './upstream-stream';
 import { summarizeArgs } from './summarize-args';
 import { ToolRegistry, ToolValidationError, type ToolContext } from './tool-registry';
 
@@ -84,19 +84,28 @@ export class AgentService {
         pushMessage({ role: 'user', content: 'Answer now with what you have. Do not call any more tools.' });
       }
 
+      // Iteration 1 forces a tool call (probe-first: search or ask_user before
+      // answering — qwen3 otherwise skips tools and fabricates "not found").
+      // It must run NON-streamed: the llama.cpp host honors tool_choice:
+      // 'required' only for plain completions and silently ignores it under
+      // streaming (verified live 2026-09-07). Later iterations stream as usual.
+      const firstProbe = iter === 1 && !finalIteration;
       const body: UpstreamChatBody = {
         model: this.chatModel,
         messages: transcript as unknown as Array<Record<string, unknown>>,
-        stream: true,
+        stream: !firstProbe,
         temperature: 0.2,
         max_tokens: 1024,
-        ...(finalIteration ? {} : { tools: this.registry.openAiTools(), tool_choice: 'auto' as const }),
+        ...(finalIteration
+          ? {}
+          : { tools: this.registry.openAiTools(), tool_choice: firstProbe ? ('required' as const) : ('auto' as const) }),
       } as UpstreamChatBody;
 
       const upstream = await this.ai.upstream(body, signal);
-      const result = await consumeAgentStream(upstream, (delta) =>
-        emit(null, { choices: [{ delta: { content: delta } }] }),
-      );
+      const onDelta = (delta: string) => emit(null, { choices: [{ delta: { content: delta } }] });
+      const result = firstProbe
+        ? await consumeAgentJson(upstream, onDelta)
+        : await consumeAgentStream(upstream, onDelta);
 
       if (!result.toolCalls.length || finalIteration) return;
 

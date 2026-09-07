@@ -263,6 +263,23 @@ describe('AgentService.run', () => {
     expect(clarify.execute).not.toHaveBeenCalled();
   });
 
+  it('strips [sN] citation aliases from clarify questions and options', async () => {
+    const clarify: ToolDef = {
+      name: 'ask_user', description: 'clarify', mode: 'clarify', resultBudget: 0,
+      schema: z.object({ question: z.string(), options: z.array(z.string()).min(2).max(4) }),
+      execute: jest.fn(),
+    };
+    const { svc, frames, emit } = makeService(
+      [jsonToolCall('ask_user', '{"question":"Which doc [s1]?","options":["Untitled [s1]","Charter Test Notes [s2]"]}')],
+      [clarify],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+
+    const frame = frames.find((f) => f.event === 'clarify');
+    expect(frame!.data.question).toBe('Which doc?');
+    expect(frame!.data.options).toEqual(['Untitled', 'Charter Test Notes']);
+  });
+
   it('only the first clarify in an iteration is emitted; the turn still ends', async () => {
     const clarify: ToolDef = {
       name: 'ask_user', description: 'clarify', mode: 'clarify', resultBudget: 0,

@@ -279,7 +279,11 @@ export class AgentService {
     if (def.mode === 'clarify') {
       const clarifyId = randomUUID();
       const { question, options } = args as { question: string; options: string[] };
-      emit('clarify', { clarifyId, question, options });
+      // Strip [sN] citation aliases: a chip's text becomes the user's next
+      // message, and an alias in it sends the model chasing "[s2]" as a
+      // document id (observed live 2026-09-07) instead of re-searching.
+      const stripAliases = (s: string) => s.replace(/\s*\[s\d+\]/g, '').replace(/\s+([?!.])/g, '$1').trim();
+      emit('clarify', { clarifyId, question: stripAliases(question), options: options.map(stripAliases) });
       emit('tool_result', {
         id: callId, ok: true, summary: 'Clarifying question shown', refs: [], injectionSuspected: false,
       });

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { authedFetch } from '@/lib/authed-fetch';
 import type { AgentProposal } from '@/lib/ai/agent';
+import { markdownToHtml } from '@/lib/ai/markdownToHtml';
 import { cn } from '@/lib/utils';
 
 type Status = 'idle' | 'working' | 'done' | 'dismissed' | 'error';
@@ -15,9 +16,10 @@ const ENDPOINTS: Record<AgentProposal['tool'], { url: string; verb: string; done
 /**
  * Renders one agent-proposed action (send an email / create a calendar event)
  * awaiting human approval. Self-contained: owns its own approve/dismiss state,
- * POSTs the tool's `args` verbatim to the matching approval endpoint (payload
- * contracts fixed in Task 9 — no reshaping here), and reflects the outcome
- * in place rather than unmounting.
+ * POSTs the tool's `args` to the matching approval endpoint (payload contracts
+ * fixed in Task 9 — email payloads additionally carry bodyFormat: 'markdown'
+ * so the server formats the body and appends the user's signature), and
+ * reflects the outcome in place rather than unmounting.
  */
 export default function ProposalCard({ proposal }: { proposal: AgentProposal }) {
   const [status, setStatus] = useState<Status>('idle');
@@ -66,9 +68,13 @@ export default function ProposalCard({ proposal }: { proposal: AgentProposal }) 
             {args.cc?.length ? ` · Cc: ${args.cc.join(', ')}` : ''}
           </div>
           <div className="font-medium">{args.subject}</div>
-          <div className="whitespace-pre-wrap text-[0.6875rem] max-h-48 overflow-y-auto text-foreground/90">
-            {args.body}
-          </div>
+          {/* The body is agent-authored markdown; the server formats it the same
+              way on send/save (bodyFormat: 'markdown'), so preview ≈ what goes out.
+              markdownToHtml is escape-first + DOMPurify — safe for innerHTML. */}
+          <div
+            className="prose-sm text-[0.6875rem] max-h-48 overflow-y-auto text-foreground/90 [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_ul]:pl-4 [&_ol]:pl-4 [&_ul]:list-disc [&_ol]:list-decimal"
+            dangerouslySetInnerHTML={{ __html: markdownToHtml(args.body ?? '') }}
+          />
         </div>
       ) : (
         <div className="space-y-1 text-[0.6875rem]">
@@ -86,7 +92,13 @@ export default function ProposalCard({ proposal }: { proposal: AgentProposal }) 
           <button
             type="button"
             disabled={status === 'working'}
-            onClick={() => post(meta.url, args, meta.doneLabel)}
+            onClick={() =>
+              post(
+                meta.url,
+                proposal.tool === 'send_email' ? { ...args, bodyFormat: 'markdown' } : args,
+                meta.doneLabel,
+              )
+            }
             className={cn(
               'rounded-md bg-primary px-2 py-1 text-[0.6875rem] text-primary-foreground transition-colors',
               status === 'working' ? 'opacity-50' : 'hover:bg-primary/90',
@@ -98,7 +110,7 @@ export default function ProposalCard({ proposal }: { proposal: AgentProposal }) 
             <button
               type="button"
               disabled={status === 'working'}
-              onClick={() => post('/mail/drafts', { to: args.to, cc: args.cc, subject: args.subject, body: args.body }, 'Saved to Drafts ✓')}
+              onClick={() => post('/mail/drafts', { to: args.to, cc: args.cc, subject: args.subject, body: args.body, bodyFormat: 'markdown' }, 'Saved to Drafts ✓')}
               className={cn(
                 'rounded-md border border-border/40 px-2 py-1 text-[0.6875rem] text-foreground transition-colors',
                 status === 'working' ? 'opacity-50' : 'hover:bg-muted/60',

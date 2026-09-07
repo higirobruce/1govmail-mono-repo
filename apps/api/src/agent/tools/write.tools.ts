@@ -10,7 +10,7 @@ export function buildWriteTools(mail: MailService, docs: DocsService, tasks: Tas
     {
       name: 'draft_email',
       description:
-        'Create an email draft in the user\'s Drafts folder. Nothing is sent. Use this when the user asks you to write or prepare an email they will review.',
+        'Create an email draft in the user\'s Drafts folder. Nothing is sent. Use this when the user asks you to write or prepare an email they will review. Write the body as markdown (short paragraphs, lists where they help). Do NOT add a signature block or contact details at the end — the user\'s signature is appended automatically.',
       mode: 'write-auto',
       resultBudget: 500,
       schema: z.object({
@@ -25,10 +25,15 @@ export function buildWriteTools(mail: MailService, docs: DocsService, tasks: Tas
           cc: args.cc,
           subject: args.subject,
           body: args.body,
+          bodyFormat: 'markdown',
         });
         return {
           summary: `Draft "${args.subject}" saved to Drafts`,
-          content: `Draft saved (id ${zimbraId}). The user can open it in their Drafts folder to review, edit and send it.`,
+          content: `Draft saved (id ${zimbraId}). The user can open it from the source chip or their Drafts folder to review, edit and send it.`,
+          refs: [{
+            alias: ctx.nextAlias(), type: 'mail', id: zimbraId, title: args.subject,
+            date: new Date().toISOString(), snippet: '', injectionSuspected: false,
+          }],
         };
       },
     },

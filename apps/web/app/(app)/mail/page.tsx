@@ -612,7 +612,10 @@ export default function MailPage() {
         }
       }
 
-      if (isDraft) {
+      // Re-check the draft flag on the fetched message: an ?open= deep link
+      // (e.g. the agent's "draft saved" source chip) has no list row to read
+      // isDraft from, so the pre-fetch check above misses it.
+      if (isDraft || data?.isDraft) {
         // Open the draft in the compose panel instead of the detail view
         const extractEmails = (arr: any[]): string[] =>
           (arr ?? [])

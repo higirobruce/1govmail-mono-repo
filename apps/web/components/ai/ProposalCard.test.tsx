@@ -31,13 +31,39 @@ describe('ProposalCard', () => {
     expect(screen.getByRole('button', { name: /dismiss/i })).toBeTruthy();
   });
 
-  it('approve posts the exact payload to /mail/send and shows sent state', async () => {
+  it('approve posts the payload with bodyFormat markdown to /mail/send and shows sent state', async () => {
     authedFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
     render(<ProposalCard proposal={sendProposal} />);
     fireEvent.click(screen.getByRole('button', { name: /approve & send/i }));
     await waitFor(() => expect(screen.getByText(/sent/i)).toBeTruthy());
     expect(authedFetch).toHaveBeenCalledWith('/mail/send', expect.objectContaining({ method: 'POST' }));
-    expect(JSON.parse(authedFetch.mock.calls[0][1].body)).toEqual(sendProposal.args);
+    expect(JSON.parse(authedFetch.mock.calls[0][1].body)).toEqual({ ...sendProposal.args, bodyFormat: 'markdown' });
+  });
+
+  it('save as draft posts the payload with bodyFormat markdown to /mail/drafts', async () => {
+    authedFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    render(<ProposalCard proposal={sendProposal} />);
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() => expect(screen.getByText(/saved to drafts/i)).toBeTruthy());
+    expect(authedFetch).toHaveBeenCalledWith('/mail/drafts', expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(authedFetch.mock.calls[0][1].body)).toEqual({
+      to: ['a@b.rw'],
+      cc: undefined,
+      subject: 'Hello',
+      body: 'Body text',
+      bodyFormat: 'markdown',
+    });
+  });
+
+  it('renders the markdown body preview as formatted HTML', () => {
+    render(
+      <ProposalCard
+        proposal={{ ...sendProposal, args: { ...sendProposal.args, body: 'Hi **team**\n\n- one' } }}
+      />,
+    );
+    const strong = screen.getByText('team');
+    expect(strong.tagName).toBe('STRONG');
+    expect(screen.getByText('one').tagName).toBe('LI');
   });
 
   it('failed approval surfaces the error and re-enables actions', async () => {

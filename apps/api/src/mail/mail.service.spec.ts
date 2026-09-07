@@ -1159,3 +1159,234 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
     expect(result.bodyHtml).toContain('data:image/gif;base64');
   });
 });
+
+describe('MailService.getDefaultSignatureHtml', () => {
+  const user = {
+    id: 'u1',
+    zimbraHost: 'mail.example.com',
+    authToken: 'tok',
+    csrfToken: 'csrf',
+    tokenExpiry: new Date(Date.now() + 60_000),
+  };
+
+  function makeService() {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+    } as unknown as PrismaService;
+    const zimbra = {
+      getPrefs: jest.fn().mockResolvedValue({}),
+      getIdentities: jest.fn().mockResolvedValue([]),
+      getSignatures: jest.fn().mockResolvedValue([]),
+    } as unknown as ZimbraService;
+    const service = new MailService(
+      prisma,
+      zimbra,
+      {} as NotificationsService,
+      {} as TasksService,
+    );
+    return { service, zimbra: zimbra as any };
+  }
+
+  const sigs = [
+    { id: 's1', name: 'First', contentHtml: '<p>First sig</p>', contentText: 'First sig' },
+    { id: 's2', name: 'Default', contentHtml: '<p>Bruce — RISA</p>', contentText: 'Bruce — RISA' },
+  ];
+
+  it('uses the identity default signature id when configured', async () => {
+    const { service, zimbra } = makeService();
+    zimbra.getSignatures.mockResolvedValue(sigs);
+    zimbra.getIdentities.mockResolvedValue([
+      { id: 'i1', name: 'DEFAULT', attrs: { zimbraPrefDefaultSignatureId: 's2' } },
+    ]);
+
+    await expect(service.getDefaultSignatureHtml('u1')).resolves.toBe('<p>Bruce — RISA</p>');
+  });
+
+  it('falls back to the prefs default signature id when the identity has none', async () => {
+    const { service, zimbra } = makeService();
+    zimbra.getSignatures.mockResolvedValue(sigs);
+    zimbra.getPrefs.mockResolvedValue({ zimbraPrefDefaultSignatureId: 's2' });
+
+    await expect(service.getDefaultSignatureHtml('u1')).resolves.toBe('<p>Bruce — RISA</p>');
+  });
+
+  it('falls back to the first signature when no default is configured', async () => {
+    const { service, zimbra } = makeService();
+    zimbra.getSignatures.mockResolvedValue(sigs);
+
+    await expect(service.getDefaultSignatureHtml('u1')).resolves.toBe('<p>First sig</p>');
+  });
+
+  it('falls back to the first signature when the configured id no longer exists', async () => {
+    const { service, zimbra } = makeService();
+    zimbra.getSignatures.mockResolvedValue(sigs);
+    zimbra.getIdentities.mockResolvedValue([
+      { id: 'i1', name: 'DEFAULT', attrs: { zimbraPrefDefaultSignatureId: 'gone' } },
+    ]);
+
+    await expect(service.getDefaultSignatureHtml('u1')).resolves.toBe('<p>First sig</p>');
+  });
+
+  it('converts a text-only signature to HTML paragraphs', async () => {
+    const { service, zimbra } = makeService();
+    zimbra.getSignatures.mockResolvedValue([
+      { id: 's1', name: 'Plain', contentHtml: '', contentText: 'Bruce\n\nRISA' },
+    ]);
+
+    await expect(service.getDefaultSignatureHtml('u1')).resolves.toBe(
+      '<p>Bruce</p><p><br></p><p>RISA</p>',
+    );
+  });
+
+  it('returns an empty string when the user has no signatures', async () => {
+    const { service } = makeService();
+
+    await expect(service.getDefaultSignatureHtml('u1')).resolves.toBe('');
+  });
+
+  it('returns an empty string instead of throwing when Zimbra errors', async () => {
+    const { service, zimbra } = makeService();
+    zimbra.getSignatures.mockRejectedValue(new Error('zimbra down'));
+
+    await expect(service.getDefaultSignatureHtml('u1')).resolves.toBe('');
+  });
+});
+
+describe('MailService.sendMessage body formatting', () => {
+  const user = {
+    id: 'u1',
+    email: 'bruce@risa.gov.rw',
+    zimbraHost: 'mail.example.com',
+    authToken: 'tok',
+    csrfToken: 'csrf',
+    tokenExpiry: new Date(Date.now() + 60_000),
+  };
+
+  function makeService() {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      message: { findFirst: jest.fn().mockResolvedValue(null) },
+      folder: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const zimbra = {
+      sendMessage: jest.fn().mockResolvedValue({ zimbraId: null, conversationId: null }),
+      getPrefs: jest.fn().mockResolvedValue({}),
+      getIdentities: jest.fn().mockResolvedValue([]),
+      getSignatures: jest.fn().mockResolvedValue([
+        { id: 's1', name: 'Default', contentHtml: '<p>Bruce — RISA</p>', contentText: 'Bruce — RISA' },
+      ]),
+    } as unknown as ZimbraService;
+    const service = new MailService(
+      prisma,
+      zimbra,
+      {} as NotificationsService,
+      {} as TasksService,
+    );
+    return { service, zimbra: zimbra as any };
+  }
+
+  it('converts a markdown body and appends the default signature when bodyFormat is markdown', async () => {
+    const { service, zimbra } = makeService();
+
+    await service.sendMessage('u1', {
+      to: ['a@b.rw'],
+      subject: 'S',
+      body: 'Hello\n\n- a\n- b',
+      bodyFormat: 'markdown',
+    });
+
+    expect(zimbra.sendMessage).toHaveBeenCalledWith(
+      'mail.example.com',
+      'tok',
+      expect.objectContaining({
+        body: '<p>Hello</p><ul><li>a</li><li>b</li></ul><p><br></p><div data-sig="1"><p>Bruce — RISA</p></div>',
+      }),
+      'csrf',
+      [],
+      [],
+      [],
+    );
+  });
+
+  it('sends the markdown-converted body without a signature block when the user has none', async () => {
+    const { service, zimbra } = makeService();
+    zimbra.getSignatures.mockResolvedValue([]);
+
+    await service.sendMessage('u1', {
+      to: ['a@b.rw'],
+      subject: 'S',
+      body: 'Hello',
+      bodyFormat: 'markdown',
+    });
+
+    expect(zimbra.sendMessage.mock.calls[0][2].body).toBe('<p>Hello</p>');
+  });
+
+  it('leaves HTML bodies untouched when bodyFormat is not set', async () => {
+    const { service, zimbra } = makeService();
+
+    await service.sendMessage('u1', {
+      to: ['a@b.rw'],
+      subject: 'S',
+      body: '<p>already html</p>',
+    });
+
+    expect(zimbra.sendMessage.mock.calls[0][2].body).toBe('<p>already html</p>');
+    expect(zimbra.getSignatures).not.toHaveBeenCalled();
+  });
+});
+
+describe('MailService.saveDraft body formatting', () => {
+  const user = {
+    id: 'u1',
+    zimbraHost: 'mail.example.com',
+    authToken: 'tok',
+    csrfToken: 'csrf',
+    tokenExpiry: new Date(Date.now() + 60_000),
+  };
+
+  function makeService() {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+    } as unknown as PrismaService;
+    const zimbra = {
+      saveDraft: jest.fn().mockResolvedValue('z9'),
+      getPrefs: jest.fn().mockResolvedValue({}),
+      getIdentities: jest.fn().mockResolvedValue([]),
+      getSignatures: jest.fn().mockResolvedValue([
+        { id: 's1', name: 'Default', contentHtml: '<p>Bruce — RISA</p>', contentText: 'Bruce — RISA' },
+      ]),
+    } as unknown as ZimbraService;
+    const service = new MailService(
+      prisma,
+      zimbra,
+      {} as NotificationsService,
+      {} as TasksService,
+    );
+    return { service, zimbra: zimbra as any };
+  }
+
+  it('converts a markdown body and appends the default signature when bodyFormat is markdown', async () => {
+    const { service, zimbra } = makeService();
+
+    await service.saveDraft('u1', {
+      to: ['a@b.rw'],
+      subject: 'S',
+      body: 'Hello\n\n- a\n- b',
+      bodyFormat: 'markdown',
+    });
+
+    expect(zimbra.saveDraft.mock.calls[0][2].body).toBe(
+      '<p>Hello</p><ul><li>a</li><li>b</li></ul><p><br></p><div data-sig="1"><p>Bruce — RISA</p></div>',
+    );
+  });
+
+  it('leaves the body untouched when bodyFormat is not set', async () => {
+    const { service, zimbra } = makeService();
+
+    await service.saveDraft('u1', { to: ['a@b.rw'], subject: 'S', body: '<p>html</p>' });
+
+    expect(zimbra.saveDraft.mock.calls[0][2].body).toBe('<p>html</p>');
+    expect(zimbra.getSignatures).not.toHaveBeenCalled();
+  });
+});

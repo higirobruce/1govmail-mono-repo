@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, Logger, UnauthorizedException, ConflictException } from '@nestjs/common';
-import { deriveLabel, formatAttachments, type ExtractedCard, type TriageLabel } from '@email-client/shared';
+import { deriveLabel, formatAttachments, mdToHtml, type ExtractedCard, type TriageLabel } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -695,6 +695,7 @@ export class MailService {
       bcc?: string[];
       subject: string;
       body: string;
+      bodyFormat?: 'markdown';
       replyToId?: string;
       replyType?: 'r' | 'w';
       forwardedAttachments?: Array<{ mid: string; part: string }>;
@@ -702,6 +703,12 @@ export class MailService {
     files: Express.Multer.File[] = [],
   ) {
     const user = await this.getUser(userId);
+
+    // Agent-approved sends deliver the body as markdown: convert it to HTML
+    // and append the user's signature, matching what draft_email produces.
+    if (payload.bodyFormat === 'markdown') {
+      payload = { ...payload, body: await this.renderMarkdownBody(userId, payload.body) };
+    }
 
     // Resolve replyToId: the frontend sends our internal Prisma CUID, but
     // Zimbra's origid expects the numeric zimbraId.
@@ -1260,9 +1267,64 @@ export class MailService {
   // ─── Drafts ─────────────────────────────────────────────────────────────────
 
   /**
+   * Resolve the user's default signature as HTML, mirroring the compose
+   * modal's client-side resolution: the primary identity's configured
+   * default signature, then the prefs-level default, then the first
+   * available signature. Text-only signatures are converted to simple
+   * paragraphs. Returns '' when the user has no signatures — and on any
+   * Zimbra error, so callers composing a body never fail on the signature.
+   */
+  async getDefaultSignatureHtml(userId: string): Promise<string> {
+    try {
+      const user = await this.getUser(userId);
+      const [prefs, identities, signatures] = await Promise.all([
+        this.zimbra.getPrefs(user.zimbraHost, user.authToken!, user.csrfToken ?? undefined),
+        this.zimbra.getIdentities(user.zimbraHost, user.authToken!, user.csrfToken ?? undefined),
+        this.zimbra.getSignatures(user.zimbraHost, user.authToken!, user.csrfToken ?? undefined),
+      ]);
+      if (!signatures.length) return '';
+
+      const resolve = (sig?: { contentHtml: string; contentText: string }): string => {
+        if (sig?.contentHtml) return sig.contentHtml;
+        if (sig?.contentText) {
+          return sig.contentText
+            .split('\n')
+            .map((line) => `<p>${line || '<br>'}</p>`)
+            .join('');
+        }
+        return '';
+      };
+
+      const attrs = identities[0]?.attrs ?? {};
+      const id = attrs.zimbraPrefDefaultSignatureId || prefs.zimbraPrefDefaultSignatureId || '';
+      if (id) {
+        const html = resolve(signatures.find((s) => s.id === id));
+        if (html) return html;
+      }
+      return resolve(signatures[0]);
+    } catch (err: any) {
+      this.logger.warn(`getDefaultSignatureHtml failed: ${err?.message}`);
+      return '';
+    }
+  }
+
+  /**
+   * Render an agent-authored markdown body as final email HTML: the escaped
+   * markdown conversion followed by the user's default signature in the same
+   * `<div data-sig="1">` wrapper the compose modal uses (so opening the
+   * result in compose never double-injects a signature).
+   */
+  private async renderMarkdownBody(userId: string, markdown: string): Promise<string> {
+    const sigHtml = await this.getDefaultSignatureHtml(userId);
+    return mdToHtml(markdown) + (sigHtml ? `<p><br></p><div data-sig="1">${sigHtml}</div>` : '');
+  }
+
+  /**
    * Save or update a Zimbra draft.
    * If `payload.draftId` is supplied, the existing draft is updated in-place;
    * otherwise a new draft is created in the Drafts folder.
+   * `bodyFormat: 'markdown'` marks an agent-authored body: it is converted to
+   * HTML and the user's default signature is appended before saving.
    * Returns the Zimbra message ID of the (new or updated) draft.
    */
   async saveDraft(
@@ -1273,10 +1335,14 @@ export class MailService {
       bcc?: string[];
       subject?: string;
       body?: string;
+      bodyFormat?: 'markdown';
       draftId?: string;
     },
   ): Promise<{ zimbraId: string }> {
     const user = await this.getUser(userId);
+    if (payload.bodyFormat === 'markdown') {
+      payload = { ...payload, body: await this.renderMarkdownBody(userId, payload.body ?? '') };
+    }
     const zimbraId = await this.zimbra.saveDraft(
       user.zimbraHost,
       user.authToken!,

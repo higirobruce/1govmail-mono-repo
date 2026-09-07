@@ -41,6 +41,15 @@ export class SendMessageDto {
   @IsString()
   body: string;
 
+  /**
+   * When 'markdown', the server converts the body to HTML and appends the
+   * user's default signature (agent-approved sends). Omit for compose sends,
+   * whose body is already final HTML with the signature in place.
+   */
+  @IsOptional()
+  @IsIn(['markdown'])
+  bodyFormat?: 'markdown';
+
   @IsOptional()
   @IsString()
   replyToId?: string;

@@ -24,12 +24,27 @@ describe('write-auto tools', () => {
     expect(tools.map((t) => t.mode)).toEqual(['write-auto', 'write-auto', 'write-auto']);
   });
 
-  it('draft_email saves via MailService.saveDraft', async () => {
+  it('draft_email saves the markdown body via saveDraft with bodyFormat markdown', async () => {
+    mail.saveDraft.mockClear();
     const res = await byName('draft_email').execute(
-      { to: ['a@b.rw'], subject: 'Hi', body: 'Body' }, makeCtx(),
+      { to: ['a@b.rw'], subject: 'Hi', body: 'Dear Alice,\n\n- one\n- two' }, makeCtx(),
     );
-    expect(mail.saveDraft).toHaveBeenCalledWith('u1', { to: ['a@b.rw'], cc: undefined, subject: 'Hi', body: 'Body' });
+    expect(mail.saveDraft).toHaveBeenCalledWith('u1', {
+      to: ['a@b.rw'],
+      cc: undefined,
+      subject: 'Hi',
+      body: 'Dear Alice,\n\n- one\n- two',
+      bodyFormat: 'markdown',
+    });
     expect(res.summary).toContain('Draft');
+  });
+
+  it('draft_email returns a mail ref pointing at the saved draft', async () => {
+    const res = await byName('draft_email').execute(
+      { to: ['a@b.rw'], subject: 'Budget follow-up', body: 'Body' }, makeCtx(),
+    );
+    expect(res.refs).toHaveLength(1);
+    expect(res.refs![0]).toMatchObject({ type: 'mail', id: 'z9', title: 'Budget follow-up' });
   });
 
   it('create_document converts markdown to TipTap JSON', async () => {

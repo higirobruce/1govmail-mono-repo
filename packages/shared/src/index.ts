@@ -9,3 +9,4 @@ export * from './ai/language';
 export * from './ai/chat';
 export * from './ai/docText';
 export * from './ai/mdDoc';
+export * from './ai/mdHtml';

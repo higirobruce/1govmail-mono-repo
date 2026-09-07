@@ -229,7 +229,31 @@ export class AgentService {
       const result = await consumeAgentJson(upstream, () => {});
       const call = result.toolCalls.find((c) => c.name === 'ask_user');
       if (!call) return;
-      await this.dispatch(call, call.id || 'clarify_conv', ctx, turnId, emit);
+
+      // Coerce sloppy args into the schema instead of dropping them — the
+      // model routinely returns 5 options or 70-char labels here (observed
+      // live: strict validation rejected the whole conversion). Re-dispatch
+      // the cleaned args so the normal clarify frames/logging apply.
+      let parsed: any;
+      try {
+        parsed = JSON.parse(call.arguments || '{}');
+      } catch {
+        return;
+      }
+      const question = String(parsed?.question ?? '').trim().slice(0, 300);
+      const options = (Array.isArray(parsed?.options) ? parsed.options : [])
+        .map((o: unknown) => String(o).trim())
+        .filter((o: string) => o.length > 0)
+        .map((o: string) => (o.length > 60 ? `${o.slice(0, 59)}…` : o))
+        .slice(0, 4);
+      if (question.length < 5 || options.length < 2) return;
+      await this.dispatch(
+        { id: call.id, name: 'ask_user', arguments: JSON.stringify({ question, options }) },
+        call.id || 'clarify_conv',
+        ctx,
+        turnId,
+        emit,
+      );
     } catch {
       // best-effort — the prose question already reached the user
     }

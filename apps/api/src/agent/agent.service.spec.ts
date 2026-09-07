@@ -350,6 +350,27 @@ describe('AgentService.run', () => {
     expect(frame!.data.options).toEqual(['Charter Test Notes', 'Untitled']);
   });
 
+  it('coerces sloppy conversion args (extra options, overlong labels) into a valid clarify', async () => {
+    const longLabel = 'Project Charter for Joint Technical Workshop on ILPD MIS-E-learning as LMS Integration Document';
+    const { svc, frames, emit } = makeService(
+      [
+        jsonToolCall('echo', '{"message":"hi"}'),
+        sseResponse([text('Please choose one.')]),
+        jsonToolCall('ask_user', JSON.stringify({
+          question: 'Which document?',
+          options: ['A', 'B', 'C', 'D', 'E'].map((s, i) => (i === 0 ? longLabel : s)),
+        }), 'c9'),
+      ],
+      [echoTool, clarifyTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'summarize the document' }], emit, new AbortController().signal);
+
+    const frame = frames.find((f) => f.event === 'clarify');
+    expect(frame).toBeTruthy();
+    expect(frame!.data.options).toHaveLength(4);
+    expect(frame!.data.options[0].length).toBeLessThanOrEqual(60);
+  });
+
   it('does not convert a statement final answer', async () => {
     const { svc, ai, frames, emit } = makeService(
       [jsonToolCall('echo', '{"message":"hi"}'), sseResponse([text('Here is the summary.')])],

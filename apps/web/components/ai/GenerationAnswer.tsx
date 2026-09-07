@@ -2,6 +2,7 @@
 
 import { Loader2, TriangleAlert, Mail, FileText, Calendar } from 'lucide-react';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
+import { renderInline, splitBlocks } from './answerFormat';
 import type { AskSource, AskSourceType } from '@/lib/ai/ask';
 
 /**
@@ -61,31 +62,46 @@ function AnswerBody({
   onSourceClick: (s: { type: AskSourceType; id: string }) => void;
 }) {
   const validAliases = new Set(sources.map((s) => s.alias));
-  const segments: AnswerSegment[] = splitByCitations(content, validAliases);
+  // Per line: split out citation chips, then render inline markdown on the
+  // text segments (same treatment as AskPanel's answers — **bold**, bullets,
+  // ### headings — instead of raw asterisks in a pre-wrap block).
+  const renderLine = (text: string, lineKey: string) =>
+    splitByCitations(text, validAliases).map((seg: AnswerSegment, i: number) => {
+      if (seg.kind === 'text') return <span key={`${lineKey}-${i}`}>{renderInline(seg.text, `${lineKey}-${i}`)}</span>;
+      const source = sources.find((s) => s.alias === seg.alias);
+      if (!source) return null; // guarded by splitByCitations, but keep TS/render safe
+      const Icon = SOURCE_TYPE_ICON[source.type];
+      return (
+        <button
+          key={`${lineKey}-${i}`}
+          type="button"
+          title={source.title ?? source.fromEmail ?? undefined}
+          onClick={() => onSourceClick({ type: source.type, id: source.id })}
+          className="mx-0.5 inline-flex max-w-full items-center gap-0.5 rounded bg-primary/10 px-1 text-[0.625rem] font-semibold text-primary hover:bg-primary/20 align-baseline"
+        >
+          <Icon className="h-2.5 w-2.5 shrink-0" aria-hidden />
+          {/* Long subject lines here were forcing the whole panel to overflow
+              horizontally — chips truncate instead of stretching the line. */}
+          <span className="max-w-[11rem] truncate">{sourceLabel(source)}</span>
+        </button>
+      );
+    });
+  const blocks = splitBlocks(content);
   return (
-    <p className="whitespace-pre-wrap text-[0.75rem] leading-relaxed text-foreground">
-      {segments.map((seg, i) => {
-        if (seg.kind === 'text') return <span key={i}>{seg.text}</span>;
-        const source = sources.find((s) => s.alias === seg.alias);
-        if (!source) return null; // guarded by splitByCitations, but keep TS/render safe
-        const Icon = SOURCE_TYPE_ICON[source.type];
-        return (
-          <button
-            key={i}
-            type="button"
-            title={source.title ?? source.fromEmail ?? undefined}
-            onClick={() => onSourceClick({ type: source.type, id: source.id })}
-            className="mx-0.5 inline-flex items-center gap-0.5 rounded bg-primary/10 px-1 text-[0.625rem] font-semibold text-primary hover:bg-primary/20 align-baseline"
-          >
-            <Icon className="h-2.5 w-2.5 shrink-0" aria-hidden />
-            {sourceLabel(source)}
-          </button>
-        );
-      })}
+    <div className="min-w-0 break-words text-[0.75rem] leading-relaxed text-foreground">
+      {blocks.map((block, i) => (
+        <div
+          key={i}
+          className={`${block.gapBefore ? 'mt-2 ' : ''}${block.kind === 'li' ? 'flex gap-1.5 pl-1' : ''}${block.kind === 'h' ? 'font-semibold' : ''}`}
+        >
+          {block.kind === 'li' && <span aria-hidden className="select-none text-muted-foreground">•</span>}
+          <span className="min-w-0">{renderLine(block.text, `b${i}`)}</span>
+        </div>
+      ))}
       {streaming && (
         <Loader2 className="ml-1 inline h-3 w-3 animate-spin align-middle text-muted-foreground/60" aria-hidden />
       )}
-    </p>
+    </div>
   );
 }
 
@@ -141,7 +157,7 @@ export function GenerationAnswer(props: {
 }) {
   const { content, sources, streaming, onSourceClick } = props;
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <InjectionBanner sources={sources} />
       <AnswerBody content={content} sources={sources} streaming={streaming} onSourceClick={onSourceClick} />
       <SourceRail sources={sources} onSourceClick={onSourceClick} />

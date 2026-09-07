@@ -346,8 +346,15 @@ export default function PersonDossierPanel() {
           )}
 
           {!streaming && streamError && (
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[0.719rem] text-amber-800 dark:text-amber-300">
-              {streamError}
+            <div className="flex items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-[0.719rem] text-amber-800 dark:text-amber-300">
+              <span className="min-w-0 break-words">{streamError}</span>
+              <button
+                type="button"
+                onClick={startStream}
+                className="shrink-0 font-medium underline hover:no-underline"
+              >
+                Retry
+              </button>
             </div>
           )}
         </section>

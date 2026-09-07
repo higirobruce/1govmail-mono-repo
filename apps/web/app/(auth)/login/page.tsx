@@ -13,6 +13,7 @@ import { Loader2, Mail, Lock, Building2, ShieldCheck } from 'lucide-react';
 const INSTITUTIONS = [
   { label: 'RISA', host: 'mail.risa.gov.rw:8443' },
   { label: 'MINICT', host: 'mail.minict.gov.rw' },
+  { label: 'MINAFFET', host: 'mail.minaffet.gov.rw' },
 ];
 
 export default function LoginPage() {

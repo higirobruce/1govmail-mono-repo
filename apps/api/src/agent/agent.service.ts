@@ -128,8 +128,12 @@ export class AgentService {
 
       for (const [i, call] of calls.entries()) {
         const callId = callIds[i];
-        const content = await this.dispatch(call, callId, ctx, turnId, emit);
+        const { content, endTurn } = await this.dispatch(call, callId, ctx, turnId, emit);
         pushMessage({ role: 'tool', tool_call_id: callId, content });
+        // A clarifying question ends the turn: the user's pick arrives as the
+        // next user message. Returning here also caps ask_user at one per
+        // turn — any further calls in this batch are simply never dispatched.
+        if (endTurn) return;
       }
     }
   }
@@ -140,7 +144,18 @@ export class AgentService {
     ctx: ToolContext,
     turnId: string,
     emit: EmitFn,
-  ): Promise<string> {
+  ): Promise<{ content: string; endTurn: boolean }> {
+    const content = await this.dispatchContent(call, callId, ctx, turnId, emit);
+    return typeof content === 'string' ? { content, endTurn: false } : content;
+  }
+
+  private async dispatchContent(
+    call: UpstreamToolCall,
+    callId: string,
+    ctx: ToolContext,
+    turnId: string,
+    emit: EmitFn,
+  ): Promise<string | { content: string; endTurn: boolean }> {
     const def = this.registry.get(call.name);
     if (!def) {
       emit('tool_start', { id: callId, tool: call.name, argsSummary: '(unknown tool)' });
@@ -170,6 +185,21 @@ export class AgentService {
 
     emit('tool_start', { id: callId, tool: call.name, argsSummary: summarizeArgs(call.name, args) });
     const started = Date.now();
+
+    if (def.mode === 'clarify') {
+      const clarifyId = randomUUID();
+      const { question, options } = args as { question: string; options: string[] };
+      emit('clarify', { clarifyId, question, options });
+      emit('tool_result', {
+        id: callId, ok: true, summary: 'Clarifying question shown', refs: [], injectionSuspected: false,
+      });
+      await this.log(ctx.userId, turnId, call.name, args, true, Date.now() - started);
+      return {
+        content:
+          'Your clarifying question was shown to the user with quick-reply options. The turn is over; their answer arrives as the next user message.',
+        endTurn: true,
+      };
+    }
 
     if (def.mode === 'write-gated') {
       const proposalId = randomUUID();

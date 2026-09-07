@@ -23,6 +23,7 @@ import { buildCalendarTools } from './tools/calendar.tools';
 import { buildDocsTools } from './tools/docs.tools';
 import { buildMailReadTools, buildMailStatsTool } from './tools/mail.tools';
 import { buildPeopleTools } from './tools/people.tools';
+import { buildClarifyTool } from './tools/clarify.tool';
 import { buildChartTool, buildGatedTools, buildWriteTools } from './tools/write.tools';
 
 @Module({
@@ -51,6 +52,7 @@ import { buildChartTool, buildGatedTools, buildWriteTools } from './tools/write.
         registry.registerAll(buildWriteTools(mail, docs, tasks));
         registry.registerAll(buildGatedTools());
         registry.register(buildChartTool());
+        registry.register(buildClarifyTool());
         return registry;
       },
     },

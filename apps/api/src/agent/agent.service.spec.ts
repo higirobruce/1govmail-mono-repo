@@ -185,6 +185,49 @@ describe('AgentService.run', () => {
     expect(nudge).toBeTruthy();
   });
 
+  it('clarify tool emits a clarify frame and ends the turn without another model call', async () => {
+    const clarify: ToolDef = {
+      name: 'ask_user', description: 'clarify', mode: 'clarify', resultBudget: 0,
+      schema: z.object({ question: z.string(), options: z.array(z.string()).min(2).max(4) }),
+      execute: jest.fn(),
+    };
+    const { svc, ai, frames, emit } = makeService(
+      [sseResponse([toolCall('ask_user', '{"question":"Which document?","options":["Docs","Email attachment"]}')])],
+      [clarify],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'open the doc' }], emit, new AbortController().signal);
+
+    const frame = frames.find((f) => f.event === 'clarify');
+    expect(frame!.data).toMatchObject({
+      question: 'Which document?',
+      options: ['Docs', 'Email attachment'],
+    });
+    expect(typeof frame!.data.clarifyId).toBe('string');
+    expect(ai.upstream).toHaveBeenCalledTimes(1);
+    expect(clarify.execute).not.toHaveBeenCalled();
+  });
+
+  it('only the first clarify in an iteration is emitted; the turn still ends', async () => {
+    const clarify: ToolDef = {
+      name: 'ask_user', description: 'clarify', mode: 'clarify', resultBudget: 0,
+      schema: z.object({ question: z.string(), options: z.array(z.string()).min(2).max(4) }),
+      execute: jest.fn(),
+    };
+    const { svc, ai, frames, emit } = makeService(
+      [sseResponse([multiToolCall([
+        { name: 'ask_user', args: '{"question":"Q1?","options":["a","b"]}', id: 'c1' },
+        { name: 'ask_user', args: '{"question":"Q2?","options":["c","d"]}', id: 'c2' },
+      ])])],
+      [clarify],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+
+    const clarifies = frames.filter((f) => f.event === 'clarify');
+    expect(clarifies).toHaveLength(1);
+    expect(clarifies[0].data.question).toBe('Q1?');
+    expect(ai.upstream).toHaveBeenCalledTimes(1);
+  });
+
   it('forces a final answer after MAX_ITERATIONS', async () => {
     const loopy = Array.from({ length: 8 }, (_, i) =>
       sseResponse([toolCall('echo', '{"message":"again"}', `c${i}`)]),

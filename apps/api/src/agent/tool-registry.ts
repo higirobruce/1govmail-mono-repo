@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export type ToolMode = 'read' | 'write-auto' | 'write-gated';
+export type ToolMode = 'read' | 'write-auto' | 'write-gated' | 'clarify';
 
 export interface ChartSpec {
   type: 'bar' | 'line' | 'pie';

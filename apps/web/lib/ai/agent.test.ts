@@ -65,13 +65,40 @@ describe('streamAgent', () => {
     const onProposal = vi.fn();
     const onChart = vi.fn();
     const text = await streamAgent([{ role: 'user', content: 'go' }], {
-      onStep, onStepResult, onProposal, onChart, onChunk: () => {},
+      onStep, onStepResult, onProposal, onChart, onClarify: () => {}, onChunk: () => {},
     });
     expect(text).toBe('Answer');
     expect(onStep).toHaveBeenCalledWith(expect.objectContaining({ tool: 'echo' }));
     expect(onStepResult).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
     expect(onChart).toHaveBeenCalledWith(expect.objectContaining({ type: 'bar' }));
     expect(onProposal).not.toHaveBeenCalled();
+    vi.doUnmock('../authed-fetch');
+  });
+
+  it('routes a clarify frame to onClarify', async () => {
+    // The previous test cached ./agent with its own (already-consumed) mock —
+    // reset the module graph so this test's mock is the one imported.
+    vi.resetModules();
+    const raw = [
+      'event: clarify',
+      'data: {"clarifyId":"q1","question":"Which document?","options":["Docs","Email attachment"]}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    vi.doMock('../authed-fetch', () => ({ authedFetch: vi.fn().mockResolvedValue(sseResponse(raw)) }));
+    const { streamAgent } = await import('./agent');
+
+    const onClarify = vi.fn();
+    await streamAgent([{ role: 'user', content: 'open the doc' }], {
+      onStep: () => {}, onStepResult: () => {}, onProposal: () => {}, onChart: () => {},
+      onClarify, onChunk: () => {},
+    });
+    expect(onClarify).toHaveBeenCalledWith({
+      clarifyId: 'q1',
+      question: 'Which document?',
+      options: ['Docs', 'Email attachment'],
+    });
     vi.doUnmock('../authed-fetch');
   });
 });

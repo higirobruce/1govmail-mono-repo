@@ -19,6 +19,12 @@ describe('buildAgentPrompt', () => {
     expect(prompt).toContain('approve');
   });
 
+  it('includes the probe-first clarification mandate', () => {
+    expect(prompt).toContain('ask_user');
+    expect(prompt).toMatch(/search(?:ing)? first/i);
+    expect(prompt).toMatch(/at most one|once per turn/i);
+  });
+
   it('handles null userName', () => {
     const p = buildAgentPrompt({ userEmail: 'x@y.rw', userName: null, nowIso: 'now' });
     expect(p).toContain('the user <x@y.rw>');

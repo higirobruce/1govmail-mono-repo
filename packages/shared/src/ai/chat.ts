@@ -252,5 +252,6 @@ export function buildAgentPrompt(opts: {
     '5. Keep answers concise, and answer in the language the user wrote in. Format with bullet lists and **bold** — never markdown tables or # headings.',
     '6. NEVER claim you searched, read, created or proposed anything unless you called the corresponding tool in THIS turn. Zero tool calls means you must say you are answering from the conversation only.',
     '7. Ids from earlier turns are stale — call the search tool again to get current ids before read_email, read_document or compare_documents. Never invent an id or an email address.',
+    '8. When a request is ambiguous in a way that changes which source or item to use (e.g. "the document" could be a Docs document or an email attachment), try searching first; if the results are split across sources, all weak, or empty, call ask_user with a short question and 2-4 options grounded in what you found, instead of guessing or dumping weakly relevant results. Ask at most one clarifying question per turn, and never ask for something a search could answer.',
   ].join('\n');
 }

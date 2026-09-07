@@ -1,8 +1,8 @@
 /**
  * Client for POST /ai/agent — the agentic tool-use layer. Protocol: named SSE
- * frames (tool_start / tool_result / proposal / chart) interleaved with
- * normal OpenAI-shaped delta chunks, ending in `data: [DONE]`. See sse.ts's
- * readEventSse for the frame parser.
+ * frames (tool_start / tool_result / proposal / chart / clarify) interleaved
+ * with normal OpenAI-shaped delta chunks, ending in `data: [DONE]`. See
+ * sse.ts's readEventSse for the frame parser.
  */
 import { authedFetch } from '../authed-fetch';
 import { AIHttpError } from './client';
@@ -29,6 +29,14 @@ export interface AgentProposal {
   summary: string;
 }
 
+/** A clarifying question from the ask_user tool — ends the agent's turn;
+ *  the user's pick (or any typed reply) becomes the next user message. */
+export interface AgentClarify {
+  clarifyId: string;
+  question: string;
+  options: string[];
+}
+
 export interface AgentChartSpec {
   type: 'bar' | 'line' | 'pie';
   title: string;
@@ -43,6 +51,7 @@ export async function streamAgent(
     onStepResult: (step: AgentStep) => void;
     onProposal: (p: AgentProposal) => void;
     onChart: (c: AgentChartSpec) => void;
+    onClarify: (c: AgentClarify) => void;
     onChunk: (delta: string) => void;
     signal?: AbortSignal;
   },
@@ -62,6 +71,7 @@ export async function streamAgent(
       else if (name === 'tool_result') opts.onStepResult(data as AgentStep);
       else if (name === 'proposal') opts.onProposal(data as AgentProposal);
       else if (name === 'chart') opts.onChart(data as AgentChartSpec);
+      else if (name === 'clarify') opts.onClarify(data as AgentClarify);
     },
   });
 }

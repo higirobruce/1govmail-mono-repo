@@ -30,6 +30,8 @@ export function summarizeArgs(tool: string, args: any): string {
       return (args.emails ?? []).join(', ');
     case 'get_person':
       return String(args.email);
+    case 'ask_user':
+      return `"${args.question}"`;
     case 'list_tasks':
       return args.status ?? 'all';
     default:

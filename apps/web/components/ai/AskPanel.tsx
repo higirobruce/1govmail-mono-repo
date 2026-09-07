@@ -9,7 +9,7 @@ import {
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
 import { renderInline, splitBlocks } from './answerFormat';
 import { streamAsk, type AskSource, type AskSourceType, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
-import { streamAgent, type AgentStep, type AgentProposal, type AgentChartSpec } from '@/lib/ai/agent';
+import { streamAgent, type AgentStep, type AgentProposal, type AgentChartSpec, type AgentClarify } from '@/lib/ai/agent';
 import { sourceHref } from '@/lib/ai/sourceNav';
 import { scrubOutput } from '@/lib/ai/prompt';
 import { useCharStream } from '@/lib/ai/useCharStream';
@@ -19,6 +19,7 @@ import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import AgentSteps from '@/components/ai/AgentSteps';
 import AgentChart from '@/components/ai/AgentChart';
 import ProposalCard from '@/components/ai/ProposalCard';
+import ClarifyCard from '@/components/ai/ClarifyCard';
 import { useAskStore, type LinkedCommitment } from '@/stores/ask.store';
 import { useResizable } from '@/hooks/useResizable';
 import { ResizeHandle } from '@/components/layout/ResizeHandle';
@@ -32,6 +33,7 @@ interface AnswerTurn {
   steps?: AgentStep[];
   proposals?: AgentProposal[];
   charts?: AgentChartSpec[];
+  clarify?: AgentClarify;
 }
 interface QuestionTurn { role: 'user'; content: string }
 type Turn = QuestionTurn | AnswerTurn;
@@ -317,6 +319,9 @@ export default function AskPanel() {
   const liveStepsRef = useRef<AgentStep[]>([]);
   const liveProposalsRef = useRef<AgentProposal[]>([]);
   const liveChartsRef = useRef<AgentChartSpec[]>([]);
+  // Clarify needs no state mirror: the frame ends the turn, so it only ever
+  // renders from the completed turn, never from the live bubble.
+  const liveClarifyRef = useRef<AgentClarify | null>(null);
   const [liveSteps, setLiveSteps] = useState<AgentStep[]>([]);
   const [liveProposals, setLiveProposals] = useState<AgentProposal[]>([]);
 
@@ -352,7 +357,16 @@ export default function AskPanel() {
     if (!q || streaming) return;
     setError(null);
     setInput('');
-    const history: AskTurn[] = [...turns.map((t) => ({ role: t.role, content: t.content.slice(0, 4000) })), { role: 'user', content: q }]
+    // A clarify turn's question lives in the card, not the bubble text — fold
+    // it back into the history content so the model sees what it asked when
+    // the user's pick arrives as the next message.
+    const history: AskTurn[] = [...turns.map((t) => ({
+      role: t.role,
+      content: (t.role === 'assistant' && t.clarify
+        ? `${t.content}\n\nI asked the user: ${t.clarify.question} (options: ${t.clarify.options.join(' / ')})`.trim()
+        : t.content
+      ).slice(0, 4000),
+    })), { role: 'user', content: q }]
       .slice(-(scope ? MAX_SENT_TURNS : MAX_AGENT_TURNS)) as AskTurn[];
     setTurns((prev) => [...prev, { role: 'user', content: q }]);
     setStreaming(true);
@@ -366,6 +380,7 @@ export default function AskPanel() {
     liveStepsRef.current = [];
     liveProposalsRef.current = [];
     liveChartsRef.current = [];
+    liveClarifyRef.current = null;
     setLiveSteps([]);
     setLiveProposals([]);
     stream.reset();
@@ -431,6 +446,7 @@ export default function AskPanel() {
               setLiveProposals(liveProposalsRef.current);
             },
             onChart: (c) => { liveChartsRef.current = [...liveChartsRef.current, c]; },
+            onClarify: (c) => { liveClarifyRef.current = c; },
           });
       // Agent turns: the answer is the FINAL segment only — earlier segments
       // were folded into the step timeline above. Scoped turns have no steps,
@@ -445,6 +461,7 @@ export default function AskPanel() {
         steps: liveStepsRef.current,
         proposals: liveProposalsRef.current,
         charts: liveChartsRef.current,
+        clarify: liveClarifyRef.current ?? undefined,
       }]);
     } catch (err) {
       if (!ac.signal.aborted) {
@@ -474,6 +491,7 @@ export default function AskPanel() {
     liveStepsRef.current = [];
     liveProposalsRef.current = [];
     liveChartsRef.current = [];
+    liveClarifyRef.current = null;
     setLiveSteps([]);
     setLiveProposals([]);
     stream.reset();
@@ -604,6 +622,13 @@ export default function AskPanel() {
               <AnswerBody content={t.content} sources={t.sources} onOpenSource={onOpenSource} />
               {t.charts?.map((c, ci) => <AgentChart key={ci} spec={c} />)}
               {t.proposals?.map((p) => <ProposalCard key={p.proposalId} proposal={p} />)}
+              {t.clarify && (
+                <ClarifyCard
+                  clarify={t.clarify}
+                  onPick={(option) => void ask(option)}
+                  disabled={streaming || i !== turns.length - 1}
+                />
+              )}
               <DegradedNotice degraded={t.degraded} />
               <SourcesRail
                 sources={t.sources}

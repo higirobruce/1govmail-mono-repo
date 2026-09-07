@@ -327,6 +327,29 @@ describe('AgentService.run', () => {
     expect(convBody.tools[0].function.name).toBe('ask_user');
   });
 
+  it('converts a choose-one imperative ending (no question mark) into a clarify card', async () => {
+    const { svc, frames, emit } = makeService(
+      [
+        jsonToolCall('echo', '{"message":"hi"}'),
+        sseResponse([text('I found three documents. Please choose one.')]),
+        jsonToolCall('ask_user', '{"question":"Which one?","options":["A","B"]}', 'c9'),
+      ],
+      [echoTool, clarifyTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'summarize the document' }], emit, new AbortController().signal);
+    expect(frames.some((f) => f.event === 'clarify')).toBe(true);
+  });
+
+  it('strips (id …) tokens from clarify options alongside [sN] aliases', async () => {
+    const { svc, frames, emit } = makeService(
+      [jsonToolCall('ask_user', '{"question":"Which doc?","options":["Charter Test Notes (id cmtq41mi600hjz2eh0ukl3jxn)","Untitled [s1]"]}')],
+      [clarifyTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+    const frame = frames.find((f) => f.event === 'clarify');
+    expect(frame!.data.options).toEqual(['Charter Test Notes', 'Untitled']);
+  });
+
   it('does not convert a statement final answer', async () => {
     const { svc, ai, frames, emit } = makeService(
       [jsonToolCall('echo', '{"message":"hi"}'), sseResponse([text('Here is the summary.')])],

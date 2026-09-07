@@ -196,7 +196,14 @@ export class AgentService {
     signal: AbortSignal,
   ): Promise<void> {
     if (!usedTools || signal.aborted) return;
-    if (!/[?？][)*\s]*$/.test(finalText.trimEnd())) return;
+    // A clarification isn't always a question mark — qwen also closes with
+    // imperatives like "Please choose one." Look at the answer's tail for
+    // either shape.
+    const tail = finalText.trimEnd().slice(-300);
+    const asksUser =
+      /[?？]/.test(tail) ||
+      /\b(please (choose|specify|select|confirm|clarify)|which (one|of these|document|email|event|file)|let me know which)\b/i.test(tail);
+    if (!asksUser) return;
     const askDef = this.registry.get('ask_user');
     if (!askDef || askDef.mode !== 'clarify') return;
 
@@ -209,7 +216,7 @@ export class AgentService {
           {
             role: 'user',
             content:
-              'Convert the question you just asked into ONE ask_user tool call: the question plus 2-4 short options grounded in what you found. Call the tool only — write no text.',
+              'Convert the choice you just asked the user to make into ONE ask_user tool call: a short question plus 2-4 short options grounded in what you found. Options are plain human-readable labels — no [sN] aliases, no ids. Call the tool only — write no text.',
           },
         ] as unknown as Array<Record<string, unknown>>,
         stream: false,
@@ -282,7 +289,12 @@ export class AgentService {
       // Strip [sN] citation aliases: a chip's text becomes the user's next
       // message, and an alias in it sends the model chasing "[s2]" as a
       // document id (observed live 2026-09-07) instead of re-searching.
-      const stripAliases = (s: string) => s.replace(/\s*\[s\d+\]/g, '').replace(/\s+([?!.])/g, '$1').trim();
+      const stripAliases = (s: string) =>
+        s
+          .replace(/\s*\[s\d+\]/g, '')
+          .replace(/\s*\(id\s+[A-Za-z0-9_-]+\)/gi, '')
+          .replace(/\s+([?!.])/g, '$1')
+          .trim();
       emit('clarify', { clarifyId, question: stripAliases(question), options: options.map(stripAliases) });
       emit('tool_result', {
         id: callId, ok: true, summary: 'Clarifying question shown', refs: [], injectionSuspected: false,

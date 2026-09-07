@@ -307,6 +307,22 @@ export class AgentService {
     emit('tool_start', { id: callId, tool: call.name, argsSummary: summarizeArgs(call.name, args) });
     const started = Date.now();
 
+    // Citation aliases ("s2", "[s2]") leak out of conversation history into
+    // id arguments (observed live: read_document {docId:"s2"} after a chip
+    // pick). Reject them with a corrective error so the model re-searches
+    // within the same turn instead of reporting "could not be retrieved".
+    const aliasArg = Object.entries((args ?? {}) as Record<string, unknown>).find(
+      ([key, value]) =>
+        /Id[AB]?$/.test(key) && typeof value === 'string' && /^\[?s\d+\]?$/.test(value.trim()),
+    );
+    if (aliasArg) {
+      emit('tool_result', {
+        id: callId, ok: false, summary: 'Citation alias passed as id', refs: [], injectionSuspected: false,
+      });
+      await this.log(ctx.userId, turnId, call.name, args, false, Date.now() - started);
+      return `Error: "${String(aliasArg[1]).trim()}" is a citation alias from the conversation, not a real id. Call the matching search tool with the item's title or keywords, then use the id from that fresh result.`;
+    }
+
     if (def.mode === 'clarify') {
       const clarifyId = randomUUID();
       const { question, options } = args as { question: string; options: string[] };

@@ -162,6 +162,25 @@ describe('AgentService.run', () => {
     expect(gated.execute).not.toHaveBeenCalled();
   });
 
+  it('rejects citation-alias ids with a corrective error instead of executing the tool', async () => {
+    const readTool: ToolDef = {
+      name: 'read_document', description: 'read', mode: 'read', resultBudget: 100,
+      schema: z.object({ docId: z.string() }),
+      execute: jest.fn(),
+    };
+    const { svc, ai, frames, emit } = makeService(
+      [jsonToolCall('read_document', '{"docId":"s2"}'), sseResponse([text('Recovered')])],
+      [readTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+
+    expect(readTool.execute).not.toHaveBeenCalled();
+    expect(frames.find((f) => f.event === 'tool_result')!.data.ok).toBe(false);
+    const toolMsg = ai.upstream.mock.calls[1][0].messages.find((m: any) => m.role === 'tool');
+    expect(toolMsg.content).toMatch(/citation alias/);
+    expect(toolMsg.content).toMatch(/search/i);
+  });
+
   it('invalid args become a tool error message, loop continues', async () => {
     const { svc, ai, frames, emit } = makeService(
       [jsonToolCall('echo', '{"message":5}'), sseResponse([text('Recovered')])],

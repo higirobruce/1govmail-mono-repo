@@ -47,6 +47,12 @@ export default function MailPage() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [hydrated, setHydrated] = useState(false);
+  // Resize hooks must run before the hydration/auth early-returns below —
+  // React requires an unconditional, stable hook order every render.
+  // The docked AI/Dossier panel width is read from the same store key those
+  // panels write, so the reserved padding tracks it.
+  const listResize = useResizable({ key: 'mailList', defaultWidth: 370, min: 280, max: 560, edge: 'right' });
+  const aiPanelWidth = clampWidth(useUIStore((s) => s.panelWidths['aiPanel']) ?? 420, 320, 640);
 
   const queryClient = useQueryClient();
   const offline = useOffline();
@@ -1239,11 +1245,6 @@ export default function MailPage() {
   const askDocked = askOpen && !askCollapsed;
   const aiPanelVisible =
     (briefingOpen && briefingExpanded) || commitmentsOpen || askDocked;
-
-  // Resizable message-list column; the docked AI/Dossier panel width is read
-  // from the same store key those panels write, so the reserved padding tracks it.
-  const listResize = useResizable({ key: 'mailList', defaultWidth: 370, min: 280, max: 560, edge: 'right' });
-  const aiPanelWidth = clampWidth(useUIStore((s) => s.panelWidths['aiPanel']) ?? 420, 320, 640);
 
   return (
     <div

@@ -77,6 +77,7 @@ export class AgentService {
     ];
     let transcriptChars = transcript.reduce((sum, m) => sum + m.content.length, 0);
     let probeNudged = false;
+    let usedTools = false;
     const pushMessage = (msg: AgentMessage): void => {
       transcript.push(msg);
       transcriptChars += msg.content.length;
@@ -130,7 +131,14 @@ export class AgentService {
         result = await consumeAgentStream(upstream, onDelta);
       }
 
-      if (!result.toolCalls.length || finalIteration) return;
+      if (!result.toolCalls.length || finalIteration) {
+        // qwen3 reliably ignores mandate 8's "questions go through ask_user"
+        // once it is composing prose. If this turn's final answer asks the
+        // user something after tool use, one cheap extra call converts that
+        // question into a real clarify card (chips) under the answer.
+        await this.convertQuestionToClarify(result.text, usedTools, transcript, ctx, turnId, emit, signal);
+        return;
+      }
 
       // This iteration produced both a preamble ("Let me look that up.") and
       // tool calls. Both the preamble and the next iteration's text stream to
@@ -167,6 +175,56 @@ export class AgentService {
         // turn — any further calls in this batch are simply never dispatched.
         if (endTurn) return;
       }
+      usedTools = true;
+    }
+  }
+
+  /**
+   * Post-answer conversion pass: when a turn that used tools ends with a
+   * question to the user, ask the model — with ask_user as the ONLY tool — to
+   * restate that question as a clarify call, and dispatch it so the panel
+   * renders quick-reply chips under the already-streamed answer. Best-effort:
+   * any failure or non-compliance is silently dropped.
+   */
+  private async convertQuestionToClarify(
+    finalText: string,
+    usedTools: boolean,
+    transcript: AgentMessage[],
+    ctx: ToolContext,
+    turnId: string,
+    emit: EmitFn,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!usedTools || signal.aborted) return;
+    if (!/[?？][)*\s]*$/.test(finalText.trimEnd())) return;
+    const askDef = this.registry.get('ask_user');
+    if (!askDef || askDef.mode !== 'clarify') return;
+
+    try {
+      const body: UpstreamChatBody = {
+        model: this.chatModel,
+        messages: [
+          ...transcript,
+          { role: 'assistant', content: finalText },
+          {
+            role: 'user',
+            content:
+              'Convert the question you just asked into ONE ask_user tool call: the question plus 2-4 short options grounded in what you found. Call the tool only — write no text.',
+          },
+        ] as unknown as Array<Record<string, unknown>>,
+        stream: false,
+        temperature: 0.2,
+        max_tokens: 300,
+        tools: this.registry.openAiTools().filter((t) => t.function.name === 'ask_user'),
+        tool_choice: 'auto',
+      } as UpstreamChatBody;
+      const upstream = await this.ai.upstream(body, signal);
+      const result = await consumeAgentJson(upstream, () => {});
+      const call = result.toolCalls.find((c) => c.name === 'ask_user');
+      if (!call) return;
+      await this.dispatch(call, call.id || 'clarify_conv', ctx, turnId, emit);
+    } catch {
+      // best-effort — the prose question already reached the user
     }
   }
 

@@ -284,6 +284,57 @@ describe('AgentService.run', () => {
     expect(ai.upstream).toHaveBeenCalledTimes(1);
   });
 
+  const clarifyTool: ToolDef = {
+    name: 'ask_user', description: 'clarify', mode: 'clarify', resultBudget: 0,
+    schema: z.object({ question: z.string(), options: z.array(z.string()).min(2).max(4) }),
+    execute: jest.fn(),
+  };
+
+  it('converts a question-shaped final answer after tool use into a clarify card', async () => {
+    const { svc, ai, frames, emit } = makeService(
+      [
+        jsonToolCall('echo', '{"message":"hi"}'),
+        sseResponse([text('I found A and B. Which one do you want?')]),
+        jsonToolCall('ask_user', '{"question":"Which one do you want?","options":["A","B"]}', 'c9'),
+      ],
+      [echoTool, clarifyTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'summarize the document' }], emit, new AbortController().signal);
+
+    const clarify = frames.find((f) => f.event === 'clarify');
+    expect(clarify!.data).toMatchObject({ question: 'Which one do you want?', options: ['A', 'B'] });
+    expect(ai.upstream).toHaveBeenCalledTimes(3);
+    const convBody = ai.upstream.mock.calls[2][0];
+    expect(convBody.stream).toBe(false);
+    expect(convBody.tools).toHaveLength(1);
+    expect(convBody.tools[0].function.name).toBe('ask_user');
+  });
+
+  it('does not convert a statement final answer', async () => {
+    const { svc, ai, frames, emit } = makeService(
+      [jsonToolCall('echo', '{"message":"hi"}'), sseResponse([text('Here is the summary.')])],
+      [echoTool, clarifyTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+    expect(ai.upstream).toHaveBeenCalledTimes(2);
+    expect(frames.some((f) => f.event === 'clarify')).toBe(false);
+  });
+
+  it('a failed conversion is harmless — no clarify frame, no extra text emitted', async () => {
+    const { svc, frames, emit } = makeService(
+      [
+        jsonToolCall('echo', '{"message":"hi"}'),
+        sseResponse([text('Which one?')]),
+        jsonText('I cannot call tools right now.'),
+      ],
+      [echoTool, clarifyTool],
+    );
+    await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
+    expect(frames.some((f) => f.event === 'clarify')).toBe(false);
+    const deltas = frames.filter((f) => f.event === null).map((f) => f.data.choices[0].delta.content);
+    expect(deltas.join('')).not.toContain('I cannot call tools');
+  });
+
   it('forces a final answer after MAX_ITERATIONS', async () => {
     const loopy = Array.from({ length: 8 }, (_, i) =>
       i === 0 ? jsonToolCall('echo', '{"message":"again"}', 'c0') : sseResponse([toolCall('echo', '{"message":"again"}', `c${i}`)]),

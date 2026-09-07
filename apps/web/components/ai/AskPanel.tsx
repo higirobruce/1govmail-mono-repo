@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square,
-  Mail, FileText, Calendar, SquarePen,
+  Mail, FileText, Calendar, SquarePen, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
 import { renderInline, splitBlocks } from './answerFormat';
@@ -120,6 +120,9 @@ function SourcesRail({
   onReplyToMessage: (messageId: string) => void;
   openCommitments: LinkedCommitment[];
 }) {
+  // Collapsed by default — the citation chips in the answer stay clickable;
+  // the rail is the "show me the receipts" expansion.
+  const [expanded, setExpanded] = useState(false);
   if (sources.length === 0) return null;
   // The agent can surface the same message under several aliases across
   // repeated searches (observed live: 35 cards, mostly duplicates). Group by
@@ -131,8 +134,42 @@ function SourcesRail({
     groups.set(key, [...(groups.get(key) ?? []), src]);
   }
   return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="flex items-center gap-1 text-[0.6875rem] font-medium text-muted-foreground/80 hover:text-foreground transition-colors"
+      >
+        {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        Sources
+        <span className="rounded bg-muted px-1 py-0.5 text-[0.625rem] font-semibold tabular-nums text-muted-foreground/80">
+          {groups.size}
+        </span>
+      </button>
+      {expanded && (
+        <SourceList
+          groups={[...groups.values()]}
+          onOpenSource={onOpenSource}
+          onReplyToMessage={onReplyToMessage}
+          openCommitments={openCommitments}
+        />
+      )}
+    </div>
+  );
+}
+
+function SourceList({
+  groups, onOpenSource, onReplyToMessage, openCommitments,
+}: {
+  groups: AskSource[][];
+  onOpenSource: (s: AskSource) => void;
+  onReplyToMessage: (messageId: string) => void;
+  openCommitments: LinkedCommitment[];
+}) {
+  return (
     <ul className="space-y-1.5">
-      {[...groups.values()].map((group) => {
+      {groups.map((group) => {
         const s = group[0];
         const linked = s.type === 'mail' ? openCommitments.filter((c) => c.messageId === s.id) : [];
         const Icon = SOURCE_TYPE_ICON[s.type];

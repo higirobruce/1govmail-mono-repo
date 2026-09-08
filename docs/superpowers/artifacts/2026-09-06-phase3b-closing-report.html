@@ -1,0 +1,122 @@
+<title>People Layer Close-Out</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #FAFBFA; --surface: #F1F4F2; --surface-2: #E7ECEA;
+    --ink: #1A2321; --ink-2: #48544F; --ink-3: #74807B; --line: #D8DFDC;
+    --dossier: #0F7A6A; --dossier-soft: #E2F0ED;
+    --prep: #B0762A; --prep-soft: #F4EBDD;
+    --code-bg: #EEF2F0; --amber: #9A6A00; --amber-soft: #F5ECD6;
+    --ok: #0F7A6A;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101615; --surface: #171F1D; --surface-2: #1E2926;
+      --ink: #E6ECEA; --ink-2: #A9B5B0; --ink-3: #77837E; --line: #2A3531;
+      --dossier: #4CC2AE; --dossier-soft: #14332E;
+      --prep: #DFA55C; --prep-soft: #362A18;
+      --code-bg: #161E1C; --amber: #E0B85C; --amber-soft: #33290F;
+      --ok: #4CC2AE;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101615; --surface: #171F1D; --surface-2: #1E2926;
+    --ink: #E6ECEA; --ink-2: #A9B5B0; --ink-3: #77837E; --line: #2A3531;
+    --dossier: #4CC2AE; --dossier-soft: #14332E;
+    --prep: #DFA55C; --prep-soft: #362A18;
+    --code-bg: #161E1C; --amber: #E0B85C; --amber-soft: #33290F;
+    --ok: #4CC2AE;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: "Source Serif 4", Georgia, serif; font-size: 1.02rem; line-height: 1.62; margin: 0; padding: 0 1.25rem 5rem; }
+  .page { max-width: 740px; margin: 0 auto; }
+  h1, h2, h3, .eyebrow, .chip, th { font-family: "Archivo", "Helvetica Neue", Arial, sans-serif; }
+  .eyebrow { margin-top: 3.5rem; font-size: .72rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  h1 { font-size: clamp(2rem, 5.5vw, 2.7rem); font-weight: 800; letter-spacing: -.02em; line-height: 1.05; margin: .5rem 0 .75rem; text-wrap: balance; }
+  .standfirst { font-size: 1.1rem; color: var(--ink-2); max-width: 62ch; margin: 0 0 1.4rem; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 2.5rem; }
+  .chip { font-size: .72rem; font-weight: 600; letter-spacing: .04em; padding: .28rem .65rem; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-2); background: var(--surface); }
+  .chip.ok { color: var(--ok); border-color: var(--ok); background: var(--dossier-soft); }
+  h2 { font-size: 1.24rem; font-weight: 700; margin: 2.8rem 0 .9rem; padding-top: 1.3rem; border-top: 1px solid var(--line); text-wrap: balance; }
+  p { margin: .7rem 0; max-width: 68ch; }
+  ul, ol { padding-left: 1.2rem; margin: .7rem 0; }
+  li { margin: .4rem 0; max-width: 66ch; }
+  li::marker { color: var(--ink-3); }
+  code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .84em; background: var(--code-bg); border: 1px solid var(--line); border-radius: 4px; padding: .06em .32em; }
+  a { color: var(--dossier); }
+  .table-wrap { overflow-x: auto; margin: 1rem 0; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); background: var(--surface); }
+  tr:last-child td { border-bottom: none; }
+  .callout { border: 1px solid var(--amber); background: var(--amber-soft); border-radius: 8px; padding: .75rem 1rem; font-size: .93rem; margin: 1.2rem 0; }
+  .callout strong { color: var(--amber); }
+  .gates { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .6rem; margin: 1rem 0; }
+  .gate { border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: 6px; background: var(--surface); padding: .55rem .8rem; font-size: .88rem; }
+  .gate b { font-family: "Archivo", sans-serif; display: block; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+  footer { margin-top: 3.5rem; color: var(--ink-3); font-size: .85rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+</style>
+
+<div class="page">
+  <div class="eyebrow">1Gov Mail · AI stream · Phase 3b closing report · 2026-09-06</div>
+  <h1>The People Layer, built</h1>
+  <p class="standfirst">Relationship dossier and meeting prep pack are implemented, reviewed, and pushed on <code>ft-hyperscale</code> (<code>cf42e8d..ea2bf75</code>, 11 SDD tasks + final fix wave). Deploy to the VMs is the remaining step.</p>
+  <div class="meta-row">
+    <span class="chip ok">All 11 tasks review-clean</span>
+    <span class="chip ok">Final whole-branch review: fixed &amp; clean</span>
+    <span class="chip">Pushed to origin</span>
+    <span class="chip">Not yet deployed</span>
+  </div>
+
+  <h2>What shipped</h2>
+  <ul>
+    <li><strong>Dossier</strong> — click any sender (mail) or attendee/organizer (event panel): docked panel with instant facts (conversations both ways, open loops promised/waiting, shared events, shared docs) + on-demand streamed relationship brief, cached server-side with a stale badge and Regenerate. Mutually exclusive with the Ask panel, as you specified.</li>
+    <li><strong>Meeting prep</strong> — a Prep section on the calendar event detail panel: structured pack (about · per-attendee open loops · recent context · talking points) with citable typed source chips; cached per event, instant on reopen.</li>
+    <li><strong>Under the hood</strong> — one migration (<code>ai_generations</code> + <code>messages(userId, fromEmail, receivedAt)</code> index), PeopleModule facts endpoint, two SSE endpoints beside <code>/ai/ask</code> with server-side cache write-back and read-time staleness, all 3a security invariants carried (verified end-to-end in the final review: fencing, alias whitelist, 160-char snippets, ownership-before-retrieval, per-user cache isolation).</li>
+  </ul>
+
+  <div class="gates">
+    <div class="gate"><b>api jest</b>232/232</div>
+    <div class="gate"><b>web vitest</b>432/432</div>
+    <div class="gate"><b>tsc ×2</b>clean</div>
+    <div class="gate"><b>container builds</b>web + api green</div>
+    <div class="gate"><b>prisma tarball</b>126 entries ✓</div>
+  </div>
+
+  <h2>Final review &amp; the one fix that mattered</h2>
+  <p>The whole-branch review (<a href="https://claude.ai/code/artifact/cca923c6-4b8d-446b-bc84-11b855cea840">full report</a>) confirmed the security posture across layers and found one integration defect the per-task gates couldn't see: the controller-level 10/min throttle also covered the cache-read GETs, so browsing ~10 events in a minute would make previously generated packs silently render as never-generated. Fixed in <code>ea2bf75</code> (throttle scoped to the two POST handlers; prep event context also clamped to the per-source budget). Scoped re-review clean.</p>
+
+  <h2>Rulings I made on your behalf</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Ruling</th><th>Why</th><th>If wrong, it costs</th></tr>
+    <tr><td>Involvement-predicate SQL stays textually duplicated across services (plan-mandated)</td><td>Prisma SQL-fragment composition adds risk for ~6 lines</td><td>Predicate drift between copies later</td></tr>
+    <tr><td>Mandate block in generation prompts restored <em>verbatim</em> from buildAskPrompt (rejected an implementer's adapted wording)</td><td>One shared security wording across ask + generations</td><td>Slightly less-tailored prompt text</td></tr>
+    <tr><td>Extra <code>[sN]</code>-stripping in the prompt SUBJECT line kept (plan's formula and its own test disagreed)</td><td>Alias-shaped markers in an untrusted subject could collide with the citation whitelist</td><td>Nothing material</td></tr>
+    <tr><td>Regenerate button shown on fresh (not only stale) cached narratives</td><td>The spec backs it; the plan's stale-only phrasing was drift</td><td>An extra button</td></tr>
+    <tr><td>MailDetail got one dossier entry (Message-tab sender strip), not every name render site</td><td>Spec treats extra entry points as follow-ups</td><td>Missing click affordance on secondary strips</td></tr>
+    <tr><td>User email passed <em>raw</em> (unlowercased) into retrieval's doc-ACL leg</td><td>Doc-invite ACL is deliberately exact-string (3a decision)</td><td>—; changing it would have been the bug</td></tr>
+    <tr><td>Parallel phase-4 docs commits (143cdba, e8b735c, 0468f17) left untouched and pushed together with 3b</td><td>Another session's work on the shared branch; docs-only</td><td>None — flagged so you know they're on origin now</td></tr>
+    <tr><td>Final-review minors triaged to the debt list, not fixed pre-merge</td><td>Reviewer concurred none block merge</td><td>Debt list below must actually get worked</td></tr>
+  </table></div>
+
+  <h2>Follow-up debt (ranked)</h2>
+  <ol>
+    <li>Display names / event titles enter prompts neutralized but never injection-scanned — a hostile <code>fromName</code> won't raise the amber banner (same class as 3a's header lines).</li>
+    <li>Degraded-leg generations are cached as fresh; consider skipping the cache write when a leg degraded.</li>
+    <li><code>cache.upsert</code> rejection after <code>res.end()</code> is unhandled (noisy log, lost write) — wrap and warn.</li>
+    <li>Entry-gating inconsistency: mail sender buttons hide when AI is off; calendar attendee buttons always show. Also: clicking your own name on sent mail opens the panel into the 400 banner (calendar skips self, mail doesn't).</li>
+    <li>Dossier stats can label cc'd third-party mail as "sent by me" (direction heuristic); commitments facts query unbounded; prep anchor folds retrieval-leg mail dates; dossier cache GET fires even with AI off; chip/banner markup + openSource helper duplicated by design (copy-not-extract).</li>
+  </ol>
+
+  <div class="callout"><strong>Deploy note:</strong> the gate-run tarballs (<code>web-52d22c4.tar.gz</code> / <code>api-52d22c4.tar.gz</code>) predate the fix wave — rebuild at <code>ea2bf75</code> before shipping. Then: one migration (<code>prisma migrate deploy</code>) + api/web bundles on .154 and .155 (.155 via your <code>!</code> script, PG on 5433). No new env vars, no worker changes.</div>
+
+  <h2>What's next (your call)</h2>
+  <ol>
+    <li><strong>Keep the branch as-is</strong> (pushed on <code>ft-hyperscale</code>) and deploy to the VMs — the pattern of every previous phase.</li>
+    <li>Merge <code>ft-hyperscale</code> → <code>main</code> locally.</li>
+    <li>Open a PR to <code>main</code>.</li>
+  </ol>
+
+  <footer>Spec <code>docs/superpowers/specs/2026-09-06-ai-phase3b-people-design.md</code> · Plan <code>docs/superpowers/plans/2026-09-06-ai-phase3b-people.md</code> · Design page: <a href="https://claude.ai/code/artifact/3a631db5-0b3a-47b2-bbb0-4738b23996c5">1Gov People</a> · Range <code>cf42e8d..ea2bf75</code> (15 commits incl. 3 parallel phase-4 docs commits)</footer>
+</div>

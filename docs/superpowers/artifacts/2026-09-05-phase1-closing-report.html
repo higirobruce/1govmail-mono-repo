@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/f651ee8e-6376-4a9c-863e-ac1c816a393d — content-faithful, original styling not preserved -->
+<title>AI Phase 1 Shipped</title>
+<style>
+  :root {
+    --bg: #ffffff; --surface: #ffffff; --surface-2: #f4f5f7;
+    --ink: #23262b; --ink-2: #4b525c; --ink-3: #767e88;
+    --line: #dde1e6; --accent: #2f6fb0;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16191d; --surface: #1c2026; --surface-2: #22262d;
+      --ink: #e9ecef; --ink-2: #b7bec7; --ink-3: #8a9099;
+      --line: #333941; --accent: #6ea6df;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16191d; --surface: #1c2026; --surface-2: #22262d;
+    --ink: #e9ecef; --ink-2: #b7bec7; --ink-3: #8a9099;
+    --line: #333941; --accent: #6ea6df;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: .72rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); margin: 0 0 .6rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.2rem); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; margin: 0 0 .6rem; text-wrap: balance; }
+  .lede { color: var(--ink-2); margin: 0 0 1.6rem; max-width: 68ch; }
+  h2 { font-size: 1.15rem; font-weight: 700; margin: 2.2rem 0 .7rem; letter-spacing: -.01em; }
+  p, li, td { color: var(--ink-2); }
+  strong, em { color: var(--ink); }
+  strong { font-weight: 600; }
+  ul { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: .5rem; }
+  code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: .06em .3em; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .7rem; margin: 0 0 1rem; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .8rem 1rem; }
+  .stat b { display: block; font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: .74rem; color: var(--ink-3); }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin: .8rem 0 1.2rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { text-align: left; padding: .55rem .85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .68rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+  footer { font-size: .82rem; color: var(--ink-3); margin-top: 2.4rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Execution report · 5 Sep 2026</p>
+  <h1>AI Phase 1 shipped, everywhere</h1>
+  <p class="lede">All four quick wins are live on both test boxes (<code>https://test1.risa.gov.rw</code> and <code>http://10.10.94.154:3000</code>): API <code>724827e</code>, web <code>dba0ad0</code>. Nine plan tasks + a final fix wave, every one independently reviewed.</p>
+
+  <div class="stats">
+    <div class="stat"><b>12</b><span>commits</span></div>
+    <div class="stat"><b>281</b><span>web tests green (+13 new) · api 162</span></div>
+    <div class="stat"><b>9 + 1</b><span>task reviews + whole-plan review</span></div>
+    <div class="stat"><b>2</b><span>real bugs found &amp; fixed on the way</span></div>
+  </div>
+
+  <h2>What you can use right now</h2>
+  <ul>
+    <li><strong>Thread → tasks:</strong> the promote arrow on any commitment opens a prefilled, editable task (title, context line, AI-parsed due date from the hint, mail link). Saving records the task against the ledger exactly as before — the endpoint now accepts your edits.</li>
+    <li><strong>Docs writing assistant:</strong> select prose → the bubble's AI row: Rewrite (paraphrase / formal / concise / friendly / fix grammar) and Summarize — streamed preview, then Replace selection or Insert below. Collaboration-safe (ranged edits only; the popover closes if the doc changes under it).</li>
+    <li><strong>Natural-language quick-add:</strong> tasks page — "chase the TOR from Solange on Friday" becomes a task with a due date; with AI off or unreachable it degrades to a plain title, never blocks.</li>
+    <li><strong>Workload strip:</strong> Brief me now opens with exact numbers — open tasks, overdue, due this week, commitments split — no model call, links straight to the sources.</li>
+  </ul>
+
+  <h2>Two bugs the work surfaced</h2>
+  <ul>
+    <li><strong>ComposeModal rewrites were corrupting their own line breaks</strong> (the old escape ordering escaped the <code>&lt;br/&gt;</code> tags it had just inserted). Fixed via the shared <code>textToHtml</code> helper, unit-tested.</li>
+    <li><strong>The new API build script initially shipped without the generated Prisma client</strong> — caught as a crash-loop on .155, rolled back inside a minute, fixed (in-bundle <code>prisma generate</code>), tar-verified, redeployed. .154 never went down. The script now lives durably at <code>scripts/build-api.sh</code>.</li>
+  </ul>
+
+  <h2>Rulings I made</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Ruling</th><th>Cost if wrong</th></tr></thead>
+    <tbody>
+      <tr><td>Promote endpoint extended with optional task overrides (amending the spec's "no API changes" line) — the PATCH whitelist made every other editable-flow route unsound</td><td>One backward-compatible endpoint change to maintain</td></tr>
+      <tr><td>ComposeModal's escape-order bug fix is intended behavior change (multi-line rewrites render correctly now)</td><td>None foreseeable — old behavior was broken</td></tr>
+      <tr><td><code>quickAddTask</code> relocated to <code>lib/tasks/</code> (pages shouldn't export helpers)</td><td>None — pure placement</td></tr>
+      <tr><td>Commitment due-hint parse uses the row spinner, not the AI indicator (panel idiom wins); the one-shot parse is non-cancelable by design → later reversed in part: the final review demanded abort wiring, which now exists</td><td>Superseded by the fix wave</td></tr>
+      <tr><td>Workload strip's commitments link collapses the briefing first — the plan's own JSX violated drawer mutual-exclusion (caught pre-review)</td><td>One-line revert</td></tr>
+      <tr><td>Final fix wave scoped to I1+I2+I3+M3+M1; nine observations parked (below)</td><td>Parked items ship as known polish debt</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Parked follow-ups (known, non-blocking)</h2>
+  <ul>
+    <li>Date parsing uses UTC weekday — off-by-one window 00:00–02:00 Kigali time.</li>
+    <li>Promote success doesn't invalidate the tasks list cache; clearing a prefilled field restores server defaults silently.</li>
+    <li>Docs Summarize reuses the email text extractor (strips a lone <code>--</code> as a signature; silent 3000-char clamp).</li>
+    <li>Docs AI row is visible to anonymous share-link viewers on locked builds (calls would 401).</li>
+    <li>Quick-added tasks can vanish visually on the TODAY filter; the AI preview popover doesn't follow scroll; insert-below lands inside outer containers for nested blocks (list items).</li>
+    <li>Build-script hardening: assert the generated client exists before tar; note the <code>prisma</code>-in-dependencies coupling.</li>
+  </ul>
+
+  <footer>Spec: <code>docs/superpowers/specs/2026-09-05-ai-phase1-design.md</code> · Plan: <code>docs/superpowers/plans/2026-09-05-ai-phase1.md</code> · Final review page: <a href="https://claude.ai/code/artifact/4afc6be5-92e8-48cc-996f-3e2da852215f">whole-plan review</a> · All pushed to <code>ft-hyperscale</code>, on PR #2. Smoke-test suggestion: promote one real commitment end-to-end on either box.</footer>
+</main>
+</body>
+</html>

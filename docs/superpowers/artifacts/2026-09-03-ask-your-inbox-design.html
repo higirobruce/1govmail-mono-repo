@@ -1,0 +1,207 @@
+<title>Ask Your Inbox</title>
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/e7e76700-9c02-4cac-b322-dc9089e4ac99 — content-faithful, original styling not preserved -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #ffffff; --surface: #f7f7f5; --ink: #1a1a1a; --ink-soft: #55585c; --ink-faint: #8a8d90;
+    --line: #e0e0dc; --accent: #0f6f5c; --accent-soft: #e3f0ec; --code-bg: #f0f0ee;
+    --warn: #9a5b00; --warn-bg: #fbf3e4;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+      --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+      --warn: #e0a44e; --warn-bg: #2a2216;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+    --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+    --warn: #e0a44e; --warn-bg: #2a2216;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: "Inter", system-ui, sans-serif; font-size: 16px; line-height: 1.65; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.6rem; }
+  h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; margin: 0 0 1rem; }
+  h2 { font-size: 1.3rem; font-weight: 700; margin: 2.6rem 0 0.8rem; }
+  h3 { font-size: 1.05rem; font-weight: 600; margin: 1.5rem 0 0.5rem; }
+  p, li, td { color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent); }
+  ul, ol { padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.4rem; }
+  code, .mono { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); border-radius: 4px; padding: 0.08em 0.35em; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.2rem; overflow-x: auto; font-family: var(--mono); font-size: 0.83rem; line-height: 1.55; }
+  pre code { background: none; padding: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; font-family: var(--mono); font-size: 0.8rem; color: var(--ink-faint); margin: 0 0 1rem; }
+  .meta strong { color: var(--ink-soft); font-weight: 500; }
+  .decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.7rem; margin: 1.2rem 0 0; }
+  .decision { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.8rem 1rem; }
+  .decision .q { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 0.3rem; }
+  .decision .a { font-weight: 600; color: var(--ink); margin: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 0.8rem 0 1.3rem; }
+  th, td { text-align: left; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+  tr:last-child td { border-bottom: none; }
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; padding: 0.8rem 1.1rem; margin: 1rem 0; }
+  .warn { border-left: 3px solid var(--warn); background: var(--warn-bg); border-radius: 0 8px 8px 0; padding: 0.8rem 1.1rem; margin: 1rem 0; }
+  .warn .label, .callout .label { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; display: block; margin-bottom: 0.3rem; }
+  .warn .label { color: var(--warn); } .callout .label { color: var(--accent); }
+  footer, .foot { font-size: 0.85rem; color: var(--ink-faint); margin-top: 2.8rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+</style>
+<main>
+<header>
+  <p class="eyebrow">1Gov Mail · Inbox Intelligence · Phase 4 Design</p>
+  <h1>Ask Your Inbox</h1>
+  <div class="meta">
+    <span>Date <strong>2026-09-03</strong></span>
+    <span>Branch <strong>ft-hyperscale</strong></span>
+    <span>Status <strong>awaiting sign-off</strong></span>
+    <span>Builds on <strong>phases 1–3 (briefing · triage cards · commitments)</strong></span>
+  </div>
+</header>
+
+<p>Phase 4 delivers a chat surface where a user asks questions of their own mailbox in plain language — English, French, or Kinyarwanda — and gets a streamed, citation-backed answer generated entirely on-premises. Retrieval is hybrid: pgvector embeddings over a rolling 90-day corpus, fused with Zimbra keyword search. A lightweight semantic mode in ⌘K search falls out of the same retrieval layer. Per the vendor benchmark, no commercial AI mail client offers self-hosted chat-with-inbox — this is the differentiator feature.</p>
+
+<h2>Decisions locked in brainstorm</h2>
+<div class="decisions">
+  <div class="decision"><p class="q">Scope</p><p class="a">Chat-first; semantic search as a byproduct</p></div>
+  <div class="decision"><p class="q">Retrieval</p><p class="a">Hybrid — pgvector + Zimbra keyword, RRF fusion</p></div>
+  <div class="decision"><p class="q">Corpus</p><p class="a">90 days, Inbox + Sent (matches card retention)</p></div>
+  <div class="decision"><p class="q">Chat powers</p><p class="a">Read-only answers + safe deep-links; no autonomous actions</p></div>
+  <div class="decision"><p class="q">Embedding model</p><p class="a">bge-m3 (1024 dims, multilingual)</p></div>
+</div>
+
+<h2>1 · Architecture overview</h2>
+<p>Three new pieces, each cloned from a proven phase 1–3 pattern:</p>
+<ul>
+  <li><strong>Embedding worker</strong> (API, mail module) — a sibling of <code>CardWorkerService</code>: same minute-cron tick, fair per-user batching (<code>pickFairBatch</code> is already exported), hydration via <code>MailService.getMessage()</code>, 3-strike tombstones, hourly purge. It chunks message text with the shared <code>extractEmailText</code> pipeline and writes vectors to a new <code>message_embeddings</code> table.</li>
+  <li><strong>Retrieval + chat service</strong> (API, new <code>chat</code> module) — turns a question into a fused source list (vector leg + Zimbra keyword leg), builds a fenced prompt with <code>s1…sN</code> source aliases, and streams the answer from the 30B chat model over SSE. Unlike phases 1–3, generation is <em>server-side</em>: retrieval needs the DB and Zimbra, so the server owns the whole pipeline and the model is picked by <code>CHAT_MODEL</code> env, not the browser.</li>
+  <li><strong>Ask panel</strong> (web) — a drawer in the mail view mirroring <code>CommitmentsPanel</code>, reusing the existing SSE stream parser and typewriter hook. Citations render as chips that deep-link to the cited message; a "Draft reply" affordance opens the existing human-reviewed compose flow.</li>
+</ul>
+<pre><code>flowchart LR
+    Q["User question&lt;br/&gt;(Ask panel)"] --> C["POST /ai/inbox-chat&lt;br/&gt;SSE"]
+    C --> R{RetrievalService}
+    R --> V["Vector leg&lt;br/&gt;bge-m3 query embed →&lt;br/&gt;pgvector cosine top-K"]
+    R --> K["Keyword leg&lt;br/&gt;Zimbra SearchRequest&lt;br/&gt;(90-day window)"]
+    V --> F["RRF fusion → top 8 sources&lt;br/&gt;dedupe by message"]
+    K --> F
+    F --> P["Prompt builder&lt;br/&gt;neutralizeMarkers + fenceUntrusted&lt;br/&gt;sources aliased s1…sN"]
+    P --> L["CHAT_MODEL&lt;br/&gt;qwen3-30b-16k"]
+    L --> S["SSE: sources event,&lt;br/&gt;then token deltas"]
+    S --> U["Answer with citation chips&lt;br/&gt;→ deep-link to message"]
+</code></pre>
+
+<h2>2 · Data model and migrations</h2>
+<h3>pgvector</h3>
+<p>One migration enables the extension and creates the table. Prisma 7 has no native vector type, so the column is <code>Unsupported("vector(1024)")</code> and all similarity queries go through <code>$queryRaw</code> (precedent exists in <code>contacts.service.ts</code>; identifiers double-quoted camelCase per house convention).</p>
+<h3>New model: <code>MessageEmbedding</code></h3>
+<div class="tw"><table>
+  <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+  <tr><td><code>id</code></td><td>cuid</td><td></td></tr>
+  <tr><td><code>messageId</code></td><td>FK → Message, cascade delete</td><td></td></tr>
+  <tr><td><code>userId</code></td><td>String</td><td>every retrieval query filters on it</td></tr>
+  <tr><td><code>chunkIndex</code></td><td>Int</td><td>0-based; ≤ 4 chunks per message</td></tr>
+  <tr><td><code>model</code></td><td>String</td><td>embed-model tag; model change → re-embed (same trick as cards)</td></tr>
+  <tr><td><code>chunkText</code></td><td>String</td><td>the embedded text — reused as prompt context and search snippet</td></tr>
+  <tr><td><code>embedding</code></td><td><code>vector(1024)</code>, nullable</td><td>null on tombstone rows</td></tr>
+  <tr><td><code>failed</code></td><td>Boolean</td><td>tombstone after 3 hydration/embed failures — invisible to reads</td></tr>
+  <tr><td><code>extractedAt</code></td><td>DateTime</td><td></td></tr>
+</table></div>
+<p>Constraints: <code>@@unique([messageId, chunkIndex, model])</code>, <code>@@index([userId, extractedAt])</code>, plus a raw-SQL HNSW index (<code>vector_cosine_ops</code>). At this scale — one user's 90-day window is a few thousand rows — a filtered HNSW scan is comfortable.</p>
+<div class="warn">
+  <span class="label">Infrastructure change</span>
+  <p>The compose Postgres image moves from <code>postgres:17-alpine</code> to <code>pgvector/pgvector:pg17</code> (same PG major, existing <code>pgdata</code> volume attaches unchanged). On the natively-installed VMs the <code>postgresql-17-pgvector</code> package must be installed <em>before</em> <code>prisma migrate deploy</code>, or <code>CREATE EXTENSION vector</code> fails and wedges migration history — same class of hazard as the earlier sender-rules migration.</p>
+</div>
+<h3>Chunking</h3>
+<p><code>extractEmailText</code> (quoted-history and signature stripping, EN/FR/Kinyarwanda markers) produces the text; a new shared <code>chunkForEmbedding()</code> splits it on paragraph boundaries into ≤ 1,500-char chunks, max 4 per message, with the subject line prefixed to chunk 0. Storage: 4 KB per vector, so ≤ 16 KB + text per message — tens of MB per active user, negligible.</p>
+
+<h2>3 · Embedding worker</h2>
+<p><code>EmbedWorkerService</code> lives beside <code>CardWorkerService</code> in the mail module and copies its skeleton verbatim where possible:</p>
+<ul>
+  <li><strong>Selection:</strong> messages with <code>receivedAt ≥ now − 90d</code>, folder <code>/Inbox</code> or <code>/Sent</code>, user has a live Zimbra token, and no non-failed embedding rows for the current <code>EMBED_MODEL</code>. Newest first, so recent mail is searchable immediately and history backfills behind it.</li>
+  <li><strong>Fairness:</strong> reuse the exported <code>pickFairBatch</code>; separate batch-size envs so embedding (cheap, batchable) can run hotter than card extraction — default 16/tick, 4/user/tick.</li>
+  <li><strong>Embedding call:</strong> new <code>EmbedderService</code> mirroring <code>CardExtractorService</code>: raw fetch to Ollama's native <code>/api/embed</code>, which accepts a batched input array — one HTTP call embeds all chunks of a message.</li>
+  <li><strong>Failure handling:</strong> identical 3-strike in-memory counter → tombstone row (<code>failed: true</code>, null vector); counters reset on restart by design.</li>
+  <li><strong>Purge:</strong> in the same hourly throttled purge pass as cards, delete embeddings whose message left the 90-day window. Model change purges superseded-model rows lazily as re-embeds land.</li>
+</ul>
+<p>Backfill math: 16 messages/minute ≈ 23k messages/day of worker throughput — a full 90-day backfill for a typical mailbox completes within the first day, and the newest-first order makes chat useful within minutes of deploy.</p>
+
+<h2>4 · Retrieval</h2>
+<p><code>RetrievalService</code> (new <code>chat</code> module) runs two legs concurrently:</p>
+<ul>
+  <li><strong>Vector leg:</strong> embed the question with bge-m3, cosine top-20 chunks over the user's rows via <code>$queryRaw</code>, keep the best chunk per message.</li>
+  <li><strong>Keyword leg:</strong> deterministic keyword extraction from the question (stopword strip for EN/FR/Kinyarwanda, quoted phrases preserved) → existing <code>ZimbraService.searchMessages</code>, limit 10, scoped to the last 90 days. No LLM query-rewrite in v1 — deterministic is testable and free; rewrite is a noted future upgrade.</li>
+  <li><strong>Fusion:</strong> Reciprocal Rank Fusion (<code>score = Σ 1/(60 + rank)</code>), dedupe by message, take the top 8. No score calibration needed between legs — that's why RRF.</li>
+  <li><strong>Source context:</strong> per source — subject, sender, date, and up to 1,200 chars: the matching <code>chunkText</code> for vector hits; for keyword-only hits, <code>extractEmailText</code> over the cached body if present, else the Zimbra snippet. At most 3 uncached hydrations per question to bound latency.</li>
+  <li><strong>Degradation:</strong> either leg failing degrades to the other with a notice flag; both failing or zero sources short-circuits to a canned "I couldn't find anything relevant" — the model is never asked to answer without sources, which is the cheapest hallucination guard there is.</li>
+</ul>
+<p><strong>Search byproduct:</strong> <code>GET /mail/search/semantic?q=</code> exposes the vector leg alone in message-list shape; ⌘K gains a "From your mail (semantic)" section plus an "Ask your inbox…" row that opens the chat panel pre-filled.</p>
+
+<h2>5 · Chat pipeline</h2>
+<p><code>POST /ai/inbox-chat</code> (chat module controller; <code>JwtAuthGuard</code>, throttled at 20/min — stricter than the general AI proxy). Request body: the conversation's last ≤ 6 turns. Retrieval runs on the latest user turn; earlier turns are clamped and included in the prompt for continuity. No server-side conversation persistence — state lives in the panel (YAGNI; revisit if users ask for history).</p>
+<p>SSE protocol: first a <code>sources</code> event carrying <code>[{alias, messageId, subject, from, receivedAt, injectionSuspected}]</code>, then OpenAI-style token deltas (the existing web SSE parser handles these unchanged), then <code>[DONE]</code>. Client disconnect aborts the upstream Ollama call, same as the current proxy.</p>
+<p>Prompt assembly lives in <code>packages/shared/src/ai/chat.ts</code> (buildable and testable from both apps, like <code>cards.ts</code>): system prompt with the untrusted-content rule, an explicit named-language instruction (answer in the question's language — small-model lesson from phase 1 applies), each source passed through <code>neutralizeMarkers</code> + <code>fenceUntrusted</code> and labeled <code>s1…sN</code>, and an instruction to cite aliases inline. Generation uses <code>CHAT_MODEL</code> (default <code>qwen3-30b-16k:latest</code> — reserved for chat since phase 2).</p>
+
+<h2>6 · Threat model</h2>
+<div class="warn">
+  <span class="label">Known limit, inherited</span>
+  <p>Phase 1 measured that sentinel fencing does <strong>not</strong> reliably stop prompt injection on small local models. Phases 1–3 were safe because AI output only ever landed in a human-reviewed draft. A chat answer is read and believed directly, so phase 4's protection comes from <em>capability containment</em>, not prompt hygiene.</p>
+</div>
+<ul>
+  <li><strong>Read-only:</strong> the endpoint takes no write action of any kind. A fully steered model can at worst emit misleading text.</li>
+  <li><strong>Citations as verification:</strong> every claim carries an <code>s{i}</code> chip; one click shows the actual email. The UI states answers are AI-generated and should be checked against sources.</li>
+  <li><strong>Aliases as a security boundary:</strong> the model only ever names <code>s1…sN</code>. Deep-links are constructed client-side from the <code>sources</code> event — server-supplied, validated data — so no id, URL, or route parameter in model output is ever dereferenced. A hallucinated or injected citation resolves to nothing.</li>
+  <li><strong>Deep-links are inert:</strong> chips open the message view or a pre-filled compose/reply — flows that already require full human review to act.</li>
+  <li><strong>Injection banner:</strong> if any retrieved source's <code>MessageCard.injectionSuspected</code> is set (or shared <code>detectInjectionAttempt</code> fires on its chunk), the panel shows the existing warning treatment on the answer and flags the offending source chip. Suspected sources stay <em>in</em> retrieval — silently dropping mail would make answers wrong in a different way.</li>
+  <li><strong>Output scrubbing:</strong> answers pass through the existing <code>scrubOutput</code> before final render.</li>
+</ul>
+
+<h2>7 · Web UI</h2>
+<ul>
+  <li><strong><code>AskInboxPanel</code></strong> — right-side drawer over the mail view, same shell/z-order conventions as <code>CommitmentsPanel</code> (<code>z-[41]</code>), opened from a toolbar button next to Briefing/Commitments and from the ⌘K row. Multi-turn within the session; conversation clears on logout like the briefing cache.</li>
+  <li><strong>Streaming answer</strong> via <code>useCharStream</code>; <code>[s1]</code>-style citations swapped for chips post-scrub. Chips show sender + subject on hover, click opens the message.</li>
+  <li><strong>Sources rail</strong> under each answer listing all retrieved sources (including uncited ones) — the user sees what the model saw.</li>
+  <li><strong>Deep-link affordances</strong> per source: Open message · Reply (pre-filled compose) · linked commitment when one matches the message.</li>
+  <li><strong>States:</strong> AI-disabled (settings off) empty state; retrieval-degraded notice ("keyword search unavailable — answering from semantic matches only"); zero-sources canned reply; 429 with the existing backoff treatment.</li>
+</ul>
+
+<h2>8 · Configuration and deployment</h2>
+<div class="tw"><table>
+  <tr><th>Env var</th><th>Default</th><th>Notes</th></tr>
+  <tr><td><code>EMBED_MODEL</code></td><td><code>bge-m3:latest</code></td><td>new; model tag stored per row</td></tr>
+  <tr><td><code>CHAT_MODEL</code></td><td><code>qwen3-30b-16k:latest</code></td><td>new; server-side choice, not browser</td></tr>
+  <tr><td><code>EMBED_BATCH_PER_TICK</code> / <code>EMBED_PER_USER_PER_TICK</code></td><td>16 / 4</td><td>new; worker pacing</td></tr>
+  <tr><td><code>OLLAMA_BASE_URL</code>, <code>CARD_MODEL</code></td><td>—</td><td>existing but absent from every env template and compose file — fixed as part of this phase</td></tr>
+</table></div>
+<p>Pre-deploy checklist (VM):</p>
+<ol>
+  <li>Ship <code>bge-m3</code> to the Ollama host (192.168.100.2) the same way the qwen models got there; verify with a one-line <code>/api/embed</code> smoke call.</li>
+  <li>Extend <code>scripts/card-model-spotcheck.mjs</code> with an embedding spot-check (retrieval quality over a handful of real EN/FR/Kinyarwanda questions) — run once on the VM before enabling the panel.</li>
+  <li>Install pgvector for the target Postgres (compose: image swap; native installs: distro package) <em>before</em> <code>prisma migrate deploy</code>.</li>
+  <li><code>prisma migrate deploy</code> (extension + <code>message_embeddings</code> + HNSW index).</li>
+  <li>Add the new env vars to <code>/opt/govmail/api.env</code> and the compose <code>x-api-env</code> anchor.</li>
+</ol>
+<div class="callout">
+  <span class="label">Standalone desktop variant</span>
+  <p>The single-user desktop build runs SQLite, which cannot host pgvector. Phase 4 features are gated on a Postgres datasource: the worker doesn't start and the panel/endpoints are hidden. No keyword-only fallback in v1.</p>
+</div>
+
+<h2>9 · Testing</h2>
+<ul>
+  <li><strong>Shared:</strong> <code>chunkForEmbedding</code> (boundaries, subject prefix, max-chunk cap), chat prompt builder (fencing applied to every source, language rule named, alias format), citation-parsing regex.</li>
+  <li><strong>API:</strong> worker selection query shape and fairness (reusing card-worker test patterns), tombstone behavior, RRF fusion unit tests (mocked legs, dedupe, degradation paths), SSE controller test (sources event precedes deltas; abort propagates), zero-sources short-circuit.</li>
+  <li><strong>Web:</strong> panel state machine, and — security-relevant — the alias→deep-link mapper: model text naming an alias not in the sources event must resolve to nothing.</li>
+  <li><strong>Contract seam:</strong> the web <code>request()</code> helper's quirks (rejects empty bodies) bit phase 3; the chat endpoint gets an explicit API-client contract test rather than relying on mocks agreeing by luck.</li>
+  <li><strong>Manual E2E on the VM:</strong> checklist covering a French question over French mail, a Kinyarwanda question, an exact-term lookup (invoice number — keyword leg), a paraphrase lookup (vector leg), and an injection-bearing email in the retrieval set.</li>
+</ul>
+
+<h2>10 · Out of scope</h2>
+<p>Conversation persistence and history; any write action from chat; full-mailbox-history embedding (window is config-widenable later); attachment <em>content</em> extraction; LLM query-rewrite for the keyword leg; user-facing chat model selection; folders beyond Inbox/Sent; admin retrieval-quality dashboards; the SQLite desktop variant.</p>
+
+<p class="foot">Source of record once approved: docs/superpowers/specs/2026-09-03-ask-your-inbox-design.md · then superpowers:writing-plans → SDD on ft-hyperscale</p>
+</main>

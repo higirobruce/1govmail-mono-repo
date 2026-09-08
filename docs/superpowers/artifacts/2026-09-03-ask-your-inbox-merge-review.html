@@ -1,0 +1,182 @@
+<title>Ask Your Inbox — Merge Review</title>
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/bfef7448-ee7b-45dd-b49d-693f5c8f9264 — content-faithful, original styling not preserved -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #ffffff; --surface: #f7f7f5; --ink: #1a1a1a; --ink-soft: #55585c; --ink-faint: #8a8d90;
+    --line: #e0e0dc; --accent: #0f6f5c; --accent-soft: #e3f0ec; --code-bg: #f0f0ee;
+    --crit: #b3323c; --crit-bg: #b3323c14; --imp: #b07a1f; --imp-bg: #b07a1f14;
+    --good: #1e7f4e; --good-bg: #1e7f4e14;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+      --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+      --crit: #e4707a; --crit-bg: #e4707a1a; --imp: #d9a94e; --imp-bg: #d9a94e1a;
+      --good: #56c77e; --good-bg: #56c77e1a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+    --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+    --crit: #e4707a; --crit-bg: #e4707a1a; --imp: #d9a94e; --imp-bg: #d9a94e1a;
+    --good: #56c77e; --good-bg: #56c77e1a;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: "Inter", system-ui, sans-serif; font-size: 16px; line-height: 1.65; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.6rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.2rem); font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; margin: 0 0 0.6rem; }
+  h2 { font-size: 1.2rem; font-weight: 700; margin: 2.4rem 0 0.9rem; letter-spacing: 0.01em; }
+  h3 { font-size: 1.05rem; font-weight: 600; margin: 0; }
+  p, li, td { color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent); }
+  ul, ol { padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.5rem; }
+  code, .mono { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); border-radius: 4px; padding: 0.08em 0.35em; }
+  .meta { color: var(--ink-faint); font-size: 0.9rem; margin: 0 0 1rem; }
+  .verdict { display: flex; gap: 1rem; align-items: flex-start; background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--accent); padding: 1.1rem 1.3rem; margin: 1rem 0 1.5rem; }
+  .verdict-badge { font-weight: 700; font-size: 0.9rem; letter-spacing: 0.02em; color: var(--imp); background: var(--imp-bg); padding: 0.4rem 0.7rem; white-space: nowrap; border-radius: 6px; }
+  .statline { display: flex; flex-wrap: wrap; gap: 1.3rem; margin: 0 0 1.5rem; font-family: var(--mono); font-size: 0.8rem; color: var(--ink-faint); }
+  .statline b { color: var(--ink); font-weight: 600; }
+  .issue { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--ink-faint); padding: 1rem 1.3rem; margin: 0 0 0.9rem; border-radius: 0 8px 8px 0; }
+  .issue.crit { border-left-color: var(--crit); }
+  .issue.imp { border-left-color: var(--imp); }
+  .issue-head { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .chip { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; padding: 0.15rem 0.5rem; border-radius: 4px; white-space: nowrap; }
+  .chip.crit { color: var(--crit); background: var(--crit-bg); }
+  .chip.imp { color: var(--imp); background: var(--imp-bg); }
+  .loc { display: inline-block; font-family: var(--mono); font-size: 0.75rem; color: var(--ink-faint); background: var(--code-bg); border-radius: 4px; padding: 0.1rem 0.4rem; margin: 0.1rem 0.3rem 0.1rem 0; }
+  .issue .fix { font-size: 0.92rem; color: var(--ink-soft); margin: 0.6rem 0 0; padding-top: 0.5rem; border-top: 1px dashed var(--line); }
+  .issue .fix b { font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-right: 0.4rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 0.8rem 0 1.3rem; }
+  th, td { text-align: left; padding: 0.55rem 0.85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+  tr:last-child td { border-bottom: none; }
+  .pill { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 0.12rem 0.5rem; border-radius: 4px; white-space: nowrap; }
+  .pill.ok { color: var(--good); background: var(--good-bg); }
+  .pill.fix { color: var(--crit); background: var(--crit-bg); }
+  .pill.rec { color: var(--imp); background: var(--imp-bg); }
+  .note { font-size: 0.9rem; color: var(--ink-soft); background: var(--surface); border: 1px solid var(--line); padding: 0.9rem 1.1rem; margin-top: 1rem; border-radius: 8px; }
+  .note b { font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--imp); }
+  footer, .foot { font-size: 0.85rem; color: var(--ink-faint); margin-top: 2.8rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+</style>
+<main>
+  <p class="eyebrow">Final whole-branch review · ft-hyperscale</p>
+  <h1>Ask Your Inbox — Merge Review</h1>
+  <p class="meta">Range <code>ffb408b..64ea15a</code> · 19 commits · 39 files · +5,046 / −73 · reviewed 2026-09-04 against the phase-4 spec (binding) and plan, after 13 per-task reviews</p>
+
+  <div class="verdict">
+    <span class="verdict-badge">MERGE WITH FIXES</span>
+    <p><strong>The architecture is sound and the security posture holds end-to-end</strong>, but the ⌘K "Ask your inbox" row — a spec-mandated entry point — is a verified no-op, and two cross-task gaps (no embedding-model filter in retrieval; unclamped turns vs the DTO's 4,000-char cap) will bite in production. Fix C1, I1–I3 before merge; everything else can follow.</p>
+  </div>
+  <div class="statline">
+    <span>Critical <b>1</b></span>
+    <span>Important <b>4</b></span>
+    <span>Minor <b>7</b></span>
+    <span>Deferred minors triaged <b>21 · 1 folds into I2</b></span>
+    <span>Tests <b>all passing</b> (api 26 new · web 198)</span>
+  </div>
+
+  <h2>Strengths</h2>
+  <ul>
+    <li><strong>Alias security boundary is real, end-to-end.</strong> The DTO rejects <code>system</code> turns, the prompt names only <code>s1…sN</code>, chips resolve exclusively through the server-sent sources event, and <code>splitByCitations</code> has an explicit security test proving an unvouched alias stays literal text. Full retrieval context never ships to the client — asserted in a test.</li>
+    <li><strong>The SSE contract is pinned, not assumed.</strong> The web client's fixture mirrors the controller's exact frames (sources event → OpenAI deltas → <code>[DONE]</code>), including a split-mid-frame test — the phase-3 contract-seam lesson applied.</li>
+    <li><strong>Graceful degradation done properly.</strong> <code>Promise.allSettled</code> legs, per-leg degraded flags surfaced to the UI, and a zero-sources short-circuit so the model is never asked to answer sourceless.</li>
+    <li><strong>Worker discipline.</strong> Fair batching reused from cards, tombstones carry the current model so they stop re-selection, delete-then-insert in a transaction, hourly throttled purge — all covered by realistic query-shape tests.</li>
+    <li><strong>Deployment story is complete.</strong> pgvector images in both compose files, env vars in templates and the <code>x-api-env</code> anchor, a trilingual embed spot-check script, and the HNSW-drift hazard documented both in the migration and as a schema comment.</li>
+    <li><strong>Prompt hygiene:</strong> <code>neutralizeMarkers</code> on source metadata, per-source fencing with forgery test, named-language rule, output scrubbing before final render.</li>
+  </ul>
+
+  <h2>Critical — must fix</h2>
+  <div class="issue crit">
+    <div class="issue-head"><span class="chip crit">C1</span><h3>⌘K "Ask your inbox" row never opens the panel</h3></div>
+    <span class="loc">apps/web/components/GlobalSearch.tsx:handleAskSelect</span>
+    <span class="loc">apps/web/app/(app)/mail/page.tsx:268–279</span>
+    <p>The row does <code>router.push('/mail?ask=…')</code>, but <code>GlobalSearch</code> is rendered <em>only inside the mail page</em>, and the <code>?ask=</code> consumer is an effect with deps <code>[hydrated, isAuthenticated]</code> that reads <code>window.location.search</code>. A same-route query-only push in the App Router neither remounts the page nor re-runs that effect (the page never calls <code>useSearchParams</code>), so selecting the row closes the dialog and does nothing. Worse, the stale <code>?ask=</code> stays in the URL and pops the panel on the next full reload. The per-task pair (T11 consumes / T12 produces) looked consistent on paper; only a whole-flow view catches that the producer and consumer live on the same mounted page.</p>
+    <p class="fix"><b>Fix</b>Pass callbacks instead of navigating: give <code>GlobalSearch</code> an <code>onAsk(q)</code> prop from the mail page (it already owns <code>setAskOpen</code>/<code>setAskPrefill</code>). Keep the <code>?ask=</code> effect for genuine cross-page deep links.</p>
+  </div>
+
+  <h2>Important — should fix</h2>
+  <div class="issue imp">
+    <div class="issue-head"><span class="chip imp">I1</span><h3>Semantic ⌘K rows click into a dead deep-link</h3></div>
+    <span class="loc">apps/web/components/GlobalSearch.tsx:handleSelect('mail')</span>
+    <p>Both the pre-existing Messages group and the new semantic group push <code>/mail?messageId=…</code> — a parameter <em>nothing in the app consumes</em> (only <code>?open=</code> exists; verified by repo-wide grep, pattern dates to commit <code>4a249a2</code>). The defect is pre-existing, but the new "From your mail (semantic)" section ships its core interaction — click a result, open the message — as a no-op.</p>
+    <p class="fix"><b>Fix</b>Same shape as C1: an <code>onOpenMessage(id)</code> prop wired to the mail page's <code>openMessage</code>. Fix the Messages group while there, or push <code>?open=</code> which is actually consumed.</p>
+  </div>
+
+  <div class="issue imp">
+    <div class="issue-head"><span class="chip imp">I2</span><h3>Vector retrieval ignores the embedding model column</h3></div>
+    <span class="loc">apps/api/src/chat/retrieval.service.ts:vectorRows (WHERE clause)</span>
+    <p>The cosine query filters on <code>userId / failed / embedding IS NOT NULL</code> but never <code>e."model"</code>. After an <code>EMBED_MODEL</code> change, question vectors from the new model are compared against stored vectors from the old one — cosine distance across models is meaningless — for however long the lazy re-embed takes (spec estimates a day for a full backfill). It compounds with T6's deferred tombstone gap: a message that tombstones under the new model keeps its old-model vectors <em>forever</em> retrievable (until the 90-day purge), since the tombstone stops re-selection. Affects both the chat leg and <code>/mail/search/semantic</code>.</p>
+    <p class="fix"><b>Fix</b>Add <code>AND e."model" = ${'{'}this.embedder.model{'}'}</code> to the query. One line; makes the T6 deferral safely moot (stale rows become invisible and purge at 90d).</p>
+  </div>
+
+  <div class="issue imp">
+    <div class="issue-head"><span class="chip imp">I3</span><h3>Long assistant answers break the next turn with a 400</h3></div>
+    <span class="loc">apps/web/components/mail/AskInboxPanel.tsx:ask()</span>
+    <span class="loc">apps/api/src/chat/dto/inbox-chat.dto.ts:@MaxLength(4000)</span>
+    <p>The panel sends prior turns unclamped, but the DTO validates every turn at 4,000 chars — and with <code>max_tokens: 1024</code> an answer can plausibly exceed that (~4 chars/token in English, more in French). One long answer, and every subsequent question in that conversation is rejected with a raw <code>400</code> the panel surfaces as an error string. The server clamps to 1,000/2,000 chars for the prompt anyway, so the client-side data is pure validation ballast. The unbounded question textarea has the same failure on a large paste.</p>
+    <p class="fix"><b>Fix</b>Clamp each turn's <code>content.slice(0, 4000)</code> when building <code>history</code> in <code>ask()</code> (covers both cases).</p>
+  </div>
+
+  <div class="issue imp">
+    <div class="issue-head"><span class="chip imp">I4</span><h3>Spec deviation: no Postgres-datasource gate for the SQLite desktop variant</h3></div>
+    <span class="loc">apps/api/src/mail/embed-worker.service.ts (unconditional @Cron)</span>
+    <span class="loc">apps/api/src/app.module.ts (ChatModule unconditional)</span>
+    <p>The spec requires "the worker doesn't start and the panel/endpoints are hidden" on a SQLite datasource. No such gate exists; the plan's Task 13 note quietly weakened this to "the desktop build is unaffected". Practical risk today is low — <code>apps/desktop/api-bundle</code>'s checked-in schema predates even phases 1–3 (17 models, no <code>MessageCard</code>/<code>Commitment</code>), so the desktop bundle is a stale artifact that would already break on regeneration for earlier phases. But the next <code>prepare-api.mjs</code> run copies this dist into that bundle and the embed worker will crash every minute at runtime.</p>
+    <p class="fix"><b>Fix</b>Decide explicitly: add a cheap gate (skip the cron tick / module registration when the datasource isn't Postgres, or an env flag), or amend the spec's desktop paragraph to record the descope. This is a call for you, not the implementer.</p>
+  </div>
+
+  <h2>Minor — nice to have</h2>
+  <ul>
+    <li><strong>docker-compose.local.yml</strong> got the pgvector image but not the four AI env vars — the local API container falls back to in-container <code>127.0.0.1:11434</code>. Harmless if you run the API natively; inconsistent with <code>docker-compose.yml</code>.</li>
+    <li><strong>?ask= deep-link isn't gated on <code>aiEnabled</code></strong> (mail/page.tsx:270) — the toolbar button and ⌘K row are, but a pasted URL opens the panel with AI off.</li>
+    <li><strong>Upstream-failure delta leaks <code>err.message</code></strong> (chat.controller.ts:459) and is written even when the throw was the client's own abort — guard with <code>ac.signal.aborted</code> and prefer a generic string.</li>
+    <li><strong>Closing the panel doesn't abort an in-flight stream</strong> — the component early-returns <code>null</code> but stays mounted, so the unmount abort never fires; the stream finishes invisibly.</li>
+    <li><strong>Short questions always get the English no-sources reply</strong> — <code>detectLanguage</code> needs ≥8 words; two of the panel's own three example questions are under it. Inherent detector limit; worth a lower threshold for question-length text someday.</li>
+    <li><strong><code>languageRule</code> phrasing</strong> says "the email below is in X" when keyed to the question — cosmetic prompt inaccuracy.</li>
+    <li><strong>Spec letter:</strong> a new <code>embed-spotcheck.mjs</code> was created instead of extending <code>card-model-spotcheck.mjs</code>. Arguably better; noting the deviation.</li>
+  </ul>
+
+  <h2>Deferred-minors triage</h2>
+  <p>All 21 ledger-deferred items reviewed. One folds into a merge-blocking fix; two are cheap and recommended; the rest are explicitly fine to leave.</p>
+  <div class="tw"><table>
+    <tr><th>Task</th><th>Deferred item</th><th>Ruling</th></tr>
+    <tr><td class="mono">T6</td><td>Tombstone path doesn't delete old-model rows (orphaned stale vectors after model switch + 3-strike failure)</td><td><span class="pill fix">Folds into I2</span> — with the model filter added it self-heals via the 90-day purge; without I2 it actively serves garbage. Optionally add <code>deleteMany</code> in <code>tombstone()</code> for hygiene.</td></tr>
+    <tr><td class="mono">T11</td><td><code>pendingDegraded</code> not reset at start of <code>ask()</code> (stale banner flash)</td><td><span class="pill rec">Recommend</span> — one-liner beside the existing <code>setPendingSources([])</code>.</td></tr>
+    <tr><td class="mono">T11</td><td><code>DegradedNotice</code> shows only the keyword message when both legs degraded</td><td><span class="pill rec">Recommend</span> — reachable: both-degraded yields the canned reply <em>with</em> <code>{'{'}vector:true, keyword:true{'}'}</code>, and the notice then claims "answered from semantic matches only" under an answer that used neither leg.</td></tr>
+    <tr><td class="mono">T1–T5, T7–T13</td><td>Everything else: dead defensive slice, re-export style, mixed-validity citation group dropping the valid alias (fails safe), duplicate 'iki' stopword, HNSW index naming, unused Logger, NaN guard, over-flagging injection pre-slice (never under-flags), untested error-after-headers branches, <code>{'{'}context, ...pub{'}'}</code> destructure, clamp edge cases, decoder flush, drawer-exclusivity asymmetry, missing semantic loading indicator, script stack traces / chmod</td><td><span class="pill ok">OK to leave</span> — each either fails safe, mirrors a sibling convention, or is cosmetic; none changes behavior a user or attacker can exploit.</td></tr>
+  </table></div>
+  <div class="note"><b>Standing gotcha — carry forward:</b> a future <code>prisma migrate dev</code> will offer to DROP <code>message_embeddings_embedding_hnsw_idx</code> (Prisma can't see indexes on <code>Unsupported()</code> columns). Always decline. Documented in the schema comment and migration; must also land in release notes and the pre-deploy checklist.</div>
+
+  <h2>Spec section sweep</h2>
+  <ul>
+    <li><strong>Data model / migration</strong> ✓ — table, unique key, HNSW index, extension; migration matches the spec's Prisma model verbatim.</li>
+    <li><strong>Worker</strong> ✓ — selection, fairness, hydration, batched embed, 3-strike tombstones, hourly purge.</li>
+    <li><strong>Retrieval</strong> ✓ — both legs, RRF, ≤3 hydrations, context precedence, degradation (minus the model filter, I2).</li>
+    <li><strong>Chat pipeline</strong> ✓ — throttle 20/min, ≤6-exchange DTO, sources-first SSE, abort propagation, no-sources short-circuit, CHAT_MODEL default.</li>
+    <li><strong>Threat model</strong> ✓ — read-only, alias boundary, inert deep-links, injection banner with suspected sources kept in retrieval, output scrubbing. Verified: <code>searchMessages</code>'s upsert side-writes are sync bookkeeping, not user-visible actions — capability containment intact.</li>
+    <li><strong>UI</strong> ✓ mostly — drawer, chips, sources rail, Reply/Open/linked-commitment affordances, 429 treatment; the ⌘K entry is C1.</li>
+    <li><strong>Config / deploy</strong> ✓ — env templates, compose, spot-check script; embed spot-check live run and bge-m3 ship remain on the VM checklist.</li>
+    <li><strong>Desktop gating</strong> ✗ — I4.</li>
+  </ul>
+
+  <h2>Recommendations</h2>
+  <ol>
+    <li>Fix C1 + I1 together with two callbacks on <code>GlobalSearch</code> — it's a child of the only page that renders it; the router round-trip was never needed.</li>
+    <li>Land I2 (one-line WHERE) and I3 (one-line clamp) before merge; both are cheap and both fail silently in production otherwise.</li>
+    <li>Rule on I4 explicitly — gate or spec amendment — so the spec and code stop disagreeing.</li>
+    <li>Keep the VM checklist alive: ship bge-m3, run <code>embed-spotcheck.mjs</code> on the VM, install pgvector before <code>migrate deploy</code>, and run the spec's manual E2E set (FR/RW questions, exact-term, paraphrase, injection-bearing email).</li>
+  </ol>
+
+  <h2>Assessment</h2>
+  <div class="verdict">
+    <span class="verdict-badge">MERGE WITH FIXES</span>
+    <p>The hard parts — the security boundary, the SSE contract, hybrid retrieval, the worker — are done well and tested honestly. What remains are integration seams the per-task reviews structurally couldn't see: one inert entry point (C1), one silent-corruption path (I2), one multi-turn breaker (I3), and one spec/code disagreement to rule on (I4).</p>
+  </div>
+</main>

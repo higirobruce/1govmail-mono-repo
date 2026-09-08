@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/9e494df7-8628-4268-ad05-1243ffa8820c — content-faithful, original styling not preserved -->
+<title>The Bridges Phase</title>
+<style>
+  :root {
+    --bg: #ffffff; --surface: #ffffff; --surface-2: #f4f5f7;
+    --ink: #23262b; --ink-2: #4b525c; --ink-3: #767e88;
+    --line: #dde1e6; --accent: #2f6fb0;
+    --good: #1e7f4e; --good-soft: #e3f3ea;
+    --warn: #a97a00; --warn-soft: #faf1d9;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16191d; --surface: #1c2026; --surface-2: #22262d;
+      --ink: #e9ecef; --ink-2: #b7bec7; --ink-3: #8a9099;
+      --line: #333941; --accent: #6ea6df;
+      --good: #7fcda3; --good-soft: #163429;
+      --warn: #dcb65a; --warn-soft: #362c14;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16191d; --surface: #1c2026; --surface-2: #22262d;
+    --ink: #e9ecef; --ink-2: #b7bec7; --ink-3: #8a9099;
+    --line: #333941; --accent: #6ea6df;
+    --good: #7fcda3; --good-soft: #163429;
+    --warn: #dcb65a; --warn-soft: #362c14;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: .72rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); margin: 0 0 .6rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.2rem); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; margin: 0 0 .6rem; text-wrap: balance; }
+  .lede { color: var(--ink-2); margin: 0 0 1.6rem; max-width: 68ch; }
+  h2 { font-size: 1.15rem; font-weight: 700; margin: 2.4rem 0 .7rem; letter-spacing: -.01em; }
+  h2 span.sub { font-weight: 400; color: var(--ink-3); font-size: .9rem; }
+  h3 { font-size: .95rem; font-weight: 600; margin: 1.4rem 0 .4rem; }
+  p, li, td { color: var(--ink-2); }
+  strong { color: var(--ink); font-weight: 600; }
+  ul, ol { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: .5rem; }
+  code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: .06em .3em; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin: .8rem 0 1.2rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  th, td { text-align: left; padding: .55rem .85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .68rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; font-size: .68rem; font-weight: 600; border-radius: 999px; padding: .08rem .5rem; white-space: nowrap; }
+  .pill.rec { background: var(--good-soft); color: var(--good); }
+  .pill.rej { background: var(--warn-soft); color: var(--warn); }
+  .decided { border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 10px 10px 0; padding: .7rem 1rem; margin: .8rem 0 1.2rem; font-size: .9rem; color: var(--ink-2); }
+  .decided b { color: var(--ink); }
+  .flow { font-family: var(--mono); font-size: .78rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: .8rem 1rem; overflow-x: auto; white-space: pre; color: var(--ink-2); margin: .6rem 0 1rem; line-height: 1.8; }
+  footer { font-size: .82rem; color: var(--ink-3); margin-top: 2.6rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Design for sign-off · AI Phase 2 · 5 Sep 2026</p>
+  <h1>Bridges: mail flows into docs and calendar</h1>
+  <p class="lede">Four features that connect modules using only the plumbing phase 1 built — the locked model, the guardrails library, the markdown pipeline, streaming with abort. <strong>No API schema changes, no migrations; this phase is entirely in the web app</strong> (plus two small bug fixes it trips over). Your three choices from chat are locked in and marked below.</p>
+
+  <h2>1 · Draft from thread <span class="sub">mail → docs</span></h2>
+  <div class="decided"><b>You chose:</b> one click, the AI picks the best-fitting government template itself.</div>
+  <p>A <strong>Draft document</strong> action joins the quick-actions row above the thread title. One click runs a single model call that both classifies and writes:</p>
+  <div class="flow">click → gather thread (bodies, not snippets) → one JSON-mode call
+      → { templateId, title, markdown }
+      → sanitize markdown → TipTap JSON → docs.create → open in /docs</div>
+  <ul>
+    <li><strong>Full bodies, finally.</strong> Today's thread summarize only has the opened message's body; every other message is a snippet. This feature fans out to fetch real bodies (cached, capped: last 10 messages, ~2,000 chars each) via a new <code>lib/ai/threadContent.ts</code> — which thread summarize can also adopt later.</li>
+    <li><strong>The model picks from a catalog</strong> of the 17 gov templates (id + description + section list sent in the prompt). A bad or missing <code>templateId</code> falls back to Memo — never an error the user sees.</li>
+    <li><strong>Safety of the content path:</strong> model markdown goes through the existing escape-first <code>markdownToHtml</code> (DOMPurify locked), then TipTap's <code>generateJSON</code> turns that sanitized HTML into doc JSON. Model output never becomes raw HTML or raw editor JSON.</li>
+    <li><strong>The doc is created only after generation fully succeeds</strong> — no half-written documents on error, just a toast.</li>
+    <li><strong>Docs gets a deep link.</strong> There is no <code>/docs/[id]</code> route today; the mail page can't open a doc. Fix: the docs page honors <code>/docs?open=&lt;id&gt;</code> — tiny, and useful beyond this feature.</li>
+    <li>While working: the CLI-style indicator with real steps — <em>Reading thread → Choosing template → Drafting</em>.</li>
+  </ul>
+
+  <h3>Content path — the one real architecture choice</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Option</th><th></th><th>Trade-off</th></tr></thead>
+    <tbody>
+      <tr><td>A · Markdown → sanitized HTML → TipTap JSON</td><td><span class="pill rec">Recommended</span></td><td>Reuses the hardened docs markdown pipeline end-to-end; one prompt format the model already handles well. Loses nothing we need (headings, lists, bold all survive).</td></tr>
+      <tr><td>B · Structured JSON per template section</td><td></td><td>Tighter template fidelity, but a bespoke prompt + assembler per template shape; brittle when the model omits a section.</td></tr>
+      <tr><td>C · Model emits TipTap JSON directly</td><td><span class="pill rej">Rejected</span></td><td>Unvalidated editor JSON from a model is an injection and corruption surface — violates our standing invariant.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>2 · Smart event from mail <span class="sub">mail → calendar</span></h2>
+  <div class="decided"><b>You chose:</b> the form opens immediately and AI-parsed fields fill in live; typing over anything wins.</div>
+  <p>All three existing entry paths (drop on the calendar grid, drop on the sidebar item, right-click → Create event) open the modal exactly as today — then a background parse of the <em>full email body</em> fills in what you'd otherwise retype:</p>
+  <ul>
+    <li>New <code>lib/ai/eventParse.ts</code> → <code>parseEventFromEmail</code>: JSON-mode call returning <code>{ title, startAt, endAt, allDay, location, attendees[] }</code>, anchored on "now" for relative dates, validated hard (real dates, <code>endAt &gt; startAt</code> or +1h, attendee strings must contain <code>@</code>). Like <code>taskParse</code>, it never throws — failure means the form just stays as it is.</li>
+    <li><strong>Dirty-field tracking:</strong> the parse only fills fields you haven't touched. Start typing a title and the AI result won't overwrite it.</li>
+    <li><strong>Attendees are suggestions in chips, invites only go out when you press Save</strong> — the AI never sends anything. The working indicator sits inside the modal while parsing.</li>
+    <li><strong>Two bug fixes in passing</strong> (the feature trips over both): the drag payload's message id is currently discarded, so drag-created events lose their <code>linkedMessageId</code> back-reference — fixed on both drag paths; and <code>api.ts</code>'s calendar create/update types omit <code>linkedMessageId</code>/<code>linkedSubject</code> that the server already accepts — typed properly.</li>
+  </ul>
+
+  <h2>3 · Natural-language event creation</h2>
+  <p>A quick-add input in the calendar toolbar, mirroring the tasks page: <em>"Steering committee Tuesday 10–11 with Erick and Tricia"</em>. Same <code>eventParse</code> library, second entry point (<code>parseEventInput</code>).</p>
+  <ul>
+    <li><strong>One deliberate difference from tasks quick-add:</strong> it opens the create modal prefilled rather than creating directly. Task quick-add can safely auto-create; an event sends invites to attendees, so you always review before Save.</li>
+    <li>AI off or parse failed → the modal opens with your raw text as the title. Never blocks, never loses input.</li>
+  </ul>
+
+  <h2>4 · Minutes formatter <span class="sub">docs</span></h2>
+  <div class="decided"><b>You chose:</b> an editor selection action, not a template-picker box.</div>
+  <p><strong>Format as minutes</strong> joins Rewrite and Summarize in the selection bubble's AI row. Select raw pasted notes → the model restructures them as Markdown matching the Meeting Minutes template sections (Attendees, Agenda, Decisions, Action items with <strong>bold owners</strong>) → same preview popover as Summarize, with <em>Replace selection</em> / <em>Insert below</em>.</p>
+  <ul>
+    <li>Reuses <code>summarizeSelection</code>'s exact plumbing: raw passage in, fenced as untrusted, markdown out, plain-text preview while streaming (the freeze lesson), rendered once complete, ranged inserts only.</li>
+    <li>Nothing invented: attendees/decisions the notes don't contain are omitted, not guessed — the prompt forbids fabrication.</li>
+  </ul>
+
+  <h2>Cross-cutting</h2>
+  <ul>
+    <li><strong>Same architecture as phase 1:</strong> all AI orchestration client-side in <code>lib/ai/</code>, locked-model config respected, guardrails (<code>fenceUntrusted</code>, <code>scrubOutput</code>, injection rule) on every call, AbortController on every stream, one in-flight call per surface.</li>
+    <li><strong>Server changes: none.</strong> Calendar create and docs create already accept everything these features send.</li>
+    <li><strong>Testing:</strong> vitest units for <code>eventParse</code> (relative dates, ordering, salvage, fallbacks), the draft-doc assembly (catalog matching, markdown→JSON, bad-template fallback), the dirty-field merge (pure function), and minutes wiring — following the <code>taskParse</code>/<code>quickAdd</code> test pattern. Existing 289 web tests stay green.</li>
+    <li><strong>Rough size:</strong> two new libs + one helper, edits to ThreadView, calendar page/modal, DocsEditor, docs page. Comparable to phase 1's scope — a normal spec → plan → SDD run.</li>
+  </ul>
+
+  <footer>Approve and I'll write the spec to <code>docs/superpowers/specs/2026-09-05-ai-phase2-bridges-design.md</code>, then the implementation plan. Anything here you'd change — say the word and this page updates.</footer>
+</main>
+</body>
+</html>

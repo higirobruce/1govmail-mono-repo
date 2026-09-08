@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/4afc6be5-92e8-48cc-996f-3e2da852215f — content-faithful, original styling not preserved -->
+<title>AI Phase 1 Merge Review</title>
+<style>
+  :root {
+    --bg: #F4F6F7; --surface: #FFFFFF; --surface-2: #EDF0F1;
+    --ink: #14181B; --ink-2: #454F55; --ink-3: #737E85; --ink-4: #98A2A8;
+    --rule: #DDE2E4; --rule-soft: #E9EDEE;
+    --accent: #0F6E5C; --accent-soft: #E2F0EC;
+    --critical: #9E2B2B; --critical-soft: #F6E7E6;
+    --important: #9A5F0E; --important-soft: #F7EDDE;
+    --minor: #4E5C66; --minor-soft: #E8ECEE;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0E1114; --surface: #161A1E; --surface-2: #1D2227;
+      --ink: #E7EBEC; --ink-2: #B0B9BE; --ink-3: #838E95; --ink-4: #67727A;
+      --rule: #262D33; --rule-soft: #1F262B;
+      --accent: #4FBBA1; --accent-soft: #10312C;
+      --critical: #E0827C; --critical-soft: #33201F;
+      --important: #DDA755; --important-soft: #2F2617;
+      --minor: #9AA6AE; --minor-soft: #1E252A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0E1114; --surface: #161A1E; --surface-2: #1D2227;
+    --ink: #E7EBEC; --ink-2: #B0B9BE; --ink-3: #838E95; --ink-4: #67727A;
+    --rule: #262D33; --rule-soft: #1F262B;
+    --accent: #4FBBA1; --accent-soft: #10312C;
+    --critical: #E0827C; --critical-soft: #33201F;
+    --important: #DDA755; --important-soft: #2F2617;
+    --minor: #9AA6AE; --minor-soft: #1E252A;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-family: var(--mono); font-size: .72rem; font-weight: 500; letter-spacing: .13em; text-transform: uppercase; color: var(--accent); margin: 0 0 .6rem; }
+  h1 { font-size: clamp(1.8rem, 4.5vw, 2.5rem); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; margin: 0 0 .6rem; text-wrap: balance; }
+  .standfirst { color: var(--ink-2); margin: 0 0 1.6rem; max-width: 68ch; }
+  h2 { font-size: 1.3rem; font-weight: 700; margin: 2.6rem 0 .5rem; letter-spacing: -.01em; }
+  .section-note { color: var(--ink-3); font-size: .92rem; margin: 0 0 1.2rem; max-width: 66ch; }
+  h3 { font-family: var(--mono); font-size: .74rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin: 1.8rem 0 .8rem; padding-bottom: .4rem; border-bottom: 1px solid var(--rule); }
+  h3:first-of-type { margin-top: 0; }
+  p, li, td { color: var(--ink-2); }
+  strong, b { color: var(--ink); }
+  ul, ol { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: .55rem; }
+  code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); border: 1px solid var(--rule); border-radius: 4px; padding: .06em .3em; color: var(--ink); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; margin: 1.4rem 0; }
+  .fact { background: var(--surface); padding: .7rem .85rem; }
+  .fact dt { font-family: var(--mono); font-size: .64rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin: 0; }
+  .fact dd { margin: .2rem 0 0; font-size: .9rem; font-weight: 500; }
+  .fact dd.ok { color: var(--accent); }
+  .verdict { margin: 1.4rem 0; border: 1px solid var(--rule); border-left: 4px solid var(--important); border-radius: 8px; background: var(--surface); padding: 1.1rem 1.2rem; }
+  .verdict .label { font-family: var(--mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  .verdict .call { font-size: 1.35rem; font-weight: 700; color: var(--important); margin: .2rem 0 .5rem; }
+  .verdict p { margin: 0; max-width: 66ch; }
+  ul.strengths { list-style: none; padding: 0; }
+  ul.strengths li { position: relative; padding-left: 1.4rem; }
+  ul.strengths li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 600; }
+  .issues { display: flex; flex-direction: column; gap: .9rem; margin-bottom: 1rem; }
+  .issue { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 1rem 1.1rem; }
+  .issue-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; margin-bottom: .4rem; }
+  .chip { font-family: var(--mono); font-size: .68rem; font-weight: 600; letter-spacing: .06em; padding: .12rem .45rem; border-radius: 4px; flex-shrink: 0; }
+  .chip.imp { background: var(--important-soft); color: var(--important); }
+  .chip.min { background: var(--minor-soft); color: var(--minor); }
+  .issue-title { font-weight: 600; }
+  .issue p { margin: 0 0 .5rem; font-size: .93rem; }
+  .issue p:last-child { margin-bottom: 0; }
+  .issue .fix b { color: var(--accent); }
+  .paths { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .4rem; }
+  .paths .path { font-family: var(--mono); font-size: .74rem; color: var(--ink-3); }
+  .none { background: var(--accent-soft); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 8px; padding: .8rem 1rem; font-size: .93rem; }
+  .none b { color: var(--accent); }
+  .tw { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); margin: .8rem 0 1.2rem; }
+  table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: .88rem; }
+  th, td { text-align: left; padding: .6rem .8rem; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th { font-family: var(--mono); font-size: .66rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); background: var(--surface-2); white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td.ruling { white-space: nowrap; font-weight: 600; color: var(--accent); }
+  td.origin { font-family: var(--mono); font-size: .78rem; color: var(--ink-3); white-space: nowrap; }
+  td small { display: block; margin-top: .3rem; color: var(--ink-2); font-size: .86rem; }
+  ol.recs { list-style: none; counter-reset: rec; padding-left: 0; }
+  ol.recs li { counter-increment: rec; position: relative; padding-left: 2rem; }
+  ol.recs li::before { content: counter(rec); position: absolute; left: 0; top: 0; font-family: var(--mono); font-size: .78rem; font-weight: 600; color: var(--accent); }
+  footer { font-size: .78rem; color: var(--ink-4); margin-top: 2.6rem; border-top: 1px solid var(--rule); padding-top: 1rem; display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; font-family: var(--mono); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Final whole-plan review · 11 commits</p>
+  <h1>AI Phase 1 Merge Review</h1>
+  <p class="standfirst">Four AI quick wins plus groundwork on 1Gov Mail, reviewed as one body of work against the approved spec and plan. Read in three passes: new lib modules and the API side; the task and mail UI; then DocsEditor and the build script.</p>
+
+  <dl class="facts">
+    <div class="fact"><dt>Range</dt><dd>e8a2d62 → 341fe47</dd></div>
+    <div class="fact"><dt>Diff</dt><dd>21 files · +809 / −27</dd></div>
+    <div class="fact"><dt>Web suite</dt><dd class="ok">280 / 280 pass</dd></div>
+    <div class="fact"><dt>API spec</dt><dd class="ok">56 / 56 pass</dd></div>
+    <div class="fact"><dt>Typecheck</dt><dd class="ok">web + api clean</dd></div>
+  </dl>
+
+  <div class="verdict">
+    <div class="label">Ready to merge?</div>
+    <div class="call">With fixes</div>
+    <p>No critical defects, and every guardrail the spec mandates is honoured somewhere — but the DocsEditor apply path holds an unmapped position range across a multi-second model call in a collaborative editor, which is the one place this change can damage a user's document. Clamp and re-anchor that range (I1, I2) before merge; everything else is a fast-follow.</p>
+  </div>
+
+  <h2>Strengths</h2>
+  <p class="section-note">What this plan got right, judged across the whole range rather than task by task.</p>
+  <ul class="strengths">
+    <li><strong>The extraction paid for itself immediately.</strong> Pulling <code>textToHtml</code> out of ComposeModal surfaced a real self-escaping bug — the old order emitted <code>&lt;br/&gt;</code> then escaped its own <code>&lt;</code>, so every single newline in a rewrite rendered as literal <code>&amp;lt;br/&gt;</code> text. One helper, one test file, one behaviour fix, three call sites.</li>
+    <li><strong>The fallback contract is genuinely deterministic.</strong> <code>parseTaskInput</code> wraps everything — the fetch, the JSON salvage, the field validation — in a single try/catch returning <code>fallbackParse(input)</code>. The feature cannot block task creation, and both call sites inherit that for free.</li>
+    <li><strong>The promote extension is backward-compatible in the direction that matters.</strong> Empty body preserves the derived title/description exactly, the saga compensation and double-promote guard are untouched, and the new API spec test asserts <em>both</em> the override merge and the empty-body default in one case.</li>
+    <li><strong>The payload contract holds end to end.</strong> TaskModal builds a nine-field payload; the mail page plucks exactly the four the DTO declares. Nothing leaks — and even if it did, the API's <code>ValidationPipe</code> runs <code>whitelist: true</code> without <code>forbidNonWhitelisted</code>, so extras are stripped rather than 400'd. <code>form.dueDate</code> is <code>YYYY-MM-DD</code> or <code>undefined</code>, never <code>''</code>, so <code>@IsDateString()</code> never sees an empty string.</li>
+    <li><strong>Decision C was the right call and is verifiably exact.</strong> The workload strip's overdue rule (<code>dueDate &lt; local midnight</code>) is character-for-character the rule <code>formatDueDate</code> and <code>isOverdue</code> already use on the tasks page, so the strip and <code>/tasks</code> can't disagree. <code>['tasks','workload']</code> sits under the <code>['tasks']</code> prefix — invalidation reaches it, no collision with GlobalSearch.</li>
+    <li><strong>Docs collab discipline was respected.</strong> No <code>setContent</code> anywhere; ranged inserts only. Both DocsEditor mounts are keyed by doc id, so the unmount abort effect fires on every doc switch — no listener or in-flight request survives a switch.</li>
+    <li><strong>The build-script fix carries its own postmortem.</strong> The in-bundle <code>prisma generate</code> comment explains why the workspace generate isn't enough and names the exact crash it prevents. That comment is worth more than the three lines it guards.</li>
+    <li><strong>Tests assert behaviour, not mocks.</strong> The quick-add tests drive the real <code>parseTaskInput</code> through a fake <code>chat</code>; the TaskModal test drives the real modal and asserts the rendered form. No mocks-of-mocks anywhere in the new suite.</li>
+  </ul>
+
+  <h2>Issues</h2>
+  <p class="section-note">Nine findings. Severity reflects blast radius, not effort.</p>
+
+  <h3>Critical — must fix</h3>
+  <div class="none"><b>None.</b> No data loss, no auth gap, no injection path. Every model output that reaches the DOM goes through <code>textToHtml</code>, which escapes <code>&lt;</code> before any tag can open.</div>
+
+  <h3>Important — should fix</h3>
+  <div class="issues">
+    <div class="issue">
+      <div class="issue-head"><span class="chip imp">I1</span><span class="issue-title">The docs AI range is an unmapped position snapshot held across the whole model call</span></div>
+      <p><code>runAi</code> snapshots <code>{from, to}</code> and <code>applyAi</code> uses those absolute positions verbatim, seconds later. The editor stays fully editable while the preview streams, and the doc is collaborative — so a local keystroke or a remote peer typing <em>above</em> the selection shifts every position after it. Apply then replaces the wrong span. Worse, if the doc shrank below <code>aiRange.to</code>, <code>insertContentAt</code> throws a ProseMirror range error straight out of the click handler.</p>
+      <p class="fix"><b>Fix:</b> clamp both ends to <code>editor.state.doc.content.size</code> before applying, and either map the range through the transactions since the snapshot or close the popover on the first non-AI <code>update</code> event. The clamp alone removes the throw.</p>
+      <div class="paths"><span class="path">apps/web/components/docs/DocsEditor.tsx — runAi / applyAi</span></div>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip imp">I2</span><span class="issue-title">"Insert below" splits the paragraph when the selection ends mid-block</span></div>
+      <p>Summarize inserts a <code>&lt;p&gt;</code> at <code>aiRange.to</code>. When that position sits inside a paragraph — the normal case for selecting a sentence — TipTap splits the paragraph in two and drops the summary between the halves. Decision B says the summary lands below the selected prose, not through it.</p>
+      <p class="fix"><b>Fix:</b> insert at the parent block boundary, <code>editor.state.doc.resolve(to).after()</code>, rather than the raw selection end.</p>
+      <div class="paths"><span class="path">apps/web/components/docs/DocsEditor.tsx — applyAi</span></div>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip imp">I3</span><span class="issue-title">Two of the four features skip the abort guardrail the other honours</span></div>
+      <p>The spec's cross-cutting rule is that every AI call is abortable. DocsEditor does it properly — controller per run, predecessor aborted, cleanup on unmount. Neither the tasks quick-add nor the mail page's due-hint parse passes a <code>signal</code> at all, so a hung local model leaves the Add button and the commitment row spinning with no way out but a reload. Both already accept <code>opts.signal</code>; the wiring is the only thing missing.</p>
+      <p class="fix"><b>Fix:</b> an <code>AbortController</code> ref in each caller, aborted on unmount and on a second submit. The deterministic fallback then converts a cancel into a plain task rather than a hang.</p>
+      <div class="paths"><span class="path">apps/web/app/(app)/tasks/page.tsx — handleQuickAdd</span><span class="path">apps/web/app/(app)/mail/page.tsx — openTaskFromCommitment</span></div>
+    </div>
+  </div>
+
+  <h3>Minor — nice to have</h3>
+  <div class="issues">
+    <div class="issue">
+      <div class="issue-head"><span class="chip min">M1</span><span class="issue-title">The AI indicator shows while AI is switched off</span></div>
+      <p>Quick-add renders <code>AIWorkingIndicator step="Parsing your task"</code> on <code>quickAdding</code> alone. With AI disabled no model is called, yet the user watches a pulsing spark claim otherwise. Gate it on <code>quickAdding &amp;&amp; aiEnabled</code>.</p>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip min">M2</span><span class="issue-title">The parser's reference date is UTC while the rest of the app is local</span></div>
+      <p><code>parseTaskInput</code> derives "today" from <code>toISOString().slice(0,10)</code> and <code>getUTCDay()</code>. In Kigali (UTC+2) that means between midnight and 02:00 local the model is told the wrong date <em>and</em> the wrong weekday, so "tomorrow" and "Friday" resolve one day early. Use local date parts, matching the toast's own <code>parseISO</code>-then-format handling.</p>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip min">M3</span><span class="issue-title">The workload strip renders an empty labelled box on error</span></div>
+      <p>The spec says render nothing when the query fails. The bordered card and its "Your workload" eyebrow render unconditionally on <code>expanded</code>; only the two lines inside are guarded, so a failed fetch with no commitments count leaves a titled empty box. Guard the wrapper on having at least one line.</p>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip min">M4</span><span class="issue-title">Clearing the description silently restores the server's derived text</span></div>
+      <p>TaskModal sends <code>form.description || undefined</code>, so a deliberately emptied field is omitted and the service's <code>??</code> falls back to "Due hint: … Extracted from email." The user clears a field and the text comes back. Same shape for title, where <code>?.trim() ||</code> falls back to the commitment text.</p>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip min">M5</span><span class="issue-title">Promote success doesn't invalidate the tasks queries</span></div>
+      <p><code>onSaved</code> invalidates <code>['commitments']</code> only. The new workload strip and GlobalSearch both read <code>['tasks']</code> and stay stale for up to their 60s window after a task is created from a commitment. One extra <code>invalidateQueries({ queryKey: ['tasks'] })</code>.</p>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip min">M6</span><span class="issue-title">Docs summarize routes prose through the email extraction pipeline</span></div>
+      <p><code>summarizeMessage</code> feeds the selection in as <code>bodyHtml</code>, so doc text passes through <code>htmlToText</code> (literal <code>&lt;TBD&gt;</code> style fragments vanish), then <code>stripSignature</code> (a lone <code>--</code> line truncates the source), then a silent 3000-character clamp. A long selection is summarised from its first ~3000 characters with no indication. Preview-then-apply makes the result visible, but not the truncation.</p>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip min">M7</span><span class="issue-title">The AI row appears to anonymous share-link viewers</span></div>
+      <p>On <code>AI_LOCKED</code> builds the store forces <code>enabled: true</code> for everyone, including visitors on <code>/docs/share/[token]</code>. If the link grants editing, the bubble shows Rewrite and Summarize; <code>authedFetch</code> then sends no Authorization header and the popover displays the raw 401 body. Not a security hole — the server refuses — but it offers a control that cannot work.</p>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip min">M8</span><span class="issue-title">A quick-added task can vanish on the TODAY tab</span></div>
+      <p>The new task is prepended to <code>tasks</code>, but <code>filteredByTab</code> drops anything without a due date today. The toast says "Task added" while the list shows nothing new. Worth either switching the tab or noting it in the toast.</p>
+    </div>
+    <div class="issue">
+      <div class="issue-head"><span class="chip min">M9</span><span class="issue-title">The preview popover doesn't follow its text</span></div>
+      <p><code>aiAnchor</code> is a snapshot of the bubble's fixed coordinates. Scrolling during a long stream leaves the popover parked while the selection it describes moves away. Cosmetic, but noticeable on a slow model.</p>
+    </div>
+  </div>
+
+  <h2>Deferred-minor triage</h2>
+  <p class="section-note">The three minors the per-task reviews deferred, plus the one ruling, each verified against the merged code.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Origin</th><th>Deferred item</th><th>Ruling</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="origin">Task 1</td>
+        <td><code>&gt;</code> is never escaped in <code>textToHtml</code><small>Verified harmless: every <code>&lt;</code> is escaped first, so no tag can ever open and a bare <code>&gt;</code> is inert text content. The test asserting <code>&lt;p&gt;&amp;lt;script&gt;x&amp;lt;/script&gt;&lt;/p&gt;</code> documents exactly this.</small></td>
+        <td class="ruling">Can ship</td>
+      </tr>
+      <tr>
+        <td class="origin">Task 2</td>
+        <td>Double <code>neutralizeMarkers</code> on the parser input<small>Confirmed idempotent — <code>fenceUntrusted</code> calls it internally at <code>promptCore.ts:83</code>. Costs one redundant pass over a short string. Drop the outer call opportunistically, not urgently.</small></td>
+        <td class="ruling">Can ship</td>
+      </tr>
+      <tr>
+        <td class="origin">Task 5</td>
+        <td>Double-click race across commitment row actions<small>Pre-existing, and the new path is strictly safer than what it replaced: <code>setPendingId</code> fires synchronously on click and disables the row, and the modal is single-slot keyed by commitment id, so a duplicate click re-opens rather than double-promotes.</small></td>
+        <td class="ruling">Can ship</td>
+      </tr>
+      <tr>
+        <td class="origin">Task 8</td>
+        <td>Ruling: the strip's commitments button must collapse the briefing first<small>Applied and verified in <code>2ecbd0b</code> — <code>onToggleExpanded(false)</code> then <code>onOpenCommitments?.()</code>. Drawer mutual-exclusion holds.</small></td>
+        <td class="ruling">Resolved</td>
+      </tr>
+    </tbody>
+  </table></div>
+
+  <h2>Build-script fragility</h2>
+  <p class="section-note">Notes for the ledger, not blockers. The recipe works today and is tar-verified; these are the ways it stops working later.</p>
+  <ol class="recs">
+    <li><strong>It depends on <code>prisma</code> being a runtime dependency.</strong> <code>./node_modules/.bin/prisma</code> only exists in a <code>--prod</code> bundle because <code>prisma</code> sits in <code>dependencies</code> (apps/api/package.json:48), not the conventional <code>devDependencies</code>. Any tidy-up that moves it breaks the bundle build — loudly, thanks to <code>set -e</code>, which is the good outcome. Worth a comment in package.json rather than only in the script.</li>
+    <li><strong>Nothing asserts the generated client made it in.</strong> The exact failure that caused the rollback would still only surface as a crash-loop on the VM. Add <code>test -e node_modules/.prisma/client/default.js</code> and a <code>node -e "require('.prisma/client')"</code> smoke inside the container, before <code>tar</code>.</li>
+    <li><strong>The schema copy is conditional and silent.</strong> <code>[ -f /bundle/prisma/schema.prisma ] || cp -r …</code> accepts whatever <code>pnpm deploy</code> happened to include. If the schema moves to a workspace package or a multi-file directory, the guard still passes and generate runs against whatever is there.</li>
+    <li><strong>Two generates can diverge.</strong> The workspace generate (for the nest build's typecheck) and the bundle generate read the schema by different paths. A Prisma major bump that changes the default output location would satisfy one and not the other.</li>
+    <li><strong>The tarball has no top-level directory.</strong> <code>tar -czf … .</code> from <code>/bundle</code> means the documented extract step must pre-create <code>/tmp/api.new</code>. Keep that in the deploy note; it is easy to lose.</li>
+  </ol>
+
+  <h2>Recommendations</h2>
+  <ol class="recs">
+    <li><strong>Before merge:</strong> clamp the docs apply range and move the summarize insert to the block boundary (I1, I2). Two small edits in one file, both in <code>applyAi</code>.</li>
+    <li><strong>First fast-follow:</strong> wire abort controllers into quick-add and the due-hint parse (I3), and gate the quick-add indicator on <code>aiEnabled</code> (M1). That completes the cross-cutting contract the spec set, so the four features honour the same five guardrails.</li>
+    <li><strong>Switch the parser to local date parts</strong> (M2). It is a two-line change and it is the only place in the change set where an off-by-one is invisible to the user until the task is already wrong.</li>
+    <li><strong>Consider a docs-specific summarize option</strong> rather than reusing the email extractor (M6) — at minimum surface the 3000-character clamp in the popover, so a long selection doesn't produce a confidently partial summary.</li>
+    <li><strong>Ledger the two prompt framings as intentional.</strong> The quick-add feeds raw user input; the commitments flow feeds <code>{text} — due: {hint}</code> and then discards the parsed title, using only the date. That asymmetry is deliberate and correct — a mangled title from the commitment framing can never reach the user — but it deserves a comment, because the next person to touch it will be tempted to "fix" it by using <code>parsed.title</code>.</li>
+  </ol>
+
+  <footer>
+    <span>Passes: lib + api · task/mail UI · DocsEditor + build</span>
+    <span>Reviewed 2026-09-05</span>
+    <span>ft-hyperscale</span>
+  </footer>
+</main>
+</body>
+</html>

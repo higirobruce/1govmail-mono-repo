@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/daa19ec0-32c9-4821-8c32-32917f19c43a — content-faithful, original styling not preserved -->
+<title>Bridges Built</title>
+<style>
+  :root {
+    --bg: #ffffff; --surface: #ffffff; --surface-2: #f4f5f7;
+    --ink: #23262b; --ink-2: #4b525c; --ink-3: #767e88;
+    --line: #dde1e6; --accent: #2f6fb0;
+    --warn: #a97a00;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16191d; --surface: #1c2026; --surface-2: #22262d;
+      --ink: #e9ecef; --ink-2: #b7bec7; --ink-3: #8a9099;
+      --line: #333941; --accent: #6ea6df;
+      --warn: #dcb65a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16191d; --surface: #1c2026; --surface-2: #22262d;
+    --ink: #e9ecef; --ink-2: #b7bec7; --ink-3: #8a9099;
+    --line: #333941; --accent: #6ea6df;
+    --warn: #dcb65a;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: .72rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); margin: 0 0 .6rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.2rem); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; margin: 0 0 .6rem; text-wrap: balance; }
+  .lede { color: var(--ink-2); margin: 0 0 1.6rem; max-width: 68ch; }
+  h2 { font-size: 1.15rem; font-weight: 700; margin: 2.3rem 0 .7rem; letter-spacing: -.01em; }
+  p, li, td { color: var(--ink-2); }
+  strong, em { color: var(--ink); }
+  strong { font-weight: 600; }
+  ul { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: .5rem; }
+  code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: .06em .3em; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .7rem; margin: 0 0 1rem; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .8rem 1rem; }
+  .stat b { display: block; font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .stat span { font-size: .74rem; color: var(--ink-3); }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin: .8rem 0 1.2rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { text-align: left; padding: .55rem .85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .68rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+  .blocked { border-left: 3px solid var(--warn); background: var(--surface-2); border-radius: 0 10px 10px 0; padding: .7rem 1rem; margin: .8rem 0 1.2rem; font-size: .88rem; color: var(--ink-2); }
+  footer { font-size: .82rem; color: var(--ink-3); margin-top: 2.4rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Execution report · 5 Sep 2026</p>
+  <h1>The bridges are built, swept, and live on .154</h1>
+  <p class="lede">All four Phase 2 features are implemented, reviewed, deployed to .154 (<code>30eb1c8</code>), and verified in the browser — including one Critical the sweep caught and killed the same evening. 18 commits on <code>ft-hyperscale</code> (PR #2), zero API/schema changes. .155 waits on your one-line command below.</p>
+
+  <div class="stats">
+    <div class="stat"><b>10 + 2</b><span>plan tasks + two fix waves</span></div>
+    <div class="stat"><b>366</b><span>web tests green (+75 new this phase)</span></div>
+    <div class="stat"><b>16</b><span>review seats incl. whole-branch + freeze-fix</span></div>
+    <div class="stat"><b>4 / 4</b><span>features live-verified on .154</span></div>
+  </div>
+
+  <h2>What you can use right now (on .154)</h2>
+  <ul>
+    <li><strong>Draft doc from a thread:</strong> one click above the thread title — the model reads the <em>full bodies</em> of the last 10 messages, picks the best of the 17 gov templates itself, writes the document as sanitized markdown, and opens it in Docs via the new <code>/docs?open=&lt;id&gt;</code> deep link. Cancel works at every step; if you cancel at the very last moment and the doc was already saved, a toast with an <em>Open</em> action tells you instead of leaving a silent orphan.</li>
+    <li><strong>Smart event from mail:</strong> all three paths (drop on the calendar, drop on the sidebar, right-click → Create event) open the form instantly and AI-fill title, times, location, and attendee chips from the full email body — but never a field you've already touched, and invites still only go out on your Save. Bonus fix: drag-created events now keep their link back to the source email (both drag paths silently lost it before).</li>
+    <li><strong>Natural-language events:</strong> a quick-add box in the calendar toolbar — <em>"Steering committee Tuesday 10–11 with Erick and Tricia"</em> opens the create form prefilled. Unlike task quick-add it never creates directly, because saving sends invites.</li>
+    <li><strong>Format as minutes:</strong> select raw notes in a doc → <em>Minutes</em> in the AI row restructures them into Attendees / Agenda / Decisions / Action items with bold owners, with Replace or Insert below — and a prompt that forbids inventing names, decisions, or dates.</li>
+  </ul>
+
+  <h2>Review trail</h2>
+  <p>Every task passed an independent spec + quality review; four needed a fix round (each verified by a scoped re-review). The whole-branch review (most capable model) then verified all eight cross-task contracts at their call sites, confirmed the security invariants hold (model output can never become raw HTML or raw editor JSON — and the test suite now proves a removed sanitizer would be caught), and raised three Importants that a final fix wave closed: an email <em>subject</em> reaching a prompt unneutralized, a date-shape edge that could save an event ending before it starts, and a missing total prompt budget on the draft path (now 12k chars, oldest messages dropped first).</p>
+
+  <h2>Rulings I made on your behalf</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Ruling</th><th>Cost if wrong</th></tr></thead>
+    <tbody>
+      <tr><td>Quick-add's parse wrapper never throws except AbortError (mirrors the tasks quick-add precedent exactly)</td><td>One small contract change in a 40-line wrapper</td></tr>
+      <tr><td>The plan said "clear the quick-add input in the modal's onCreated" — but the modal is shared by 7 other creation flows, so a literal clear wiped unrelated in-progress text. Spec's "never loses input" won: the clear is scoped by an origin ref</td><td>A stale input string after a quick-add save</td></tr>
+      <tr><td>The plan's hostile-payload test assertion (output must not contain the substring "script") is unsatisfiable for an escape-first sanitizer — the payload survives as inert <em>text</em> by design. Replaced with a stronger structural assertion: hostile input yields only plain-text nodes, zero marks, zero attributes — plus a test that would fail if the sanitizer were removed</td><td>A weaker-than-intended sanitizer test, backstopped by markdownToHtml's own suite</td></tr>
+      <tr><td>Local <code>next build</code> fails on a pre-existing Next 16.1.6 Turbopack bug (identical on the base commit) — the build gate moved to the containerized deploy build, which passes at the final HEAD</td><td>A broken prod build would surface at deploy-build time, before shipping</td></tr>
+      <tr><td>Cancel landing while the doc-create network call is in flight can't be aborted server-side (the endpoint takes no signal) — mitigated with an informational toast + Open action rather than a backend change</td><td>A slightly chatty cancel; the alternative was API surgery out of scope</td></tr>
+      <tr><td>The freeze fix's verification gate = the live .154 retest (passed) + a scoped code review (approved); the peg never reproduced locally, so it's closed on the strength of the idempotent write-back plus the deployed reproducer no longer wedging</td><td>If it recurs on an unhit path, the perf-trace runbook is in the fix report</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>The Critical the sweep caught</h2>
+  <p>First deploy's browser sweep froze the page — permanently — the moment a <em>non-empty</em> AI fill landed in the event form (empty fills were fine). Root causes, both fixed in <code>30eb1c8</code> and verified by regression tests that genuinely fail on the pre-fix commit: the fill write-back was never idempotent (a fresh attendees array on every merge defeated the change-guard, so every fill committed state churn), and all-day parses wrote bare dates like <code>2026-09-12</code> into datetime fields — non-picker-safe and read as UTC midnight on save. The redeployed reproducer now fills cleanly: workshop email → title, Sep 6 18:00 → Sep 9, location "Nyanza", attendees left empty (the no-invention rule), page responsive throughout. Nothing was saved during testing — <strong>no test invites went to real people</strong>, per your rule, now in standing memory.</p>
+
+  <h2>Sweep results</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Check</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>Draft doc from thread</td><td>Pass — steps shown with Cancel, model picked a memo-style template, doc created with Purpose/Background/Discussion/Recommendations filled from real thread facts, opened via the deep link, URL cleaned</td></tr>
+      <tr><td>Smart event from mail</td><td>Pass after the freeze fix — full-body parse live-fills title/times/location; no-event emails leave the form untouched; linked email kept on the previously-lossy paths</td></tr>
+      <tr><td>NL event quick-add</td><td>Pass — "Team sync Monday 3–4pm in the boardroom" → prefilled modal, 15:00–16:00, location set. One model slip: "Monday" resolved a day late (the review-before-save step caught it, as designed)</td></tr>
+      <tr><td>Minutes formatter</td><td>Pass — Attendees/Agenda/Decisions/Action items with bold owners, three buttons fit the popover, Replace lands in place, autosave fires</td></tr>
+      <tr><td>Regressions (docs Summarize, thread view, calendar)</td><td>Pass — markdown summary with bullets/bold unchanged; no event was created or invite sent during any test</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Incidents along the way</h2>
+  <ul>
+    <li>One implementer was <strong>killed mid-task by a model safety filter</strong> that misread the defensive XSS test fixtures as cyber-offense work. Its files survived; a fresh agent on a stronger model audited them, fixed a real bug it found (a duplicate TipTap Link registration), and landed the task.</li>
+    <li>One implementer stalled twice on stream watchdogs; resuming it preserved all work both times.</li>
+    <li>The Nebula overlay dropped mid-evening and delayed the first deploy until you brought it back.</li>
+  </ul>
+
+  <h2>Known debt (documented, non-blocking)</h2>
+  <ul>
+    <li><strong>The manual all-day date picker still writes bare dates</strong> — the exact UTC-midnight shift just fixed on the AI path exists on the hand-entry path too (pre-existing; surfaced by the fix review). Top follow-up candidate.</li>
+    <li>The model sometimes resolves relative weekdays a day off ("Monday" → Tuesday); the mandatory review-before-save is the guardrail, but a deterministic date cross-check would close it.</li>
+    <li>The event form keeps a stuck horizontal scroll after a long title takes focus (cosmetic; more visible now that AI writes long titles).</li>
+    <li><code>DocsEditor</code>'s duplicate extension registration (Link, and underline too) logs a console warning on every mount — the fix must keep <code>draftDoc</code>'s extension set in sync.</li>
+    <li>Draft doc's Cancel button is only visible from the Overview tab while work continues from other tabs; the template corpus ships in the mail bundle (a slim catalog would trim it); smaller ledger items (rolled-forward "Feb 30", quick-add density on month view) don't change happy-path behavior.</li>
+  </ul>
+
+  <div class="blocked"><strong>.155 is one command away:</strong> the phase-2 bundle (<code>web155-30eb1c8.tar.gz</code>) is built; my SSH to that box stays classifier-blocked, so run<br><code>! bash /private/tmp/claude-501/-Users-brucehigiro-Documents-development-email-client/91bd8ae2-4a7c-450a-8663-c8654c5cb0fe/scratchpad/deploy-155-phase2.sh</code><br>and both boxes match. Also still standing: your dark-mode + mobile sign-off sweep before PR #2 merges to main.</div>
+
+  <footer>Spec: <code>docs/superpowers/specs/2026-09-05-ai-phase2-bridges-design.md</code> · Plan: <code>docs/superpowers/plans/2026-09-05-ai-phase2-bridges.md</code> · Design page: <a href="https://claude.ai/code/artifact/9e494df7-8628-4268-ad05-1243ffa8820c">The Bridges Phase</a> · 16 commits pushed to <code>ft-hyperscale</code>, on PR #2.</footer>
+</main>
+</body>
+</html>

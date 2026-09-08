@@ -1,0 +1,363 @@
+<title>1Gov People</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #FAFBFA;
+    --surface: #F1F4F2;
+    --surface-2: #E7ECEA;
+    --ink: #1A2321;
+    --ink-2: #48544F;
+    --ink-3: #74807B;
+    --line: #D8DFDC;
+    --dossier: #0F7A6A;
+    --dossier-soft: #E2F0ED;
+    --prep: #B0762A;
+    --prep-soft: #F4EBDD;
+    --code-bg: #EEF2F0;
+    --amber: #9A6A00;
+    --amber-soft: #F5ECD6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101615;
+      --surface: #171F1D;
+      --surface-2: #1E2926;
+      --ink: #E6ECEA;
+      --ink-2: #A9B5B0;
+      --ink-3: #77837E;
+      --line: #2A3531;
+      --dossier: #4CC2AE;
+      --dossier-soft: #14332E;
+      --prep: #DFA55C;
+      --prep-soft: #362A18;
+      --code-bg: #161E1C;
+      --amber: #E0B85C;
+      --amber-soft: #33290F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101615;
+    --surface: #171F1D;
+    --surface-2: #1E2926;
+    --ink: #E6ECEA;
+    --ink-2: #A9B5B0;
+    --ink-3: #77837E;
+    --line: #2A3531;
+    --dossier: #4CC2AE;
+    --dossier-soft: #14332E;
+    --prep: #DFA55C;
+    --prep-soft: #362A18;
+    --code-bg: #161E1C;
+    --amber: #E0B85C;
+    --amber-soft: #33290F;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, serif;
+    font-size: 1.02rem;
+    line-height: 1.62;
+    margin: 0;
+    padding: 0 1.25rem 5rem;
+  }
+  .page { max-width: 740px; margin: 0 auto; }
+  h1, h2, h3, .eyebrow, .chip, .leg-title, th {
+    font-family: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  }
+  .eyebrow {
+    margin-top: 3.5rem;
+    font-size: .72rem;
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  }
+  .eyebrow .lineage { color: var(--ink-2); }
+  .eyebrow .sep { color: var(--line); }
+  h1 {
+    font-size: clamp(2rem, 5.5vw, 2.9rem);
+    font-weight: 800;
+    letter-spacing: -.02em;
+    line-height: 1.05;
+    margin: .5rem 0 .75rem;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.12rem;
+    color: var(--ink-2);
+    max-width: 60ch;
+    margin: 0 0 1.5rem;
+  }
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: .5rem;
+    margin-bottom: 3rem;
+  }
+  .chip {
+    font-size: .72rem; font-weight: 600; letter-spacing: .04em;
+    padding: .28rem .65rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--ink-2);
+    background: var(--surface);
+  }
+  .chip.ok { color: var(--dossier); border-color: var(--dossier); background: var(--dossier-soft); }
+  h2 {
+    font-size: 1.28rem; font-weight: 700; letter-spacing: -.01em;
+    margin: 3rem 0 .9rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--line);
+    text-wrap: balance;
+  }
+  h2 .no { color: var(--ink-3); font-weight: 500; margin-right: .35rem; }
+  h3 { font-size: .98rem; font-weight: 700; margin: 1.6rem 0 .4rem; }
+  p { margin: .7rem 0; max-width: 68ch; }
+  strong { font-weight: 600; }
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .84em;
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: .06em .32em;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1rem 1.15rem;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: .8rem; }
+  ul { padding-left: 1.2rem; margin: .7rem 0; }
+  li { margin: .35rem 0; max-width: 66ch; }
+  li::marker { color: var(--ink-3); }
+
+  .docket {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    margin: 1.5rem 0 0;
+  }
+  .docket h3 { margin-top: 0; font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+  .docket ol { margin: .4rem 0 0; padding-left: 1.25rem; }
+  .docket li { margin: .45rem 0; }
+
+  .feature-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+    margin: 1.4rem 0;
+  }
+  @media (max-width: 640px) { .feature-grid { grid-template-columns: 1fr; } }
+  .feature {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1rem 1.15rem 1.15rem;
+    background: var(--surface);
+  }
+  .feature.dossier { border-top: 3px solid var(--dossier); }
+  .feature.prep { border-top: 3px solid var(--prep); }
+  .feature .leg-title { font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .feature.dossier .leg-title { color: var(--dossier); }
+  .feature.prep .leg-title { color: var(--prep); }
+  .feature h3 { margin: .3rem 0 .4rem; font-size: 1.05rem; }
+  .feature p, .feature li { font-size: .93rem; }
+  .feature ul { margin: .5rem 0 0; padding-left: 1.1rem; }
+
+  .endpoint {
+    display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .84rem;
+    padding: .55rem .8rem;
+    border: 1px solid var(--line);
+    border-left-width: 3px;
+    border-radius: 6px;
+    background: var(--surface);
+    margin: .5rem 0;
+  }
+  .endpoint .verb { font-weight: 500; color: var(--ink-3); min-width: 3.2em; }
+  .endpoint.d { border-left-color: var(--dossier); }
+  .endpoint.p { border-left-color: var(--prep); }
+  .endpoint.n { border-left-color: var(--ink-3); }
+  .endpoint .note { font-family: "Source Serif 4", Georgia, serif; font-size: .88rem; color: var(--ink-2); }
+
+  .invariant {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: .2rem 1.3rem .9rem;
+    margin: 1.2rem 0;
+  }
+  .invariant li { font-size: .95rem; }
+
+  .callout {
+    border: 1px solid var(--amber);
+    background: var(--amber-soft);
+    color: var(--ink);
+    border-radius: 8px;
+    padding: .75rem 1rem;
+    font-size: .93rem;
+    margin: 1.2rem 0;
+  }
+  .callout strong { color: var(--amber); }
+
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  .table-wrap { overflow-x: auto; margin: 1rem 0; border: 1px solid var(--line); border-radius: 8px; }
+  th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); background: var(--surface); }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+
+  .signoff {
+    margin-top: 3rem;
+    border: 1px solid var(--dossier);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    background: var(--dossier-soft);
+  }
+  .signoff h2 { border: none; margin: 0 0 .5rem; padding: 0; font-size: 1.1rem; }
+  .signoff li { font-size: .95rem; }
+  footer { margin-top: 3.5rem; color: var(--ink-3); font-size: .85rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+  footer code { font-size: .78em; }
+</style>
+
+<div class="page">
+  <div class="eyebrow">
+    <span>1Gov Mail · AI stream</span><span class="sep">/</span>
+    <span class="lineage">Phase 1 → 2 Bridges → 3a Ask 1Gov → <strong>3b People</strong></span>
+  </div>
+  <h1>The People Layer</h1>
+  <p class="standfirst">Phase 3b turns 1Gov's mail, commitments, calendar, and docs into a per-person view: a <strong>relationship dossier</strong> that opens from any sender, and an on-demand <strong>meeting prep pack</strong> on every calendar event.</p>
+  <div class="meta-row">
+    <span class="chip">Spec 2026-09-06</span>
+    <span class="chip ok">Design sections 1–4 approved in chat</span>
+    <span class="chip">Awaiting spec sign-off</span>
+  </div>
+
+  <div class="docket">
+    <h3>Decisions locked in chat</h3>
+    <ol>
+      <li>Both features ship in <strong>one 3b run</strong> — they share the counterparty-query layer.</li>
+      <li>Dossier entry: <strong>sender click → docked panel</strong>; attendee rows in the event panel are the second entry.</li>
+      <li>Prep pack is <strong>on-demand on the event detail panel</strong>, cached per event — no pre-generation worker.</li>
+      <li>Dossier facts are instant and deterministic; the AI narrative streams <strong>on demand</strong> and caches until newer mail arrives.</li>
+      <li>Generated output caches <strong>server-side</strong> in a small DB table — survives reloads and devices.</li>
+    </ol>
+  </div>
+
+  <h2><span class="no">1</span>The two features</h2>
+  <div class="feature-grid">
+    <div class="feature dossier">
+      <span class="leg-title">Dossier</span>
+      <h3>Relationship dossier</h3>
+      <p>Click a sender's name anywhere in mail (or an attendee in an event) and a docked panel opens for that person:</p>
+      <ul>
+        <li>Profile: name, first/last interaction, 90-day volume</li>
+        <li>Recent conversations, both directions → click to open</li>
+        <li>Open loops: what I promised them / what I'm waiting on</li>
+        <li>Shared events and shared docs → deep links</li>
+        <li><em>Summarize relationship</em> streams an AI narrative; cached with a stale badge + Regenerate</li>
+      </ul>
+    </div>
+    <div class="feature prep">
+      <span class="leg-title">Prep</span>
+      <h3>Meeting prep pack</h3>
+      <p>A <em>Prep</em> button on the calendar event detail panel generates a structured, citable pack:</p>
+      <ul>
+        <li>What this meeting is about</li>
+        <li>Attendees &amp; open loops, per person</li>
+        <li>Recent context (mail + docs, via retrieval)</li>
+        <li>Suggested talking points</li>
+        <li>Cached per event; instant on reopen; Regenerate when stale</li>
+      </ul>
+    </div>
+  </div>
+  <p>A <strong>person</strong> is a lowercased email address. Display name resolves contacts → latest <code>fromName</code> → the address. No alias merging in v1; your own address is never a dossier target.</p>
+
+  <h2><span class="no">2</span>Data layer — one migration</h2>
+  <p>Migration <code>add_people_phase3b</code> adds an index and one cache table. No vector columns — but the spurious Prisma drift offer to drop the HNSW indexes will appear as always, and is declined as always.</p>
+  <ul>
+    <li><code>@@index([userId, fromEmail, receivedAt])</code> on <code>messages</code> — powers every "mail from this person" query. Sent-to-them mail uses a JSONB scan over <code>toRecipients</code> (fine at this corpus size).</li>
+    <li><code>ai_generations</code> — shared cache for both features:</li>
+  </ul>
+<pre><code>model AiGeneration {
+  userId       String
+  kind         String   // 'dossier' | 'meeting_prep'
+  targetKey    String   // dossier: lowercased email · prep: eventId
+  content      String
+  sources      Json     // PublicChatSource[] snapshot for chip re-render
+  model        String
+  sourceAnchor DateTime // newest source timestamp considered
+  generatedAt  DateTime
+
+  @@unique([userId, kind, targetKey])
+}</code></pre>
+  <p>Staleness is computed at read time, never stored: newer mail from the person (dossier) or <code>event.updatedAt</code> / newer attendee mail past the anchor (prep) ⇒ served with <code>stale: true</code>. Stale content still renders — regeneration is always user-initiated.</p>
+
+  <h2><span class="no">3</span>API surface</h2>
+  <h3>New PeopleModule — deterministic, instant</h3>
+  <div class="endpoint n"><span class="verb">GET</span><span>/people/dossier?email=</span><span class="note">profile · recent conversations · open commitments · shared events · shared docs (titles only)</span></div>
+  <p>All userId-scoped indexed queries; commitments join <code>Commitment.messageId → messages</code> and match the counterparty on either direction. Email validated + lowercased; own address → 400.</p>
+
+  <h3>Chat module — two streams beside /ai/ask</h3>
+  <div class="endpoint d"><span class="verb">POST</span><span>/ai/dossier</span><span class="note">{email} — streams the relationship narrative, then upserts the cache row</span></div>
+  <div class="endpoint d"><span class="verb">GET</span><span>/ai/dossier?email=</span><span class="note">cached narrative + sources + stale flag, or null</span></div>
+  <div class="endpoint p"><span class="verb">POST</span><span>/ai/meeting-prep</span><span class="note">{eventId} — ownership verified before any retrieval; streams the pack</span></div>
+  <div class="endpoint p"><span class="verb">GET</span><span>/ai/meeting-prep?eventId=</span><span class="note">cached pack + stale flag</span></div>
+
+  <div class="table-wrap"><table>
+    <tr><th>Context legs</th><th>Dossier</th><th>Meeting prep</th></tr>
+    <tr><td>Mail</td><td>Last 15 msgs to/from the person — card gist where present, else snippet</td><td>Top 5 per attendee (cap 20 total) via the new index; + the <code>linkedMessageId</code> mail</td></tr>
+    <tr><td>Commitments</td><td>Open, both directions</td><td>Open, involving any attendee</td></tr>
+    <tr><td>Calendar</td><td>Shared events next 30 days</td><td>The event itself — title/description/attendees</td></tr>
+    <tr><td>Vectors</td><td>—</td><td>Mail-vec + doc-vec legs from RetrievalService on title+description; doc leg keeps its query-time owner-OR-invite ACL</td></tr>
+  </table></div>
+  <p>Same SSE/char-stream shape, typed source chips, ~12k-char context budget, and no-context short-circuit as <code>/ai/ask</code>. No new env vars.</p>
+
+  <h2><span class="no">4</span>Web</h2>
+  <ul>
+    <li><strong><code>PersonDossierPanel</code></strong> + <code>people.store.ts</code>, mounted once in the app layout beside AskLauncher; docked right with the same <code>xl:pr-[420px]</code> reservation, fixed at all breakpoints. Opening it closes the Ask panel and vice versa — the two never stack.</li>
+    <li><strong>Entry points this phase:</strong> sender name/avatar in <code>ThreadMessage</code> / <code>MailDetail</code>; attendee rows in the calendar <code>EventDetailPanel</code>. Every fact row navigates: thread → mail, event → <code>?event=</code>, doc → <code>/docs?open=</code>.</li>
+    <li><strong>Prep view</strong> lives inside <code>EventDetailPanel</code>: cached pack renders instantly with generated-at + stale badge; otherwise streams. Source chips navigate via <code>sourceNav</code>.</li>
+    <li><strong>Client:</strong> <code>lib/ai/generation.ts</code> (<code>streamDossier</code> / <code>streamMeetingPrep</code>, mirroring <code>streamAsk</code>) + new <code>api.people</code>/<code>api.ai</code> namespaces.</li>
+  </ul>
+
+  <h2><span class="no">5</span>Security</h2>
+  <div class="invariant"><ul>
+    <li>All four 3a mandates carry verbatim: fencing per type, <code>neutralizeMarkers</code> on subjects/names/titles, alias-only citations enforced by the <code>splitByCitations</code> whitelist, injection detection → amber banner.</li>
+    <li>Prep pack verifies event ownership <em>before</em> retrieval; its doc/vector legs run the same query-time ACL as Ask — an attendee's name can never pull doc content the user can't read.</li>
+    <li>No AI on anonymous share pages, unchanged. Legs degrade, never error.</li>
+  </ul></div>
+  <div class="callout"><strong>Testing note:</strong> a display name is attacker-controlled text that now enters two new prompts — the test plan covers neutralization on names in both endpoints, plus revoked-invite misses in sharedDocs.</div>
+
+  <h2><span class="no">6</span>Testing &amp; deploy</h2>
+  <ul>
+    <li><strong>api (jest):</strong> people queries (both directions, JSONB attendee match, commitment join, revoked-invite miss, own-address 400), staleness compute, prep ownership-404-before-retrieval, per-attendee caps, cache upserts, DTO validation.</li>
+    <li><strong>web (vitest):</strong> store transitions + Ask mutual exclusion, stream clients + abort, panel states (facts / cached / streaming / stale), chip navigation.</li>
+    <li>Gates: web 405+ and api 202+ green, <code>tsc --noEmit</code> both apps, containerized builds (prisma-client tarball guard with <code>find -maxdepth 6</code>).</li>
+    <li><strong>Deploy:</strong> one migration on both VMs (.155 via the <code>!</code> script, PG on 5433); no new env; no worker restarts.</li>
+  </ul>
+
+  <h2><span class="no">7</span>Out of scope (follow-ups)</h2>
+  <ul>
+    <li>Alias merging / person entities across addresses; a <code>/people</code> directory page; MailList hover cards.</li>
+    <li>Pre-generation worker; briefing-strip "Prep" shortcuts; <code>toRecipients</code> GIN index.</li>
+    <li>DL/group addresses treated specially (v1 treats a DL as one person).</li>
+    <li>3a debt (docId-scoped chunk depth, "Ask your inbox" copy, live-DB ACL test) stays on its own list.</li>
+  </ul>
+
+  <div class="signoff">
+    <h2>Before you sign off, check</h2>
+    <ul>
+      <li>Dossier and Ask panel being <strong>mutually exclusive</strong> when docked — acceptable, or should they stack on xl?</li>
+      <li>Recent-conversation and per-attendee mail <strong>caps</strong> (8 conversations shown; 15 msgs dossier context; 5/attendee, 20 total prep) — right sizes?</li>
+      <li>Prep pack output sections (About · Attendees &amp; open loops · Recent context · Talking points) — anything missing, e.g. related past meetings?</li>
+      <li>DLs-as-a-person in v1 — fine for the pilot?</li>
+    </ul>
+  </div>
+
+  <footer>Source of record: <code>docs/superpowers/specs/2026-09-06-ai-phase3b-people-design.md</code> (committed <code>f938699</code> on ft-hyperscale). Next step on approval: writing-plans → implementation plan.</footer>
+</div>

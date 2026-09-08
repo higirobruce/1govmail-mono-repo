@@ -1,0 +1,320 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/fc560d02-e40e-43a9-8753-9263fe8ee340 — content-faithful, original styling not preserved -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mail Client UX Review</title>
+<style>
+  :root {
+    --bg: #fdfcf9; --card: #ffffff; --ink: #1c2430; --ink-2: #4d5a68; --ink-3: #85919e;
+    --border: #e4ded0; --accent: #0f4c81;
+    --success: #1f8a5b; --warning: #9a6b12; --destructive: #b23a35;
+    --success-bg: #e4f3ea; --warning-bg: #fbf0dc; --destructive-bg: #fbe6e5;
+    --code-bg: #f1ede2; --accent-bg: #eef4f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --card: #181e27; --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+      --border: #2b3441; --accent: #4f9fd8;
+      --success: #57caa0; --warning: #e3b45a; --destructive: #e08782;
+      --success-bg: #143427; --warning-bg: #3a2c11; --destructive-bg: #3a1c1c;
+      --code-bg: #10151c; --accent-bg: #16202b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --card: #181e27; --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+    --border: #2b3441; --accent: #4f9fd8;
+    --success: #57caa0; --warning: #e3b45a; --destructive: #e08782;
+    --success-bg: #143427; --warning-bg: #3a2c11; --destructive-bg: #3a1c1c;
+    --code-bg: #10151c; --accent-bg: #16202b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    max-width: 780px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem;
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6; font-size: 16px;
+  }
+  .eyebrow { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.5rem; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0.4rem 0 0.7rem; }
+  .lede { color: var(--ink-2); font-size: 1.05rem; max-width: 64ch; }
+  .method { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 1.4rem 0 0.5rem; }
+  .method > div { background: var(--card); padding: 0.8rem 0.9rem; }
+  .method .k { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 0.2rem; }
+  .method .v { font-size: 0.85rem; font-weight: 600; }
+  .method .sub { display: block; font-weight: 400; color: var(--ink-3); font-size: 0.78rem; }
+  .fixedmark { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 600; color: var(--success); background: var(--success-bg); border: 1px solid var(--success); border-radius: 8px; padding: 0.45rem 0.7rem; margin: 0.5rem 0; }
+  .note { background: var(--accent-bg); border: 1px solid var(--accent); border-radius: 10px; padding: 0.8rem 1.05rem; margin-top: 1rem; font-size: 0.88rem; color: var(--ink-2); }
+  .note b { color: var(--ink); }
+  h2 { font-size: 1.35rem; margin: 3rem 0 0.3rem; }
+  .intro { color: var(--ink-2); max-width: 66ch; margin: 0.3rem 0 1.2rem; }
+  .finding { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1.1rem 1.3rem; margin-top: 0.9rem; }
+  .finding.fixed { border-left: 3px solid var(--success); }
+  .finding.med { border-left: 3px solid var(--warning); }
+  .finding.low { border-left: 3px solid var(--ink-3); }
+  .finding.good { border-left: 3px solid var(--success); }
+  .fhead { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .fhead h3 { font-size: 1.02rem; margin: 0; flex: 1; min-width: 60%; }
+  .sev { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 999px; padding: 0.15rem 0.55rem; white-space: nowrap; }
+  .sev.done { background: var(--success-bg); color: var(--success); border: 1px solid var(--success); }
+  .sev.med { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning); }
+  .sev.low { background: var(--code-bg); color: var(--ink-3); border: 1px solid var(--border); }
+  .sev.good { background: var(--success-bg); color: var(--success); border: 1px solid var(--success); }
+  .tag-live { font-size: 0.65rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0.1rem 0.5rem; }
+  .finding p { margin: 0 0 0.5rem; font-size: 0.92rem; }
+  .finding p:last-child { margin-bottom: 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: var(--code-bg); border-radius: 4px; padding: 0.05em 0.35em; }
+  .loc { font-family: ui-monospace, monospace; font-size: 0.78rem; color: var(--ink-3); background: var(--code-bg); border-radius: 4px; padding: 0.05em 0.4em; white-space: nowrap; }
+  .wf-scroll { overflow-x: auto; margin: 0.8rem 0 0.3rem; }
+  .wf { display: flex; align-items: stretch; min-width: 500px; gap: 0; }
+  .wf .s { flex: 1; background: var(--destructive-bg); border: 1px solid var(--destructive); border-radius: 8px; padding: 0.55rem 0.65rem; font-size: 0.8rem; line-height: 1.4; }
+  .wf .s b { display: block; font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--destructive); margin-bottom: 0.15rem; }
+  .wf .a { align-self: center; color: var(--ink-3); padding: 0 0.4rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+  th, td { text-align: left; padding: 0.6rem 0.7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; color: var(--ink-3); }
+  .table-wrap { overflow-x: auto; margin-top: 1rem; }
+  .pill { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; border-radius: 999px; padding: 0.15rem 0.5rem; white-space: nowrap; }
+  .pill.crit { background: var(--destructive-bg); color: var(--destructive); }
+  .pill.med { background: var(--warning-bg); color: var(--warning); }
+  .done-inline { color: var(--success); font-weight: 700; }
+  .footer { margin-top: 3rem; padding-top: 1.1rem; border-top: 1px solid var(--border); color: var(--ink-3); font-size: 0.82rem; }
+</style>
+</head>
+<body>
+
+<div class="eyebrow">1Gov Mail · UX &amp; Performance Review · 4 Sept 2026</div>
+<h1>Mail Client UX Review</h1>
+<p class="lede">A walkthrough of the live mail client focused on the areas you flagged — <strong>time to open an email or thread</strong>, <strong>attachment preview before download</strong>, and <strong>mobile responsiveness</strong> — plus what surfaced along the way. Findings are ranked by how directly a user would feel them.</p>
+
+<div class="method">
+  <div><div class="k">How it was checked</div><div class="v">Live + code trace<span class="sub">driven in-browser, then confirmed in source</span></div></div>
+  <div><div class="k">Environment</div><div class="v">test1.risa.gov.rw<span class="sub">real inbox, bruce.higiro</span></div></div>
+  <div><div class="k">Findings</div><div class="v">1 critical · 6 high<span class="sub">+ mediums, nits, and 4 things done right</span></div></div>
+  <div><div class="k">Fixes</div><div class="v" style="color: var(--success);">R1 all ✓ · R2 1/7<span class="sub">round 2 scan added 4 Sept evening</span></div></div>
+</div>
+
+<div class="fixedmark">✓&nbsp; <b>Round 1 is fully fixed and live on both test VMs</b> (commits <code>881b999</code>, <code>5250e6d</code>, <code>58dc26a</code>, <code>3634b3f</code>, plus follow-ups <code>315d0d0</code> PDF/CSP, <code>1213bba</code> responsive settings, <code>ba9c279</code> unread-preservation). A <b>round-2 live scan</b> (4 Sept evening) added seven new findings below — the worst, an eternal body spinner on conversation reopen, is already fixed in <code>25250b0</code>; the rest are open, led by non-persisting stars.</div>
+
+<div class="note"><b>A note on confidence.</b> Items marked <span class="tag-live">Live</span> were observed directly in the running app. The rest are verified against source with exact <span class="loc">file:line</span> references — responsiveness findings in particular are deterministic from the CSS breakpoints, so they hold whether or not a phone was in hand. The browser extension became unresponsive partway through, so a couple of mobile screenshots are code-verified rather than pictured; nothing here is speculative.</div>
+
+<h2>Concern 1 — Time to open an email or thread</h2>
+<p class="intro">Good news first: the server already keeps a read-through cache, so the steady state is a single fast database read, not a Zimbra call — and opening a message fires exactly one API request from the client. The latency you feel comes from three avoidable places: a fetch waterfall, a synchronous image-embed budget, and re-work on every render.</p>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Opening a thread makes three sequential requests, and the third re-downloads the body the first already fetched <span class="tag-live">Live</span></h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>881b999</code> — <code>ThreadMessage</code>'s expand-fetch now reads the shared body cache, so the newest message reuses the body the detail pane already downloaded instead of re-fetching it and its images.</div>
+  <p>Clicking a message fetches the message, then the conversation, then the newest message's body <em>again</em> — each waiting on the one before. When the message you clicked is the newest in the thread (the common case), the last hop re-downloads the exact body, including any embedded base64 images.</p>
+  <div class="wf-scroll"><div class="wf">
+    <div class="s"><b>Hop 1</b>getMessage(id) → sets active message</div>
+    <div class="a">→</div>
+    <div class="s"><b>Hop 2</b>getConversation(id) — bodies omitted by design</div>
+    <div class="a">→</div>
+    <div class="s"><b>Hop 3</b>ThreadMessage re-fetches getMessage(id) — same body</div>
+  </div></div>
+  <p style="margin-top:0.6rem;"><span class="loc">page.tsx:514</span> → <span class="loc">ThreadView.tsx:356</span> → <span class="loc">ThreadMessage.tsx:458</span></p>
+  <p><b>Fix:</b> seed React Query with the hop-1 payload under <code>['message', id]</code> so hop 3 reads from cache, or run hops 1 and 2 in parallel with <code>Promise.all</code> instead of chaining through a render. Removes one full body download per open.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Message bodies are never cached; re-opening the same mail refetches from scratch</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>881b999</code> — new shared in-session LRU body cache (<code>lib/mailBodyCache</code>). <code>openMessage</code> renders a cached body with no spinner and no refetch, rows prefetch on hover, and the cache is cleared on logout and 401 so it never leaks between users.</div>
+  <p>The folder list and the AI cards are cached in React Query, but the message body is fetched imperatively into local state with no query key, no stale time, and no dedupe. There is no guard against re-opening the message that's already showing — clicking the highlighted row tears the body down to a spinner and fetches it again. And nothing is prefetched: no hover-prefetch, no look-ahead on the next row.</p>
+  <p><span class="loc">page.tsx:475-563</span> · list cache at <span class="loc">page.tsx:98</span> · zero <code>prefetchQuery</code>/<code>onMouseEnter</code> in the mail components</p>
+  <p><b>Fix:</b> move the body to <code>useQuery(['message', id], { staleTime: Infinity })</code>; early-return when the clicked id is already active; add <code>onMouseEnter → prefetchQuery</code>. Re-opens and back-navigation become instant, and hover-prefetch hides most of the first-open latency.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Cold open can block up to 5 seconds behind a bare spinner while inline images embed</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>5250e6d</code> — the embed budget drops to 1.5s (tunable via <code>EMBED_BUDGET_MS</code>) and a slow embed no longer blocks the open: the body returns immediately flagged <code>embedPending</code> with unresolvable <code>cid:</code> refs stripped, the embed finishes in the background (an in-flight map dedupes polls so no duplicate Zimbra fetches), and the client polls until the final body lands and swaps it into the open reader.</div>
+  <p>On the first open of a message with inline images, the server spends up to a 5-second budget embedding those images before responding — sitting directly in the request path. And the surface that renders during that wait is a bare centred spinner, not the good skeleton the codebase already has for the non-threaded path.</p>
+  <p><span class="loc">mail.service.ts:380-398</span> (embed budget) · spinner at <span class="loc">ThreadView.tsx:419-425</span> vs skeleton at <span class="loc">MailDetail.tsx:484-499</span></p>
+  <p><b>Fix:</b> return the raw body immediately and embed images in the background (the push/poll machinery already exists), and render the thread header + collapsed rows from list metadata you already hold, skeletoning only the body region.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>The email HTML is sanitized and regex-scrubbed on every render, re-triggered by each image load</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>5250e6d</code> — the sanitize + dfsrc + data-URI passes moved into a memoized <code>lib/emailRender</code> shared by both readers (one preparation per body, cached across remounts), and iframe heights are now written straight to the element instead of React state — image loads no longer re-render, re-sanitize, or rebuild the srcDoc.</div>
+  <p>DOMPurify plus three regex passes run inline in the render — not memoized — over a body that can hold multi-megabyte base64 images. Worse, the iframe stores its height in state and calls <code>setHeight</code> as each image finishes loading, so every image completion forces another full sanitize + template rebuild. The compose window already solved exactly this with a <code>useMemo</code>; the reader didn't inherit it.</p>
+  <p><span class="loc">ThreadMessage.tsx:301-305</span> · <span class="loc">MailDetail.tsx:245-249</span> · height thrash at <span class="loc">MailDetail.tsx:224-229</span></p>
+  <p><b>Fix:</b> wrap the sanitize + <code>srcDoc</code> build in <code>useMemo([html])</code>, hold iframe height in a ref with a direct style write, and move the <code>dfsrc</code>/<code>data:</code> normalization server-side at cache-write time.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>First-time thread open does an N+1 of serial DB writes; keyboard j/k pays the full cost per keypress</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>58dc26a</code> — the back-fill now collects missing rows and writes them in one <code>createMany({ skipDuplicates })</code> (a 20-message thread is 1 write, not 20), and j/k moves the selection instantly while debouncing the body fetch 150ms with an <code>AbortController</code> that cancels a superseded open.</div>
+  <p>Opening a thread for the first time upserts each message one at a time in an awaited loop — a 20-message thread is 20 serial round-trips inside hop 2 above. Separately, holding <code>j</code>/<code>k</code> to move through the list fires an uncancelled three-hop chain per keypress, with no debounce and no abort, even though the API client already supports an abort signal.</p>
+  <p>N+1 at <span class="loc">mail.service.ts:527-568</span> · j/k at <span class="loc">page.tsx:938-948</span></p>
+  <p><b>Fix:</b> batch the upserts (<code>createMany({ skipDuplicates })</code> or <code>Promise.allSettled</code>), and debounce j/k ~150ms with an <code>AbortController</code> keyed to the active message.</p>
+</div>
+
+<h2>Concern 2 — Attachment preview before download</h2>
+<p class="intro">The app <em>has</em> a strong preview experience — a full-screen lightbox with zoom, PDF embedding, and prev/next, plus a second inline previewer that even parses CSV to a table and plays audio/video. The problem is that the surface where attachments actually live doesn't wire it up.</p>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>In the default reading view, attachments are download-only — tapping a PDF downloads it with no preview</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>881b999</code> — the existing <code>AttachmentLightbox</code> is now wired into thread message tiles (image / PDF / text preview, download otherwise), and the tile actions are touch-visible so preview is reachable on phones and by keyboard, not hover-only.</div>
+  <p>Most mail renders as a thread, and the attachment tiles in an expanded thread message are given only an <code>onClick</code> that forces a download — no <code>onPreview</code>, no <code>onDownload</code>. Because the tile hides its action buttons unless one of those is present, the preview (Eye) button never even appears. The capable previewer sits one tab away under "Attachments (n)", which users have to discover. The single-message detail view wires it up correctly; the thread view — the common path — does not.</p>
+  <p>download-only path at <span class="loc">ThreadMessage.tsx:655-671</span> · correct wiring at <span class="loc">MailDetail.tsx:815-838</span> · lightbox at <span class="loc">AttachmentLightbox.tsx</span></p>
+  <p><b>Fix:</b> pass <code>onPreview</code>/<code>onDownload</code> down from the thread into the message tiles (the preview handler already exists at <span class="loc">ThreadView.tsx:311</span>), so click-to-preview works where the file appears.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Every preview re-downloads the whole file; preview-then-download transfers it twice</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>58dc26a</code> — new shared blob cache (<code>lib/attachmentBlobCache</code>, LRU with revoke-on-evict, cleared on 401) behind the lightbox, the thread inline previewer, and every download button: paging, re-toggling, and preview-then-download all transfer a file once. Attachments over 10&nbsp;MB skip inline preview and offer download instead of buffering into memory.</div>
+  <p>Each preview fetches the full attachment into a blob, and the object URL is revoked and refetched on every navigation — paging next/back through three attachments downloads the first one twice, and previewing then downloading pulls the file down two full times. There's also no size guard: a large video is fully buffered into memory before the first frame plays.</p>
+  <p><span class="loc">api.ts:364-376</span> · re-fetch on nav at <span class="loc">AttachmentLightbox.tsx:50-71</span></p>
+  <p><b>Fix:</b> cache blob URLs in a small map keyed by message+part (or React Query with infinite stale time), revoked on message change rather than per toggle; skip inline preview above ~10 MB and offer download instead.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Attachment endpoint hard-codes "download" disposition, forcing the blob round-trip</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>58dc26a</code> — <code>?disposition=inline</code> now returns <code>Content-Disposition: inline</code> + <code>X-Content-Type-Options: nosniff</code> (default stays a download). The client keeps its blob path for now because auth rides the Authorization header, which an <code>&lt;img src&gt;</code> can't send — the blob cache above removes the repeated-transfer cost in the meantime.</div>
+  <p>The server always returns attachments with <code>Content-Disposition: attachment</code>, so the URL can never be dropped straight into an <code>&lt;img&gt;</code> or <code>&lt;iframe&gt;</code> — which is exactly why the client has to fetch-to-blob and pay the memory cost above.</p>
+  <p><span class="loc">mail.controller.ts:189-206</span></p>
+  <p><b>Fix:</b> add a <code>?disposition=inline</code> option (or a sibling <code>/preview</code> route) returning <code>Content-Disposition: inline</code> + <code>X-Content-Type-Options: nosniff</code>, so images and PDFs render straight from the URL with native range-request streaming and no blob allocation.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Two-and-a-half parallel implementations of the same previewer</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>3634b3f</code> — one shared <code>&lt;AttachmentPreview&gt;</code> (with a <code>lib/attachmentPreviewKind</code> classification module) now renders both the lightbox and the thread's inline panel; the duplicate text-fetchers and CSV renderer are deleted, and every surface offers the same coverage — the lightbox gained CSV tables and audio/video players in the process. Only the lightbox's zoomable-image branch stays local, since zoom belongs to its chrome. Follow-up <code>315d0d0</code>: consolidating surfaced that <b>PDF preview had never rendered at all</b> — the app CSP's <code>object-src 'none'</code> silently blanks <code>&lt;embed&gt;</code> — so PDFs now render in an iframe (allowed by <code>frame-src blob:</code>); verified live on test1.</div>
+  <p>The lightbox, the thread's inline expand-in-place previewer, and a near-duplicate text-fetcher are three separate implementations of one feature, with different type coverage. Consolidating them is why fixing the download-only gap above is cheap — there's already more preview code than the app is using.</p>
+  <p><span class="loc">AttachmentLightbox.tsx</span> · <span class="loc">ThreadView.tsx:937-995</span></p>
+  <p><b>Fix:</b> extract one <code>&lt;AttachmentPreview&gt;</code> component and render it from both surfaces.</p>
+</div>
+
+<h2>Concern 3 — Mobile &amp; screen responsiveness</h2>
+<p class="intro">The core layout is done right — pure CSS breakpoints, no fixed outer width, and the detail pane genuinely goes full-screen on a phone with a Back button. But a few high-traffic elements missed their responsive treatment, and one of them makes replying on a phone essentially impossible.</p>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>The compose window is a fixed 680px, so replying on a phone pushes half the window off-screen</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>881b999</code> — full-bleed with small insets below <code>sm</code>, unchanged 680px bottom-right anchor from <code>sm</code> up. Reply/compose now fits on any screen.</div>
+  <p>The compose/reply window is hard-coded to <code>w-[680px]</code> and pinned to the right edge, with no responsive override. On a 375px phone that's ~320px of the window — including the To/From fields and the left edge of the editor — sitting off-screen to the left, and the app's <code>overflow-hidden</code> means you can't scroll to reach it. Height was handled correctly; only width was missed. This is the one finding that breaks a core task outright on mobile.</p>
+  <p><span class="loc">ComposeModal.tsx:1036-1039</span></p>
+  <p><b>Fix:</b> one line — <code>inset-x-2 bottom-2 w-auto sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[680px]</code>.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>On mobile, tapping "Summarize" fires an AI request that streams into an invisible panel</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>5250e6d</code> — below <code>lg</code> the summary renders as a fixed bottom sheet (in both <code>ThreadView</code> and <code>MailDetail</code>, z-ordered above the AI drawers and below compose), so Summarize on a phone shows the stream instead of spending tokens into a hidden panel. From <code>lg</code> up it stays the floating top-right card.</div>
+  <p>The AI summary panel is <code>hidden lg:flex</code>, but the Sparkles trigger in the thread header has no responsive gating. So on a phone the user taps Summarize, a model request runs and spends tokens, and nothing ever appears on screen.</p>
+  <p>panel at <span class="loc">ThreadView.tsx:1009-1021</span> · trigger ungated in <span class="loc">ThreadHeader.tsx</span></p>
+  <p><b>Fix:</b> below <code>lg</code>, render the summary as a bottom sheet (reuse the AI drawer pattern), or at minimum hide the trigger where the surface can't render.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Tablets in portrait get the phone layout — one pane at a time despite having room for two</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>58dc26a</code> — an <code>md</code> tier renders the 300px list beside the reader at 768–1023px, reserving the nav sidebar for <code>lg</code>. The phone-only Back header hides from <code>md</code> up.</div>
+  <p>The only breakpoint is <code>lg</code> (1024px), so an iPad in portrait (768px) is forced into the same single-pane, one-message-at-a-time flow as a 375px phone, even though it easily fits a 300px list beside a ~460px reader.</p>
+  <p><span class="loc">page.tsx:1089-1093</span> · <span class="loc">Sidebar.tsx:553</span></p>
+  <p><b>Fix:</b> add an <code>md</code> tier — two panes at 768-1023px, reserving the sidebar for <code>lg</code>.</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Attachment previews are hover-only, so their buttons never show on touch</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>881b999</code> alongside the preview wiring — <code>AttachmentTile</code> now uses <code>opacity-100 md:opacity-0 md:group-hover:opacity-100 group-focus-within:opacity-100</code>, so the buttons are visible on touch and on keyboard focus.</div>
+  <p>The Eye/Download buttons on attachment tiles are <code>opacity-0 group-hover:opacity-100</code> with no touch or focus variant — on a phone they're permanently invisible but still occupy a tappable area, which is worse than being gone.</p>
+  <p><span class="loc">AttachmentTile.tsx:182</span> · <span class="loc">MailDetail.tsx:885</span> <span style="color: var(--ink-3); font-size: 0.8rem;">(the shared tile is fixed; the MailDetail attachments-tab buttons still use the hover-only pattern)</span></p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Smaller mobile nits: compose covers the drawers, two-column attachment grid, and clipped wide tables</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>58dc26a</code> — the AI drawers auto-collapse when compose opens below <code>lg</code>; the attachment grid is single-column on phones; email-body iframes pan wide newsletter tables (<code>overflow-x:auto</code>) instead of clipping; and opening a message pushes a <code>?msg=&lt;id&gt;</code> history entry so Android/iOS system back returns to the list instead of exiting. Only the triage-chip scroll affordance was left as-is.</div>
+  <p>A cluster of small ones: the compose window (<code>z-50</code>) covers the AI drawers (<code>z-40/41</code>) with no auto-collapse on small screens; the attachment grid is a fixed <code>grid-cols-2</code> that truncates filenames on a phone; email-body iframes use <code>overflow-x:hidden</code> which <em>clips</em> wide newsletter tables rather than letting them pan; and the horizontal triage-chip row has no scroll affordance so it's not obvious more chips exist off-screen. The Back button also isn't a real history entry, so Android/iOS system back exits instead of returning to the list.</p>
+  <p><span class="loc">MailDetail.tsx:858</span> · <span class="loc">MailDetail.tsx:144-149</span> · <span class="loc">page.tsx:1229</span> · <span class="loc">page.tsx:1290-1298</span></p>
+  <p><b>Fix:</b> <code>grid-cols-1 sm:grid-cols-2</code>; <code>overflow-x:auto</code> on a body wrapper; auto-collapse the drawer when compose opens; push <code>?msg=id</code> so system back works.</p>
+</div>
+
+<h2>Concern 4 — Other things that surfaced</h2>
+<p class="intro">Noticed while clicking around, outside the three focus areas.</p>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Inline signature images show up as real attachments <span class="tag-live">Live</span></h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>5250e6d</code> — CID-referenced inline image parts are classified as inline server-side: excluded from the attachment list and from <code>hasAttachments</code>, while still collected for body rendering. Already-cached messages pick up the corrected list the next time their body is fetched.</div>
+  <p>Opening a normal message showed "Attachment" in the list and an <code>inline.gif</code> in the Attachments tab — a one-pixel/signature image from the email body being surfaced as a genuine attachment. Across an inbox this clutters the attachment count and the "has attachment" filter with noise, and inflates the "Attachments (n)" tab.</p>
+  <p><b>Fix:</b> classify content-ID / inline-disposition parts as inline and exclude them from the attachment list (keep them for body rendering only).</p>
+</div>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>For users with sender rules, the Inbox request makes up to 50 serial Zimbra calls</h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>58dc26a</code> — enforcement moved to a new minute-cron <code>SenderRuleSweepService</code> that runs the same rules against the rows the read-through cache just synced (per-user scoping, dead-session skip, per-message error isolation). The Inbox GET is now a pure read; a blocked sender's mail leaves the Inbox within a minute of syncing.</div>
+  <p>Blocked/allowed-sender enforcement runs inside the Inbox list GET, looping over results and making a live Zimbra "move message" call per match, serially. It's correctly skipped for users with no rules — but any user who sets up rules pays real latency on every inbox load, and a mutation shouldn't live inside a read path.</p>
+  <p><span class="loc">mail.service.ts:303-325</span></p>
+  <p><b>Fix:</b> move enforcement to the background card worker / scheduler; never let a mutating SOAP call sit in a GET.</p>
+</div>
+
+<div class="finding good">
+  <div class="fhead"><h3>What's already done right</h3><span class="sev good">Credit</span></div>
+  <p>Worth stating plainly so it doesn't get "fixed" away: the server-side read-through body cache is real and effective (steady-state open is one DB read); opening a message is a single client request, not an N+1; the three-pane layout collapses correctly to a full-screen reader with a Back button on phones; the AI drawers are properly full-bleed-then-capped (<code>w-full max-w-[420px]</code>) with deliberate, commented z-ordering; and email-body iframes are hardened against horizontal overflow with a viewport meta and <code>max-width:100%</code> images. The triage labels also render live and correctly in the list.</p>
+</div>
+
+<h2>Round 2 · 4 Sept, evening — Second live scan, new findings</h2>
+<p class="intro">A fresh walkthrough after all round-1 fixes shipped: mail flows, all three AI surfaces, ⌘K search, compose, notifications, and the secondary pages (Calendar, Contacts, Tasks, Docs), at desktop and phone widths with console and network watched. The AI surfaces, search, compose, thread rendering, PDF preview, and Tasks/Contacts/Docs mobile layouts all held up. Eight new findings, one already fixed and deployed.</p>
+
+<div class="finding fixed">
+  <div class="fhead"><h3>Eternal body spinner after closing and reopening a conversation <span class="tag-live">Live</span></h3><span class="sev done">✓ Fixed</span></div>
+  <div class="fixedmark">✓&nbsp; Fixed in <code>25250b0</code> — settlement always resets <code>loadingBody</code> now, and a fetch that lands after a collapse still stores the body (the row is keyed by message id, so the data can't belong to anyone else). Regression test drives the exact collapse-mid-flight sequence.</div>
+  <p>Close the reader (Escape or system back) while a thread message's body fetch is in flight, then reopen the same conversation: the body spins forever. <code>ThreadView</code> keeps its rows mounted when the reader closes, so the effect cleanup stranded <code>loadingBody=true</code> (the <code>finally</code> skipped the reset when cancelled) and the effect's <code>|| loadingBody</code> guard blocked every retry. Opening a <em>different</em> thread "fixed" it by remounting the rows — which is exactly why it looked intermittent.</p>
+  <p><span class="loc">ThreadMessage.tsx:503-526</span></p>
+</div>
+
+<div class="finding med">
+  <div class="fhead"><h3>Starring a message is never persisted — the star silently vanishes on refresh</h3><span class="sev med">High</span></div>
+  <p>The star toggle does an optimistic UI update, then calls… <code>api.mail.markRead(id, isRead)</code>, with a comment admitting the real call was never built: <em>"a dedicated star endpoint would be ideal… we'll add the real call once the flag endpoint is wired up."</em> There is no star/flag endpoint anywhere server-side, so a user's stars survive only until the next folder sync or reload — and the Starred filter tab can never show mail starred from this app after a sync. The thread view's per-message star repeats the same pattern.</p>
+  <p><span class="loc">page.tsx:843-855</span> · <span class="loc">ThreadView.tsx:757-768</span> · no flag route in <span class="loc">mail.controller.ts</span> / <span class="loc">zimbra.service.ts</span></p>
+  <p><b>Fix:</b> add a Zimbra <code>MsgActionRequest op="flag"/"!flag"</code> method + a <code>PATCH /mail/messages/:id/star</code> route that also updates the DB row, and call it from both toggles.</p>
+</div>
+
+<div class="finding med">
+  <div class="fhead"><h3>Escape double-fires: closes the AI drawer <em>and</em> the open message behind it <span class="tag-live">Live</span></h3><span class="sev med">Medium</span></div>
+  <p>With the Ask panel (or another drawer) open over a message, Escape dismissed the panel <em>and</em> popped the reader back to the list in one press. This was parked at the commitment-tracker review as a theoretical risk — round 2 hit it in normal use within minutes.</p>
+  <p><b>Fix:</b> scope Escape by a layered-dismiss order — topmost surface consumes the event (drawer → lightbox → compose → reader), e.g. check drawer state in the page-level key handler before closing the reader.</p>
+</div>
+
+<div class="finding med">
+  <div class="fhead"><h3>Calendar agenda rows clip on phones — titles and locations cut mid-word, unreachable</h3><span class="sev med">Medium</span></div>
+  <p>At phone width the agenda view's header adapts nicely, but event titles, locations, and meeting links overflow past the right edge with no truncation or wrap — and the page doesn't scroll horizontally (verified <code>scrollWidth == innerWidth</code>), so the clipped text is simply unreachable.</p>
+  <p><b>Fix:</b> <code>min-w-0</code> + <code>truncate</code> (or wrap) on the event title/meta cells in the agenda row.</p>
+</div>
+
+<div class="finding low">
+  <div class="fhead"><h3>Notifications show stale "Starting soon" alerts hours after the meeting <span class="tag-live">Live</span></h3><span class="sev low">Low</span></div>
+  <p>The panel listed four "Starting soon: … In 30 minutes" alerts each stamped "about 7–8 hours ago" — the meetings were long over. Time-sensitive notifications never expire or re-render their relative time.</p>
+  <p><b>Fix:</b> drop (or de-emphasize) event-reminder notifications once the event start time has passed.</p>
+</div>
+
+<div class="finding low">
+  <div class="fhead"><h3>⌘K "Ask your inbox" hands the question to the panel but doesn't submit it</h3><span class="sev low">Paper cut</span></div>
+  <p>Selecting the Ask row from global search opens the Ask panel with the question prefilled in the composer — and then waits for a second Enter. The row reads as "ask this now"; the extra step feels like a stall. (The ask flow itself is excellent: grounded answer, citations, source cards with Open/Reply, linked-commitment annotations.)</p>
+  <p><b>Fix:</b> auto-submit the prefilled question when arriving via the Ask row, keeping prefill-only for the suggestion chips.</p>
+</div>
+
+<div class="finding low">
+  <div class="fhead"><h3>Console noise: TipTap duplicate extensions and a Radix a11y warning</h3><span class="sev low">Cleanup</span></div>
+  <p>Every editor mount warns <code>[tiptap] Duplicate extension names: ['link', 'underline']</code> — StarterKit v3 now bundles Link and Underline, and the app registers them again (compose + signature editors). Separately, a dialog renders without <code>aria-describedby</code> (Radix warning). Both are one-line fixes and keep real errors visible.</p>
+  <p><b>Fix:</b> configure <code>StarterKit.configure({ link: false, underline: false })</code> (or drop the standalone extensions); add a <code>DialogDescription</code> (or <code>aria-describedby={undefined}</code>) to the flagged dialog.</p>
+</div>
+
+<div class="finding good">
+  <div class="fhead"><h3>What round 2 confirmed working</h3><span class="sev good">Credit</span></div>
+  <p>All round-1 fixes held up live: thread bodies render instantly from cache, PDF preview works in the lightbox, the settings page adapts to phone width with the tab bar and back button, system back returns to the list, and the reader/list split works at tablet width. The three AI surfaces are in good shape — briefing items deep-link to their source messages, drawer exclusivity behaves, commitments track waiting-ons with counterparties, and Ask-your-inbox answers with clean citations. Tasks, Contacts, and Docs are already properly responsive.</p>
+</div>
+
+<h2>Where to start — Fix order by impact vs effort</h2>
+<div class="table-wrap">
+  <table>
+    <tr><th>#</th><th>Fix</th><th>Severity</th><th>Status</th><th>Payoff</th></tr>
+    <tr><td>1</td><td>Make compose responsive (<code>w-[680px]</code> → full-bleed on mobile)</td><td><span class="pill crit">Critical</span></td><td><span class="done-inline">✓ Done · 881b999</span></td><td>Unbreaks reply/compose on every phone</td></tr>
+    <tr><td>2</td><td>Cache message bodies + hover-prefetch + skip the duplicate 3rd fetch</td><td><span class="pill crit">High</span></td><td><span class="done-inline">✓ Done · 881b999</span></td><td>Instant re-open; most first-open latency hidden</td></tr>
+    <tr><td>3</td><td>Wire preview into thread attachment tiles</td><td><span class="pill crit">High</span></td><td><span class="done-inline">✓ Done · 881b999</span></td><td>Preview-before-download where files actually are</td></tr>
+    <tr><td>4</td><td>Move the 5s inline-image embed out of the request path</td><td><span class="pill med">Medium</span></td><td><span class="done-inline">✓ Done · 5250e6d</span></td><td>Kills the worst cold-open stalls</td></tr>
+    <tr><td>5</td><td>Memoize sanitize/regex + stop height thrash</td><td><span class="pill med">Medium</span></td><td><span class="done-inline">✓ Done · 5250e6d</span></td><td>Smoother render on image-heavy mail</td></tr>
+    <tr><td>6</td><td>Gate/relocate the mobile Summarize trigger</td><td><span class="pill med">Medium</span></td><td><span class="done-inline">✓ Done · 5250e6d</span></td><td>Stops silent token spend into a hidden panel</td></tr>
+    <tr><td>7</td><td>Exclude inline images from the attachment list</td><td><span class="pill med">Low</span></td><td><span class="done-inline">✓ Done · 5250e6d</span></td><td>Cleaner attachment counts and filters</td></tr>
+  </table>
+</div>
+
+<div class="footer">Reviewed 4 September 2026 · live session on <code>test1.risa.gov.rw</code> + source trace at <code>ft-hyperscale</code> @ <code>40be375</code> · fixes in <code>881b999</code> (items 1–3), <code>5250e6d</code> (items 4–7) and <code>58dc26a</code> (unranked mediums + nits) — all deployed to both test VMs 4 Sept · 1Gov Mail — RISA. Line references are approximate to <code>40be375</code>.</div>
+
+</body>
+</html>

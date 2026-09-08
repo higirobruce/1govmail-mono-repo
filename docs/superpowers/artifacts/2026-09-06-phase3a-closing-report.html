@@ -1,0 +1,128 @@
+<title>Ask 1Gov Built</title>
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/44419233-c224-4197-97fe-b03840c97a51 — content-faithful, original styling not preserved -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #ffffff; --surface: #f7f7f5; --ink: #1a1a1a; --ink-soft: #55585c; --ink-faint: #8a8d90;
+    --line: #e0e0dc; --accent: #0f6f5c; --accent-soft: #e3f0ec; --code-bg: #f0f0ee;
+    --warn: #9a5b00; --warn-bg: #fbf3e4; --crit: #b3323c; --crit-bg: #b3323c14;
+    --imp: #b07a1f; --imp-bg: #b07a1f14; --good: #1e7f4e; --good-bg: #1e7f4e14;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+      --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+      --warn: #e0a44e; --warn-bg: #2a2216; --crit: #e4707a; --crit-bg: #e4707a1a;
+      --imp: #d9a94e; --imp-bg: #d9a94e1a; --good: #56c77e; --good-bg: #56c77e1a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+    --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+    --warn: #e0a44e; --warn-bg: #2a2216; --crit: #e4707a; --crit-bg: #e4707a1a;
+    --imp: #d9a94e; --imp-bg: #d9a94e1a; --good: #56c77e; --good-bg: #56c77e1a;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: "Inter", system-ui, sans-serif; font-size: 16px; line-height: 1.65; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.6rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.3rem); font-weight: 700; letter-spacing: -0.01em; line-height: 1.18; margin: 0 0 0.6rem; }
+  h2 { font-size: 1.25rem; font-weight: 700; margin: 2.4rem 0 0.8rem; }
+  h3 { font-size: 1.05rem; font-weight: 600; margin: 1.6rem 0 0.5rem; }
+  p, li, td { color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent); }
+  ul, ol { padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.45rem; }
+  code, .mono { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); border-radius: 4px; padding: 0.08em 0.35em; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.2rem; overflow-x: auto; font-family: var(--mono); font-size: 0.83rem; line-height: 1.55; }
+  pre code { background: none; padding: 0; }
+  .lede { color: var(--ink-soft); margin: 0 0 1.6rem; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.7rem; margin: 0 0 1rem; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 0.8rem 1rem; }
+  .stat b { display: block; font-size: 1.4rem; font-weight: 700; color: var(--ink); }
+  .stat span { font-size: 0.74rem; color: var(--ink-faint); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 0.8rem 0 1.3rem; }
+  th, td { text-align: left; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+  tr:last-child td { border-bottom: none; }
+  .warn, .blocked { border-left: 3px solid var(--warn); background: var(--warn-bg); border-radius: 0 8px 8px 0; padding: 0.8rem 1.1rem; margin: 1rem 0; }
+  footer, .foot { font-size: 0.85rem; color: var(--ink-faint); margin-top: 2.8rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+</style>
+<main>
+  <p class="eyebrow">Execution report · AI Phase 3a · 6 Sep 2026</p>
+  <h1>Ask 1Gov is live on .154 and sweep-verified</h1>
+  <p class="lede">The retrieval core shipped: doc embeddings, four-leg fused retrieval with a query-time ACL, and the app-wide Ask panel. 15 commits (<code>8d3f2e2..6c9dfcb</code>), every task independently reviewed, a nine-finding fix wave verified, the migration applied, and the live sweep passed — one answer on the test box cited a mail, a document, and a calendar event side by side, each with a working typed chip. .155 is one command away.</p>
+
+  <div class="stats">
+    <div class="stat"><b>11 + 1</b><span>plan tasks + final fix wave</span></div>
+    <div class="stat"><b>405 + 202</b><span>web + api tests green (+90 this phase)</span></div>
+    <div class="stat"><b>15</b><span>review seats incl. two opus gates</span></div>
+    <div class="stat"><b>1</b><span>additive migration (document_embeddings)</span></div>
+  </div>
+
+  <h2>What lands with the deploy</h2>
+  <ul>
+    <li><strong>Ask 1Gov, everywhere:</strong> one Ask panel mounted app-wide — floating button on every page, the rail on mail — answering from <strong>mail + documents + calendar</strong> in one fused, cited response. Mail chips open messages, doc chips open docs, event chips open the calendar detail (new <code>?event=</code> deep link), including when you're already on that page.</li>
+    <li><strong>Doc embeddings with an honest ACL:</strong> one set of vectors per document; every query joins through owner-OR-live-invite, so a revoked invite vanishes from answers instantly. The opus reviews hunted for leak paths twice and found none — parenthesization, bound params, email normalization, and the pre-stream access gate all verified.</li>
+    <li><strong>"Ask this document"</strong> — a scope chip on the same panel, opened from the docs editor toolbar, removable to widen the same conversation. Fail-closed on anonymous share links.</li>
+    <li><strong>A calendar leg without embeddings:</strong> "what do I have with MINIJUST next week?" answers from a deterministic keyword+date lookup over your events.</li>
+    <li><strong>All guardrails travel:</strong> per-type fencing (EMAIL/DOCUMENT/EVENT), neutralized headers, citation whitelisting (the model still cannot mint a link), injection banners now source-aware, snippets-only over the wire, no-sources short-circuit in three languages.</li>
+  </ul>
+
+  <h2>What the final review caught (and the fix wave closed)</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Finding</th><th>Why it mattered</th></tr></thead>
+    <tbody>
+      <tr><td><strong>C1 — the doc worker could never backfill past the 32 newest documents.</strong> A plan defect faithfully implemented — the batch window applied before the staleness filter, and the task's own tests encoded the bug as intended</td><td>~18 of the VMs' ~50 docs would silently never be searchable; fixed by moving staleness into SQL (NOT EXISTS), with tests that now prove backfill</td></tr>
+      <tr><td><strong>C2 — the mail page's panel docking broke at desktop width</strong> once the panel moved to the app layout (two mutually-exclusive plan requirements nobody reconciled)</td><td>At ≥1280px the panel rendered below the fold while the mail list still shrank; fixed by keeping the panel fixed everywhere and reserving space with padding</td></tr>
+      <tr><td>I1 — doc/event chips were silent no-ops when already on the target page (consume-once deep-link effects never re-fire on same-route pushes)</td><td>The headline cross-citing flow; fixed with a store signal consumed by both pages</td></tr>
+      <tr><td>I2 — tombstoning a previously-embedded doc left its old chunks live and retrievable</td><td>Deleted text could be cited forever; now one transaction deletes all rows first</td></tr>
+      <tr><td>I3 — an open collab editor re-embedded identical text every minute (Yjs autosaves bump <code>updatedAt</code>)</td><td>Unbounded Ollama load + starved backfill; unchanged text now refreshes timestamps without embedding</td></tr>
+      <tr><td>Four promoted minors: calendar stopword leak ("the budget" matched everything), panel copy still said "your inbox"/"emails", empty <code>docId</code> validation, a wrong JSDoc</td><td>All fixed in the same wave; 9/9 verified by the scoped re-review</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Rulings I made on your behalf</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Ruling</th><th>Cost if wrong</th></tr></thead>
+    <tbody>
+      <tr><td>Task 7 removed <code>/ai/inbox-chat</code> mid-branch with the web client not updated until Task 8 — sanctioned breakage on this single-tenant branch (test suites mock fetch; nothing live runs between tasks)</td><td>A broken interval nobody exercises</td></tr>
+      <tr><td>Accepted the prompt's scope sentence as "the user's own government mail, documents, and calendar" (implementer's wording) over the plan's shorter quote</td><td>One string tweak</td></tr>
+      <tr><td>Event times in answers use the server's timezone — handled at deploy by setting <code>TZ=Africa/Kigali</code> on the api units rather than in code (matches existing conventions)</td><td>Times shown two hours off until the env lands</td></tr>
+      <tr><td>Embedding contention between the two workers and interactive asks — handled by env tuning (<code>DOC_EMBED_BATCH_PER_TICK</code>) and a latency watch at deploy, not in code</td><td>Slower asks while the backlog embeds</td></tr>
+      <tr><td>HNSW post-filter recall (ANN picks 20 global neighbours, then the ACL drops inaccessible ones — can under-return for small tenants) stays as deferred debt: inherited from the mail leg's identical design, immaterial at ~50 docs</td><td>Missing-but-relevant docs in answers as the corpus grows; follow-up is an <code>ef_search</code>/candidate-limit tune</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Known debt (documented, non-blocking)</h2>
+  <ul>
+    <li>The AI rail button, ⌘K row, and landing copy still say "Ask your inbox" while the panel now says Ask 1Gov — naming pass pending.</li>
+    <li>No integration test runs the docs ACL against a real database (its correctness is argued from verified SQL text + unit assertions); one live-DB test for owner/invitee/revoked/stranger would close it.</li>
+    <li>Smaller ledger items (docJsonToText array-root ambiguity, chunker JSDoc, DTO spec conventions, launcher re-register churn) — none change behavior.</li>
+  </ul>
+
+  <h2>Live sweep results (.154, api+web <code>6c9dfcb</code>)</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Check</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>Migration + TZ</td><td>Pass — <code>add_document_embeddings</code> applied cleanly; the api now logs in Kigali time (TZ drop-in live), so event times in answers are local</td></tr>
+      <tr><td>Doc embed worker</td><td>Pass — embedded 2/2 documents (3 chunks, zero failures) on its first tick, then idles correctly. The box only has two docs, so the &gt;32-doc backfill scenario rests on the unit tests</td></tr>
+      <tr><td>Ask from a non-mail page</td><td>Pass — the floating button on /tasks opens Ask 1Gov with the new mail+docs+calendar copy</td></tr>
+      <tr><td>Fused, typed, cited answer</td><td>Pass — "what are the objectives of the joint technical workshop?" answered with every claim cited to a <strong>document</strong> source, alongside mail sources and a calendar <strong>event</strong> source with its time range — all three types in one source rail</td></tr>
+      <tr><td>Cross-module chips</td><td>Pass — the document chip navigated to Docs and opened the Project Charter with the conversation intact in the overlay panel</td></tr>
+      <tr><td>Ask this document</td><td>Pass — the editor's Ask button scoped the panel (chip + doc-only placeholder); a scoped ask retrieved from that doc alone and honestly said the excerpt didn't answer rather than inventing; clearing the chip widens</td></tr>
+      <tr><td>Desktop docking (the C2 fix)</td><td>Pass — at 1456px on /mail the panel docks right and the mail layout reflows into the reserved space; nothing below the fold</td></tr>
+      <tr><td>Safety</td><td>No events saved, nothing sent; revoked-invite and injection-banner scenarios rest on their code-level verification (no second live account to exercise them)</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>One new follow-up came out of the sweep: the docs leg dedupes to each document's single best chunk — right for cross-doc asks, but it means a <em>doc-scoped</em> ask only ever sees one 1200-char window of the document, so deep "what does this doc say about…" questions can come back honestly shallow. The fix (return top-N chunks when scoped) is on the debt list.</p>
+
+  <div class="warn"><strong>.155 is one command away</strong> (bundle, migration, and TZ drop-in all in the script):<br><code>! bash /private/tmp/claude-501/-Users-brucehigiro-Documents-development-email-client/91bd8ae2-4a7c-450a-8663-c8654c5cb0fe/scratchpad/deploy-155-phase3a.sh</code></div>
+
+  <p class="foot">Spec: <code>docs/superpowers/specs/2026-09-05-ai-phase3a-ask-1gov-design.md</code> · Plan: <code>docs/superpowers/plans/2026-09-05-ai-phase3a-ask-1gov.md</code> · Design page: <a href="https://claude.ai/code/artifact/921576a6-3020-47cf-b9c8-b43fa96ace94">Ask 1Gov</a> · Phase 3b (relationship dossier, meeting prep pack) gets its own design after this lands.</p>
+</main>

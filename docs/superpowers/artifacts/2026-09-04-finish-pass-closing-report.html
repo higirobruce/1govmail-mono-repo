@@ -1,0 +1,157 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/f262a758-566a-459c-9383-bbacf67354f0 — content-faithful, original styling not preserved -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Finish Pass Shipped</title>
+<style>
+  :root {
+    --bg: #faf9f5;
+    --ink: #1c2430;
+    --ink-2: #4d5a68;
+    --ink-3: #85919e;
+    --line: #ddd5c6;
+    --surface: #ffffff;
+    --surface-2: #f1ede2;
+    --accent: #0f4c81;
+    --good: #1f8a5b;
+    --good-bg: #e4f3ea;
+    --warn: #9a6b12;
+    --warn-bg: #fbf0dc;
+    --code-bg: #f1ede2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+      --line: #2b3441; --surface: #181e27; --surface-2: #1f2632;
+      --accent: #4f9fd8; --good: #57caa0; --good-bg: #143427;
+      --warn: #e3b45a; --warn-bg: #3a2c11; --code-bg: #10151c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+    --line: #2b3441; --surface: #181e27; --surface-2: #1f2632;
+    --accent: #4f9fd8; --good: #57caa0; --good-bg: #143427;
+    --warn: #e3b45a; --warn-bg: #3a2c11; --code-bg: #10151c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    max-width: 740px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem;
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6;
+  }
+  .eyebrow { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.5rem; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 0.6rem; }
+  .lede { color: var(--ink-2); font-size: 1.05rem; }
+  .meta { color: var(--ink-3); font-size: 0.85rem; margin-bottom: 2rem; }
+  h2 { font-size: 1.2rem; margin-top: 2.5rem; }
+  h3 { font-size: 1rem; margin: 0 0 0.5rem; }
+  p { margin: 0 0 1rem; }
+  ul { padding-left: 1.2rem; }
+  li { margin-bottom: 0.4rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: var(--code-bg); border: 1px solid var(--line); border-radius: 4px; padding: 0.05em 0.35em; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px,1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.8rem 1rem; }
+  .stat b { display: block; font-size: 1.4rem; }
+  .stat span { font-size: 0.75rem; color: var(--ink-3); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem 1.3rem; margin-bottom: 1rem; }
+  .pill { display: inline-block; font-size: 0.7rem; font-weight: 600; border-radius: 999px; padding: 0.15rem 0.6rem; margin-left: 0.4rem; }
+  .pill.done { background: var(--good-bg); color: var(--good); }
+  .pill.gate { background: var(--warn-bg); color: var(--warn); }
+  .gate-box { background: var(--warn-bg); border: 1px solid var(--warn); border-radius: 12px; padding: 1.1rem 1.3rem; margin-bottom: 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.7rem; text-transform: uppercase; color: var(--ink-3); }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; margin: 1rem 0; }
+  .footnote { font-size: 0.8rem; color: var(--ink-3); margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<p class="eyebrow">Execution report · 4 Sep 2026</p>
+<h1>The finish pass has shipped</h1>
+<p class="lede">All 13 plan tasks executed on <code>ft-hyperscale</code> via subagent-driven development: 18 commits, every task independently reviewed, a whole-branch final review, and one fix wave. One gate remains for you.</p>
+<p class="meta">Range <code>e95f69d..31e3473</code> · spec <code>docs/superpowers/specs/2026-09-04-finish-pass-design.md</code> · plan <code>docs/superpowers/plans/2026-09-04-finish-pass.md</code></p>
+
+<div class="stats">
+  <div class="stat"><b>18</b><span>commits</span></div>
+  <div class="stat"><b>264</b><span>tests, all green (+12 new)</span></div>
+  <div class="stat"><b>13 + 1</b><span>task reviews + final review</span></div>
+  <div class="stat"><b>5</b><span>fix rounds, all converged</span></div>
+</div>
+
+<h2>What shipped, by workstream</h2>
+
+<div class="card">
+  <h3>A · Consistency foundation <span class="pill done">done</span></h3>
+  <ul>
+    <li>Named type scale (<code>text-display/title/body/ui/micro</code> with paired weight, tracking, line-height), three ink tiers, border tiers, eight file-type colors, <code>warning-strong</code>, and shadow tokens — all with dark-mode values, all named for future app-wide adoption.</li>
+    <li>All nine mail-surface files migrated: zero raw palette classes, zero arbitrary rem sizes, zero opacity-soup variants remain (grep-verified).</li>
+    <li>shadcn primitives adopted: row checkbox, bulk-bar and toolbar Buttons, Badge attachment pills, Sidebar folder menu on DropdownMenu. One documented deviation: MailList's right-click menu stays hand-rolled (no trigger element for Radix) but is fully tokenized.</li>
+    <li>One avatar implementation (<code>MailAvatar</code> + exported <code>getInitials</code>); three duplicates deleted.</li>
+    <li>Both silent <code>hsl(oklch(...))</code> bugs fixed — compose blockquote/inline-code colors render again.</li>
+    <li><strong>Bonus root fix:</strong> <code>cn()</code>/tailwind-merge now understands the named text steps. This repaired a latent bug where any named step next to a color class silently deleted the color — unit-tested.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>C · Icon rail <span class="pill done">done</span></h3>
+  <ul>
+    <li>Sidebar now visible from <code>md</code> — the 768–1024px tablet band gets a forced rail instead of no navigation.</li>
+    <li>Numeric unread badge on the collapsed Inbox; dots elsewhere; tooltips on every rail item (including the disabled "Soon" items, via the Radix span-trigger pattern); monochrome rail icons with the active item in primary.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>D · Attachment cards <span class="pill done">done</span></h3>
+  <ul>
+    <li>File size on every tile; "Download all" (sequential, per your decision) on message strips, the thread Attachments tab, and the single-message view — via a new tested <code>lib/downloadAll</code> helper.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>B · Inline reply as the default path <span class="pill done">done</span></h3>
+  <ul>
+    <li>QuickReplyBar is now a mini-composer: recipient chips (tested <code>lib/replyRecipients</code>), Reply↔Reply-all switch, TipTap formatting toolbar, emoji popover, primary Send, ⌘↵, and an expand that carries your typed draft into the full composer.</li>
+    <li>Thread toolbar and Overview Reply/Reply-all now open the inline composer below the newest message; forwards keep the floating window; ComposeModal honors carried drafts in reply modes.</li>
+    <li><strong>Bonus bug fix:</strong> the old quick-reply sent via a field the API doesn't have (<code>inReplyTo</code>) — quick replies were going out <em>unthreaded</em>. They now use the proven <code>replyToId</code>/<code>replyType</code> path.</li>
+  </ul>
+</div>
+
+<h2>The one remaining gate</h2>
+<div class="gate-box">
+  <p><strong>Visual sweep — needs your environment.</strong> <span class="pill gate">must do before merge to main</span></p>
+  <p>No pipeline agent had a browser, so the spec's "both themes × three widths" check is still open. Run the app and check light + dark at mobile, ~900px (tablet), and desktop, with two specific suspects the final reviewer named:</p>
+  <ul>
+    <li><strong>Hover states</strong> on the converted icon buttons (thread toolbar, attachment rows, sidebar) — the fix wave restored muted hovers over the bright accent leak; confirm nothing still flashes blue.</li>
+    <li><strong>Small-text legibility</strong> — attachment sizes and timestamps were moved up a contrast tier (ink-4 → ink-3) for WCAG AA; confirm they read well in both themes.</li>
+    <li>Plus the ordinary pass: list, thread, rail at tablet width, mini-composer, compose modal (blockquote/inline-code colors now visible), Download all.</li>
+  </ul>
+</div>
+
+<h2>Rulings made on your behalf</h2>
+<p>Decisions I settled during execution — review and push back on any of them:</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Ruling</th><th>Cost if wrong</th></tr></thead>
+    <tbody>
+      <tr><td>MailDetail's <code>text-[1.25rem]</code> subject heading → <code>text-title</code> (spec forbids arbitrary sizes; same role as ThreadHeader subject)</td><td>Subject renders 15px instead of 20px — one-line revert</td></tr>
+      <tr><td>Bespoke bordered icon buttons (MailDetail reply bar, tile hover actions) stay raw-but-tokenized rather than forced into Button variants</td><td>Minor primitive-adoption gap</td></tr>
+      <tr><td>Inert-<code>text-micro</code>-in-Badge fixed at the root — tailwind-merge taught the named steps — instead of <code>!important</code> per-site</td><td>App-wide cn() behavior change; guarded by unit tests</td></tr>
+      <tr><td>Ghost-hover leak fixed per-site on converted mail buttons, NOT by editing the app-wide <code>buttonVariants</code></td><td>~20 className edits vs one variant edit if you'd rather change ghost globally</td></tr>
+      <tr><td>Fix wave included three out-of-list items that render inside migrated surfaces: TaskModal priority pills tokenized, reply-all switch now counts CC, attachments-tab header aligned to the section-header pattern</td><td>Slight scope growth beyond the literal spec file list</td></tr>
+      <tr><td>Parked as follow-ups (not fixed): TooltipContent <code>text-xs</code> ×15 (hoist to the base once), <code>formatBytes</code> ×4 duplication, QuickReplyBar + inline composer can stack in the single-message view, two a11y polish items on Radix triggers, warning-tint alpha variance, tablet one-frame mount flash, <code>tasks/page.tsx</code> raw-palette badges</td><td>Known cosmetic/structural debt, listed so it isn't silent</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Review trail</h2>
+<ul>
+  <li>Every task got a fresh implementer + independent spec/quality review; findings that triggered fix rounds: MailDetail tier slip (T5), inert Badge sizing (T7), disabled-item tooltips (T8), event-leak call sites (T11).</li>
+  <li>Final whole-branch review (most capable model, all 17 pre-fix commits): no Criticals, 7 Importants — all fixed in one wave and re-review-verified, including the WCAG contrast lift and a render-loop <code>scrollIntoView</code> on the new hot path.</li>
+  <li>Verification: 264/264 tests, <code>tsc</code> clean, production build green, acceptance greps zero across all nine files.</li>
+</ul>
+
+<p class="footnote">Proposal: <a href="https://claude.ai/code/artifact/cf867071-dbdc-4117-9931-5fb04a9e0290">Finish Pass proposal</a> · Plan: <a href="https://claude.ai/code/artifact/59940657-3f82-46ef-a2d8-8f2bc4f06996">implementation plan</a> · Detailed acceptance evidence: <a href="https://claude.ai/code/artifact/15b18669-7e1d-40e1-b148-0f420ad5e39b">verification report</a>. Work committed directly on <code>ft-hyperscale</code> per your standing preference; nothing pushed.</p>
+</body>
+</html>

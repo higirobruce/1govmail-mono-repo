@@ -1,0 +1,103 @@
+<title>Ask 1Gov</title>
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/921576a6-3020-47cf-b9c8-b43fa96ace94 — content-faithful, original styling not preserved -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #ffffff; --surface: #f7f7f5; --ink: #1a1a1a; --ink-soft: #55585c; --ink-faint: #8a8d90;
+    --line: #e0e0dc; --accent: #0f6f5c; --accent-soft: #e3f0ec; --code-bg: #f0f0ee;
+    --good: #1e7f4e; --good-bg: #1e7f4e14; --warn: #9a5b00; --warn-bg: #fbf3e4;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+      --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+      --good: #56c77e; --good-bg: #56c77e1a; --warn: #e0a44e; --warn-bg: #2a2216;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+    --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+    --good: #56c77e; --good-bg: #56c77e1a; --warn: #e0a44e; --warn-bg: #2a2216;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: "Inter", system-ui, sans-serif; font-size: 16px; line-height: 1.65; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.6rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.3rem); font-weight: 700; letter-spacing: -0.01em; line-height: 1.18; margin: 0 0 0.6rem; }
+  h2 { font-size: 1.25rem; font-weight: 700; margin: 2.4rem 0 0.8rem; }
+  p, li, td { color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent); }
+  ul, ol { padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.45rem; }
+  code, .mono { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); border-radius: 4px; padding: 0.08em 0.35em; }
+  .lede { color: var(--ink-soft); margin: 0 0 1.6rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 0.8rem 0 1.3rem; }
+  th, td { text-align: left; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; font-size: 0.68rem; font-weight: 700; border-radius: 999px; padding: 0.1rem 0.6rem; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+  .pill.rec { color: var(--good); background: var(--good-bg); }
+  .pill.rej { color: var(--warn); background: var(--warn-bg); }
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; padding: 0.8rem 1.1rem; margin: 1rem 0; }
+  .flow { font-family: var(--mono); font-size: 0.8rem; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1.1rem; overflow-x: auto; white-space: pre; color: var(--ink-soft); margin: 0.6rem 0 1rem; line-height: 1.8; }
+  footer, .foot { font-size: 0.85rem; color: var(--ink-faint); margin-top: 2.8rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+</style>
+<main>
+  <p class="eyebrow">Design for sign-off · AI Phase 3a · 5 Sep 2026</p>
+  <h1>Ask 1Gov: one question box over everything you have</h1>
+  <p class="lede">Phase 3a builds the retrieval core: doc embeddings beside the existing mail embeddings, one server-side RAG endpoint that fuses <strong>mail + docs + calendar</strong>, and the Ask panel promoted from a mail-page feature to an app-wide one. Unlike phases 1–2, this touches the API and the database — one new table, one new worker, one widened endpoint. Phase 3b (dossier, meeting prep) builds on this later.</p>
+
+  <div class="callout"><strong>Your calls, locked in:</strong> two runs (3a now, 3b later) · Ask available app-wide · retrieval = mail + docs vectors + a lightweight calendar leg · docs coverage = <strong>own + invited</strong> docs.</div>
+
+  <h2>1 · Doc embeddings — per-document, access checked at query time</h2>
+  <p>Your "own + invited" choice settles the key architecture question. Embeddings are keyed by <strong>document, not user</strong>: one set of vectors per doc, and every query joins through a live access predicate — owner <em>or</em> a current invite matching the asker's email. Because access is evaluated at answer time, a revoked invite disappears from Ask instantly; nothing is ever re-embedded when sharing changes.</p>
+  <ul>
+    <li><strong>New table <code>document_embeddings</code></strong> — mirrors <code>message_embeddings</code>: <code>documentId, chunkIndex, model, chunkText, embedding vector(1024), failed, extractedAt</code>, plus <code>sourceUpdatedAt</code> (the doc's <code>updatedAt</code> at embed time — the re-embed trigger). Same hand-written HNSW cosine index, same "never let prisma drop it" migration caveat, cascade on document delete.</li>
+    <li><strong>Doc text extraction, server-side</strong>: a new shared <code>docJsonToText</code> — a plain recursive walker over the TipTap JSON (the pattern <code>getDebugInfo</code> already uses), deliberately NOT <code>generateHTML</code>, so unknown node types degrade to skipped nodes instead of throws. Title becomes the header line of chunk 0.</li>
+    <li><strong>Chunker generalized</strong>: <code>chunkForEmbedding</code> splits into a text-in core plus the existing email adapter (same export, zero behavior change, existing tests stay green) and a new doc adapter. Docs get a higher chunk cap (12 × 1500 chars ≈ 18k chars) since documents run longer than emails and aren't a rolling cache.</li>
+    <li><strong>Fourth cron worker</strong>, same skeleton as the other three (minute tick, <code>pickFairBatch</code> fairness, 3-strike tombstones): candidates are docs with non-empty <code>content</code> whose <code>updatedAt</code> is newer than their embeddings (or that have none). Edits re-embed within a minute of the REST autosave. Known, accepted limit: collab sessions persist to <code>yjsState</code> continuously but <code>content</code> only on autosave — embeddings track the autosaved JSON, which is the same freshness the REST API itself sees.</li>
+  </ul>
+
+  <h2>2 · Retrieval — three legs, one fused answer</h2>
+  <div class="flow">question → [ mail vectors | doc vectors (ACL join) | calendar keyword+date leg | Zimbra keyword leg ]
+        → RRF fusion → typed sources s1…sN → fenced prompt → streamed answer with [s2] citations</div>
+  <ul>
+    <li><code>RetrievalService</code> gains the docs leg (cosine search joined against the owner-or-invite predicate) and a <strong>calendar leg</strong>: keyword match over title/location/description/attendees of the user's events in a −30/+90-day window, ordered by proximity to now — deterministic SQL, no embeddings, so "what do I have with MINIJUST next week?" costs nothing new.</li>
+    <li><code>rrfFuse</code> generalizes from <code>messageId</code> to a typed key; each leg's failure sets a per-leg <code>degraded</code> flag exactly as today (an Ollama outage degrades to keyword-only answers, never an error).</li>
+    <li>Sources become typed: <code>{ type: 'mail' | 'doc' | 'event', … }</code> end to end — retrieval, SSE <code>sources</code> frame, and the panel's source rail, which gets per-type icons and header lines (<em>Document: Title · updated…</em> / <em>Event: Title · Tue 10:00</em>).</li>
+    <li>The prompt keeps every existing mandate (fenced untrusted content, cite-or-say-so, alias-only references, no links) — doc and event sources are fenced as <code>DOCUMENT</code>/<code>EVENT</code> the same way mail is fenced as <code>EMAIL</code>. The alias whitelist still means the model cannot mint a link to anything the server didn't vouch for.</li>
+    <li>The endpoint stays server-side RAG: <code>POST /ai/inbox-chat</code> is renamed <code>POST /ai/ask</code> (same DTO + a new optional <code>scope</code>), same 20/min throttle, same SSE protocol, same no-sources short-circuit. <code>CHAT_MODEL</code> still picked server-side.</li>
+  </ul>
+
+  <h2>3 · The app-wide Ask panel</h2>
+  <ul>
+    <li><code>AskInboxPanel</code> moves to <code>components/ai/AskPanel.tsx</code> and mounts once in the app shell, driven by a small <code>useAskStore</code> (open/collapsed/prefill/scope) so any page can open it. The mail page's rail button, FAB, and <code>?ask=</code> deep link all re-point at the store — behavior on mail is unchanged.</li>
+    <li>Non-mail pages get the same floating Ask button bottom-right (the pattern the mail page already has on mobile).</li>
+    <li><strong>Typed source chips navigate</strong>: mail → the message (as today), doc → <code>/docs?open=&lt;id&gt;</code> (phase 2's deep link), event → <code>/calendar?event=&lt;id&gt;</code> (one new deep link, same consume-once pattern).</li>
+    <li><strong>"Ask this document" is a scope, not a second feature</strong>: an Ask button in the docs editor toolbar opens the same panel with a removable scope chip — <em>This document: Title</em>. Scoped asks retrieve only within that doc (post-<code>verifyReadAccess</code>, so invitees can use it; anonymous share-link viewers get no AI, as today). Remove the chip and the same conversation widens to everything.</li>
+  </ul>
+
+  <h2>4 · The alternative we're not doing</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Option</th><th></th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Per-document vectors + query-time ACL</td><td><span class="pill rec">Chosen</span></td><td>One embedding per doc regardless of sharing; revocations take effect instantly; the ACL is one JOIN/EXISTS predicate reused by both Ask legs.</td></tr>
+      <tr><td>Per-user vectors (duplicate per invitee)</td><td><span class="pill rej">Rejected</span></td><td>Simpler SQL but N copies of every shared doc, stale vectors when invites change, and a re-embed storm on every share.</td></tr>
+      <tr><td>Client-side docs leg</td><td><span class="pill rej">Rejected</span></td><td>Would fork the RAG path in two places and leak full chunk text to the browser; the server-side prepare/stream design is the security boundary worth keeping.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Cross-cutting</h2>
+  <ul>
+    <li><strong>Migration:</strong> one new table + indexes. Additive only — no changes to existing tables, no data backfill needed (the worker backfills organically). Deploys to the VMs need <code>prisma migrate deploy</code> this time (first schema change since phase 4).</li>
+    <li><strong>Testing:</strong> api — worker candidate selection/re-embed trigger, ACL predicate (owner/invitee/revoked/stranger), calendar leg, typed fusion, prompt building per type (jest, mirroring the existing embed-worker and retrieval specs); shared — <code>docJsonToText</code> walker + doc chunker (vitest); web — store, scope chip behavior, typed chip navigation (vitest).</li>
+    <li><strong>Guardrails unchanged and extended:</strong> injection detection runs on doc chunks too; a suspicious doc gets the same amber banner treatment as a suspicious email.</li>
+    <li><strong>Rough size:</strong> comparable to phase 2 — roughly 10–12 plan tasks, this time split across api (5–6), shared (2), web (3–4).</li>
+  </ul>
+
+  <p class="foot">Approve and I'll write the spec to <code>docs/superpowers/specs/2026-09-05-ai-phase3a-ask-1gov-design.md</code>, then the implementation plan. 3b (relationship dossier + meeting prep pack) gets its own design after this lands.</p>
+</main>

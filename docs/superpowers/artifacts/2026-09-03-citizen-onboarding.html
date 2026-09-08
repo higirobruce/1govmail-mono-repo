@@ -1,0 +1,125 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/9e62ac51-b6b1-4bf6-bc07-acd332a7305e — content-faithful, original styling not preserved -->
+<title>Citizen Onboarding</title>
+<style>
+  body { max-width: 740px; margin: 0 auto; padding: 2rem 1.25rem 4rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; color: #211D18; background: #FAF9F5; }
+  @media (prefers-color-scheme: dark) { body { color: #EAE6DE; background: #171310; } }
+  code, pre, .mono { font-family: ui-monospace, "SF Mono", monospace; }
+  code { font-size: 0.9em; background: rgba(127,127,127,0.12); border-radius: 4px; padding: 0.05em 0.35em; }
+  pre { font-size: 0.85rem; line-height: 1.6; background: rgba(127,127,127,0.08); border-radius: 8px; padding: 1rem; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  h1 { font-size: 2rem; margin: 0 0 0.5rem; }
+  h2 { font-size: 1.3rem; margin: 2.2rem 0 0.6rem; }
+  h3 { font-size: 1.05rem; margin: 1.4rem 0 0.4rem; }
+  .eyebrow { font-family: ui-monospace, monospace; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.6; }
+  .sub { opacity: 0.85; max-width: 60ch; }
+  .chip { font-family: ui-monospace, monospace; font-size: 0.72rem; padding: 0.2rem 0.6rem; border: 1px solid #999; border-radius: 999px; margin-right: 0.5rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; margin: 0.8rem 0; }
+  th, td { border-bottom: 1px solid #ccc; padding: 0.5rem 0.6rem; text-align: left; vertical-align: top; }
+  th { font-family: ui-monospace, monospace; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.6; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  .rule { background: rgba(23,90,64,0.08); border-left: 3px solid #175A40; border-radius: 0 8px 8px 0; padding: 0.7rem 1rem; margin: 1rem 0; }
+  .steps { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; padding: 0; margin: 1rem 0; }
+  .steps li { flex: 1 1 8rem; border: 1px solid #ccc; border-radius: 8px; padding: 0.7rem 0.8rem; min-width: 8rem; }
+  .steps .k { font-family: ui-monospace, monospace; font-size: 0.65rem; letter-spacing: 0.08em; text-transform: uppercase; color: #175A40; display: block; margin-bottom: 0.25rem; }
+  .steps b { display: block; }
+  .steps small { opacity: 0.7; display: block; margin-top: 0.2rem; }
+  .tag { display: inline-block; font-family: ui-monospace, monospace; font-size: 0.65rem; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 999px; padding: 0.1rem 0.5rem; margin-left: 0.4rem; }
+  .tag.keep { background: rgba(23,90,64,0.12); color: #175A40; }
+  .tag.throw { background: rgba(122,83,0,0.12); color: #7A5300; }
+  .tag.no { background: rgba(163,39,31,0.12); color: #A3271F; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ccc; opacity: 0.7; font-size: 0.85rem; }
+</style>
+
+<p class="eyebrow">Consent Platform · Design Spec · 2026-09-03</p>
+<h1>Citizen Onboarding</h1>
+<p class="sub">How a citizen goes from "I have a national ID and a phone" to "I'm signed into My Consents" — with no username, no password, and no biometric data ever held by the platform.</p>
+<div>
+  <span class="chip">supersedes eid-mock</span>
+  <span class="chip">engine: zero changes</span>
+  <span class="chip">status: draft for review</span>
+</div>
+
+<h2>0. Problem &amp; decisions</h2>
+<p>Portal v1's citizen login is a mocked e-ID realm with username/password — cumbersome, and passwords are exactly what a national digital ID should eliminate. Working assumptions: every citizen has a national ID (NID), a mobile phone, and an email. NIDA's SDID project enrolls citizen biometrics.</p>
+<div class="rule"><strong>The correcting insight:</strong> SDID has no citizen-facing pages. It is a registry — personal data and biometrics, no passwords — exposing lookup and 1:1 biometric verification APIs. A registry cannot run a login ceremony, so <strong>the platform runs the ceremony</strong> and SDID answers questions.</div>
+<table>
+<tr><th>Decision</th><th>Choice</th></tr>
+<tr><td>Deliverable</td><td>Target design <em>and</em> a faithful working implementation now — SDID integration later is an adapter swap, not a redesign.</td></tr>
+<tr><td>Trust anchor</td><td>SDID is the registry of truth; the platform owns the ceremony end to end.</td></tr>
+<tr><td>Ceremony</td><td>NID → SMS code → biometric step at first proofing; device biometrics (WebAuthn) for returning visits.</td></tr>
+<tr><td>SDID surface</td><td>Assumed: lookup by NID + 1:1 biometric verify. Liveness is SDID's job. Top of the asks list (Appendix A).</td></tr>
+</table>
+
+<h2>1. Architecture</h2>
+<p><strong>New permanent component — the citizen IdP</strong> <span class="tag keep">keeper</span>: a small standalone OIDC provider at top-level <code>idp/</code> (Node + <code>oidc-provider</code>). Server-rendered ceremony screens, Zerano tokens, trilingual (Kinyarwanda default), mobile-first, WCAG 2.2 AA. Its three jobs: render the ceremony, talk to the registry through an adapter, and issue standard OIDC tokens to the platform Keycloak.</p>
+<p><strong>The adapter is the SDID seam</strong> <span class="tag throw">swappable</span>: <code>lookup(nid)</code> and <code>verifyBiometric(nid, capture)</code>. A fake implementation ships now (seed registry); the real SDID client replaces it on integration day. Nothing else moves.</p>
+<p><strong>Unchanged:</strong> the <code>consent</code> realm brokers to the citizen IdP under alias <code>sdid</code> — same mapper chain as today (NID claim → attribute → re-emitted as <code>sub</code>; hardcoded role <code>individual</code>; <code>idp=sdid</code>; auto-create on first login). Portal changes one config value. <strong>Engine: zero changes</strong> — token contract stays <code>sub</code> = NID.</p>
+<p><strong>Retired:</strong> the <code>eid-mock</code> realm and its username/password users. Passwords cease to exist anywhere in the citizen path.</p>
+<p><strong>Now ours to own:</strong> OTP sending (SMS gateway interface), biometric capture transport (transient pass-through), ceremony security (rate limits, lockouts, anti-enumeration, audit), and returning-visit convenience (WebAuthn).</p>
+
+<h2>2. The ceremony</h2>
+<h3>First visit</h3>
+<ul class="steps">
+  <li><span class="k">Step 1</span><b>Your ID</b><small>16-digit NID, one field. Language carries over from the portal.</small></li>
+  <li><span class="k">Step 2</span><b>The code</b><small>SMS to the registered phone (ending •••45). 6 digits, 5-min life, 5 tries.</small></li>
+  <li><span class="k">Step 3</span><b>Prove it's you</b><small>One selfie → SDID verify → image discarded. First proofing only.</small></li>
+  <li><span class="k">Step 4</span><b>Faster next time</b><small>Optional: enroll this device's own Face ID / fingerprint. Never blocks.</small></li>
+</ul>
+<p>No camera or permission denied → step 3 is skipped and the token records the difference: <code>amr: otp</code> vs <code>otp bio</code>. That one field is what lets sensitive actions demand biometric-level assurance later, without redesign.</p>
+<h3>Returning visit</h3>
+<p>Enrolled device (recognized by a cookie set at enrollment): <em>"Sign in as Aline U.?"</em> → OS biometric prompt → in. Two seconds; no NID, no SMS, no SDID call. Any failure or "Not you?" falls back silently to NID + OTP. Un-enrolled device: NID + OTP — biometric proofing is a first-time event, not a per-login toll.</p>
+<h3>Failure paths</h3>
+<table>
+<tr><th>Case</th><th>Behavior</th></tr>
+<tr><td>Unknown NID</td><td>"We can't find this ID number. Check it and try again." Honest — registry membership is near-universal — with hard rate limits per NID and per device/IP, and uniform timing.</td></tr>
+<tr><td>Wrong / expired code</td><td>Inline error with remaining attempts; expiry sends a fresh code.</td></tr>
+<tr><td>Biometric mismatch</td><td>One retry, then a hard stop: "We couldn't confirm it's you. Please visit a NIDA service point." This is the fraud path.</td></tr>
+<tr><td>SMS / SDID down</td><td>"We can't sign you in right now. Try again in a few minutes."</td></tr>
+<tr><td>Stale ceremony</td><td>10-minute state TTL; restarts cleanly.</td></tr>
+</table>
+
+<h2>3. Security &amp; data handling</h2>
+<h3>What the citizen IdP stores — and refuses to store</h3>
+<table>
+<tr><th>Data</th><th>Stored?</th><th>Rule</th></tr>
+<tr><td>NID</td><td>Yes</td><td>The account key; platform-wide contract.</td></tr>
+<tr><td>Display name</td><td>Yes</td><td>For the "Sign in as…" screen.</td></tr>
+<tr><td>WebAuthn credentials</td><td>Yes</td><td>Public keys only.</td></tr>
+<tr><td>OTP</td><td>Hashed, 5-min TTL</td><td>Never plaintext at rest.</td></tr>
+<tr><td>Phone / email</td><td><span class="tag no">no</span></td><td>Fetched fresh from the registry each ceremony, used, dropped.</td></tr>
+<tr><td>Biometric capture</td><td><span class="tag no">never</span></td><td>In memory for the one verify call, then gone. Enforced by test, not just policy.</td></tr>
+<tr><td><code>amr</code></td><td>Token only</td><td><code>otp</code> or <code>otp bio</code>; carried, not persisted.</td></tr>
+</table>
+<h3>The adapter interfaces</h3>
+<pre><code>Registry (SDID):   lookup(nid) → { names, phoneMasked, phoneForOtp, email? } | NOT_FOUND
+                   verifyBiometric(nid, capture) → MATCH | NO_MATCH | UNAVAILABLE
+SMS gateway:       send(phone, message) → SENT | FAILED</code></pre>
+<div class="rule">Liveness detection is SDID's responsibility — it owns the biometric science; we own transport and disposal.</div>
+<h3>Threat cases</h3>
+<ul>
+<li><strong>NID fishing / enumeration</strong> — rate limits per NID and per device+IP; uniform timing; burst alerts.</li>
+<li><strong>SIM swap / OTP interception</strong> — the honest residual risk of OTP. Mitigations: biometric step at first proofing; <code>amr</code> lets sensitive actions demand more than OTP-only.</li>
+<li><strong>Phishing</strong> — WebAuthn credentials are origin-bound; the ceremony URL is stable behind the Keycloak redirect; OTP screens ask for nothing but the code.</li>
+<li><strong>Replay / CSRF / state</strong> — PKCE, single-use codes, signed state, 10-minute TTL.</li>
+<li><strong>Token theft</strong> — short-lived ES256 tokens, JWKS validation, rotation from day one.</li>
+<li><strong>Us as the threat</strong> — a breach of the citizen IdP yields no phone numbers, no biometrics, no passwords.</li>
+</ul>
+<p>Audit events (<code>lookup</code>, <code>otp_sent</code>, <code>otp_ok/fail</code>, <code>bio_ok/fail</code>, <code>credential_enrolled</code>, <code>lockout</code>) carry NID + timestamp + outcome only.</p>
+
+<h2>4. Dev mock behavior &amp; testing</h2>
+<p><strong>Fake registry:</strong> seed citizens including the edge cases — one with no email, one reserved NID that always fails biometric verify (the fraud path must be demo-able), one that simulates SDID <code>UNAVAILABLE</code>.</p>
+<p><strong>OTP in dev:</strong> the dev SMS adapter delivers to a <code>/dev/inbox</code> page; <code>DEV_FIXED_OTP</code> pins the code for e2e. Ceremony code never knows these exist.</p>
+<p><strong>Biometrics in dev:</strong> real capture UI with an always-MATCH fake adapter (except the mismatch NID); headless e2e uses Chromium's fake camera. Returning visits are real WebAuthn end to end, exercised with Playwright's virtual authenticator.</p>
+<p><strong>Dev stack:</strong> citizen IdP joins <code>dev-stack.sh</code> on port 5177; broker alias <code>sdid</code>; the <code>eid-mock</code> realm file is deleted; <code>sdid-smoke.sh</code> scripts the ceremony with the fixed OTP and proves the token chain to the engine.</p>
+<p><strong>Tests:</strong> ceremony state machine unit tests (every transition and failure); OTP hash/TTL/lockout; adapter contract tests against <em>both</em> implementations; a <strong>no-storage test</strong> asserting zero capture bytes on disk or in logs after a full proofing run; reworked e2e golden path (first visit → portal journey → sign out → returning visit via device biometric) plus the mismatch hard stop; axe on every ceremony screen; spec-silence and i18n-completeness gates extended; <code>make ci</code> green with the engine untouched.</p>
+
+<h2>Appendix A — Asks to NIDA</h2>
+<ol>
+<li>Confirm the SDID API surface: lookup by NID (names + registered phone) and 1:1 biometric verification. <strong>Blocking question: is the NID itself released to relying platforms?</strong> Our data model keys individuals by it.</li>
+<li>Liveness detection inside SDID's verify API.</li>
+<li>API authentication for platform callers (mTLS / private_key_jwt), rate limits, availability targets.</li>
+<li>Assurance metadata in verify responses (match score / threshold policy).</li>
+<li>Retention guarantee: verification captures not retained beyond the verify call, or a published policy.</li>
+</ol>
+
+<footer>Source of record: <code>docs/specs/2026-09-03-citizen-onboarding-design.html</code> on branch <code>citizen-onboarding</code> · Companion to the Citizen Portal design (2026-08-24)</footer>

@@ -12,6 +12,10 @@ import { api } from '@/lib/api';
 import { AIClient } from '@/lib/ai/client';
 import { CUSTOM_INSTRUCTIONS_MAX_CHARS } from '@/lib/ai/prompt';
 import { isValidSenderAddress } from './blocked-senders-helpers';
+import {
+  normalizeProfileDraft, mergeSuggestions, AI_PROFILE_FIELD_MAX_CHARS,
+  type AiProfileDraft,
+} from './ai-profile-helpers';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -23,7 +27,7 @@ import { toast } from 'sonner';
 import {
   User, Pen, Shield, Mail, Loader2, Plus, Trash2,
   Check, ChevronRight, ArrowLeft, RotateCcw, FileSignature,
-  Palmtree, Settings2, Bot, AlertTriangle, Ban,
+  Palmtree, Settings2, Bot, AlertTriangle, Ban, IdCard, Sparkles,
   Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
   Monitor, LogOut,
 } from 'lucide-react';
@@ -80,7 +84,7 @@ interface SettingsData {
   signatures: Signature[];
 }
 
-type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'security';
+type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'ai-profile' | 'security';
 
 // ── Toggle Switch ──────────────────────────────────────────────────────────────
 
@@ -480,6 +484,7 @@ export default function SettingsPage() {
         {!AI_LOCKED && (
           <NavItem icon={Bot}           label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
         )}
+        <NavItem icon={IdCard}        label="AI Profile"    active={section === 'ai-profile'}  onClick={() => setSection('ai-profile')} />
         <NavItem icon={Shield}        label="Security"      active={section === 'security'}    onClick={() => setSection('security')} />
       </div>
 
@@ -498,6 +503,7 @@ export default function SettingsPage() {
               {section === 'blocked-senders' && <BlockedSendersSection />}
               {section === 'preferences' && <PreferencesSection  data={data} onUpdate={loadSettings} />}
               {section === 'ai' && !AI_LOCKED && <AISection />}
+              {section === 'ai-profile'  && <AiProfileSection />}
               {section === 'security'    && <SecuritySection     data={data} />}
             </>
           ) : null}
@@ -1295,13 +1301,10 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
 function AISection() {
   const enabled = useAIStore((s) => s.enabled);
   const model = useAIStore((s) => s.model);
-  const customInstructions = useAIStore((s) => s.customInstructions);
   const setEnabled = useAIStore((s) => s.setEnabled);
   const setModel = useAIStore((s) => s.setModel);
-  const setCustomInstructions = useAIStore((s) => s.setCustomInstructions);
 
   const [draftModel, setDraftModel] = useState(model);
-  const [draftInstructions, setDraftInstructions] = useState(customInstructions);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<null | { ok: boolean; detail: string }>(null);
   const [installed, setInstalled] = useState<string[] | null>(null);
@@ -1326,7 +1329,6 @@ function AISection() {
 
   const handleSave = () => {
     setModel(draftModel.trim());
-    setCustomInstructions(draftInstructions.trim());
     toast.success('AI settings saved');
   };
 
@@ -1413,26 +1415,6 @@ function AISection() {
           )}
         </div>
 
-        <div>
-          <div className="flex items-center justify-between">
-            <Label className="text-xs text-muted-foreground">Custom instructions</Label>
-            <span className="text-[0.6875rem] text-muted-foreground/60 tabular-nums">
-              {draftInstructions.length}/{CUSTOM_INSTRUCTIONS_MAX_CHARS}
-            </span>
-          </div>
-          <textarea
-            value={draftInstructions}
-            onChange={(e) => setDraftInstructions(e.target.value.slice(0, CUSTOM_INSTRUCTIONS_MAX_CHARS))}
-            placeholder="e.g. Keep replies under three sentences. Sign summaries with bullet points. Prefer formal wording."
-            rows={3}
-            maxLength={CUSTOM_INSTRUCTIONS_MAX_CHARS}
-            className="mt-1 w-full rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/20 focus:border-primary/30 resize-y"
-          />
-          <p className="text-[0.6875rem] text-muted-foreground/70 mt-1">
-            Style preferences applied to every AI action (Summarize, Rewrite, Suggest Reply). They never override the built-in safety rules, and small models may follow them loosely.
-          </p>
-        </div>
-
         <div className="flex items-center gap-2 pt-1">
           <Button size="sm" onClick={handleSave} className="h-8">
             Save changes
@@ -1465,6 +1447,172 @@ function AISection() {
         </div>
       </div>
     </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AI Profile section
+// ══════════════════════════════════════════════════════════════════════════════
+
+const AI_PROFILE_LANGUAGES: Array<{ value: string; label: string }> = [
+  { value: '',   label: 'Auto' },
+  { value: 'en', label: 'English' },
+  { value: 'fr', label: 'French' },
+  { value: 'rw', label: 'Kinyarwanda' },
+];
+
+const EMPTY_AI_PROFILE_DRAFT: AiProfileDraft = {
+  jobTitle: '', institution: '', department: '', language: '', instructions: '',
+};
+
+function AiProfileSection() {
+  const setCustomInstructions = useAIStore((s) => s.setCustomInstructions);
+
+  const [draft, setDraft] = useState<AiProfileDraft>(EMPTY_AI_PROFILE_DRAFT);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const profile = await api.settings.getAiProfile();
+        if (cancelled) return;
+        setDraft({
+          jobTitle: profile.jobTitle ?? '',
+          institution: profile.institution ?? '',
+          department: profile.department ?? '',
+          language: profile.language ?? '',
+          instructions: profile.instructions ?? '',
+        });
+      } catch (err: any) {
+        toast.error('Failed to load AI profile', { description: err?.message });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleSuggest = async () => {
+    setSuggesting(true);
+    try {
+      const suggestions = await api.settings.getAiProfileSuggestions();
+      setDraft((current) => mergeSuggestions(current, suggestions));
+    } catch (err: any) {
+      toast.error('Failed to fetch suggestions', { description: err?.message });
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const payload = normalizeProfileDraft(draft);
+      await api.settings.updateAiProfile(payload);
+      setCustomInstructions(payload.instructions);
+      toast.success('AI profile saved');
+    } catch (err: any) {
+      toast.error('Failed to save AI profile', { description: err?.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/40" />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <SectionHeader
+        title="AI Profile"
+        description="Used to personalize AI answers and drafts. Never overrides security rules."
+      />
+
+      <div className="space-y-4 max-w-sm">
+        <div>
+          <Label className="text-xs text-muted-foreground">Job title</Label>
+          <Input
+            value={draft.jobTitle}
+            onChange={(e) => setDraft((d) => ({ ...d, jobTitle: e.target.value.slice(0, AI_PROFILE_FIELD_MAX_CHARS) }))}
+            maxLength={AI_PROFILE_FIELD_MAX_CHARS}
+            placeholder="e.g. Registrar"
+            className="mt-1"
+          />
+        </div>
+
+        <div>
+          <Label className="text-xs text-muted-foreground">Institution</Label>
+          <Input
+            value={draft.institution}
+            onChange={(e) => setDraft((d) => ({ ...d, institution: e.target.value.slice(0, AI_PROFILE_FIELD_MAX_CHARS) }))}
+            maxLength={AI_PROFILE_FIELD_MAX_CHARS}
+            placeholder="e.g. Ministry of Education"
+            className="mt-1"
+          />
+        </div>
+
+        <div>
+          <Label className="text-xs text-muted-foreground">Department</Label>
+          <Input
+            value={draft.department}
+            onChange={(e) => setDraft((d) => ({ ...d, department: e.target.value.slice(0, AI_PROFILE_FIELD_MAX_CHARS) }))}
+            maxLength={AI_PROFILE_FIELD_MAX_CHARS}
+            placeholder="e.g. IT"
+            className="mt-1"
+          />
+        </div>
+
+        <div>
+          <Label className="text-xs text-muted-foreground">Language</Label>
+          <div className="mt-1">
+            <Select
+              value={draft.language}
+              onChange={(v) => setDraft((d) => ({ ...d, language: v }))}
+              options={AI_PROFILE_LANGUAGES}
+            />
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Custom instructions</Label>
+            <span className="text-[0.6875rem] text-muted-foreground/60 tabular-nums">
+              {draft.instructions.length}/{CUSTOM_INSTRUCTIONS_MAX_CHARS}
+            </span>
+          </div>
+          <textarea
+            value={draft.instructions}
+            onChange={(e) => setDraft((d) => ({ ...d, instructions: e.target.value.slice(0, CUSTOM_INSTRUCTIONS_MAX_CHARS) }))}
+            placeholder="e.g. Keep replies under three sentences. Sign summaries with bullet points. Prefer formal wording."
+            rows={3}
+            maxLength={CUSTOM_INSTRUCTIONS_MAX_CHARS}
+            className="mt-1 w-full rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-primary/20 focus:border-primary/30 resize-y"
+          />
+          <p className="text-[0.6875rem] text-muted-foreground/70 mt-1">
+            Style preferences applied to every AI action (Summarize, Rewrite, Suggest Reply). They never override the built-in safety rules, and small models may follow them loosely.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          <Button size="sm" onClick={handleSave} disabled={saving} className="h-8">
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+            Save changes
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleSuggest} disabled={suggesting} className="h-8 gap-1.5">
+            {suggesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            Suggest from directory
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

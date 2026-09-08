@@ -42,3 +42,16 @@ If it reports the collision: verify column parity, then
   web per target (`scripts/build-web-154.sh` / `build-web-155.sh`).
 - Desktop `apps/desktop/api-bundle` is stale (7 of 15 modules) — regenerate before any
   desktop release.
+
+## Addendum — AI personalization P1+P2 (2026-09-08 pm)
+
+- **Custom AI instructions now live on the account, not the device.** Existing device-local
+  instructions migrate up automatically the first time that device syncs (one-time, per-user-keyed —
+  a device previously used by someone else never migrates their text into your account). Other
+  devices pick up the account value on next load.
+- New Settings → **AI Profile** section (visible even on builds with the AI model locked): job
+  title, institution, department, preferred language, and the instructions editor (moved here from
+  the AI Assistant section). "Suggest from directory" pre-fills blank fields from the Zimbra GAL.
+- AI answers and drafts now know who they're written for/as, tiered per surface: the agent and Ask
+  see the full profile; meeting prep sees the identity card; dossiers see the identity line only;
+  summaries/cards see nothing. Deploy requires migration `add_user_ai_profiles` (one pending per VM).

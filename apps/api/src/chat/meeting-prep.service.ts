@@ -30,7 +30,14 @@ export class MeetingPrepService {
     const event = await this.prisma.calendarEvent.findFirst({ where: { id: eventId, userId } });
     if (!event) throw new NotFoundException('event not found');
 
-    const me = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    const me = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        email: true,
+        displayName: true,
+        aiProfile: { select: { instructions: true, jobTitle: true, institution: true, department: true, language: true } },
+      },
+    });
     const myEmail = me?.email?.toLowerCase() ?? '';
     const attendees = (Array.isArray(event.attendees) ? (event.attendees as Array<{ email?: string; name?: string }>) : [])
       .map((a) => ({ email: a?.email?.toLowerCase() ?? '', name: a?.name ?? null }))
@@ -92,7 +99,13 @@ export class MeetingPrepService {
       : undefined;
 
     const subject = `${event.title} — ${event.startAt.toLocaleString()}`;
-    const system = buildGenerationPrompt('meeting_prep', subject, internal, extra);
+    // Card yes, style instructions stripped: a meeting prep pack has its own
+    // fixed section structure (see GENERATION_TASKS.meeting_prep) that the
+    // account owner's free-form writing-style instructions shouldn't bend.
+    const profile = me?.aiProfile || me?.displayName || me?.email
+      ? { ...me?.aiProfile, instructions: null, displayName: me?.displayName ?? null, email: me?.email ?? null }
+      : null;
+    const system = buildGenerationPrompt('meeting_prep', subject, internal, extra, profile);
 
     return {
       kind: 'meeting_prep',

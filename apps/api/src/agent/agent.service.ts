@@ -52,15 +52,27 @@ export class AgentService {
     // select that and pass it through as userName (null when unset).
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true, displayName: true },
+      select: {
+        email: true,
+        displayName: true,
+        aiProfile: { select: { instructions: true, jobTitle: true, institution: true, department: true, language: true } },
+      },
     });
     const turnId = randomUUID();
     const startedAt = Date.now();
     let aliasCount = 0;
+    const aliasByKey = new Map<string, string>();
     const ctx: ToolContext = {
       userId,
       userEmail: user?.email ?? '',
-      nextAlias: () => `s${++aliasCount}`,
+      aliasFor: (type, id) => {
+        const k = `${type}:${id}`;
+        const hit = aliasByKey.get(k);
+        if (hit) return hit;
+        const alias = `s${++aliasCount}`;
+        aliasByKey.set(k, alias);
+        return alias;
+      },
       emitChart: (spec) => emit('chart', spec),
     };
 
@@ -71,6 +83,10 @@ export class AgentService {
           userEmail: user?.email ?? '',
           userName: user?.displayName ?? null,
           nowIso: new Date().toISOString(),
+          // Identity (name/email) is already stated in this prompt's own
+          // "acting for" line — omit displayName/email here so the profile
+          // block doesn't render a duplicate identity line.
+          profile: user?.aiProfile ? { ...user.aiProfile } : null,
         }),
       },
       ...turns.slice(-12).map((t) => ({ role: t.role, content: t.content.slice(0, 4000) }) as AgentMessage),

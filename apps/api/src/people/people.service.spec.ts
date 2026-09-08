@@ -13,6 +13,16 @@ function makePrisma() {
 }
 
 describe('PeopleService.dossier', () => {
+  // PeopleService.dossier's upcoming/past split compares event startAt
+  // against Date.now() — pin the clock to NOW so fixtures dated around it
+  // (e.g. the sharedEvents test below) stay deterministic as real time passes.
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(NOW);
+  });
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
   it('rejects the user own address (case-insensitively)', async () => {
     const svc = new PeopleService(makePrisma());
     await expect(svc.dossier('u1', 'ME@risa.gov.rw')).rejects.toThrow(BadRequestException);

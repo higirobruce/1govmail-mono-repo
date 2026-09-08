@@ -4,6 +4,7 @@ import ThreadMessage, { type ThreadMessageMeta } from './ThreadMessage';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { clearBodyCache } from '@/lib/mailBodyCache';
 import { api } from '@/lib/api';
+import { useAIStore } from '@/stores/ai.store';
 
 // Collapse → expand → collapse mid-fetch used to strand loadingBody=true
 // forever: the effect cleanup set cancelled=true, the finally skipped
@@ -18,6 +19,11 @@ vi.mock('@/lib/api', () => ({
       downloadAttachment: vi.fn(),
     },
   },
+}));
+
+let mockUserEmail: string | undefined = 'me@risa.gov.rw';
+vi.mock('@/stores/auth.store', () => ({
+  useAuthStore: (sel: any) => sel({ user: { email: mockUserEmail } }),
 }));
 
 const meta: ThreadMessageMeta = {
@@ -85,5 +91,29 @@ describe('ThreadMessage body loading', () => {
     view.rerender(row(true));
 
     await waitFor(() => expect(screen.getByText('hello body')).toBeInTheDocument());
+  });
+});
+
+describe('ThreadMessage dossier entry button', () => {
+  afterEach(() => cleanup());
+
+  it('renders a dossier button for another sender even when AI is disabled', () => {
+    mockUserEmail = 'me@risa.gov.rw';
+    useAIStore.setState({ enabled: false });
+
+    render(row(false));
+
+    const button = screen.getByRole('button', { name: 'Ann' });
+    expect(button).toHaveAttribute('title', 'Open dossier');
+  });
+
+  it('renders no dossier button when the message is from the logged-in user (case-insensitive)', () => {
+    mockUserEmail = 'A@X.RW'; // meta.fromEmail is 'a@x.rw'
+    useAIStore.setState({ enabled: true });
+
+    render(row(false));
+
+    expect(screen.queryByRole('button', { name: 'Ann' })).not.toBeInTheDocument();
+    expect(screen.getByText('Ann')).toBeInTheDocument();
   });
 });

@@ -50,6 +50,8 @@ model User {
   messageEmbeddings      MessageEmbedding[]
   aiGenerations          AiGeneration[]
   agentToolLogs          AgentToolLog[]
+  attachmentEmbeddings   AttachmentEmbedding[]
+  aiProfile              UserAiProfile?
 
   @@map("users")
 }
@@ -164,6 +166,7 @@ model Message {
   folder     Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
   card       MessageCard?
   embeddings MessageEmbedding[]
+  attachmentEmbeddings AttachmentEmbedding[]
 
   @@unique([userId, zimbraId])
   @@index([userId, folderId])
@@ -596,6 +599,28 @@ model DocumentEmbedding {
   @@map("document_embeddings")
 }
 
+model AttachmentEmbedding {
+  id          String   @id @default(cuid())
+  messageId   String
+  userId      String
+  partId      String                        // Zimbra MIME part id ("!" on tombstone rows)
+  filename    String
+  mimeType    String
+  chunkIndex  Int                           // 0-based; <= 6 chunks per attachment
+  model       String                        // embed-model tag; model change => re-extract
+  chunkText   String                        // embedded text — prompt context + snippet
+  embedding   Unsupported("vector(1024)")?  // null on tombstone rows; written via $executeRaw
+  failed      Boolean  @default(false)      // tombstone: extraction/embedding gave up
+  extractedAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, partId, chunkIndex, model])
+  @@index([userId, extractedAt])
+  @@map("attachment_embeddings")
+}
+
 enum InviteRole {
   VIEWER
   EDITOR
@@ -718,4 +743,22 @@ model CalendarEvent {
   @@unique([userId, zimbraId])
   @@index([userId, startAt])
   @@map("calendar_events")
+}
+
+// ─── AI profile ──────────────────────────────────────────────────────────────
+
+model UserAiProfile {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  instructions String?             // free-text preferences, hard cap 500 chars (DTO-enforced)
+  jobTitle     String?             // cap 80
+  institution  String?             // cap 80
+  department   String?             // cap 80
+  language     String?             // 'en' | 'fr' | 'rw' | null(auto)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_ai_profiles")
 }

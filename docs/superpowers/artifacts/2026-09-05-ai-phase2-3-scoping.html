@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/bab96827-e4ed-41b4-82d0-e3ca31e97ef7 — content-faithful, original styling not preserved -->
+<title>AI Across the Modules</title>
+<style>
+  :root {
+    --bg: #ffffff; --surface: #ffffff; --surface-2: #f4f5f7;
+    --ink: #23262b; --ink-2: #4b525c; --ink-3: #767e88;
+    --line: #dde1e6; --accent: #2f6fb0;
+    --good: #1e7f4e; --good-soft: #e3f3ea;
+    --mid: #2f6fb0; --mid-soft: #e6eefa;
+    --warn: #a97a00; --warn-soft: #faf1d9;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16191d; --surface: #1c2026; --surface-2: #22262d;
+      --ink: #e9ecef; --ink-2: #b7bec7; --ink-3: #8a9099;
+      --line: #333941; --accent: #6ea6df;
+      --good: #7fcda3; --good-soft: #163429;
+      --mid: #6ea6df; --mid-soft: #16263a;
+      --warn: #dcb65a; --warn-soft: #362c14;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16191d; --surface: #1c2026; --surface-2: #22262d;
+    --ink: #e9ecef; --ink-2: #b7bec7; --ink-3: #8a9099;
+    --line: #333941; --accent: #6ea6df;
+    --good: #7fcda3; --good-soft: #163429;
+    --mid: #6ea6df; --mid-soft: #16263a;
+    --warn: #dcb65a; --warn-soft: #362c14;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: .72rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); margin: 0 0 .6rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.2rem); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; margin: 0 0 .8rem; text-wrap: balance; }
+  .lede { color: var(--ink-2); margin: 0 0 2rem; max-width: 68ch; }
+  h2 { font-size: 1.15rem; font-weight: 700; margin: 2.4rem 0 .7rem; letter-spacing: -.01em; }
+  p, li, td { color: var(--ink-2); }
+  strong { color: var(--ink); font-weight: 600; }
+  ul { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: .55rem; }
+  code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: .06em .3em; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin: .8rem 0 1.2rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  th, td { text-align: left; padding: .55rem .85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .68rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { font-weight: 600; color: var(--ink); }
+  .pill { display: inline-block; font-size: .68rem; font-weight: 600; border-radius: 999px; padding: .08rem .5rem; white-space: nowrap; }
+  .pill.s { background: var(--good-soft); color: var(--good); }
+  .pill.m { background: var(--mid-soft); color: var(--mid); }
+  .pill.l { background: var(--warn-soft); color: var(--warn); }
+  footer { font-size: .82rem; color: var(--ink-3); margin-top: 2.4rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Scoping proposal · for discussion</p>
+  <h1>AI across Docs, Tasks, Calendar &amp; Contacts</h1>
+  <p class="lede">Mail already has the full AI stack: a locked self-hosted model, streaming with citations, injection scrubbing, an embeddings pipeline (bge-m3 + pgvector), a commitments extractor, and now a shared working indicator. Everything below reuses that plumbing — nothing needs new infrastructure.</p>
+
+  <h2>Docs</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Idea</th><th>Effort</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td>Writing assistant</td><td><span class="pill s">S–M</span></td><td>Rewrite / adjust tone / summarize the selection inside the TipTap editor — a direct port of mail's rewrite tasks into DocsEditor's bubble menu. The quickest win in the whole list.</td></tr>
+      <tr><td>Draft from thread</td><td><span class="pill m">M</span></td><td>"Turn this email thread into a memo / minutes" — picks a gov template, fills it from the thread, opens in Docs. Bridges the two modules and shows off the template system.</td></tr>
+      <tr><td>Ask this document</td><td><span class="pill m">M</span></td><td>Doc-scoped Q&amp;A with cited passages. Needs a <code>doc_embeddings</code> table — the message-embeddings worker generalizes to a source-typed embeddings pipeline.</td></tr>
+      <tr><td>Minutes formatter</td><td><span class="pill s">S</span></td><td>Paste raw notes into the Meeting Minutes template → structured attendees / decisions / action items.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Tasks</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Idea</th><th>Effort</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td>Thread → tasks</td><td><span class="pill s">S</span></td><td>The commitments extractor already finds action items in mail — add "create task" one click away, prefilled with title, source link, and deadline. Highest value-to-effort in this document.</td></tr>
+      <tr><td>Natural-language entry</td><td><span class="pill s">S</span></td><td>"Remind me Friday to chase the TOR" → parsed into title + due date + priority in the task composer.</td></tr>
+      <tr><td>Workload digest</td><td><span class="pill s">S</span></td><td>The morning briefing gains a section joining open tasks and commitments — extends an existing panel rather than adding UI.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Calendar</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Idea</th><th>Effort</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td>Smart event from mail</td><td><span class="pill m">M</span></td><td>Drag-mail-to-calendar already exists — AI prefills title, time, location, and attendees from the email body instead of leaving a blank form.</td></tr>
+      <tr><td>NL event creation</td><td><span class="pill s">S</span></td><td>"Steering committee Tuesday 10–11 with Erick and Tricia" → parsed event.</td></tr>
+      <tr><td>Meeting prep pack</td><td><span class="pill l">M–L</span></td><td>Before each meeting: a brief built from related threads, docs, and open commitments with the attendees — the flagship "staff of three" feature, built on cross-module embeddings.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Contacts</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Idea</th><th>Effort</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td>Relationship dossier</td><td><span class="pill m">M</span></td><td>Open a contact → recent interactions, open commitments both ways, waiting-on status. The data all exists; this is retrieval + one summarization call.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Cross-cutting decisions to make once</h2>
+  <ul>
+    <li><strong>One Ask, wider scope:</strong> should "Ask your inbox" grow into "Ask 1Gov" (mail + docs + calendar), or stay per-module? Recommendation: one entry point, source-typed citations — the intelligence rail is already the home for it.</li>
+    <li><strong>Generalize the embeddings pipeline:</strong> <code>message_embeddings</code> → a source-typed table (<code>source: mail|doc</code>), one worker. Prerequisite for doc Q&amp;A and meeting prep.</li>
+    <li><strong>Guardrails travel with the stack:</strong> injection scrubbing, mandatory citations, and the suspicious-content flag apply to every module from day one — they're already library code.</li>
+    <li><strong>Model policy:</strong> the new <code>NEXT_PUBLIC_AI_MODEL</code> lock governs all modules automatically; nothing new needed.</li>
+  </ul>
+
+  <h2>Suggested order</h2>
+  <div class="tw"><table>
+    <thead><tr><th>Phase</th><th>Contents</th><th>Why first</th></tr></thead>
+    <tbody>
+      <tr><td>1 · Quick wins</td><td>Thread → tasks · Docs writing assistant · NL task entry · Workload digest</td><td>All S-effort, all reuse existing extractors/editors; visible across three modules within days.</td></tr>
+      <tr><td>2 · Bridges</td><td>Draft from thread · Smart event from mail · NL event creation</td><td>Connect mail to docs/calendar — the "one system" story.</td></tr>
+      <tr><td>3 · Retrieval</td><td>Generalized embeddings → Ask 1Gov · Ask this document · Relationship dossier · Meeting prep pack</td><td>Needs the pipeline decision; biggest wow, biggest lift.</td></tr>
+    </tbody>
+  </table></div>
+
+  <footer>Grounded in the current codebase (TipTap docs editor, commitments extractor, drag-to-calendar targets, pgvector on PG16, remote locked model). Pick a phase-1 subset and I'll spec it properly.</footer>
+</main>
+</body>
+</html>

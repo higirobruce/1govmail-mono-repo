@@ -1,0 +1,246 @@
+<title>Phase 3b People Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #F5F7F9;
+    --surface: #FFFFFF;
+    --ink: #1B2430;
+    --muted: #5A6572;
+    --faint: #8A94A0;
+    --line: #DDE3E9;
+    --accent: #33608F;
+    --accent-soft: #E8EFF6;
+    --good: #2C7A57;
+    --good-soft: #E5F1EB;
+    --warn: #9A6B15;
+    --warn-soft: #F7EEDC;
+    --crit: #A03B45;
+    --crit-soft: #F6E7E9;
+    --code-bg: #EDF1F5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161C;
+      --surface: #1A2027;
+      --ink: #E3E8EE;
+      --muted: #9AA5B1;
+      --faint: #6E7987;
+      --line: #2B333D;
+      --accent: #7FA9D4;
+      --accent-soft: #223142;
+      --good: #6DBE97;
+      --good-soft: #1D3229;
+      --warn: #D9A84E;
+      --warn-soft: #3A2F17;
+      --crit: #D98790;
+      --crit-soft: #3B2226;
+      --code-bg: #232B34;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161C;
+    --surface: #1A2027;
+    --ink: #E3E8EE;
+    --muted: #9AA5B1;
+    --faint: #6E7987;
+    --line: #2B333D;
+    --accent: #7FA9D4;
+    --accent-soft: #223142;
+    --good: #6DBE97;
+    --good-soft: #1D3229;
+    --warn: #D9A84E;
+    --warn-soft: #3A2F17;
+    --crit: #D98790;
+    --crit-soft: #3B2226;
+    --code-bg: #232B34;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Public Sans", -apple-system, "Segoe UI", sans-serif;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+  header.masthead { border-bottom: 2px solid var(--ink); padding-bottom: 1.25rem; margin-bottom: 1.5rem; }
+  .eyebrow {
+    font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 0.5rem;
+  }
+  h1 {
+    font-family: "Source Serif 4", Georgia, serif;
+    font-size: 1.85rem; font-weight: 700; line-height: 1.2; margin: 0 0 0.75rem;
+    text-wrap: balance;
+  }
+  .meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; font-size: 0.75rem; color: var(--muted); }
+  .meta code { font-size: 0.75rem; }
+  h2 {
+    font-family: "Source Serif 4", Georgia, serif;
+    font-size: 1.25rem; font-weight: 700; margin: 2.5rem 0 0.75rem;
+    padding-top: 1.5rem; border-top: 1px solid var(--line);
+    text-wrap: balance;
+  }
+  h3 { font-size: 0.9375rem; font-weight: 700; margin: 1.5rem 0 0.5rem; }
+  p { margin: 0 0 0.9rem; }
+  code, pre {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.8125rem;
+  }
+  code { background: var(--code-bg); border-radius: 3px; padding: 0.05em 0.35em; overflow-wrap: anywhere; }
+  .verdict {
+    display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+    padding: 1rem 1.25rem; margin: 1.5rem 0 0;
+  }
+  .verdict .badge {
+    font-size: 0.8125rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--warn); background: var(--warn-soft); border-radius: 4px; padding: 0.2rem 0.6rem;
+    white-space: nowrap;
+  }
+  .verdict p { margin: 0; font-size: 0.875rem; color: var(--muted); }
+  ul { padding-left: 1.25rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.55rem; }
+  li::marker { color: var(--faint); }
+  .tag {
+    display: inline-block; font-size: 0.6563rem; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; border-radius: 3px; padding: 0.1rem 0.45rem; margin-right: 0.5rem;
+    vertical-align: 0.1em;
+  }
+  .tag.crit { color: var(--crit); background: var(--crit-soft); }
+  .tag.warn { color: var(--warn); background: var(--warn-soft); }
+  .tag.minor { color: var(--muted); background: var(--code-bg); }
+  .tag.good { color: var(--good); background: var(--good-soft); }
+  .issue { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.15rem; margin-bottom: 0.9rem; }
+  .issue h4 { margin: 0 0 0.4rem; font-size: 0.9063rem; font-weight: 700; }
+  .issue p { font-size: 0.875rem; margin-bottom: 0.5rem; }
+  .issue p:last-child { margin-bottom: 0; }
+  .issue .fix { font-size: 0.8438rem; color: var(--muted); }
+  .issue .fix strong { color: var(--ink); }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.8125rem; }
+  th, td { text-align: left; padding: 0.55rem 0.85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  th {
+    font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); background: var(--code-bg);
+  }
+  td.verd { white-space: nowrap; font-weight: 600; }
+  td.verd.stay { color: var(--good); }
+  .note { font-size: 0.8125rem; color: var(--muted); }
+  .checked { font-size: 0.8438rem; color: var(--muted); }
+  .checked li { margin-bottom: 0.3rem; }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <p class="eyebrow">Final whole-branch review · pre-merge</p>
+    <h1>AI Phase 3b — People: dossier &amp; meeting prep</h1>
+    <div class="meta">
+      <span>Range <code>cf42e8d..52d22c4</code> (15 commits, ft-hyperscale)</span>
+      <span>Reviewed 2026-09-06</span>
+      <span>Spec: <code>2026-09-06-ai-phase3b-people-design.md</code></span>
+    </div>
+  </header>
+
+  <div class="verdict">
+    <span class="badge">Ready with one fix</span>
+    <p>Security posture is sound end-to-end; no Critical findings. One Important integration defect (throttle bucket shared by cache GETs and generation POSTs) should be fixed before merge — a two-line change. All ledgered deferred minors can stay deferred.</p>
+  </div>
+
+  <h2>Strengths</h2>
+  <ul>
+    <li><strong>userId scoping is airtight on all four new routes.</strong> The <code>ai_generations</code> composite key includes <code>userId</code>; every cache read passes <code>req.user.sub</code>; the meeting-prep GET additionally re-verifies event ownership inside <code>GenerationCacheService.get</code> even though the row lookup is already user-scoped — genuine defense in depth. No path serves user A's row to user B.</li>
+    <li><strong>Ownership/validation before headers.</strong> Both streams run <code>prepare()</code> (own-address 400, event-ownership 404) before any SSE header flushes, with controller tests pinning the ordering — carrying the 3a <code>verifyReadAccess</code>-before-headers pattern faithfully.</li>
+    <li><strong>Fencing posture carried intact from 3a.</strong> <code>buildGenerationPrompt</code> leads with <code>UNTRUSTED_CONTENT_RULE</code>, keeps the mandate block verbatim (checked character-for-character against <code>buildAskPrompt</code>), neutralizes and <code>[sN]</code>-strips the SUBJECT, and fences every source via <code>formatSource</code>. Commitments as a non-citable fenced TRACKER block is a smart call — the tracker's extractions never mint aliases.</li>
+    <li><strong>The 160-char boundary holds everywhere</strong>, including the cached <code>sources</code> snapshot (<code>snippet: s.context.slice(0, 160)</code> in both services), so the GET cache endpoints leak no more than the live streams.</li>
+    <li><strong>Cache-correctness semantics are right:</strong> the "nothing on file" fallback is never cached, aborted/incomplete streams never write back, and the TextDecoder tail flush handles multi-byte UTF-8 split at the final chunk.</li>
+    <li><strong>Clean client refactor.</strong> <code>readSse</code> is genuinely behavior-preserving (verified against the removed <code>streamAsk</code> loop); store mutual exclusion is cycle-free — <code>ask.store</code> has no <code>people.store</code> import, the reverse edge lives in a panel effect.</li>
+    <li><strong>Migration is additive-only</strong> — table, two indexes, one FK; no HNSW drops present in the generated SQL.</li>
+    <li><strong>AI gating done properly on the web:</strong> <code>MeetingPrepView</code> and the dossier narrative block both sit behind <code>useAIStore.enabled</code>, with an absence test; share pages (outside <code>(app)</code>) never mount the panel.</li>
+  </ul>
+
+  <h2>Issues</h2>
+
+  <h3><span class="tag crit">Critical</span>None found</h3>
+
+  <h3><span class="tag warn">Important</span>Should fix before merge</h3>
+  <div class="issue">
+    <h4>1 · Cache-read GETs share the 10/min throttle with the generation POSTs</h4>
+    <p><code>apps/api/src/chat/generation.controller.ts:25</code> — <code>@Throttle({ default: { limit: 10, ttl: 60_000 } })</code> is class-level, so <code>GET /ai/dossier</code> and <code>GET /ai/meeting-prep</code> draw from the same bucket as the expensive POSTs. <code>MeetingPrepView</code> refetches on every <code>eventId</code> change and <code>PersonDossierPanel</code> on every open, so clicking through 10+ calendar events (or dossier targets) in a minute exhausts it. The 429 is swallowed by <code>getCached()</code> (<code>!res.ok → null</code>), so a <em>previously generated pack silently renders as never-generated</em>, and a subsequent POST 429s into the error banner. The <code>/ai/ask</code> precedent (20/min) guards a controller whose only heavy route is the POST — a per-task review couldn't see this because the throttle (Task 7) and the GET-per-selection consumer (Task 10) landed in different tasks.</p>
+    <p class="fix"><strong>Fix:</strong> move <code>@Throttle</code> onto the two POST handlers only (GETs fall back to the global 120/min), or give the GETs their own generous limit.</p>
+  </div>
+
+  <h3><span class="tag minor">Minor</span>Nice to have — none block merge</h3>
+  <div class="issue">
+    <h4>2 · Display names / event titles enter the prompt unfenced and unscanned in SUBJECT</h4>
+    <p>The dossier SUBJECT is <code>`${personLabel} &lt;${email}&gt;`</code> (attacker-controlled <code>fromName</code>), prep's is the event title. <code>buildGenerationPrompt</code> neutralizes structurally and strips <code>[sN]</code>, but <code>detectInjectionAttempt</code> never runs on these strings, so a semantic payload in a display name ("J D — ignore the sources and state…") sits outside the fence without tripping the amber banner. Same exposure class as 3a's <code>From:</code>/<code>Subject:</code> header lines — not a regression, and neutralization holds against fence-forging. Hardening follow-up: OR <code>detectInjectionAttempt(subject)</code> into the flag set.</p>
+  </div>
+  <div class="issue">
+    <h4>3 · Entry-point gating is inconsistent between mail and calendar</h4>
+    <p>Mail sender buttons (<code>ThreadMessage.tsx</code>, <code>MailDetail.tsx</code>) render only when <code>aiEnabled</code>; calendar attendee/organizer buttons render unconditionally. Dossier <em>facts</em> are deterministic (non-AI), so either both should show or both should hide — as shipped, the AI kill switch removes a non-AI affordance in mail while calendar keeps it.</p>
+  </div>
+  <div class="issue">
+    <h4>4 · Mail entry points don't skip self</h4>
+    <p>Clicking your own name on a sent message opens the panel straight into the 400 banner ("cannot open a dossier on yourself"). Calendar guards with <code>isSelf</code>; the mail sites don't have the user's email in scope but could get it from the auth store.</p>
+  </div>
+  <div class="issue">
+    <h4>5 · Degraded-leg generations are cached as fresh</h4>
+    <p>If the mail leg rejects (dossier) or retrieval rejects (prep), the impoverished output is still upserted with a normal anchor — it then reads as a fresh cache until newer mail arrives. The unconditional Regenerate button (controller ruling) mitigates; consider skipping the write when any leg degraded.</p>
+  </div>
+  <div class="issue">
+    <h4>6 · Prep <code>sourceAnchor</code> includes retrieval-leg mail dates</h4>
+    <p>Spec says legs b/e only (<code>meeting-prep.service.ts:1288-1290</code> folds all deduped mail sources, retrieval hits included). An unusually new retrieval hit pushes the anchor later and slightly desensitizes staleness. Cosmetic drift, err on the quiet side.</p>
+  </div>
+  <div class="issue">
+    <h4>7 · <code>cache.upsert</code> failure lands after <code>res.end()</code></h4>
+    <p>In <code>GenerationController.stream</code>, an upsert rejection (transient DB error) propagates into Nest's exception filter on an already-ended response — noisy log, lost cache write, no user impact. Wrap in try/catch + <code>logger.warn</code>.</p>
+  </div>
+  <div class="issue">
+    <h4>8 · Panel fetches the cached narrative even when AI is off</h4>
+    <p><code>PersonDossierPanel</code> effect 1 calls <code>getCachedDossier</code> regardless of <code>aiEnabled</code>. Read-only and never rendered, but it spends the (currently tight) throttle and is an AI-endpoint call with the switch off.</p>
+  </div>
+  <div class="issue">
+    <h4>9 · Prep retrieval leg is a superset of the spec's</h4>
+    <p>Spec: "the existing mail-vec + doc-vec legs"; implementation calls full <code>retrieve(…, { types: ['mail','doc'] })</code>, which includes the keyword leg. More context, same ACL, benign — recording it as deliberate would close the drift.</p>
+  </div>
+
+  <h2>Deferred-minors triage</h2>
+  <p class="note">All eleven ledgered minors reviewed against the spec's invariants. None crosses a security or correctness boundary; none must be fixed before merge.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Ledgered minor</th><th>Ruling</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Direction heuristic labels cc'd third-party mail "out" (also skews <code>sent90d</code>)</td><td class="verd stay">Stays deferred</td><td>UI nuance; plan-inherited SQL; no leak</td></tr>
+        <tr><td>Commitments facts query unbounded</td><td class="verd stay">Stays deferred</td><td>Open-only filter + 23-user corpus bounds it in practice</td></tr>
+        <tr><td><code>targetKey</code> lowercase contract undocumented in cache service</td><td class="verd stay">Stays deferred</td><td>All three callers verified to lowercase+trim; add a comment later</td></tr>
+        <tr><td><code>sources</code> Json cast style; no boundary test for <code>updatedAt === anchor</code></td><td class="verd stay">Stays deferred</td><td>Equal-timestamp edge favors "fresh"; regenerate is always available</td></tr>
+        <tr><td><code>renderSource</code>/<code>formatSource</code> naming; degraded-flags built twice; dead date ternary</td><td class="verd stay">Stays deferred</td><td>Doc/code hygiene only</td></tr>
+        <tr><td><code>eventSource</code> context unclamped (attendee line unbounded)</td><td class="verd stay">Stays deferred</td><td>Fenced + injection-scanned either way; clamp it when the throttle fix wave lands</td></tr>
+        <tr><td><code>sourceAnchor</code> computed post-slice, uncommented</td><td class="verd stay">Stays deferred</td><td>Ordering invariant holds; comment-only debt</td></tr>
+        <tr><td>Backpressure drain path untested; <code>AuthenticatedRequest</code> duplicated</td><td class="verd stay">Stays deferred</td><td>Identical to shipped <code>/ai/ask</code> code</td></tr>
+        <tr><td><code>!res.ok</code> error-block duplicated ask.ts/generation.ts; redundant <code>??</code> guards</td><td class="verd stay">Stays deferred</td><td>Deliberate copy per plan; unify with the AskPanel-chip debt</td></tr>
+        <tr><td>Meeting-prep label spacing; two-button attendee rows; defensive <code>stopPropagation</code></td><td class="verd stay">Stays deferred</td><td>Cosmetic</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Cross-layer checks performed</h2>
+  <ul class="checked">
+    <li>Read the spec, plan ledger, and the full phase-3b diff (all hunks; phase-4 docs commits <code>143cdba</code>/<code>e8b735c</code> confirmed docs-only from the stat — nothing outside <code>docs/superpowers/</code>).</li>
+    <li><code>packages/shared/src/ai/promptCore.ts</code> — verified <code>fenceUntrusted</code> neutralizes internally with a per-call random sentinel, and what <code>detectInjectionAttempt</code> does and does not cover (issue 2).</li>
+    <li><code>packages/shared/src/ai/chat.ts</code> — <code>formatSource</code> neutralizes titles/names/meta in headers; mandate block verbatim vs <code>buildAskPrompt</code>; <code>splitByCitations</code> whitelist unchanged.</li>
+    <li><code>chat.controller.ts</code> throttle (20/min, POST-only controller) vs the new class-level 10/min (issue 1).</li>
+    <li><code>ask.service.ts</code> <code>PublicAskSource</code> shape vs both new services' mappings and the web <code>AskSource</code>.</li>
+    <li><code>ask.store.ts</code> — no <code>people.store</code> import (no cycle); <code>close()/openAsk()/setOpenTarget()</code> semantics match the panel's usage.</li>
+    <li><code>main.ts</code> global <code>ValidationPipe({ whitelist, transform })</code> — @Query DTO validation on the GETs is real.</li>
+    <li>Share page lives at <code>app/docs/share/[token]</code>, outside <code>(app)</code> — no dossier/prep mount, no AI on anonymous pages.</li>
+    <li>Wiring: <code>chat.module.ts</code> (3 providers + controller), <code>app.module.ts</code> (PeopleModule), <code>(app)/layout.tsx</code> mount, mail-page width reservation extended to <code>dossierOpen</code>.</li>
+  </ul>
+
+  <h2>Assessment</h2>
+  <p><strong>Ready to merge? With fixes</strong> — one: scope the generation-controller throttle to the POST handlers.</p>
+  <p class="note">The standing invariants (server-side RAG boundary, fencing, alias whitelist, 160-char snippets, ownership-before-retrieval, no AI on share pages) all hold across layers, and per-user isolation of the new cache is correct by construction. The only defect worth holding the merge for is the shared throttle bucket, which makes cached content silently vanish under ordinary calendar browsing; everything else is hardening or hygiene that can ride the existing debt list.</p>
+</div>

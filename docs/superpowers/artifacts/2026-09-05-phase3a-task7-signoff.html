@@ -1,0 +1,132 @@
+<title>Task 7 Sign-off — /ai/ask</title>
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/28b37321-8a96-4d1b-9979-27c0b225156d — content-faithful, original styling not preserved -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #ffffff; --surface: #f7f7f5; --ink: #1a1a1a; --ink-soft: #55585c; --ink-faint: #8a8d90;
+    --line: #e0e0dc; --accent: #0f6f5c; --accent-soft: #e3f0ec; --code-bg: #f0f0ee;
+    --good: #1e7f4e; --good-bg: #1e7f4e14;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+      --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+      --good: #56c77e; --good-bg: #56c77e1a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+    --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+    --good: #56c77e; --good-bg: #56c77e1a;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: "Inter", system-ui, sans-serif; font-size: 16px; line-height: 1.65; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.6rem; }
+  h1 { font-size: clamp(1.6rem, 4vw, 2.1rem); font-weight: 700; letter-spacing: -0.01em; line-height: 1.2; margin: 0 0 0.6rem; }
+  h2 { font-size: 1.2rem; font-weight: 700; margin: 2.2rem 0 0.8rem; }
+  p, li, td { color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent); }
+  ul, ol { padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.5rem; }
+  code, .mono { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); border-radius: 4px; padding: 0.08em 0.35em; }
+  .subline { color: var(--ink-soft); max-width: 60ch; margin: 0 0 1.2rem; }
+  .meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; font-family: var(--mono); font-size: 0.8rem; color: var(--ink-faint); margin: 0 0 1rem; }
+  .meta strong { color: var(--ink-soft); font-weight: 500; }
+  .verdict { display: flex; align-items: center; gap: 1rem; background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 10px; padding: 1rem 1.3rem; margin: 1.4rem 0 0; }
+  .verdict .badge { flex: none; width: 2rem; height: 2rem; border-radius: 50%; background: var(--accent); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+  .verdict strong { display: block; color: var(--accent); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.3rem; margin: 0.8rem 0 1.3rem; }
+  .risk { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.3rem; margin: 0 0 1rem; }
+  .risk .rhead { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
+  .risk .letter { font-weight: 700; color: var(--accent); }
+  .risk .chip { margin-left: auto; font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; background: var(--good-bg); color: var(--good); padding: 0.2rem 0.55rem; border-radius: 5px; }
+  .evidence { display: block; background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; padding: 0.7rem 0.9rem; margin-top: 0.6rem; font-family: var(--mono); font-size: 0.8rem; overflow-x: auto; white-space: pre; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 0.8rem 0 1.3rem; }
+  th, td { text-align: left; padding: 0.55rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); }
+  tr:last-child td { border-bottom: none; }
+  .empty-state { color: var(--ink-faint); font-style: italic; }
+  footer, .foot { font-size: 0.85rem; color: var(--ink-faint); margin-top: 2.8rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+</style>
+<main>
+  <p class="eyebrow">SDD plan · 2026-09-05-ai-phase3a-ask-1gov · Task 7 of N</p>
+  <h1><em>/ai/ask</em> — service &amp; controller rename, typed public sources</h1>
+  <p class="subline">Task-scoped spec-compliance review. Base <code>3b1b392</code> → head <code>f8005fb</code>, single commit, 14 files touched.</p>
+  <div class="meta">
+    <span><strong>API tests</strong> 45 chat / 197 total</span>
+    <span><strong>Web tests</strong> 384 (was 386)</span>
+    <span><strong>tsc</strong> clean both sides</span>
+  </div>
+
+  <div class="verdict">
+    <div class="badge">✓</div>
+    <div>
+      <strong>Approved</strong>
+      <span>All three named risks trace clean; the DTO, route, and typed source shape match the brief exactly.</span>
+    </div>
+  </div>
+
+  <h2>Named risks — the three things asked to be checked, checked</h2>
+
+  <div class="risk">
+    <div class="rhead"><span class="letter">a</span><span>Clamping parity with the deleted alias</span><span class="chip">match</span></div>
+    <p>The deleted <code>buildInboxChatPrompt</code> (packages/shared/src/ai/chat.ts) and the reintroduced clamp in <code>ask.service.ts</code> use the identical expression — same ternary, same 14-char <code>'\n\n[…truncated]'</code> accounting, same limits, same order (last turn 2000, earlier turns 1000).</p>
+    <span class="evidence">clampText(t.content, i === turns.length - 1 ? 2000 - 14 : 1000 - 14)</span>
+  </div>
+
+  <div class="risk">
+    <div class="rhead"><span class="letter">b</span><span>Trimmed web test → API coverage</span><span class="chip">equal or stronger</span></div>
+    <p>Deleted from <code>inboxChatCore.test.ts</code>: a delegation-equivalence test (moot — the alias it tested no longer exists) and a clamping test (<code>'a'.repeat(5000)</code>, asserts ≤1000/≤1000/≤2000). The new <code>ask.service.spec.ts</code> test "CRITICAL CARRY-FORWARD" asserts the same three bounds against the real <code>upstreamBody.messages</code>, plus a strict length inequality proving clamping actually fired — not merely that the bound holds. Coverage moved to the right layer, not lost.</p>
+  </div>
+
+  <div class="risk">
+    <div class="rhead"><span class="letter">c</span><span>403 fires before SSE headers flush</span><span class="chip">confirmed</span></div>
+    <p>Traced <code>chat.controller.ts</code>: <code>askService.prepare()</code> is awaited before any <code>res.status</code>/<code>setHeader</code>/<code>flushHeaders</code>/<code>write</code>. Inside <code>prepare()</code>, <code>verifyReadAccess</code> is the first statement — ahead of the prisma email lookup and <code>retrieve()</code>. A new controller spec asserts <code>setHeader</code>, <code>flushHeaders</code>, <code>write</code>, and <code>upstream</code> were never called on the rejected path.</p>
+  </div>
+
+  <h2>Also checked independently</h2>
+  <div class="card">
+    <ul>
+      <li><code>grep -rn "inbox-chat" apps packages</code> re-run directly (not trusted from the report): matches the disclosure exactly — <code>AskInboxPanel.tsx</code>, <code>lib/ai/inboxChat.ts</code>, <code>inboxChat.test.ts</code> (all web, Task 8's job), one harmless comment in <code>inboxChatCore.test.ts:122</code>, one comment in <code>ask.service.ts</code>. No leftover api route, service, or DTO.</li>
+      <li><code>AskScope</code> and <code>retrieve(userId, userEmail, question, scope?)</code> confirmed present in <code>retrieval.service.ts</code> (Task 6) — the import in <code>ask.service.ts</code> resolves against real, already-landed code, not a stub.</li>
+      <li><code>PublicAskSource</code> shape matches the brief field-for-field: <code>alias, type, id, title, fromEmail?, fromName?, date: string, meta?, injectionSuspected, snippet</code>. <code>context</code> is never assigned into the returned object; <code>snippet</code> is exactly <code>context.slice(0, 160)</code>.</li>
+      <li>DTO validation matches: <code>AskScopeDto.types</code> is <code>@IsIn</code> per-element, <code>docId</code> is <code>@IsString</code>, the whole <code>scope</code> is <code>@IsOptional @ValidateNested</code>. Upstream body unchanged: <code>{ model, messages, stream: true, temperature: 0.2, max_tokens: 1024 }</code>.</li>
+    </ul>
+  </div>
+
+  <h2>Strengths</h2>
+  <div class="card">
+    <ul>
+      <li>Access-gate ordering is airtight and independently test-covered from both ends (service unit test + controller integration test), not just asserted in prose.</li>
+      <li>The disclosed 403-vs-404 split (denied → 403 via <code>ForbiddenException</code>, nonexistent → 404 via <code>NotFoundException</code>) is standard Nest exception-filter behavior and was surfaced proactively in the implementer's own report rather than left for review to catch.</li>
+      <li>Module wiring is minimal and correctly scoped — <code>DocsModule</code> exports only <code>DocsService</code>; <code>verifyReadAccess</code> is the one method widened from private to public, with a doc comment pointing at the new caller.</li>
+      <li>No compat alias for the old route, as instructed — clean cutover, not a soft deprecation.</li>
+    </ul>
+  </div>
+
+  <h2>Issues</h2>
+  <h3 style="font-size:1rem;margin-bottom:0.4rem;color:var(--ink-soft);font-weight:600;">Critical (must fix)</h3>
+  <p class="empty-state">None found.</p>
+  <h3 style="font-size:1rem;margin:1.2rem 0 0.4rem;color:var(--ink-soft);font-weight:600;">Important (should fix)</h3>
+  <p class="empty-state">None found.</p>
+  <h3 style="font-size:1rem;margin:1.2rem 0 0.4rem;color:var(--ink-soft);font-weight:600;">Minor (nice to have)</h3>
+  <div class="risk">
+    <p><strong>Dead branch.</strong> In <code>ask.service.ts</code>, the final <code>internal.map(...)</code> that builds <code>PublicAskSource[]</code> re-checks <code>typeof s.date === 'string' ? s.date : s.date.toISOString()</code>, but <code>internal</code> was just built one block above with <code>date: s.date.toISOString()</code> — so the string branch always wins and the ternary is unreachable. Carried over verbatim from the deleted <code>inbox-chat.service.ts</code> (same dead branch existed there), so not a regression — just never cleaned up on this pass.</p>
+  </div>
+  <div class="risk">
+    <p><strong>Pre-existing, out of scope.</strong> Email ACL comparison in <code>verifyReadAccess</code>/<code>getInviteForUser</code> stays case-sensitive exact-match. Flagged again by the implementer as carried over from Task 6, not touched here — correctly left alone rather than scope-crept into this task.</p>
+  </div>
+
+  <h2>Assessment</h2>
+  <div class="tw"><table>
+    <tr><td style="width:12rem;"><span class="mono">Task quality</span></td><td><strong>Approved</strong></td></tr>
+    <tr><td><span class="mono">Reasoning</span></td><td>All three named risks verified against the actual diff rather than the report's prose — clamping is byte-identical to the deleted alias, the trimmed web assertion has an equal-or-stronger API-side replacement, and the 403 gate is traced through both the controller and service to fire strictly before any SSE side effect. DTO, route, and typed-source shape all match the brief with no scope creep and no undisclosed deviation.</td></tr>
+  </table></div>
+
+  <p class="foot">Reviewed against <code>.superpowers/sdd/2026-09-05-ai-phase3a-ask-1gov/task-7-brief.md</code> and <code>task-7-report.md</code>. Diff: <code>review-3b1b392..f8005fb.diff</code>. Tests were not re-run per instructions; results as reported by the implementer.</p>
+</main>

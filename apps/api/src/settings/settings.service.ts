@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { inlineSignatureImages } from '../common/signature-images';
+import { UpdateAiProfileDto } from './dto/ai-profile.dto';
 
 export interface SignatureData {
   name: string;
@@ -71,28 +73,7 @@ export class SettingsService {
     html: string,
     user: { zimbraHost: string; authToken: string | null },
   ): Promise<string> {
-    if (!user.authToken) return html;
-    const regex = /src="(\/home\/[^"]+)"/gi;
-    const matches = [...html.matchAll(regex)];
-    if (!matches.length) return html;
-
-    let processed = html;
-    await Promise.all(
-      matches.map(async ([full, path]) => {
-        try {
-          const { data, contentType } = await this.zimbra.downloadZimbraPath(
-            user.zimbraHost, user.authToken!, path,
-          );
-          const dataUri = `data:${contentType};base64,${data.toString('base64')}`;
-          // Keep the original Zimbra path in data-zimbra-src so the editor can
-          // round-trip it back when saving (avoids the 10 KB signature size limit).
-          processed = processed.split(full).join(`src="${dataUri}" data-zimbra-src="${path}"`);
-        } catch {
-          // Leave original path — image will be missing but the rest renders
-        }
-      }),
-    );
-    return processed;
+    return inlineSignatureImages(this.zimbra, user, html);
   }
 
   /**
@@ -226,5 +207,52 @@ export class SettingsService {
       user.csrfToken ?? undefined,
     );
     return { success: true };
+  }
+
+  // ── AI personalization profile (DB-only; never touches Zimbra) ────────────
+
+  private static readonly AI_PROFILE_SELECT = {
+    instructions: true, jobTitle: true, institution: true, department: true, language: true,
+  } as const;
+
+  async getAiProfile(userId: string) {
+    const row = await this.prisma.userAiProfile.findUnique({
+      where: { userId }, select: SettingsService.AI_PROFILE_SELECT,
+    });
+    return row ?? { instructions: null, jobTitle: null, institution: null, department: null, language: null };
+  }
+
+  async updateAiProfile(userId: string, dto: UpdateAiProfileDto) {
+    const norm = (v?: string | null) => (v == null ? undefined : v.trim() || null);
+    const data = {
+      instructions: norm(dto.instructions), jobTitle: norm(dto.jobTitle),
+      institution: norm(dto.institution), department: norm(dto.department), language: norm(dto.language),
+    };
+    const clean = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
+    await this.prisma.userAiProfile.upsert({
+      where: { userId }, update: clean, create: { userId, ...clean },
+    });
+    return this.getAiProfile(userId);
+  }
+
+  // ── AI profile suggestions (seeded from Zimbra; best-effort, never 5xxs) ──
+
+  /**
+   * Suggestions to seed the AI-profile form from the user's existing Zimbra
+   * GAL entry. Needs Zimbra (via getUser, which 401s if there's no
+   * authToken), but any Zimbra-leg failure past that point degrades to
+   * nulls rather than surfacing a 5xx.
+   */
+  async getAiProfileSuggestions(userId: string) {
+    const user = await this.getUser(userId);
+    const galResult = await this.zimbra
+      .galSelfLookup(user.zimbraHost, user.authToken!, user.email, user.csrfToken ?? undefined)
+      .catch(() => ({ title: null, department: null, company: null }));
+
+    return {
+      jobTitle:    galResult.title,
+      institution: galResult.company,
+      department:  galResult.department,
+    };
   }
 }

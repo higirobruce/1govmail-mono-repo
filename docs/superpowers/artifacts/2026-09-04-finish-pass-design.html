@@ -1,0 +1,221 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/cf867071-dbdc-4117-9931-5fb04a9e0290 — content-faithful, original styling not preserved -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>1Gov Mail Finish Pass</title>
+<style>
+  :root {
+    --bg: #faf9f5; --surface: #ffffff; --surface-2: #f1ede2;
+    --ink: #1c2430; --ink-2: #4d5a68; --ink-3: #85919e;
+    --line: #ddd5c6;
+    --primary: #0f4c81; --primary-soft: #eaf0f6;
+    --accent: #00a1de;
+    --warn: #a97a00; --warn-soft: #fbf0dc;
+    --good: #1e7f4e; --good-soft: #e4f3ea;
+    --crit: #c2333a; --crit-soft: #fbe6e5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --surface: #181e27; --surface-2: #1f2632;
+      --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+      --line: #2b3441;
+      --primary: #4f9fd8; --primary-soft: #16202b;
+      --accent: #43c2ee;
+      --warn: #e3b45a; --warn-soft: #3a2c11;
+      --good: #57caa0; --good-soft: #143427;
+      --crit: #e08782; --crit-soft: #3a1c1c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --surface: #181e27; --surface-2: #1f2632;
+    --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+    --line: #2b3441;
+    --primary: #4f9fd8; --primary-soft: #16202b;
+    --accent: #43c2ee;
+    --warn: #e3b45a; --warn-soft: #3a2c11;
+    --good: #57caa0; --good-soft: #143427;
+    --crit: #e08782; --crit-soft: #3a1c1c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    max-width: 740px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem;
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6;
+  }
+  .eyebrow { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.5rem; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 0.6rem; }
+  .lede { color: var(--ink-2); font-size: 1.05rem; max-width: 42rem; }
+  .meta { color: var(--ink-3); font-size: 0.85rem; margin-bottom: 2rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.5rem; }
+  h3 { font-size: 0.95rem; margin: 1.2rem 0 0.3rem; }
+  p { margin: 0 0 1rem; }
+  section p, section li { color: var(--ink-2); }
+  ul { padding-left: 1.2rem; }
+  li { margin-bottom: 0.4rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 0.05em 0.35em; white-space: nowrap; }
+  .verdict { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem 1.4rem; margin-bottom: 1rem; }
+  .pill { display: inline-block; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.02em; border-radius: 999px; padding: 0.15rem 0.6rem; vertical-align: middle; white-space: nowrap; }
+  .pill.p1 { background: var(--crit-soft); color: var(--crit); }
+  .pill.p2 { background: var(--primary-soft); color: var(--primary); }
+  .pill.effort { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); font-family: ui-monospace, monospace; }
+  .work { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem 1.4rem; margin-bottom: 1rem; }
+  .work header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .work header h3 { margin: 0; font-size: 1.02rem; flex: 1 1 auto; }
+  .work .files { font-size: 0.75rem; color: var(--ink-3); margin-top: 0.8rem; line-height: 1.8; }
+  .now-ref { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin: 0.8rem 0; }
+  @media (max-width: 560px) { .now-ref { grid-template-columns: 1fr; } }
+  .now-ref > div { background: var(--surface-2); border-radius: 8px; padding: 0.7rem 0.9rem; font-size: 0.85rem; }
+  .now-ref .tag { display: block; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 0.3rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 1rem 0; }
+  th, td { text-align: left; padding: 0.55rem 0.85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  td:first-child { font-weight: 600; }
+  .footnote { font-size: 0.8rem; color: var(--ink-3); margin-top: 2.5rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+  .swatches { display: flex; gap: 0.5rem; margin: 0.4rem 0 1rem; flex-wrap: wrap; }
+  .swatch { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--ink-2); font-family: ui-monospace, monospace; }
+  .swatch i { width: 16px; height: 16px; border-radius: 4px; display: inline-block; border: 1px solid var(--line); }
+</style>
+</head>
+<body>
+
+<p class="eyebrow">Design proposal · approved 4 Sep 2026</p>
+<h1>The finish pass: closing the gap between 1Gov Mail and the references</h1>
+<p class="lede">Direction agreed in session: email-native polish (reference image 3 as base), with inline reply, the icon rail, and attachment cards in scope. The codebase audit changed the shape of the work — here's the revised proposal.</p>
+<p class="meta">4 September 2026 · based on an audit of <code>apps/web</code> on branch <code>ft-hyperscale</code></p>
+
+<div class="verdict">
+  <p><strong>The verdict: you already built the features. What's missing is the finish.</strong></p>
+  <p>All three scoped items exist today — an inline reply bar, a collapsible 60px icon rail, and typed attachment tiles. The visual gap between 1Gov Mail and the reference designs comes almost entirely from consistency debt: ~110 ad-hoc Tailwind colors bypassing the state-blue token system, a private type scale of magic rem values, muted text at ten different opacity levels, and hand-rolled buttons where shadcn primitives exist. The references look polished because they speak one visual language everywhere. The single highest-impact change is a consistency pass, not any new component.</p>
+</div>
+
+<h2>Proposed workstreams</h2>
+
+<div class="work">
+  <header>
+    <h3>A · Consistency foundation</h3>
+    <span class="pill p1">Priority 1</span>
+    <span class="pill effort">M–L</span>
+  </header>
+  <p>The pass that makes everything else read as designed. One palette, one type scale, one component language — applied mechanically across the mail surfaces.</p>
+  <ul>
+    <li><strong>Tokens only.</strong> Replace raw palette classes (<code>bg-blue-500/10</code>, <code>text-amber-700</code>, <code>blue-400</code> status pills) with the existing token system. Biggest offenders: <code>AttachmentTile.tsx</code> (~40), <code>ThreadView.tsx</code>, <code>ThreadMessage.tsx</code>, <code>MailList.tsx</code>, <code>ThreadHeader.tsx</code>.</li>
+    <li><strong>Name the type scale.</strong> The magic sizes (<code>text-[0.719rem]</code> and friends) become five named steps in <code>globals.css</code> — sizes paired with weight, tracking, and line-height, so the Inter-done-right look of reference 3 is encoded, not approximated:</li>
+  </ul>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Step</th><th>Size</th><th>Weight</th><th>Tracking</th><th>Used for</th></tr></thead>
+      <tbody>
+        <tr><td>display</td><td>1.375rem</td><td>700</td><td>−0.02em</td><td>Pane headings, empty states — Inter wants negative tracking at this size</td></tr>
+        <tr><td>title</td><td>0.9375rem</td><td>600</td><td>−0.01em</td><td>Thread subject, dialog titles</td></tr>
+        <tr><td>body</td><td>0.875rem</td><td>400 / 600</td><td>0</td><td>Message bodies, compose, list sender (600)</td></tr>
+        <tr><td>ui</td><td>0.8125rem</td><td>400 / 500</td><td>0</td><td>List subject + snippet, buttons, inputs, chips — subject vs snippet differ by weight, not a 1px size step</td></tr>
+        <tr><td>micro</td><td>0.6875rem</td><td>500 / 600</td><td>+0.06em upper</td><td>Section headers, badges, timestamps (tabular-nums)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li><strong>Three tiers of muted, not ten.</strong> Collapse the opacity soup into secondary / tertiary / faint text tokens and border strong / default / faint.</li>
+    <li><strong>Adopt the primitives.</strong> Swap raw <code>&lt;button&gt;</code> elements in the mail views for <code>Button</code> variants; use <code>Badge</code> for pills; replace the hand-rolled row checkbox and sidebar context menu with the <code>ui/</code> components.</li>
+    <li><strong>One avatar.</strong> Fold the three initials implementations into <code>MailAvatar</code>, resolving the colored-circles vs neutral contradiction (neutral wins — it's the documented intent).</li>
+    <li><strong>Fix the two real bugs:</strong> <code>hsl(var(--x))</code> wrapped around oklch variables in <code>globals.css</code> (ProseMirror blockquote/code) and <code>ComposeModal.tsx:1171</code> — those colors silently fail today.</li>
+  </ul>
+</div>
+
+<div class="work">
+  <header>
+    <h3>B · Inline reply, upgraded to a mini-composer</h3>
+    <span class="pill p2">Priority 2</span>
+    <span class="pill effort">M</span>
+  </header>
+  <div class="now-ref">
+    <div><span class="tag">Today</span> <code>QuickReplyBar.tsx</code>: plain textarea, expands to 3 rows, ⌘↵ send, "open full editor" link.</div>
+    <div><span class="tag">Reference</span> A real composer docked in the thread: recipient chips, formatting toolbar, expand control, Send button with presence.</div>
+  </div>
+  <ul>
+    <li>Recipient chips (To, with reply/reply-all switch) so it's clear who receives the reply before sending.</li>
+    <li>Compact formatting toolbar — bold, italic, list, link — appearing when the bar is focused/expanded. Reuse the existing TipTap setup rather than a second editor.</li>
+    <li>Attachment and emoji affordances, a proper primary Send button, and the expand-to-full-compose control kept as the escape hatch into <code>ComposeModal</code>.</li>
+    <li>Visual weight: card surface, hairline border, subtle shadow — it should read as "the reply lives here," not a search box.</li>
+  </ul>
+</div>
+
+<div class="work">
+  <header>
+    <h3>C · Icon rail polish</h3>
+    <span class="pill p2">Priority 2</span>
+    <span class="pill effort">S</span>
+  </header>
+  <div class="now-ref">
+    <div><span class="tag">Today</span> <code>Sidebar.tsx</code> collapses 220px → 60px, persisted. Colored icon chips carry over; no badges or tooltips when collapsed.</div>
+    <div><span class="tag">Reference</span> Slim rail with tooltips, an unread count badge on Inbox, quiet monochrome icons, theme toggle at the foot.</div>
+  </div>
+  <ul>
+    <li>Unread badge on the collapsed Inbox icon (and a dot on folders with unread).</li>
+    <li>Tooltips on every rail item using the existing <code>ui/tooltip</code>.</li>
+    <li>Rail aesthetic: swap the colored icon chips for quiet monochrome icons with the active item picked out in primary — color returns in the expanded state if you want to keep the chips there.</li>
+    <li>Fix the tablet gap: sidebar currently appears only at <code>lg</code> while the reader splits at <code>md</code> — show the rail from <code>md</code> so there's always navigation.</li>
+  </ul>
+</div>
+
+<div class="work">
+  <header>
+    <h3>D · Attachment cards, completed</h3>
+    <span class="pill p2">Priority 3</span>
+    <span class="pill effort">S</span>
+  </header>
+  <div class="now-ref">
+    <div><span class="tag">Today</span> <code>AttachmentTile.tsx</code>: 100×112 typed tiles, thumbnails, hover preview/download. No file size, no bulk action.</div>
+    <div><span class="tag">Reference</span> Cards with type icon, name, <strong>size</strong>, and a "Download All" link on the attachment strip.</div>
+  </div>
+  <ul>
+    <li>Show file size on each tile.</li>
+    <li>"Download All" action on message attachment strips and the thread Attachments tab (zip on the API, or sequential downloads as the cheap first version — decide at implementation).</li>
+    <li>Tile colors move onto tokens as part of workstream A.</li>
+  </ul>
+</div>
+
+<h2>Sequencing &amp; effort</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Order</th><th>Workstream</th><th>Effort</th><th>Why this order</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>A · Consistency foundation</td><td>M–L</td><td>Everything after it lands on clean tokens instead of adding to the debt. Includes the two silent color bugs.</td></tr>
+      <tr><td>2</td><td>C · Icon rail polish</td><td>S</td><td>Small, self-contained, immediately visible; also fixes the tablet nav gap.</td></tr>
+      <tr><td>3</td><td>D · Attachment cards</td><td>S</td><td>Two additive changes to an already-good component.</td></tr>
+      <tr><td>4</td><td>B · Mini-composer</td><td>M</td><td>The largest UX change; benefits from the primitives and tokens being settled first.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Explicitly out of scope</h2>
+<ul>
+  <li><strong>Message list redesign</strong> — deselected in session. The list already has avatars, time grouping, and filter tabs; row colors get touched only via workstream A.</li>
+  <li><strong>Productivity-inbox restructure</strong> (reference image 2's Activity-feed model) — different product, not this pass.</li>
+  <li><strong>Pane resizing / layout re-architecture</strong> — noted in the audit (fixed 300px list), parked unless you pull it in.</li>
+  <li><strong>The two parallel readers</strong> (<code>ThreadView</code> + <code>MailDetail</code> fallback, ~87 KB combined with duplicated email-CSS constants) — a real consolidation candidate, but it's refactoring, not look-and-feel. Flagged for a future pass.</li>
+</ul>
+
+<h2>Palette staying exactly as it is</h2>
+<p>The token system is good — state blue with the Rwanda accent on a warm off-white ground. This proposal enforces it; nothing about the palette itself changes.</p>
+<div class="swatches">
+  <span class="swatch"><i style="background:#0F4C81"></i>primary</span>
+  <span class="swatch"><i style="background:#00A1DE"></i>accent</span>
+  <span class="swatch"><i style="background:#1E7F4E"></i>success</span>
+  <span class="swatch"><i style="background:#E1A100"></i>warning</span>
+  <span class="swatch"><i style="background:#C2333A"></i>destructive</span>
+</div>
+
+<h2>Decisions — resolved 4 Sep 2026</h2>
+<ul>
+  <li><strong>Scope of workstream A:</strong> mail surfaces first, but token names, type steps, and muted tiers are designed app-wide so settings/docs/calendar adopt them later without rework.</li>
+  <li><strong>Mini-composer:</strong> inline becomes the default reply path — Reply/Reply-all in the thread focus the inline composer; the modal is reached via expand.</li>
+  <li><strong>Download All:</strong> cheap sequential downloads now; a zip endpoint is future API work.</li>
+</ul>
+
+<p class="footnote">Prepared from a code audit of <code>apps/web</code> against three reference designs reviewed in session on 4 Sep 2026. Approved with the decisions above · source of record: <code>docs/superpowers/specs/2026-09-04-finish-pass-design.md</code>.</p>
+
+</body>
+</html>

@@ -1,0 +1,255 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/b2661e7a-9883-4893-8093-15d64156ccba — content-faithful, original styling not preserved -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inbox Intelligence</title>
+<style>
+  :root {
+    --bg: #fdfcf9; --card: #ffffff; --ink: #1c2430; --ink-2: #4d5a68; --ink-3: #85919e;
+    --border: #e4ded0; --primary: #0f4c81; --accent: #00a1de;
+    --success: #1f8a5b; --success-bg: #e4f3ea;
+    --warning: #9a6b12; --warning-bg: #fbf0dc;
+    --code-bg: #f1ede2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --card: #181e27; --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+      --border: #2b3441; --primary: #4f9fd8; --accent: #43c2ee;
+      --success: #57caa0; --success-bg: #143427;
+      --warning: #e3b45a; --warning-bg: #3a2c11;
+      --code-bg: #10151c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --card: #181e27; --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+    --border: #2b3441; --primary: #4f9fd8; --accent: #43c2ee;
+    --success: #57caa0; --success-bg: #143427;
+    --warning: #e3b45a; --warning-bg: #3a2c11;
+    --code-bg: #10151c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    max-width: 780px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem;
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6; font-size: 16px;
+  }
+  .eyebrow { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--primary); }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0.5rem 0 0.7rem; }
+  .lede { font-size: 1.05rem; color: var(--ink-2); max-width: 62ch; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin: 1.3rem 0 0.4rem; }
+  .facts > div { background: var(--card); padding: 0.8rem 0.9rem; }
+  .facts .k { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 0.2rem; }
+  .facts .v { font-size: 0.86rem; font-weight: 600; }
+  .facts .sub { display: block; font-weight: 400; color: var(--ink-3); font-size: 0.78rem; }
+  .status-note { display: flex; gap: 0.6rem; align-items: baseline; background: var(--warning-bg); border: 1px solid var(--warning); border-radius: 10px; padding: 0.75rem 1rem; margin-top: 1rem; font-size: 0.88rem; }
+  .status-note b { color: var(--warning); white-space: nowrap; }
+  h2 { font-size: 1.35rem; margin: 3rem 0 0.2rem; }
+  .kicker { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-3); }
+  .intro { color: var(--ink-2); max-width: 66ch; margin: 0.3rem 0 1.2rem; }
+  .feature { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1.3rem 1.4rem 1.1rem; margin-top: 1rem; }
+  .feature .where { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--primary); margin-bottom: 0.2rem; }
+  h3 { font-weight: 600; font-size: 1.15rem; margin: 0 0 0.5rem; }
+  .badge { display: inline-block; vertical-align: 1px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; border-radius: 999px; padding: 0.05rem 0.55rem; margin-left: 0.5rem; background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning); }
+  .feature p { margin: 0 0 0.7rem; max-width: 68ch; }
+  .feature p:last-of-type { margin-bottom: 0; }
+  .hood { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.9rem; padding-top: 0.8rem; border-top: 1px solid var(--border); }
+  .chip { font-family: ui-monospace, "SF Mono", monospace; font-size: 0.78rem; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.55rem; white-space: nowrap; }
+  .chip b { font-weight: 500; color: var(--ink-3); font-family: -apple-system, sans-serif; font-size: 0.72rem; letter-spacing: 0.03em; text-transform: uppercase; margin-right: 0.35rem; }
+  .modes { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.7rem 0 0.2rem; }
+  .mode { font-size: 0.82rem; font-weight: 600; background: rgba(15,76,129,0.1); color: var(--primary); border-radius: 999px; padding: 0.25rem 0.75rem; }
+  code { font-family: ui-monospace, "SF Mono", monospace; font-size: 0.88em; background: var(--code-bg); border-radius: 4px; padding: 0.05em 0.3em; }
+  .flow-scroll { overflow-x: auto; margin: 1rem 0 0.3rem; }
+  .flow { display: flex; align-items: stretch; min-width: 600px; }
+  .flow .step { flex: 1; background: rgba(0,161,222,0.08); border: 1px solid rgba(0,161,222,0.35); border-radius: 8px; padding: 0.6rem 0.7rem; font-size: 0.8rem; line-height: 1.45; }
+  .flow .step b { display: block; font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); margin-bottom: 0.15rem; }
+  .flow .arrow { align-self: center; color: var(--ink-3); padding: 0 0.5rem; font-size: 1rem; }
+  .legs { display: grid; gap: 0.3rem; }
+  .legs .leg { font-size: 0.78rem; }
+  ul { padding-left: 1.3rem; margin: 0.6rem 0; }
+  li { margin: 0.35rem 0; max-width: 66ch; }
+  .models-table-wrap { overflow-x: auto; margin-top: 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; min-width: 520px; }
+  th { text-align: left; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); border-bottom: 2px solid var(--border); padding: 0.5rem 0.8rem 0.5rem 0; }
+  td { border-bottom: 1px solid var(--border); padding: 0.6rem 0.8rem 0.6rem 0; vertical-align: top; }
+  td:first-child { font-family: ui-monospace, monospace; font-size: 0.8rem; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--ink-3); font-size: 0.82rem; }
+</style>
+</head>
+<body>
+
+<div class="eyebrow">1Gov Mail · AI capabilities · September 2026</div>
+<h1>Inbox Intelligence</h1>
+<p class="lede">Every AI feature in 1Gov Mail runs on <strong>government-hosted models</strong> — a self-hosted Ollama server inside the RISA network. No message content, embedding, or draft ever reaches a third-party AI service, and nothing the AI produces is ever sent without a person reviewing it first.</p>
+
+<div class="facts">
+  <div><div class="k">Inference</div><div class="v">On-prem Ollama<span class="sub">no external AI APIs</span></div></div>
+  <div><div class="k">Languages</div><div class="v">EN · FR · Kinyarwanda<span class="sub">detected and matched per email</span></div></div>
+  <div><div class="k">Features</div><div class="v">7 capabilities<span class="sub">3 compose assistants + 4-phase roadmap</span></div></div>
+  <div><div class="k">Test coverage</div><div class="v">144 API + 198 web<span class="sub">all green on ft-hyperscale</span></div></div>
+</div>
+
+<div class="status-note">
+  <b>Deployment status</b>
+  <span>All features are code-complete and pushed to <code>ft-hyperscale</code>. Rollout to the test VM is in progress: the bge-m3 embedding model and pgvector are being shipped ahead of the database migration. Until they land, <em>Ask Your Inbox</em> and the ⌘K semantic search — the two features that depend on embeddings — are marked in progress below.</span>
+</div>
+
+<div class="kicker">Part one</div>
+<h2>Reading &amp; writing assistants</h2>
+<p class="intro">Point tools that live where mail is read and written. Each one streams its output token-by-token, passes the final text through an output scrubber, and leaves the person in control of what actually gets sent.</p>
+
+<div class="feature">
+  <div class="where">Message view · thread view</div>
+  <h3>Summarize</h3>
+  <p>One click condenses a long email or an entire thread into a short summary, in the same language as the message. Before anything reaches the model, a dedicated extraction pipeline converts the HTML email to clean plain text — stripping quoted history and signatures using English, French, and Kinyarwanda markers — so the model summarizes the message, not the noise around it.</p>
+  <div class="hood">
+    <span class="chip"><b>entry</b>extractEmailText → summarize</span>
+    <span class="chip"><b>model</b>user-selected (Settings → AI)</span>
+  </div>
+</div>
+
+<div class="feature">
+  <div class="where">Compose window</div>
+  <h3>Rewrite</h3>
+  <p>Rewrites the current draft in one of five styles while preserving facts, names, dates, and numbers verbatim. The <em>formal</em> mode is tuned specifically for government correspondence; <em>concise</em> targets 60–70% of the original length; the others hold length within ±20%.</p>
+  <div class="modes">
+    <span class="mode">Paraphrase</span>
+    <span class="mode">Formal</span>
+    <span class="mode">Concise</span>
+    <span class="mode">Friendly</span>
+    <span class="mode">Grammar</span>
+  </div>
+  <p>When rewriting a reply, the incoming email is included only as fenced context to gauge tone and formality — the model is instructed never to act on or copy anything inside it.</p>
+</div>
+
+<div class="feature">
+  <div class="where">Compose window · reply</div>
+  <h3>Suggest Reply</h3>
+  <p>Drafts a reply to the open email, matching its language and formality. Chip controls set the <em>intent</em> — acknowledge, accept, decline, or request information (or let the model choose) — and the <em>length</em>, brief (1–2 sentences) or standard (2–4). Declines are kept polite and non-specific: the model is barred from inventing excuses involving facts the user never stated. The result lands in the draft for review — nothing is ever sent automatically.</p>
+  <div class="hood">
+    <span class="chip"><b>intents</b>auto · acknowledge · accept · decline · request-info</span>
+    <span class="chip"><b>length</b>brief · standard</span>
+  </div>
+</div>
+
+<div class="feature">
+  <div class="where">Settings → AI</div>
+  <h3>Model choice &amp; custom instructions</h3>
+  <p>Users pick the model for these assistants from a dropdown of what's actually installed on the Ollama server (<code>GET /ai/models</code>), with a warning when the configured model is missing. A personal instructions field (up to 500 characters) lets each user shape tone and habits — it is always appended last and subordinated to the built-in safety rules, so it can flavor output but never override the guardrails.</p>
+</div>
+
+<div class="kicker">Part two</div>
+<h2>The inbox-intelligence roadmap</h2>
+<p class="intro">Four phases, built and reviewed in sequence, that move the AI from responding on demand to continuously organizing the inbox. Phases 2–4 share a server-side extraction pipeline: a background worker reads recent mail, distills each message into a structured card, and everything downstream builds on those cards.</p>
+
+<div class="feature">
+  <div class="where">Phase 1 · mail toolbar</div>
+  <h3>Executive Briefing</h3>
+  <p>A one-card digest of what currently needs attention: the asks directed at you, stated deadlines, and what you're waiting on, distilled from recent inbox mail — including what's said in attachments' context. The card is cached client-side for instant reopening and cleared on logout.</p>
+  <div class="hood">
+    <span class="chip"><b>ui</b>BriefingPanel</span>
+    <span class="chip"><b>cache</b>client-side, cleared on logout/401</span>
+  </div>
+</div>
+
+<div class="feature">
+  <div class="where">Phase 2 · mail list</div>
+  <h3>Triage Labels</h3>
+  <p>A background worker runs every minute, reads mail from the last 14 days with per-user fairness, and extracts a structured card per message: the asks of the reader, deadlines, what the sender is waiting on, and priority — with a standing rule to report only what the email actually says, never to invent. Each card derives one label, shown as a chip in the mail list:</p>
+  <div class="modes">
+    <span class="mode">Needs decision</span>
+    <span class="mode">Waiting on you</span>
+    <span class="mode">Deadline</span>
+    <span class="mode">FYI</span>
+  </div>
+  <p>Cards persist server-side (they also feed the briefing's fast path), messages that repeatedly fail extraction are tombstoned after three attempts, and stale cards are purged hourly.</p>
+  <div class="hood">
+    <span class="chip"><b>worker</b>CardWorkerService (1-min cron)</span>
+    <span class="chip"><b>model</b>CARD_MODEL (default qwen3-4b-fast)</span>
+    <span class="chip"><b>api</b>GET /mail/cards</span>
+  </div>
+</div>
+
+<div class="feature">
+  <div class="where">Phase 3 · toolbar drawer</div>
+  <h3>Commitment Tracker</h3>
+  <p>Turns extracted cards into a running ledger of promises: things <em>you promised</em> (from sent mail) and things <em>you're waiting on</em> (from received mail). Commitments outlive the cards they came from, so nothing disappears when the cache is purged. When a reply arrives that looks like it settles a commitment, the tracker <em>suggests</em> resolving it — it never closes anything on its own. Open items can be promoted to a real Task in one click; untouched items are archived after 30 days idle.</p>
+  <div class="hood">
+    <span class="chip"><b>ui</b>CommitmentsPanel + toolbar badge</span>
+    <span class="chip"><b>api</b>GET /mail/commitments · PATCH /:id · POST /:id/promote</span>
+  </div>
+</div>
+
+<div class="feature">
+  <div class="where">Phase 4 · toolbar drawer + ⌘K</div>
+  <h3>Ask Your Inbox <span class="badge">In progress — awaiting bge-m3 on the AI server</span></h3>
+  <p>A read-only chat over your own mailbox: ask a question in English, French, or Kinyarwanda and get a streamed answer where every claim carries a citation chip (<code>s1</code>, <code>s2</code>…) that deep-links to the source email. Citation links are built exclusively from server-supplied source data — the model cannot fabricate a link. If retrieval finds nothing relevant, the panel says so in the question's language without ever calling the generation model.</p>
+  <p>Answers are grounded by hybrid retrieval over the last 90 days of Inbox and Sent mail:</p>
+  <div class="flow-scroll">
+    <div class="flow">
+      <div class="step"><b>Question</b>embedded with bge-m3 + keywords extracted</div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <b>Two legs in parallel</b>
+        <div class="legs">
+          <div class="leg">pgvector cosine top-20 (HNSW)</div>
+          <div class="leg">Zimbra keyword search, 90d</div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Fuse</b>reciprocal-rank fusion → top 8 sources</div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Answer</b>qwen3-30b streams over SSE with citations</div>
+    </div>
+  </div>
+  <p>The same vector index powers a <strong>semantic section in ⌘K search</strong> — results that match by meaning, not just keywords — alongside an "Ask your inbox" row that hands the query to the chat panel. A background worker embeds mail continuously (16 messages per tick, max 4 per user), and questions are throttled to 20 per minute per user.</p>
+  <div class="hood">
+    <span class="chip"><b>ui</b>AskInboxPanel · GlobalSearch</span>
+    <span class="chip"><b>api</b>POST /ai/inbox-chat (SSE) · GET /mail/search/semantic</span>
+    <span class="chip"><b>store</b>message_embeddings — vector(1024), HNSW</span>
+  </div>
+</div>
+
+<div class="kicker">Under the hood</div>
+<h2>The models</h2>
+<p class="intro">All served by one Ollama instance on government infrastructure. Each job gets the smallest model that does it well.</p>
+<div class="models-table-wrap">
+  <table>
+    <tr><th>Model</th><th>Role</th><th>Why this one</th></tr>
+    <tr>
+      <td>qwen3-30b-16k</td>
+      <td>Ask Your Inbox answers · compose assistants (default)</td>
+      <td>Strong multilingual generation with a 16k context for long threads and retrieved sources.</td>
+    </tr>
+    <tr>
+      <td>qwen3-4b-fast</td>
+      <td>Triage card extraction (<code>CARD_MODEL</code>)</td>
+      <td>Structured JSON extraction at one-minute-cron economics — runs on every recent message.</td>
+    </tr>
+    <tr>
+      <td>bge-m3</td>
+      <td>Embeddings (<code>EMBED_MODEL</code>)</td>
+      <td>1024-dim multilingual embeddings — the piece that makes French and Kinyarwanda semantic search work.</td>
+    </tr>
+  </table>
+</div>
+
+<div class="kicker">Under the hood</div>
+<h2>Safety &amp; prompt-injection defense</h2>
+<p class="intro">Email is untrusted input — any message could contain instructions aimed at the model. The defenses are layered, and their limits were measured rather than assumed.</p>
+<ul>
+  <li><strong>Sentinel fencing.</strong> Email content is wrapped in fenced blocks the prompts instruct the model to treat as data, never as instructions.</li>
+  <li><strong>Injection detection banner.</strong> A separate detector scans incoming content for instruction-like patterns and shows a visible warning on the result when one is found — this, not the fencing, is a load-bearing defense: testing showed fencing alone does not reliably hold against small local models.</li>
+  <li><strong>Human review of everything.</strong> No AI output is ever sent, filed, or resolved automatically. Drafts land in the compose window; commitment resolutions are only ever <em>suggested</em>; the chat is read-only over the mailbox.</li>
+  <li><strong>Output scrubbing.</strong> Every generated text passes through a scrubber before display, and streamed text is replaced by the scrubbed final.</li>
+  <li><strong>Server-built citations.</strong> Ask Your Inbox links are constructed only from server-supplied source records — a model-invented citation cannot become a clickable link.</li>
+  <li><strong>Subordinated customization.</strong> Per-user custom instructions are appended after, and explicitly ranked below, the built-in rules.</li>
+</ul>
+
+<div class="footer">Prepared 4 September 2026 · reflects <code>ft-hyperscale</code> @ <code>40be375</code> · 1Gov Mail — RISA</div>
+
+</body>
+</html>

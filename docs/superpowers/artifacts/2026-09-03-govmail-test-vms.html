@@ -1,0 +1,117 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/8b44461a-f8c1-40d2-90fc-c4b998283372 — content-faithful, original styling not preserved -->
+<title>Govmail Test VMs</title>
+<style>
+  body { max-width: 740px; margin: 0 auto; padding: 2rem 1.25rem 4rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; color: #1C2426; background: #FAFBFB; }
+  @media (prefers-color-scheme: dark) { body { color: #E8EEEE; background: #12181A; } }
+  code, .mono { font-family: ui-monospace, "SF Mono", monospace; font-size: 0.92em; }
+  h1 { font-size: 1.9rem; margin: 0 0 0.4rem; }
+  h2 { font-size: 1.2rem; margin: 2rem 0 0.7rem; }
+  h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.7; margin: 1rem 0 0.5rem; }
+  .eyebrow { font-family: ui-monospace, monospace; font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; margin-bottom: 0.3rem; }
+  .lede { opacity: 0.85; max-width: 60ch; }
+  .meta { opacity: 0.6; font-size: 0.8rem; margin-top: 0.6rem; }
+  .parity { background: rgba(42,127,122,0.1); border: 1px solid #ccc; border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.9rem; margin: 1.2rem 0; }
+  .parity span { margin-right: 1.5rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin: 0.8rem 0; }
+  th, td { border-bottom: 1px solid #ccc; padding: 0.5rem 0.7rem; text-align: left; vertical-align: top; }
+  th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.65; }
+  .host { border: 1px solid #ccc; border-radius: 10px; padding: 1.2rem 1.4rem; margin: 1rem 0; }
+  .host header { display: flex; justify-content: space-between; align-items: baseline; }
+  .ip { font-size: 1.1rem; font-weight: 600; }
+  .pill { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; padding: 0.2rem 0.6rem; border-radius: 99px; }
+  .pill.docker { background: rgba(180,83,9,0.12); color: #B45309; }
+  .pill.systemd { background: rgba(47,125,59,0.12); color: #2F7D3B; }
+  .who { opacity: 0.65; font-size: 0.85rem; margin: 0.2rem 0 0.8rem; }
+  .meter { margin: 0.5rem 0; }
+  .meter .row { display: flex; justify-content: space-between; font-size: 0.82rem; }
+  .bar { height: 6px; border-radius: 4px; background: rgba(127,127,127,0.2); overflow: hidden; margin-top: 2px; }
+  .bar i { display: block; height: 100%; }
+  .bar .ok { background: #2F7D3B; }
+  .bar .hot { background: #B45309; }
+  .stack ul { list-style: none; padding: 0; margin: 0; }
+  .stack li { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem; margin: 0.25rem 0; }
+  .tenant { color: #B45309; font-weight: 500; }
+  .section { border: 1px solid #ccc; border-radius: 10px; padding: 1.2rem 1.4rem; margin: 1rem 0; }
+  .obs li { margin-bottom: 0.6rem; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ccc; font-size: 0.8rem; opacity: 0.6; }
+</style>
+
+<p class="eyebrow">1Gov Mail · Infrastructure</p>
+<h1>Govmail Test VMs</h1>
+<p class="lede">Resource comparison of the two test servers, <span class="mono">10.10.94.154</span> and <span class="mono">10.10.94.155</span>, plus a tenancy audit of <span class="mono">.154</span>. <strong>Hardware is identical; the workloads are not.</strong> <span class="mono">.155</span> is a shared Docker box carrying three products and running low on disk; <span class="mono">.154</span> is a clean, dedicated Govmail host with ample headroom.</p>
+<p class="meta">Measured live over SSH · 2026-09-03 13:07 · both Ubuntu 20.04 on VMware</p>
+
+<div class="parity">
+  <span><b>Identical specs:</b></span>
+  <span>4 vCPU · Xeon Platinum 8153 @ 2.00 GHz</span>
+  <span>7.8 GiB RAM + 4 GiB swap</span>
+  <span>49 GB LVM root disk</span>
+</div>
+
+<div class="host">
+  <header>
+    <span class="ip mono">10.10.94.154</span>
+    <span class="pill systemd">systemd · dedicated</span>
+  </header>
+  <p class="who">risa1 · hostname <span class="mono">risa1</span> · up 112 days · load 0.16</p>
+
+  <div class="meter"><div class="row"><span>RAM used</span><span class="mono">0.6 / 7.8 GiB (8%)</span></div><div class="bar"><i class="ok" style="width:8%"></i></div></div>
+  <div class="meter"><div class="row"><span>Disk used</span><span class="mono">13 / 49 GB (27%) — 34 GB free</span></div><div class="bar"><i class="ok" style="width:27%"></i></div></div>
+  <div class="meter"><div class="row"><span>Swap used</span><span class="mono">≈ 0 / 4 GiB</span></div><div class="bar"><i class="ok" style="width:1%"></i></div></div>
+
+  <div class="stack">
+    <h3>Running workloads</h3>
+    <ul>
+      <li><span>govmail-api (Node 22, includes collab WS)</span><span class="mono">305 MiB</span></li>
+      <li><span>govmail-web (Next.js 16)</span><span class="mono">168 MiB</span></li>
+      <li><span>govmail-postgres (embedded 16.4)</span><span class="mono">~290 MiB</span></li>
+      <li><span>nebula overlay agent</span><span class="mono">—</span></li>
+    </ul>
+  </div>
+</div>
+
+<div class="host">
+  <header>
+    <span class="ip mono">10.10.94.155</span>
+    <span class="pill docker">docker · shared, 3 products</span>
+  </header>
+  <p class="who">test · hostname <span class="mono">test</span> · up 216 days · load 0.56</p>
+
+  <div class="meter"><div class="row"><span>RAM used</span><span class="mono">2.3 / 7.8 GiB (29%)</span></div><div class="bar"><i class="ok" style="width:29%"></i></div></div>
+  <div class="meter"><div class="row"><span>Disk used</span><span class="mono">36 / 49 GB (78%) — 11 GB free</span></div><div class="bar"><i class="hot" style="width:78%"></i></div></div>
+  <div class="meter"><div class="row"><span>Swap used</span><span class="mono">0.8 / 4 GiB</span></div><div class="bar"><i class="hot" style="width:20%"></i></div></div>
+
+  <div class="stack">
+    <h3>Running workloads · 11 containers + dockerd (1.4 GiB)</h3>
+    <ul>
+      <li><span>1govmail stack — https-portal, nginx, web, api, pg 17, redis</span><span class="mono">~582 MiB</span></li>
+      <li><span class="tenant">AFFiNE — server, postgres, redis</span><span class="mono">~267 MiB</span></li>
+      <li><span class="tenant">docflow — app, postgres 16 (host port 5432)</span><span class="mono">~19 MiB</span></li>
+    </ul>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Is anything else deployed on .154? — No.</h2>
+  <p>Audited four ways; every signal says the box runs Govmail and nothing else.</p>
+  <table>
+    <tr><th>Check</th><th>Result</th><th></th></tr>
+    <tr><td>Listening ports</td><td class="mono">22 (ssh) · 3000 (web) · 3001 (api) · 1234 (collab WS) · 5432 (postgres, localhost-only)</td><td>clean</td></tr>
+    <tr><td class="mono">/opt</td><td class="mono">govmail · node22 · nebula</td><td>clean</td></tr>
+    <tr><td>Running services</td><td>Standard Ubuntu set + <span class="mono">govmail-api / govmail-web / govmail-postgres</span> + <span class="mono">nebula</span></td><td>clean</td></tr>
+    <tr><td>Docker / web roots</td><td>No Docker installed; no <span class="mono">/var/www</span></td><td>clean</td></tr>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Observations</h2>
+  <ul class="obs">
+    <li><b>.155 disk is the one real pressure point:</b> 78% full with only 11 GB free, on a box that has been up 216 days accumulating Docker images and three products' databases. If it keeps hosting all three, a cleanup (<code>docker system prune</code>, old images) or a disk grow is worth scheduling.</li>
+    <li><b>.155 dips into swap</b> (0.8 GiB) — not critical, but consistent with dockerd alone holding 1.4 GiB. .154 touches no swap at all.</li>
+    <li><b>.154 is the healthier and current deployment:</b> 6.7 GiB RAM available, 34 GB disk free, and running yesterday's build — while .155 still serves a June build, 72 commits behind.</li>
+    <li><b>Shared credentials:</b> the same password works for <code>test@10.10.94.155</code> and <code>risa1@10.10.94.154</code>. Fine for an internal test overlay, but worth rotating before anything external-facing.</li>
+    <li><b>Postgres exposed on .155:</b> docflow's postgres publishes host port 5432 to the network (<code>0.0.0.0:5432</code>); .154 keeps its postgres on localhost only.</li>
+  </ul>
+</div>
+
+<footer>1Gov Mail · Infrastructure review</footer>

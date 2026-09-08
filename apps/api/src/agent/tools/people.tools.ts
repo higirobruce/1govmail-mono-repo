@@ -21,7 +21,7 @@ export function buildPeopleTools(
       async execute(args: any, ctx) {
         const d = await people.dossier(ctx.userId, args.email);
         const refs: ToolRef[] = d.recentConversations.slice(0, 5).map((c) => ({
-          alias: ctx.nextAlias(),
+          alias: ctx.aliasFor('mail', c.messageId),
           type: 'mail',
           id: c.messageId,
           title: c.subject,

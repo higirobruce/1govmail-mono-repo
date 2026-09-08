@@ -31,7 +31,7 @@ export function buildWriteTools(mail: MailService, docs: DocsService, tasks: Tas
           summary: `Draft "${args.subject}" saved to Drafts`,
           content: `Draft saved (id ${zimbraId}). The user can open it from the source chip or their Drafts folder to review, edit and send it.`,
           refs: [{
-            alias: ctx.nextAlias(), type: 'mail', id: zimbraId, title: args.subject,
+            alias: ctx.aliasFor('mail', zimbraId), type: 'mail', id: zimbraId, title: args.subject,
             date: new Date().toISOString(), snippet: '', injectionSuspected: false,
           }],
         };
@@ -58,7 +58,7 @@ export function buildWriteTools(mail: MailService, docs: DocsService, tasks: Tas
           summary: `Document "${args.title}" created`,
           content: `Document created with id ${doc.id}. It is private to the user; they can open it in Docs.`,
           refs: [{
-            alias: ctx.nextAlias(), type: 'doc', id: String(doc.id), title: args.title,
+            alias: ctx.aliasFor('doc', String(doc.id)), type: 'doc', id: String(doc.id), title: args.title,
             date: new Date().toISOString(), snippet: '', injectionSuspected: false,
           }],
         };
@@ -134,7 +134,7 @@ export function buildChartTool(): ToolDef {
   return {
     name: 'create_chart',
     description:
-      'Render a chart in your answer from numbers you already gathered with other tools. Keep it small: ≤30 points, ≤3 series. For pie charts only the first series is used.',
+      'Render a chart in your answer from numbers you already gathered with other tools. Keep it small: ≤30 points, ≤3 series. For pie charts only the first series is used. The chart renders automatically in the panel — never invent image links or markdown image URLs for it.',
     mode: 'read',
     resultBudget: 300,
     schema: z.object({

@@ -14,6 +14,8 @@ import { Button } from '@/components/ui/button';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
 import { prepareEmailHtml } from '@/lib/emailRender';
+import { buildEmailFrameCss } from '@/lib/emailFrameCss';
+import { useIsDark } from '@/hooks/useIsDark';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { downloadAll } from '@/lib/downloadAll';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
@@ -26,6 +28,7 @@ import { pickHighestClassification } from '@/lib/classification';
 import { AttachmentTile, fileTypeStyle } from '@/components/mail/AttachmentTile';
 import { useAIStore } from '@/stores/ai.store';
 import { usePeopleStore } from '@/stores/people.store';
+import { useAuthStore } from '@/stores/auth.store';
 import { AIClient } from '@/lib/ai/client';
 import { summarizeMessage } from '@/lib/ai/tasks';
 import { useCharStream } from '@/lib/ai/useCharStream';
@@ -127,50 +130,6 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-const EMAIL_CSS = `*,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;padding:16px;background:#ffffff;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;overflow-x:auto;word-wrap:break-word}
-a{color:#2563eb;text-decoration:underline}
-a:hover{color:#1d4ed8}
-img{max-width:100%;height:auto;display:inline-block}
-img[width="1"],img[height="1"],img[width="0"],img[height="0"]{display:none}
-table{border-collapse:collapse;max-width:100%}
-td,th{padding:4px 8px;vertical-align:top}
-pre,code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:13px;white-space:pre-wrap;word-break:break-all}
-blockquote{border-left:3px solid #d1d5db;margin:12px 0;padding:4px 12px;color:#6b7280}
-.gmail_quote,.gmail_extra{border-left:2px solid #d1d5db;margin:12px 0;padding:4px 12px;color:#6b7280;font-size:13px}
-.yahoo_quoted,.moz-cite-prefix{color:#9ca3af;font-size:13px}
-.MsoNormal{margin:0}
-div[style*="border-left"]{color:#6b7280}
-hr{border:none;border-top:1px solid #e5e7eb;margin:16px 0}
-ul,ol{padding-left:1.5em;margin:8px 0}
-li{margin:4px 0}
-h1,h2,h3,h4,h5,h6{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;line-height:1.3;margin:16px 0 8px;color:#111827}
-p{margin:0 0 12px}
-p:last-child{margin-bottom:0}
-font{font-family:inherit}`;
-
-// Appended to EMAIL_CSS when "Consistent email display" is ON.
-// Uses !important so these stylesheet rules beat inline style="" attributes on
-// every element — the only way to override sender-supplied typography wholesale.
-// Heading-specific rules restore the visual hierarchy because those selectors
-// (h1, h2…) have higher specificity than the wildcard (*) rule.
-const NORMALIZE_CSS = `
-*,*::before,*::after{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif!important;color:#111827!important;background-color:transparent!important;font-size:16px!important;line-height:1.65!important;letter-spacing:normal!important;text-transform:none!important;font-weight:normal!important;font-style:normal!important}
-html,body{background-color:#ffffff!important;color:#111827!important}
-h1{font-size:22px!important;font-weight:700!important;line-height:1.3!important;margin:16px 0 8px!important}
-h2{font-size:18px!important;font-weight:600!important;line-height:1.3!important;margin:14px 0 6px!important}
-h3{font-size:15px!important;font-weight:600!important;line-height:1.3!important;margin:12px 0 6px!important}
-h4,h5,h6{font-size:14px!important;font-weight:600!important;line-height:1.3!important}
-strong,b{font-weight:700!important}
-em,i{font-style:italic!important}
-small{font-size:12px!important}
-a,a *{color:#2563eb!important;text-decoration:underline!important}
-a:hover,a:hover *{color:#1d4ed8!important}
-code,pre,code *,pre *{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace!important;font-size:13px!important;background-color:#f3f4f6!important}
-pre{background-color:#f3f4f6!important;padding:12px!important}
-img{background-color:transparent!important}
-`;
-
 // bodyHtml is pre-processed server-side: inline images are already embedded as
 // base64 data URIs, so EmailBody renders immediately with no async fetching.
 // External images (http/https src) are also handled: the CSP meta tag below
@@ -189,6 +148,7 @@ function EmailBody({
     typeof window !== 'undefined'
       ? localStorage.getItem('1gov_normalize_email_styles') !== 'false'
       : true;
+  const isDark = useIsDark();
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Re-measure iframe height, deferred one animation frame so the browser has
@@ -226,17 +186,17 @@ function EmailBody({
   // upgrade-insecure-requests: silently upgrades http:// image/resource URLs to
   // https:// so external email images are not blocked by mixed-content policy on
   // HTTPS deployments.
-  // NORMALIZE_CSS is appended after EMAIL_CSS so its !important rules override
-  // any inline styles the sender embedded in the email HTML.
+  // isDark rebuilds the srcDoc on a live theme switch — the sandboxed frame
+  // can't see the app's `.dark` class, so its palette is baked in here.
   const srcDoc = useMemo(() => {
     if (!html) return null;
     const body = prepareEmailHtml(html);
-    const css = normalizeStyles ? EMAIL_CSS + NORMALIZE_CSS : EMAIL_CSS;
+    const css = buildEmailFrameCss({ dark: isDark, normalize: normalizeStyles });
     // <base target="_blank">: the frame is sandboxed without top-navigation, so
     // an in-frame link click would otherwise be silently blocked — route every
     // link to a new tab instead (pairs with allow-popups on the iframe).
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>${css}</style></head><body>${body}</body></html>`;
-  }, [html, normalizeStyles]);
+  }, [html, normalizeStyles, isDark]);
 
   if (!srcDoc) {
     return (
@@ -310,6 +270,9 @@ export default function MailDetail({
   const aiEnabled = useAIStore((s) => s.enabled);
   const aiModel = useAIStore((s) => s.model);
   const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  const currentUserEmail = useAuthStore((s) => s.user?.email);
+  const isSelfSender = !!currentUserEmail
+    && message?.fromEmail?.toLowerCase() === currentUserEmail.toLowerCase();
   const {
     text: streamedSummary,
     push: pushSummary,
@@ -771,7 +734,7 @@ export default function MailDetail({
               <MailAvatar name={message.fromName} email={message.fromEmail} size="md" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  {aiEnabled ? (
+                  {!isSelfSender ? (
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); usePeopleStore.getState().openDossier({ email: message.fromEmail, name: message.fromName }); }}

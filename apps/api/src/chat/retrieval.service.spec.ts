@@ -18,6 +18,13 @@ function docRow(id: string, over: Record<string, unknown> = {}) {
   };
 }
 
+function attachmentRow(id: string, over: Record<string, unknown> = {}) {
+  return {
+    messageId: id, chunkText: `attachment chunk for ${id}`, filename: `file-${id}.pdf`,
+    subject: `subj ${id}`, fromEmail: 'a@x.rw', fromName: 'A', receivedAt: new Date(), distance: 0.2, ...over,
+  };
+}
+
 function eventRow(id: string, over: Record<string, unknown> = {}) {
   return {
     id, title: `Event ${id}`, description: null, location: null, organizer: null,
@@ -40,9 +47,16 @@ function makeFakes() {
 }
 
 /** Routes $queryRaw by which table appears in the tagged-template SQL text. */
-function routeQueryRaw(prisma: ReturnType<typeof makeFakes>['prisma'], opts: { mail?: any[]; doc?: any[] | Error }) {
+function routeQueryRaw(
+  prisma: ReturnType<typeof makeFakes>['prisma'],
+  opts: { mail?: any[]; doc?: any[] | Error; attachment?: any[] | Error },
+) {
   prisma.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
     const sql = strings.join('');
+    if (sql.includes('attachment_embeddings')) {
+      if (opts.attachment instanceof Error) return Promise.reject(opts.attachment);
+      return Promise.resolve(opts.attachment ?? []);
+    }
     if (sql.includes('document_embeddings')) {
       if (opts.doc instanceof Error) return Promise.reject(opts.doc);
       return Promise.resolve(opts.doc ?? []);
@@ -64,7 +78,7 @@ describe('RetrievalService.retrieve — mail legs (scoped to mail so docs/calend
     expect(embedder.embed).toHaveBeenCalledWith(['what did finance say about the budget?']);
     expect(prisma.$queryRaw).toHaveBeenCalled();
     expect(result.sources[0]).toMatchObject({ type: 'mail', id: 'm1', context: 'chunk for m1' });
-    expect(result.degraded).toEqual({ vector: false, keyword: false, docs: false, calendar: false });
+    expect(result.degraded).toEqual({ vector: false, keyword: false, docs: false, calendar: false, attachment: false });
   });
 
   it('scopes the vector query to the embedder\'s current model, excluding stale other-model rows', async () => {
@@ -159,8 +173,79 @@ describe('RetrievalService.retrieve — mail legs (scoped to mail so docs/calend
 
     mailService.searchMessages.mockRejectedValue(new Error('zimbra down'));
     const both = await svc.retrieve('user1', 'user1@x.rw', 'budget finance', MAIL_ONLY);
-    expect(both.degraded).toEqual({ vector: true, keyword: true, docs: false, calendar: false });
+    expect(both.degraded).toEqual({ vector: true, keyword: true, docs: false, calendar: false, attachment: true });
     expect(both.sources).toHaveLength(0);
+  });
+});
+
+describe('RetrievalService.retrieve — attachment leg', () => {
+  const MAIL_ONLY = { types: ['mail'] as ('mail' | 'doc' | 'event')[] };
+
+  it('fuses an attachment row with a body row for the SAME messageId into ONE source, keeping the vector chunk as context (vector leg listed first)', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    routeQueryRaw(prisma, { mail: [vecRow('m1')], attachment: [attachmentRow('m1')] });
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget', MAIL_ONLY);
+
+    expect(result.sources.filter((s) => s.id === 'm1')).toHaveLength(1);
+    expect(result.sources.find((s) => s.id === 'm1')!.context).toBe('chunk for m1');
+  });
+
+  it('surfaces an attachment-only hit (body legs missed it) with context prefixed by the filename', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    routeQueryRaw(prisma, { mail: [], attachment: [attachmentRow('m2', { filename: 'report.pdf', chunkText: 'the Q3 numbers' })] });
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget', MAIL_ONLY);
+
+    const hit = result.sources.find((s) => s.id === 'm2');
+    expect(hit).toBeDefined();
+    expect(hit!.context.startsWith('[from attachment "report.pdf"]')).toBe(true);
+  });
+
+  it('sets degraded.attachment when the attachment SQL rejects, while the other legs still return', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    routeQueryRaw(prisma, { mail: [vecRow('m1')], attachment: new Error('attachment query down') });
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'budget', MAIL_ONLY);
+
+    expect(result.degraded).toEqual({ vector: false, keyword: false, docs: false, calendar: false, attachment: true });
+    expect(result.sources.some((s) => s.id === 'm1')).toBe(true);
+  });
+
+  it('does NOT run the attachment leg when scope.docId is set (docs-only scope)', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    prisma.$queryRaw.mockResolvedValue([docRow('doc123')]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    await svc.retrieve('user1', 'user1@x.rw', 'question', { docId: 'doc123' });
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1); // only the docs query — no attachment query
+    const [strings] = prisma.$queryRaw.mock.calls[0];
+    expect(strings.join('')).not.toContain('attachment_embeddings');
+  });
+
+  describe('searchAttachments', () => {
+    it('dedupes to one row per (messageId, filename) and clamps the snippet to 200 chars', async () => {
+      const { prisma, embedder, mailService } = makeFakes();
+      const longText = 'x'.repeat(250);
+      prisma.$queryRaw.mockResolvedValue([
+        attachmentRow('m1', { filename: 'report.pdf', chunkText: longText, distance: 0.1 }),
+        attachmentRow('m1', { filename: 'report.pdf', chunkText: 'worse chunk, same file', distance: 0.5 }),
+        attachmentRow('m1', { filename: 'other.pdf', chunkText: 'a different attachment', distance: 0.2 }),
+      ]);
+      const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+      const out = await svc.searchAttachments('user1', 'budget');
+
+      expect(out).toHaveLength(2);
+      const report = out.find((r) => r.filename === 'report.pdf')!;
+      expect(report.snippet).toHaveLength(200);
+      expect(report.snippet).toBe(longText.slice(0, 200));
+      expect(out.some((r) => r.filename === 'other.pdf')).toBe(true);
+    });
   });
 });
 
@@ -234,6 +319,52 @@ describe('RetrievalService.retrieve — docs leg', () => {
 
     expect(result.sources).toHaveLength(1);
     expect(result.sources[0].context).toBe('best chunk');
+  });
+
+  it('scope.docId joins the top 6 chunks of that ONE doc into a single deep context past the normal 1200-char clamp, at real embedding chunk size (~1500 chars)', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    // Real doc-embedding chunks are packed up to EMBED_CHUNK_MAX_CHARS (1500) each.
+    // Build 6 mocked chunks at that size so the assembled context (6 * 1500 +
+    // separators ≈ 9025 chars) exercises the real clamp instead of a
+    // toy-sized one — a too-small DOC_SCOPED_MAX_CHARS would truncate the
+    // tail of chunk 6, which the sentinel below would catch.
+    const chunkRows = Array.from({ length: 6 }, (_, i) =>
+      docRow('d1', { chunkText: `chunk-${i + 1}-`.padEnd(1490, 'x') + `-END${i + 1}`, distance: 0.1 + i * 0.01 }),
+    );
+    prisma.$queryRaw.mockResolvedValue(chunkRows);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'question', { docId: 'd1' });
+
+    expect(result.sources).toHaveLength(1);
+    const source = result.sources[0];
+    expect(source.type).toBe('doc');
+    expect(source.id).toBe('d1');
+    expect(source.context).toContain('chunk-1-');
+    expect(source.context).toContain('chunk-6-');
+    // The END-of-chunk-6 sentinel must survive the clamp — proves the cap is
+    // derived from the real ~1500-char chunk size, not the old 1200-based one.
+    expect(source.context).toContain('-END6');
+    expect(source.context.length).toBeGreaterThan(1200);
+  });
+
+  it('without docId, two docs with 3 chunks each still dedupe to 2 sources with one (best) chunk each (cross-doc dedupe regression guard)', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    prisma.$queryRaw.mockResolvedValue([
+      docRow('d1', { chunkText: 'd1 best', distance: 0.1 }),
+      docRow('d1', { chunkText: 'd1 worse', distance: 0.2 }),
+      docRow('d1', { chunkText: 'd1 worst', distance: 0.3 }),
+      docRow('d2', { chunkText: 'd2 best', distance: 0.15 }),
+      docRow('d2', { chunkText: 'd2 worse', distance: 0.25 }),
+      docRow('d2', { chunkText: 'd2 worst', distance: 0.35 }),
+    ]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'question', { types: ['doc'] });
+
+    expect(result.sources).toHaveLength(2);
+    expect(result.sources.find((s) => s.id === 'd1')?.context).toBe('d1 best');
+    expect(result.sources.find((s) => s.id === 'd2')?.context).toBe('d2 best');
   });
 });
 
@@ -316,7 +447,7 @@ describe('RetrievalService.retrieve — degraded flags and typed-key fusion', ()
 
     const result = await svc.retrieve('user1', 'user1@x.rw', 'budget');
 
-    expect(result.degraded).toEqual({ vector: false, keyword: false, docs: true, calendar: false });
+    expect(result.degraded).toEqual({ vector: false, keyword: false, docs: true, calendar: false, attachment: false });
     expect(result.sources.some((s) => s.type === 'mail' && s.id === 'm1')).toBe(true);
   });
 
@@ -358,7 +489,7 @@ describe('RetrievalService.retrieve — shared embed() across the mail-vector an
 
     const result = await svc.retrieve('user1', 'user1@x.rw', 'budget');
 
-    expect(result.degraded).toEqual({ vector: true, keyword: false, docs: true, calendar: false });
+    expect(result.degraded).toEqual({ vector: true, keyword: false, docs: true, calendar: false, attachment: true });
     expect(prisma.$queryRaw).not.toHaveBeenCalled(); // neither vector query ever runs without an embedding
     expect(result.sources.some((s) => s.type === 'mail' && s.id === 'k1')).toBe(true);
     expect(result.sources.some((s) => s.type === 'event' && s.id === 'e1')).toBe(true);

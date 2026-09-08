@@ -11,7 +11,7 @@ const EVENT = {
 
 function makeDeps() {
   const prisma = {
-    user: { findUnique: jest.fn().mockResolvedValue({ email: 'me@risa.gov.rw' }) },
+    user: { findUnique: jest.fn().mockResolvedValue({ email: 'me@risa.gov.rw', displayName: 'Bruce', aiProfile: null }) },
     calendarEvent: { findFirst: jest.fn().mockResolvedValue(EVENT) },
     message: { findFirst: jest.fn().mockResolvedValue(null) },
     $queryRaw: jest.fn().mockResolvedValue([]),
@@ -74,5 +74,22 @@ describe('MeetingPrepService.prepare', () => {
     }]).mockResolvedValue([]);
     const p = await new MeetingPrepService(prisma, retrieval).prepare('u1', 'e1');
     expect(p.sourceAnchor).toEqual(new Date('2026-09-06T07:00:00Z'));
+  });
+
+  it('includes the profile card but strips user instructions (STYLE PREFERENCES) from meeting prep', async () => {
+    const { prisma, retrieval } = makeDeps();
+    prisma.user.findUnique.mockResolvedValue({
+      email: 'me@risa.gov.rw',
+      displayName: 'Bruce',
+      aiProfile: {
+        jobTitle: 'Director of Digital', institution: 'RISA', department: null, language: null,
+        instructions: 'Always answer in bullet points only.',
+      },
+    });
+    const p = await new MeetingPrepService(prisma, retrieval).prepare('u1', 'e1');
+    const system = p.upstreamBody!.messages[0].content;
+    expect(system).toContain('Director of Digital');
+    expect(system).not.toContain('STYLE PREFERENCES');
+    expect(system).not.toContain('Always answer in bullet points only');
   });
 });

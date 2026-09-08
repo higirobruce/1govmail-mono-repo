@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/140a14af-2451-431c-9ca3-9fe1343ff850 — content-faithful, original styling not preserved -->
+<title>Calendar Fill Wedge</title>
+<style>
+  :root {
+    --bg: #ffffff; --surface: #ffffff; --surface-2: #f4f5f7;
+    --ink: #14191b; --ink-2: #3d4a4e; --ink-3: #6b797e;
+    --line: #d4dadd; --accent: #0d6a6c;
+    --open: #9a4a15; --open-soft: #f6e6da;
+    --good: #256b47; --good-soft: #dcece2;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101416; --surface: #171d20; --surface-2: #1e2528;
+      --ink: #e8edee; --ink-2: #b3c0c3; --ink-3: #7e8d91;
+      --line: #2c3538; --accent: #4fbfb8;
+      --open: #e0a06a; --open-soft: #33241a;
+      --good: #6fc397; --good-soft: #182b22;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101416; --surface: #171d20; --surface-2: #1e2528;
+    --ink: #e8edee; --ink-2: #b3c0c3; --ink-3: #7e8d91;
+    --line: #2c3538; --accent: #4fbfb8;
+    --open: #e0a06a; --open-soft: #33241a;
+    --good: #6fc397; --good-soft: #182b22;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: .72rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); margin: 0 0 .6rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.2rem); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; margin: 0 0 .6rem; text-wrap: balance; }
+  .standfirst { color: var(--ink-2); margin: 0 0 1rem; max-width: 68ch; }
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem 1.1rem; align-items: center; font-family: var(--mono); font-size: .8rem; color: var(--ink-3); margin: 0 0 1.6rem; }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+  h2 { font-size: 1.15rem; font-weight: 700; margin: 2.3rem 0 .7rem; letter-spacing: -.01em; }
+  h3 { font-size: .95rem; font-weight: 600; margin: 1.2rem 0 .4rem; }
+  p, li, td { color: var(--ink-2); }
+  strong, b { color: var(--ink); }
+  ul { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: .55rem; }
+  code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: .06em .3em; }
+  pre { margin: .6rem 0 1rem; overflow-x: auto; background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: .9rem 1rem; font-family: var(--mono); font-size: .82rem; line-height: 1.55; }
+  pre code { background: none; border: 0; padding: 0; }
+  .fail { color: var(--open); }
+  .verdicts { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); margin: 0 0 1rem; }
+  .verdict { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: .4rem; }
+  .verdict .tag { align-self: flex-start; font-family: var(--mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; padding: .18rem .5rem; border-radius: 3px; }
+  .tag.open { background: var(--open-soft); color: var(--open); }
+  .tag.fixed { background: var(--good-soft); color: var(--good); }
+  .verdict p { font-size: .92rem; margin: 0; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: .8rem 0 1.2rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { text-align: left; padding: .55rem .85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .68rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+  td.result { white-space: nowrap; color: var(--good); font-family: var(--mono); font-size: .82rem; }
+  .finding { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 1.1rem 1.2rem; margin: 0 0 .9rem; }
+  .finding .lead { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; margin-bottom: .5rem; }
+  .finding .num { font-family: var(--mono); font-size: .72rem; color: var(--accent); letter-spacing: .08em; border: 1px solid var(--accent); border-radius: 3px; padding: .1rem .4rem; }
+  .finding h3 { margin: 0; }
+  .finding p { font-size: .95rem; margin: 0 0 .6rem; }
+  .finding .fix b { color: var(--accent); }
+  .files { font-family: var(--mono); font-size: .82rem; color: var(--ink-3); }
+  .ask { border: 1px solid var(--open); background: var(--open-soft); border-radius: 8px; padding: 1.1rem 1.2rem; margin: 1.4rem 0; }
+  .ask h2 { color: var(--open); margin-top: 0; }
+  .ask p, .ask li { color: var(--ink); }
+  footer { font-size: .82rem; color: var(--ink-3); margin-top: 2.4rem; border-top: 1px solid var(--line); padding-top: 1rem; display: flex; flex-direction: column; gap: .3rem; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">1Gov Mail · ft-hyperscale · calendar</p>
+  <h1>The AI event fill that would not settle</h1>
+  <p class="standfirst">Investigation into the Critical from the .154 manual sweep — "applying a non-empty AI fill to <code>CreateEventModal</code> pegs the main thread" — plus the two defects it uncovered on that path.</p>
+  <div class="meta">
+    <span>from <b>ece1504</b></span>
+    <span>fix <b>30eb1c8</b></span>
+    <span><b>366</b> tests green</span>
+    <span>tsc <b>clean</b></span>
+  </div>
+
+  <div class="verdicts">
+    <div class="verdict">
+      <span class="tag open">Peg — unreproduced</span>
+      <p>Nine probe shapes, two harnesses, a local production build: the fill path never looped. The suspected cycle is ruled out, not confirmed.</p>
+    </div>
+    <div class="verdict">
+      <span class="tag fixed">Fixed — write-back never settled</span>
+      <p>Every fill run rewrote <code>attendees</code>. A second run changed state instead of doing nothing — the one hop of the suspected cycle that is real.</p>
+    </div>
+    <div class="verdict">
+      <span class="tag fixed">Fixed — bare dates in form state</span>
+      <p>An all-day parse wrote <code>"2026-09-12"</code> into <code>startAt</code>; the save path reads that as UTC midnight and shifts the event by the local offset.</p>
+    </div>
+  </div>
+
+  <hr>
+
+  <h2>01 · What was tested</h2>
+  <p>Probes against the real component. Two harnesses. <b>jsdom + Testing Library</b> for the modal alone and for the whole calendar page entering through the <code>?createFromEmail=</code> deep link. <b>Chrome over CDP</b> against a local <b>production</b> build — no StrictMode, the same React build as .154 — with <code>fetch</code> patched to serve a canned message and canned model JSON, so Radix, Tailwind and real layout were all in play. Entered both by fresh load and by <code>router.push()</code> from another route: the exact mail context-menu path.</p>
+  <div class="tw"><table>
+    <thead><tr><th>Probe</th><th>Outcome</th></tr></thead>
+    <tbody>
+      <tr><td><code>allDay:true</code> + bare-date start/end — the QA shape</td><td class="result">applies, no loop</td></tr>
+      <tr><td><code>allDay:true</code> + timed start/end</td><td class="result">applies, no loop</td></tr>
+      <tr><td><code>allDay:false</code> + bare <code>endAt</code>, <code>startAt:null</code> — escapes <code>validate()</code></td><td class="result">applies, no loop</td></tr>
+      <tr><td>14k-char title · 3k-char unbroken location · 10 long attendees</td><td class="result">applies, no loop</td></tr>
+      <tr><td><code>0000-01-01</code> · <code>9999-12-31</code> · <code>2026-09-31</code> · <code>2026-02-30</code> · end &lt; start</td><td class="result">applies, no loop</td></tr>
+      <tr><td>Content overflowing the <code>ScrollArea</code> (620 px viewport)</td><td class="result">applies, no loop</td></tr>
+      <tr><td>Remount mid-fill → <code>getMessage, ai/chat, getMessage, ai/chat</code>, the field signature</td><td class="result">applies, no loop</td></tr>
+      <tr><td>Toggling All-day off and on after a bare-date fill</td><td class="result">applies, no loop</td></tr>
+      <tr><td>A fill that never resolves — indicator ticking forever</td><td class="result">stays scriptable</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>02 · Eliminated</h2>
+  <p>Mechanisms checked and cleared.</p>
+  <ul>
+    <li><b>A <code>DateTimePicker</code> feedback loop.</b> There isn't one. It is a Popover plus a Button, not a native <code>datetime-local</code> input, and it only calls <code>onChange</code> from two user-gesture handlers inside the <em>closed</em> popover. Nothing fires during render, and the bare-date ↔ datetime flip is absorbed by its <code>isValid</code> guard.</li>
+    <li><b>Radix Checkbox re-emitting a click.</b> A real ping-pong shape — <code>CheckboxBubbleInput</code> dispatches a bubbling <code>click</code> whenever <code>checked</code> changes programmatically — but that input only mounts when the control sits inside a <code>&lt;form&gt;</code>. The modal is plain divs. Confirmed in the installed source and in the browser.</li>
+    <li><b><code>window.history.replaceState</code> under Next's patched history.</b> Reproduced through <code>router.push</code> in a production build: one mount, one fill.</li>
+    <li><b>Non-React CPU sinks.</b> <code>repairTruncatedJson</code> strictly decreases and terminates; <code>findFreeSlots</code> is bounded by <code>maxSlots</code>; both LRU <code>while</code> loops break on an empty key; <code>AIClient.chat</code> is non-streaming.</li>
+    <li><b>A stale bundle.</b> I pulled the deployed chunk off <code>10.10.94.154:3000</code> and diffed the minified modal and <code>validate()</code> against HEAD — identical, <code>ece1504</code> fix wave included.</li>
+    <li><b>A silent React update loop.</b> Inconsistent with "no console errors": React throws <em>Maximum update depth exceeded</em> for effect loops and <em>Too many re-renders</em> for render-phase ones. A silent peg points somewhere else.</li>
+  </ul>
+
+  <h2>03 · Findings</h2>
+  <p>What was actually broken.</p>
+
+  <div class="finding">
+    <div class="lead"><span class="num">A</span><h3>The write-back could never be a no-op</h3></div>
+    <p><code>mergeParsedEvent</code> always returned a fresh <code>attendees</code> array whenever the parse carried at least one attendee — even when nothing was added. The modal guarded on identity, so the guard was never false and <em>every</em> fill run committed a state update.</p>
+    <pre><code>// page.tsx:408 (before)
+if (merged.attendees !== current.attendees) setAttendees([...merged.attendees]);</code></pre>
+    <p>With the effect observed running twice in the field, this is the one hop of the suspected cycle that is real and provable: a repeated fill rewrote form state rather than settling — exactly the amplifier a remount cycle needs to sustain itself.</p>
+    <p class="fix"><b>Fix</b> — keep the current reference when nothing was added, and compare by value at the call site. A repeated merge is now a fixed point: the second run calls no setter at all.</p>
+  </div>
+
+  <div class="finding">
+    <div class="lead"><span class="num">B</span><h3>An all-day fill put a bare date into form state</h3></div>
+    <p>All-day parses keep bare dates by design, and the <code>{startAt: null, endAt: "…"}</code> shape escapes repair entirely, so <code>startAt</code> could hold either <code>"2026-09-12"</code> or <code>"2026-09-12T09:00"</code> depending on the parse. Two readers then disagree: <code>new Date("2026-09-12")</code> is <em>UTC</em> midnight, while everything else treats the string as local. Uncheck All-day and the save path shifts the event by the local offset — Kigali is +2. Confirmed live in the browser.</p>
+    <p class="fix"><b>Fix</b> — <code>toFormDateTime</code> widens a bare date at the merge boundary (<code>T00:00</code> for start, <code>T23:59</code> for end), so form state carries exactly one shape. Both all-day consumers still split on <code>T</code> and are unchanged.</p>
+  </div>
+
+  <div class="finding">
+    <div class="lead"><span class="num">C</span><h3>The mirror ref was written during render</h3></div>
+    <p>The final-review flag was worth acting on. <code>currentRef.current = {…}</code> ran in the render body, so an abandoned concurrent render could leave the mirror holding values the form never committed — which the async fill would then merge against. Moved to a post-commit effect. It schedules nothing, so it never participated in a loop, but it is a genuine correctness hazard on this exact path.</p>
+  </div>
+
+  <p class="files">Contracts preserved: dirty fields still never overwritten · no auto-save · abort semantics on unmount and Save untouched.</p>
+
+  <h2>04 · Evidence</h2>
+  <p>Red before, green after. The new merge tests fail against the old <code>mergeParsedEvent</code>:</p>
+  <pre><code><span class="fail">×</span> widens an all-day parse's bare dates to full local datetimes
+  → expected '2026-09-12' to be '2026-09-12T00:00'
+<span class="fail">×</span> widens a bare endAt that arrives without a startAt
+  → expected '2026-09-12' to be '2026-09-12T23:59'
+<span class="fail">×</span> is a fixed point — merging the merged result again changes nothing
+  → expected [ 'erick@risa.gov.rw', …(1) ] to be [ … ]   (new array identity)
+Tests  3 failed | 13 passed (16)</code></pre>
+  <p>After the fix: <b>42 files, 366 tests passing</b> (357 pre-existing plus 9 new), <code>npx tsc --noEmit</code> clean. Three of the new tests are component-level — an all-day fill applies once and leaves both pickers on a well-formed label, a fresh mount re-running the fill lands on the same state, and a null parse leaves the form untouched.</p>
+
+  <div class="ask">
+    <h2>What still needs your browser</h2>
+    <p>The peg itself is unreproduced. Everything above says the fill → merge → write-back → render path cannot loop with any parse shape I could construct, so if the wedge is still there the trigger is something the harness could not stand up: the real model's output bytes, the real image-heavy message body, or page state behind a login I don't have.</p>
+    <ul>
+      <li>Re-run the Erick workshop email through <b>Create Event</b> and capture the raw <code>POST /ai/chat</code> response body.</li>
+      <li>Start a performance trace with <code>autoStop:false</code> <em>before</em> triggering, then trigger. That names the pegging frame in one shot — no amount of static analysis can.</li>
+      <li>Note whether the wedge survives a click on <b>Cancel</b>.</li>
+    </ul>
+    <p>The double effect run is also still unexplained: the deps are a string and a boolean, so it implies a remount, yet a production build entered by <code>router.push</code> mounts once. I left it alone on purpose — a "fill only once" guard would make a remount <em>worse</em>, since the remount resets the form and the guard would then refuse to refill it. After finding A it costs a wasted request, not a state change.</p>
+  </div>
+
+  <footer>
+    <span>apps/web/lib/calendar/eventPrefill.ts · apps/web/app/(app)/calendar/page.tsx · +9 tests</span>
+    <span>Full record: .superpowers/sdd/2026-09-05-ai-phase2-bridges/freeze-fix-report.md</span>
+  </footer>
+</main>
+</body>
+</html>

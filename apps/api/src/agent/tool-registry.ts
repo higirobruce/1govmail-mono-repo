@@ -12,8 +12,8 @@ export interface ChartSpec {
 export interface ToolContext {
   userId: string;
   userEmail: string;
-  /** Returns 's1', 's2', ... — one counter per agent turn, matching the ask alias convention. */
-  nextAlias(): string;
+  /** Stable per-turn alias: the same (type, id) always maps to the same 'sN'. */
+  aliasFor(type: 'mail' | 'doc' | 'event', id: string): string;
   emitChart(spec: ChartSpec): void;
 }
 

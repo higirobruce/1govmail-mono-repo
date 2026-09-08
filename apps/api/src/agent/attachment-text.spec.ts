@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { extractAttachmentText, streamToBuffer } from './attachment-text';
+import { extractAttachmentText, streamToBuffer } from '../common/attachment-text';
 
 describe('extractAttachmentText', () => {
   it('decodes plain text directly', async () => {

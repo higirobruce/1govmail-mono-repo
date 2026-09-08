@@ -1,0 +1,134 @@
+<title>Ask Your Inbox — Build Report</title>
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/57468216-7f82-4a67-8deb-59f256bd2799 — content-faithful, original styling not preserved -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #ffffff; --surface: #f7f7f5; --ink: #1a1a1a; --ink-soft: #55585c; --ink-faint: #8a8d90;
+    --line: #e0e0dc; --accent: #0f6f5c; --accent-soft: #e3f0ec; --code-bg: #f0f0ee;
+    --warn: #9a5b00; --warn-bg: #fbf3e4; --good: #1b7a3d;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+      --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+      --warn: #e0a44e; --warn-bg: #2a2216; --good: #56c77e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15181a; --surface: #1c2023; --ink: #e6e8e6; --ink-soft: #aab0ac; --ink-faint: #7d8480;
+    --line: #2c3134; --accent: #4cc5a8; --accent-soft: #1e312b; --code-bg: #22262a;
+    --warn: #e0a44e; --warn-bg: #2a2216; --good: #56c77e;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: "Inter", system-ui, sans-serif; font-size: 16px; line-height: 1.65; margin: 0; padding: 3rem 1.25rem 5rem; }
+  main { max-width: 740px; margin: 0 auto; }
+  .eyebrow { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.6rem; }
+  h1 { font-size: clamp(1.7rem, 4vw, 2.2rem); font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; margin: 0 0 1rem; }
+  h2 { font-size: 1.25rem; font-weight: 700; margin: 2.4rem 0 0.8rem; }
+  p, li, td { color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent); }
+  ul, ol { padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.4rem; }
+  code, .mono { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); border-radius: 4px; padding: 0.08em 0.35em; }
+  .meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; font-family: var(--mono); font-size: 0.8rem; color: var(--ink-faint); margin: 0 0 1.5rem; }
+  .meta strong { color: var(--ink-soft); font-weight: 500; }
+  .statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.7rem; margin: 1rem 0 1.5rem; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.8rem 1rem; }
+  .stat .k { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 0.3rem; }
+  .stat .v { font-weight: 600; font-size: 1.05rem; margin: 0; }
+  .stat .v.ok { color: var(--good); }
+  .warn { border-left: 3px solid var(--warn); background: var(--warn-bg); border-radius: 0 8px 8px 0; padding: 0.8rem 1.1rem; margin: 1rem 0; }
+  .warn .label { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--warn); display: block; margin-bottom: 0.3rem; }
+  .ruling { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.9rem 1.1rem; margin: 0 0 0.8rem; }
+  .ruling .rhead { font-weight: 600; margin: 0 0 0.35rem; color: var(--ink); }
+  .ruling p { margin: 0 0 0.4rem; font-size: 0.94rem; } .ruling p:last-child { margin: 0; }
+  .ruling .cost { color: var(--ink-faint); font-size: 0.88rem; }
+  footer, .foot { font-size: 0.85rem; color: var(--ink-faint); margin-top: 2.8rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+</style>
+<main>
+<header>
+  <p class="eyebrow">1Gov Mail · Inbox Intelligence · Phase 4 Build Report</p>
+  <h1>Ask Your Inbox — Shipped</h1>
+  <div class="meta">
+    <span>Date <strong>2026-09-04</strong></span>
+    <span>Branch <strong>ft-hyperscale</strong> (local, not pushed)</span>
+    <span>Range <strong>ffb408b → 40be375 · 20 commits</strong></span>
+    <span>Status <strong>final review clean</strong></span>
+  </div>
+</header>
+
+<p>Phase 4 is code complete. Every task went through implementation, a task-scoped review, and fix rounds where needed; the whole-branch final review found one Critical and four Important cross-task findings, all fixed in a single verified wave. The inbox-intelligence roadmap (briefing → triage cards → commitments → chat) is now fully built.</p>
+
+<div class="statgrid">
+  <div class="stat"><p class="k">API tests</p><p class="v ok">144 / 144</p></div>
+  <div class="stat"><p class="k">Web tests</p><p class="v ok">198 / 198</p></div>
+  <div class="stat"><p class="k">Typecheck</p><p class="v ok">clean</p></div>
+  <div class="stat"><p class="k">Plan tasks</p><p class="v">13 / 13</p></div>
+  <div class="stat"><p class="k">Fix rounds</p><p class="v">3 task + 1 final</p></div>
+</div>
+
+<h2>What shipped</h2>
+<ul>
+  <li><strong>Embedding layer:</strong> pgvector <code>message_embeddings</code> table (vector(1024), HNSW index, migration <code>20260903211047</code>); <code>EmbedderService</code> calling Ollama's native <code>/api/embed</code> (bge-m3); <code>EmbedWorkerService</code> backfilling the 90-day Inbox/Sent window with the card worker's fair-batch/tombstone/purge discipline, model-scoped so an <code>EMBED_MODEL</code> change re-embeds lazily.</li>
+  <li><strong>Hybrid retrieval:</strong> model-filtered cosine top-20 fused with Zimbra keyword search (deterministic EN/FR/Kinyarwanda keyword extraction, 90-day <code>after:</code> scope) via Reciprocal Rank Fusion; per-leg graceful degradation; zero sources short-circuits to a canned trilingual reply — the model is never asked to answer sourceless.</li>
+  <li><strong>Chat endpoint:</strong> SSE <code>POST /ai/inbox-chat</code> (sources event → token deltas → done), JWT-guarded, throttled 20/min, server-side <code>CHAT_MODEL</code> (qwen3-30b-16k). The client can never inject a system turn, and the full retrieval context never leaves the server — only 160-char snippets.</li>
+  <li><strong>UI:</strong> AskInboxPanel drawer with streamed answers, citation chips that resolve only through the server-sent sources event (a hallucinated citation renders as plain text), sources rail, injection banner, degraded notices, stop/abort, linked-commitment notes, Reply deep-link into the human-reviewed compose flow. ⌘K gains a semantic results section and an "Ask your inbox" row wired by direct callback.</li>
+  <li><strong>Search byproduct:</strong> <code>GET /mail/search/semantic</code> in the standard list shape.</li>
+  <li><strong>Deploy config:</strong> compose images → <code>pgvector/pgvector:pg17</code>; <code>OLLAMA_BASE_URL</code>/<code>CARD_MODEL</code>/<code>EMBED_MODEL</code>/<code>CHAT_MODEL</code> now in <code>.env.example</code> and the compose <code>x-api-env</code> anchor (closing a pre-existing gap); trilingual <code>scripts/embed-spotcheck.mjs</code>.</li>
+</ul>
+<p>Full final-review findings: <a href="https://claude.ai/code/artifact/bfef7448-ee7b-45dd-b49d-693f5c8f9264">whole-branch review page</a>. Spec (source of record): <code>docs/superpowers/specs/2026-09-03-ask-your-inbox-design.md</code>; plan: <code>docs/superpowers/plans/2026-09-03-ask-your-inbox.md</code>.</p>
+
+<h2>Rulings I made on your behalf</h2>
+<p>Decisions taken during autonomous execution, in order. Each names what it costs if wrong — rework any you disagree with.</p>
+
+<div class="ruling">
+  <p class="rhead">1 · Pre-flight: fixed the plan's own chunker test</p>
+  <p>Task 1's test contradicted its specified implementation (expected 2 chunks and a mid-paragraph slice; the correct behavior yields 3 whole-paragraph chunks). I corrected the plan's test before dispatch.</p>
+  <p class="cost">Cost if wrong: none material — the spec mandates only ≤1500 chars / ≤4 chunks / paragraph boundaries, which the fix preserves.</p>
+</div>
+<div class="ruling">
+  <p class="rhead">2 · Task 1: hard-cut remainder loss is a real defect</p>
+  <p>The plan's sample chunker dropped everything past the first 1500 chars of an unstructured email body. Ruled it against spec intent (a 4-chunk budget) and ordered the fix: oversized paragraphs now split across consecutive slices up to the cap.</p>
+  <p class="cost">Cost if wrong: slightly more chunks stored per message — effectively none.</p>
+</div>
+<div class="ruling">
+  <p class="rhead">3 · Task 8: accepted the implementer's rename over the plan's snippet</p>
+  <p>The plan's controller code had a constructor-field/method name collision (<code>inboxChat</code>) — a genuine TypeScript bug. The rename to <code>inboxChatService</code> was accepted as a plan-defect fix.</p>
+  <p class="cost">Cost if wrong: none — name-only, no external behavior.</p>
+</div>
+<div class="ruling">
+  <p class="rhead">4 · Task 12: shouldFilter={false}, not a keywords prop</p>
+  <p>cmdk's built-in filter was hiding the semantic section (id-based row values score 0). The reviewer suggested a <code>keywords</code> prop, but keywords carrying subject/snippet would still score 0 for semantically-matched-but-textually-different messages — the feature's core case. Ruled: forward an optional <code>shouldFilter</code> through CommandDialog and disable cmdk filtering in GlobalSearch, whose own upstream filtering is the real gate. Scope expansion into <code>components/ui/command.tsx</code> approved (prop optional; the only other consumer uses the bare Command primitive and is unaffected).</p>
+  <p class="cost">Cost if wrong: GlobalSearch loses cmdk's second-pass text filter — which its own server/client filtering replaces by design.</p>
+</div>
+<div class="ruling">
+  <p class="rhead">5 · Final review: SQLite desktop gate resolved by spec amendment, not code</p>
+  <p>The spec asked for a Postgres-datasource gate so the SQLite desktop-standalone variant never runs the worker/endpoints. The desktop api bundle predates phases 1–3 entirely — it contains none of this code, so the gate is vacuously satisfied. Ruled: amend the spec (done, dated 2026-09-04) instead of adding dead gating code.</p>
+  <p class="cost">Cost if wrong: if that bundle is ever regenerated from the current API without reading the amendment, the worker fails loudly at the pgvector migration on SQLite — a visible failure, not silent corruption.</p>
+</div>
+<div class="ruling">
+  <p class="rhead">6 · Deferred-minor triage at the final review</p>
+  <p>Confirmed the final reviewer's triage: two panel polish items were folded into the fix wave (stale degraded-banner reset, both-degraded wording); everything else deferred as fail-safe or cosmetic — mixed-validity citation groups dropping the valid alias too (safe direction), injection detection scanning pre-slice context (over-flags only), one-directional drawer exclusivity, no decoder flush at stream end (mirrors existing chatStream), short questions (&lt;8 words) always getting the English no-sources reply, and <code>docker-compose.local.yml</code> lacking the AI env vars.</p>
+  <p class="cost">Cost if wrong: minor UX or dev-env friction; nothing structural builds on these.</p>
+</div>
+
+<h2>Pre-deploy checklist (unchanged from the spec, now load-bearing)</h2>
+<ol>
+  <li>Ship <code>bge-m3</code> to the Ollama host (192.168.100.2); smoke-test <code>/api/embed</code>.</li>
+  <li>Run <code>OLLAMA_BASE_URL=http://192.168.100.2:11434/v1 node scripts/embed-spotcheck.mjs</code> — all four trilingual probes must PASS. <em>(Never live-run locally; the local bge-m3 pull didn't complete, so the script is syntax-verified only.)</em></li>
+  <li>Install pgvector <strong>before</strong> <code>prisma migrate deploy</code> — compose deployments get it from the image swap; native VMs need the PG-version package. The dev machine runs native PostgreSQL 15 with a source-built pgvector.</li>
+  <li><code>prisma migrate deploy</code> (one new migration).</li>
+  <li>Add the four AI env vars to <code>/opt/govmail/api.env</code>.</li>
+  <li>Manual E2E: French question over French mail; Kinyarwanda question; exact-term lookup (keyword leg); paraphrase lookup (vector leg); an injection-bearing email in the retrieval set (expect banner, intact answer); revoked session → 401.</li>
+</ol>
+
+<div class="warn">
+  <span class="label">Standing gotcha — for every future schema change</span>
+  <p>Prisma cannot represent the hand-written HNSW index, so any future <code>prisma migrate dev</code> will offer a migration that <strong>drops</strong> <code>message_embeddings_embedding_hnsw_idx</code>. Always decline that offer. A warning comment sits above the model in <code>schema.prisma</code>.</p>
+</div>
+
+<p class="foot">Built via subagent-driven development · 13 tasks, per-task spec+quality reviews, whole-branch final review · spec &amp; plan committed in docs/superpowers/</p>
+</main>

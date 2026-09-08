@@ -1,5 +1,6 @@
 import { UNTRUSTED_CONTENT_RULE, fenceUntrusted, neutralizeMarkers } from './promptCore';
 import { languageRule } from './language';
+import { buildProfileBlock, type AiProfileInput } from './profile';
 
 export type SourceType = 'mail' | 'doc' | 'event';
 
@@ -111,9 +112,13 @@ function formatSource(s: ChatSource): string {
  * responsibility (AskService clamps via `clampText` before building the
  * upstream body — see apps/api/src/chat/ask.service.ts).
  */
-export function buildAskPrompt(sources: ChatSource[], turns: ChatTurn[]): string {
+export function buildAskPrompt(
+  sources: ChatSource[],
+  turns: ChatTurn[],
+  profile?: AiProfileInput | null,
+): string {
   const question = turns[turns.length - 1]?.content ?? '';
-  return `${UNTRUSTED_CONTENT_RULE}
+  const base = `${UNTRUSTED_CONTENT_RULE}
 
 You answer questions about the user's own government mail, documents, and calendar using ONLY the excerpts listed under SOURCES. Each source has an alias like [s1].
 ${languageRule(question)}
@@ -125,6 +130,8 @@ Rules:
 
 SOURCES:
 ${sources.map(formatSource).join('\n\n')}`;
+  const profileBlock = buildProfileBlock(profile, 'full');
+  return profileBlock ? `${base}\n\n${profileBlock}` : base;
 }
 
 export type AnswerSegment = { kind: 'text'; text: string } | { kind: 'cite'; alias: string };
@@ -182,6 +189,7 @@ export function buildGenerationPrompt(
   subject: string,
   sources: ChatSource[],
   extraContext?: string,
+  profile?: AiProfileInput | null,
 ): string {
   // Neutralize markers. Also strip [sN]-shaped aliases from the untrusted subject
   // to prevent them colliding with the server-vouched citation whitelist.
@@ -198,6 +206,8 @@ export function buildGenerationPrompt(
     `SOURCES:\n\n${sources.map(formatSource).join('\n\n')}`,
   ];
   if (extraContext) parts.push(extraContext);
+  const profileBlock = buildProfileBlock(profile, kind === 'dossier' ? 'identity' : 'full');
+  if (profileBlock) parts.push(profileBlock);
   return parts.join('\n\n');
 }
 
@@ -235,7 +245,9 @@ export function buildAgentPrompt(opts: {
   userEmail: string;
   userName: string | null;
   nowIso: string;
+  profile?: AiProfileInput | null;
 }): string {
+  const profileBlock = buildProfileBlock(opts.profile, 'full');
   return [
     'You are 1Gov Assistant inside the 1Gov Mail workspace. You can call tools to search and read the user\'s mail, documents, calendar, tasks, people and contacts; create drafts, documents and tasks; render charts; and propose sending email or creating calendar events.',
     '',
@@ -253,5 +265,6 @@ export function buildAgentPrompt(opts: {
     '6. NEVER claim you searched, read, created or proposed anything unless you called the corresponding tool in THIS turn. Zero tool calls means you must say you are answering from the conversation only.',
     '7. Ids from earlier turns are stale — call the search tool again to get current ids before read_email, read_document or compare_documents. Never invent an id or an email address.',
     '8. When a request is ambiguous in a way that changes which source or item to use (e.g. "the document" could be a Docs document or an email attachment), try searching first. After a search: if more than one result plausibly matches what the user meant, do NOT pick one, do NOT list them in text, and do NOT end your answer with a question — call ask_user with the top candidates as the options. When a search found nothing, call ask_user with source or detail options like "It\'s in my email" / "It\'s a Docs document" / "I\'ll give the name". NEVER ask the user anything in plain text — every question to the user goes through the ask_user tool. Ask at most one clarifying question per turn, and never ask for something a search could answer.',
+    ...(profileBlock ? ['', profileBlock] : []),
   ].join('\n');
 }

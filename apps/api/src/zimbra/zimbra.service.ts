@@ -1697,6 +1697,52 @@ export class ZimbraService {
     }
   }
 
+  /**
+   * Look up the caller's own GAL entry (title/org attrs) by email, for
+   * best-effort AI-profile seeding. Unlike `searchGal`, this requests an
+   * explicit `attrs` projection since the default GAL search neither asks
+   * for nor surfaces title/company/department. Soft-fails like `searchGal`:
+   * never throws, always returns an all-null shape on any Zimbra trouble.
+   */
+  async galSelfLookup(
+    host: string,
+    authToken: string,
+    email: string,
+    csrfToken?: string,
+  ): Promise<{ title: string | null; department: string | null; company: string | null }> {
+    const none = { title: null, department: null, company: null };
+    if (!email || !email.trim()) return none;
+    const client = this.buildClient(host, authToken, csrfToken);
+    try {
+      const response = await client.post('/service/soap', {
+        Body: {
+          SearchGalRequest: {
+            _jsns: 'urn:zimbraAccount',
+            name: email.trim(),
+            type: 'account',
+            limit: 1,
+            attrs: 'title,ou,company,department',
+          },
+        },
+        Header: this.soapHeader(csrfToken),
+      });
+
+      const hit: any = response.data?.Body?.SearchGalResponse?.cn?.[0];
+      if (!hit) return none;
+      const a = (hit._attrs ?? {}) as Record<string, string>;
+      return {
+        title:      a.title ?? null,
+        department: a.ou ?? a.department ?? null,
+        company:    a.company ?? null,
+      };
+    } catch (err: any) {
+      const fault = err?.response?.data?.Body?.Fault;
+      const msg = fault?.Reason?.Text ?? err?.message ?? 'unknown';
+      this.logger.warn(`galSelfLookup: ${msg}`);
+      return none;
+    }
+  }
+
   // ─── Free / Busy ──────────────────────────────────────────────────────────────
 
   /**

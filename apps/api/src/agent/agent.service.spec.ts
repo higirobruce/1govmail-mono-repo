@@ -426,4 +426,40 @@ describe('AgentService.run', () => {
     const lastBody = ai.upstream.mock.calls[8][0];
     expect(lastBody.tools).toBeUndefined();
   });
+
+  it('includes the account owner\'s profile card and instructions in the system prompt when aiProfile is present', async () => {
+    const { svc, ai, prisma, emit } = makeService([jsonText('First try'), jsonText('Final answer')]);
+    prisma.user.findUnique.mockResolvedValue({
+      email: 'u1@x.rw',
+      displayName: 'Bruce',
+      aiProfile: {
+        jobTitle: 'Director of Digital', institution: 'RISA', department: 'Digital Services',
+        language: 'en', instructions: 'Keep replies under three sentences.',
+      },
+    });
+    await svc.run('u1', [{ role: 'user', content: 'hi' }], emit, new AbortController().signal);
+    const systemMsg = ai.upstream.mock.calls[0][0].messages[0];
+    expect(systemMsg.role).toBe('system');
+    expect(systemMsg.content).toContain('Director of Digital');
+    expect(systemMsg.content).toContain('the rules above always win');
+  });
+
+  it('does not duplicate the identity line when the agent profile omits displayName/email', async () => {
+    const { svc, ai, prisma, emit } = makeService([jsonText('First try'), jsonText('Final answer')]);
+    prisma.user.findUnique.mockResolvedValue({
+      email: 'u1@x.rw',
+      displayName: 'Bruce',
+      aiProfile: {
+        jobTitle: 'Director of Digital', institution: null, department: null, language: null, instructions: null,
+      },
+    });
+    await svc.run('u1', [{ role: 'user', content: 'hi' }], emit, new AbortController().signal);
+    const systemMsg: string = ai.upstream.mock.calls[0][0].messages[0].content;
+    // The agent's own template already states "acting for Bruce <u1@x.rw>" —
+    // a profile block WITH displayName/email would add a second "The user
+    // you are assisting: ..." line and a second occurrence of the email.
+    const emailOccurrences = systemMsg.split('u1@x.rw').length - 1;
+    expect(emailOccurrences).toBe(1);
+    expect(systemMsg).not.toContain('The user you are assisting');
+  });
 });

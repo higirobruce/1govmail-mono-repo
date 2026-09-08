@@ -3,7 +3,7 @@ import type { ToolContext } from '../tool-registry';
 
 function makeCtx(): ToolContext {
   let n = 0;
-  return { userId: 'u1', userEmail: 'u1@x.rw', nextAlias: () => `s${++n}`, emitChart: jest.fn() };
+  return { userId: 'u1', userEmail: 'u1@x.rw', aliasFor: () => `s${++n}`, emitChart: jest.fn() };
 }
 
 // Mocks mirror the real MailService/RetrievalService return shapes:
@@ -93,6 +93,43 @@ describe('mail read tools', () => {
   });
 });
 
+describe('alias stability across calls within one turn', () => {
+  // Mirrors agent.service.run's real per-turn ctx construction (a Map keyed by
+  // "type:id"), NOT a per-call fresh alias counter — the same ctx instance is
+  // reused across two separate tool executions the way one agent turn would
+  // call search_emails more than once.
+  function makeTurnCtx(): ToolContext {
+    let aliasCount = 0;
+    const aliasByKey = new Map<string, string>();
+    return {
+      userId: 'u1',
+      userEmail: 'u1@x.rw',
+      aliasFor: (type: string, id: string) => {
+        const k = `${type}:${id}`;
+        const hit = aliasByKey.get(k);
+        if (hit) return hit;
+        const a = `s${++aliasCount}`;
+        aliasByKey.set(k, a);
+        return a;
+      },
+      emitChart: jest.fn(),
+    } as any;
+  }
+
+  it('search_emails returns the SAME alias for the same message id across two calls in one turn', async () => {
+    const ctx = makeTurnCtx();
+    const res1 = await byName('search_emails').execute(
+      { query: 'from:a@b.rw', mode: 'keyword', limit: 5 }, ctx,
+    );
+    const res2 = await byName('search_emails').execute(
+      { query: 'from:a@b.rw', mode: 'keyword', limit: 5 }, ctx,
+    );
+    expect(res1.refs![0].id).toBe('m1');
+    expect(res2.refs![0].id).toBe('m1');
+    expect(res2.refs![0].alias).toBe(res1.refs![0].alias);
+  });
+});
+
 describe('normalizeZimbraQuery', () => {
   it('rewrites ISO range idioms into after/before with US dates', () => {
     expect(normalizeZimbraQuery('received:2026-09-01..2026-09-07')).toBe('after:9/1/2026 before:9/7/2026');
@@ -122,7 +159,7 @@ describe('get_mail_stats', () => {
 
   it('counts per day with exact-bounds Zimbra queries', async () => {
     const res = await tool.execute({ startDate: '2026-09-01', endDate: '2026-09-03' }, {
-      userId: 'u1', userEmail: 'u1@x.rw', nextAlias: () => 's1', emitChart: jest.fn(),
+      userId: 'u1', userEmail: 'u1@x.rw', aliasFor: () => 's1', emitChart: jest.fn(),
     } as any);
     expect(statsMail.searchMessages).toHaveBeenCalledWith('u1', 'after:8/31/2026 before:9/2/2026', 1, 0);
     expect(statsMail.searchMessages).toHaveBeenCalledWith('u1', 'after:9/2/2026 before:9/4/2026', 1, 0);
@@ -132,7 +169,7 @@ describe('get_mail_stats', () => {
   });
 
   it('rejects ranges over 31 days or inverted', async () => {
-    const ctx = { userId: 'u1', userEmail: '', nextAlias: () => 's1', emitChart: jest.fn() } as any;
+    const ctx = { userId: 'u1', userEmail: '', aliasFor: () => 's1', emitChart: jest.fn() } as any;
     await expect(tool.execute({ startDate: '2026-01-01', endDate: '2026-03-01' }, ctx)).rejects.toThrow(/31/);
     await expect(tool.execute({ startDate: '2026-09-05', endDate: '2026-09-01' }, ctx)).rejects.toThrow(/before/);
   });

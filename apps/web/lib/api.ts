@@ -602,6 +602,51 @@ export const api = {
         body: JSON.stringify({ oldPassword, newPassword }),
       });
     },
+
+    /** GET /settings/ai-profile — account-level AI personalization profile (DB-only). */
+    getAiProfile: () => {
+      if (USE_MOCK) {
+        return delay<AiProfile>({
+          instructions: null, jobTitle: null, institution: null, department: null, language: null,
+        });
+      }
+      return request<AiProfile>('/settings/ai-profile');
+    },
+
+    /** PATCH /settings/ai-profile — upsert the AI personalization profile; empty strings clear a field. */
+    updateAiProfile: (data: {
+      instructions?: string;
+      jobTitle?: string;
+      institution?: string;
+      department?: string;
+      language?: string;
+    }) => {
+      if (USE_MOCK) {
+        // Mirror the real endpoint's string|null shape — a field the caller
+        // didn't pass comes back as null, never undefined.
+        return delay<AiProfile>({
+          instructions: data.instructions ?? null,
+          jobTitle: data.jobTitle ?? null,
+          institution: data.institution ?? null,
+          department: data.department ?? null,
+          language: data.language ?? null,
+        });
+      }
+      return request<AiProfile>('/settings/ai-profile', {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      });
+    },
+
+    /** GET /settings/ai-profile/suggestions — best-effort form seed from the Zimbra GAL entry. */
+    getAiProfileSuggestions: () => {
+      if (USE_MOCK) {
+        return delay<AiProfileSuggestions>({
+          jobTitle: null, institution: null, department: null,
+        });
+      }
+      return request<AiProfileSuggestions>('/settings/ai-profile/suggestions');
+    },
   },
 
   tasks: {
@@ -910,6 +955,20 @@ export interface CommitmentsResponse {
   promised: Commitment[];
   waiting: Commitment[];
   openCount: number;
+}
+
+export interface AiProfile {
+  instructions: string | null;
+  jobTitle: string | null;
+  institution: string | null;
+  department: string | null;
+  language: string | null;
+}
+
+export interface AiProfileSuggestions {
+  jobTitle: string | null;
+  institution: string | null;
+  department: string | null;
 }
 
 export interface Doc {

@@ -1,9 +1,11 @@
 import { ForbiddenException } from '@nestjs/common';
 import { AskService } from './ask.service';
 
+const AI_PROFILE_SELECT = { instructions: true, jobTitle: true, institution: true, department: true, language: true };
+
 function makeFakes(sources: any[] = [], degraded = { vector: false, keyword: false, docs: false, calendar: false }) {
   const retrieval = { retrieve: jest.fn().mockResolvedValue({ sources, degraded }) };
-  const prisma = { user: { findUnique: jest.fn().mockResolvedValue({ email: 'u1@x.rw' }) } };
+  const prisma = { user: { findUnique: jest.fn().mockResolvedValue({ email: 'u1@x.rw', displayName: 'Bruce', aiProfile: null }) } };
   const docsService = { verifyReadAccess: jest.fn().mockResolvedValue({ id: 'd1' }) };
   return { retrieval, prisma, docsService };
 }
@@ -30,7 +32,10 @@ describe('AskService.prepare', () => {
       ...turns,
     ]);
 
-    expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: 'u1' }, select: { email: true } });
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      select: { email: true, displayName: true, aiProfile: { select: AI_PROFILE_SELECT } },
+    });
     expect(retrieval.retrieve).toHaveBeenCalledWith('u1', 'u1@x.rw', 'What did finance say about the budget?', undefined);
     expect(prep.sources.map((s) => s.alias)).toEqual(['s1', 's2']);
     expect(prep.sources[0]).toMatchObject({ id: 'm1', type: 'mail', snippet: expect.stringContaining('Finance approved') });
@@ -140,6 +145,35 @@ describe('AskService.prepare', () => {
     const svc = new AskService(retrieval as any, prisma as any, docsService as any);
     await svc.prepare('u1', turns);
     expect(retrieval.retrieve).toHaveBeenCalledWith('u1', '', 'What did finance say about the budget?', undefined);
+  });
+
+  it('includes the identity line even when the user has NO aiProfile row (profile arg must not be gated on the row)', async () => {
+    const { retrieval, prisma, docsService } = makeFakes([MAIL_SRC]);
+    prisma.user.findUnique.mockResolvedValue({
+      email: 'u1@x.rw',
+      displayName: 'Bruce',
+      aiProfile: null,
+    });
+    const svc = new AskService(retrieval as any, prisma as any, docsService as any);
+    const prep = await svc.prepare('u1', turns);
+
+    const system = prep.upstreamBody!.messages[0].content;
+    expect(system).toContain('u1@x.rw');
+  });
+
+  it('includes the identity line and profile card when aiProfile is present', async () => {
+    const { retrieval, prisma, docsService } = makeFakes([MAIL_SRC]);
+    prisma.user.findUnique.mockResolvedValue({
+      email: 'u1@x.rw',
+      displayName: 'Bruce',
+      aiProfile: { jobTitle: 'Director of Digital', institution: 'RISA', department: null, language: null, instructions: null },
+    });
+    const svc = new AskService(retrieval as any, prisma as any, docsService as any);
+    const prep = await svc.prepare('u1', turns);
+
+    const system = prep.upstreamBody!.messages[0].content;
+    expect(system).toContain('u1@x.rw');
+    expect(system).toContain('Director of Digital');
   });
 
   it('defaults chatModel to qwen3-30b-16k:latest', () => {

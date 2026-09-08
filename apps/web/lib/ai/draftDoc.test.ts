@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import type { AIClient, ChatOptions } from './client';
 import { TEMPLATE_CATALOG, draftFromThread, assembleDocContent, templateEmoji } from './draftDoc';
+import { useAIStore } from '@/stores/ai.store';
 
 /** Captures the request instead of calling the network; returns a canned reply. */
 class FakeClient {
@@ -126,6 +127,43 @@ describe('draftFromThread', () => {
   it('non-JSON model output rejects', async () => {
     const fake = new FakeClient('this is not json at all');
     await expect(draftFromThread(fake as unknown as AIClient, 'thread text', opts)).rejects.toThrow();
+  });
+});
+
+const EMPTY_PROFILE_CARD = { jobTitle: null, institution: null, department: null, language: null };
+
+describe('profile card wiring (P2 spec: identity card reaches draftFromThread)', () => {
+  afterEach(() => {
+    useAIStore.getState().setProfileCard(EMPTY_PROFILE_CARD);
+  });
+
+  it('system prompt contains the card AND the instructions when the store has card fields set', async () => {
+    useAIStore.getState().setProfileCard({
+      jobTitle: 'Director of Digital', institution: 'RISA', department: null, language: null,
+    });
+    const fake = new FakeClient(JSON.stringify({ templateId: 'memo', title: 'T', markdown: '## Purpose\nx' }));
+    await draftFromThread(fake as unknown as AIClient, 'thread text', {
+      model: 'test',
+      subject: 'Q3 planning sync',
+      customInstructions: 'Prefer British spelling.',
+    });
+
+    const system = fake.lastOpts!.messages[0].content;
+    expect(system).toContain('Director of Digital');
+    expect(system).toContain('RISA');
+    expect(system).toContain('Prefer British spelling.');
+  });
+
+  it('prompt is unchanged from before when nothing is set in the store', async () => {
+    const fake = new FakeClient(JSON.stringify({ templateId: 'memo', title: 'T', markdown: '## Purpose\nx' }));
+    await draftFromThread(fake as unknown as AIClient, 'thread text', {
+      model: 'test',
+      subject: 'Q3 planning sync',
+    });
+
+    const system = fake.lastOpts!.messages[0].content;
+    expect(system).not.toContain('Their profile');
+    expect(system).not.toContain('USER STYLE PREFERENCES');
   });
 });
 

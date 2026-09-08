@@ -9,7 +9,7 @@ import {
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
 import { renderInline, splitBlocks } from './answerFormat';
 import { streamAsk, type AskSource, type AskSourceType, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
-import { streamAgent, type AgentStep, type AgentProposal, type AgentChartSpec, type AgentClarify } from '@/lib/ai/agent';
+import { streamAgent, mergeSources, type AgentStep, type AgentProposal, type AgentChartSpec, type AgentClarify } from '@/lib/ai/agent';
 import { sourceHref } from '@/lib/ai/sourceNav';
 import { scrubOutput } from '@/lib/ai/prompt';
 import { useCharStream } from '@/lib/ai/useCharStream';
@@ -75,6 +75,9 @@ function DegradedNotice({ degraded }: { degraded: AskDegraded }) {
   }
   if (degraded.calendar) {
     lines.push('Calendar search unavailable — the answer may be missing event sources.');
+  }
+  if (degraded.attachment) {
+    lines.push('Attachment search unavailable — the answer may be missing file contents.');
   }
   if (lines.length === 0) return null;
   return (
@@ -435,8 +438,11 @@ export default function AskPanel() {
                   ...r,
                   injectionSuspected: r.injectionSuspected || !!step.injectionSuspected,
                 }));
-                pendingSourcesRef.current = [...pendingSourcesRef.current, ...stamped];
-                setPendingSources(pendingSourcesRef.current);
+                const merged = mergeSources(pendingSourcesRef.current, stamped);
+                if (merged !== pendingSourcesRef.current) {
+                  pendingSourcesRef.current = merged;
+                  setPendingSources(merged);
+                }
               }
             },
             onProposal: (p) => {

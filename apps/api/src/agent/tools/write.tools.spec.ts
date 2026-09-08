@@ -6,7 +6,7 @@ function makeCtx(): ToolContext & { charts: ChartSpec[] } {
   const charts: ChartSpec[] = [];
   return {
     userId: 'u1', userEmail: 'u1@x.rw',
-    nextAlias: () => `s${++n}`,
+    aliasFor: () => `s${++n}`,
     emitChart: (spec) => charts.push(spec),
     charts,
   } as any;
@@ -89,6 +89,11 @@ describe('gated tools', () => {
 });
 
 describe('create_chart', () => {
+  it('description warns the model never to invent image links for the chart', () => {
+    const tool = buildChartTool();
+    expect(tool.description).toContain('never invent image links');
+  });
+
   it('validates the spec and emits it', async () => {
     const ctx = makeCtx();
     const tool = buildChartTool();

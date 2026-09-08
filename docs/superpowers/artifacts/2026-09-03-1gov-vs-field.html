@@ -1,0 +1,182 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/f331bef4-d51b-4c06-aa4f-97fefb1232ce — content-faithful, original styling not preserved -->
+<title>1Gov Mail vs the Field</title>
+<style>
+  body { max-width: 740px; margin: 0 auto; padding: 2rem 1.25rem 4rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; color: #1F2B33; background: #FAF9F5; }
+  @media (prefers-color-scheme: dark) { body { color: #E6EAE8; background: #121A1E; } }
+  h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 0.75rem; }
+  h2 { font-size: 1.4rem; margin: 2.5rem 0 0.4rem; }
+  h3 { font-size: 1.05rem; margin: 1.4rem 0 0.4rem; }
+  .eyebrow, .meta { font-family: ui-monospace, "SF Mono", monospace; font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
+  .standfirst { font-size: 1.1rem; opacity: 0.85; max-width: 62ch; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.9rem; margin: 1.5rem 0; }
+  .tile { border: 1px solid #ccc; border-radius: 6px; padding: 1rem; }
+  .tile .num { font-size: 1.8rem; font-weight: 700; }
+  .tile .lbl { font-size: 0.85rem; opacity: 0.8; margin-top: 0.4rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.82rem; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: 0.4rem 0.5rem; text-align: center; }
+  thead th { background: rgba(127,127,127,0.1); }
+  tbody th { text-align: left; white-space: nowrap; }
+  .us { background: rgba(184,134,11,0.12); }
+  .legend { font-size: 0.85rem; opacity: 0.8; margin-top: 0.6rem; }
+  .legend span { margin-right: 1.2rem; }
+  ol.footnotes, ul.caveats { font-size: 0.85rem; opacity: 0.85; }
+  .ladder { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 1rem; }
+  .rung { border: 1px solid #ccc; border-radius: 6px; padding: 0.9rem 1.1rem; }
+  .rung.top { border-color: #B8860B; background: rgba(184,134,11,0.08); }
+  .rung .step { font-weight: 700; font-size: 1.3rem; opacity: 0.6; float: left; margin-right: 1rem; }
+  .who { font-family: ui-monospace, monospace; font-size: 0.75rem; opacity: 0.7; display: block; margin-top: 0.4rem; }
+  .sec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.9rem; margin-top: 1rem; }
+  .sec-card { border: 1px solid #ccc; border-radius: 6px; padding: 1rem; }
+  .sec-card.us { border-color: #B8860B; }
+  .incident { display: inline-block; background: rgba(169,68,68,0.12); color: #A94442; font-family: ui-monospace, monospace; font-size: 0.72rem; border-radius: 3px; padding: 1px 6px; }
+  .gap-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; }
+  .gap { border: 1px solid #ccc; border-radius: 6px; padding: 0.8rem 1.1rem; }
+  .phase { font-family: ui-monospace, monospace; font-size: 0.72rem; opacity: 0.7; }
+  .note { border-left: 3px solid #0E7C6B; padding: 0.8rem 1.1rem; margin: 1.2rem 0; opacity: 0.9; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ccc; font-family: ui-monospace, monospace; font-size: 0.75rem; opacity: 0.6; }
+</style>
+
+<p class="eyebrow">AI Feature Benchmark · September 2026</p>
+<h1>1Gov Mail vs the Field</h1>
+<p class="standfirst">How 1Gov Mail's AI features compare against nine major email clients — Microsoft 365 Copilot, Gmail with Gemini, Apple Intelligence, Superhuman, Shortwave, Zoho Zia, Proton Scribe, Spark, and Canary — measured against primary vendor documentation.</p>
+<p class="meta">Research date 2026-09-03 · sources: official vendor docs (cited in docs/research/) · 1Gov features verified against the deployed build</p>
+
+<div class="tiles">
+  <div class="tile"><div class="num">0 / 9</div><div class="lbl">competitors offer fully self-hosted mail AI. 1Gov Mail runs its entire feature set against a model on government hardware.</div></div>
+  <div class="tile"><div class="num">0 / 9</div><div class="lbl">competitors document support for <em>any</em> African language. 1Gov Mail detects and answers in Kinyarwanda, French, and English.</div></div>
+  <div class="tile"><div class="num">2 / 9</div><div class="lbl">competitors publish prompt-injection defenses (Microsoft, Google) — and both have documented real-world bypasses.</div></div>
+  <div class="tile"><div class="num">4</div><div class="lbl">capabilities where the field is ahead of us today: chat-with-inbox, persistent triage labels, commitment tracking, semantic search.</div></div>
+</div>
+
+<h2>Feature matrix</h2>
+<p>● shipped and documented &nbsp;·&nbsp; ◐ partial, adjacent, or undocumented steering &nbsp;·&nbsp; ○ not offered / not documented. Every competitor cell traces to a primary source in the research file.</p>
+<table>
+  <thead>
+    <tr>
+      <th style="text-align:left">Capability</th>
+      <th class="us">1Gov Mail</th>
+      <th>Outlook Copilot</th>
+      <th>Gmail Gemini</th>
+      <th>Apple Mail</th>
+      <th>Superhuman</th>
+      <th>Shortwave</th>
+      <th>Zoho Zia</th>
+      <th>Proton Scribe</th>
+      <th>Spark +AI</th>
+      <th>Canary</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><th>Message &amp; thread summaries</th><td class="us">●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>○</td><td>●</td><td>●</td></tr>
+    <tr><th>Compose / rewrite with tone</th><td class="us">●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td><td>●</td></tr>
+    <tr><th>Reply suggestions, steerable intent + length</th><td class="us">●<sup>1</sup></td><td>◐</td><td>◐</td><td>◐</td><td>●</td><td>◐</td><td>◐</td><td>○</td><td>◐</td><td>◐</td></tr>
+    <tr><th>Inbox digest / briefing</th><td class="us">●<sup>2</sup></td><td>◐</td><td>◐</td><td>◐</td><td>◐</td><td>◐</td><td>○</td><td>○</td><td>◐</td><td>◐</td></tr>
+    <tr><th>Chat with your inbox</th><td class="us">○<sup>3</sup></td><td>●</td><td>●</td><td>○</td><td>●</td><td>●</td><td>●</td><td>○</td><td>●</td><td>◐</td></tr>
+    <tr><th>AI triage / auto-labels</th><td class="us">◐<sup>3</sup></td><td>●</td><td>◐</td><td>◐</td><td>●</td><td>●</td><td>○</td><td>○</td><td>◐</td><td>●</td></tr>
+    <tr><th>Follow-up / commitment tracking</th><td class="us">◐<sup>3</sup></td><td>○</td><td>○</td><td>○</td><td>●</td><td>◐</td><td>◐</td><td>○</td><td>◐</td><td>○</td></tr>
+    <tr><th>AI / semantic search</th><td class="us">○<sup>3</sup></td><td>●</td><td>●</td><td>○</td><td>●</td><td>●</td><td>●</td><td>○</td><td>●</td><td>●</td></tr>
+    <tr><th>French</th><td class="us">●</td><td>●</td><td>◐</td><td>●</td><td>●</td><td>◐</td><td>◐</td><td>●<sup>4</sup></td><td>◐</td><td>◐</td></tr>
+    <tr><th>Kinyarwanda (any African language)</th><td class="us">●</td><td>○</td><td>○</td><td>○</td><td>○</td><td>○</td><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+    <tr><th>Self-hosted / customer-controlled model</th><td class="us">●</td><td>○</td><td>○</td><td>◐<sup>5</sup></td><td>○</td><td>○</td><td>◐<sup>6</sup></td><td>◐<sup>4</sup></td><td>○</td><td>◐<sup>7</sup></td></tr>
+    <tr><th>Documented injection defenses</th><td class="us">●<sup>8</sup></td><td>●<sup>9</sup></td><td>●<sup>9</sup></td><td>○</td><td>○</td><td>○</td><td>○</td><td>○</td><td>○</td><td>○</td></tr>
+    <tr><th>AI pricing</th><td class="us">included</td><td>add-on</td><td>Starter+</td><td>free w/ device</td><td>$25–40/mo</td><td>$30–120/mo</td><td>paid plans</td><td>Duo+/add-on</td><td>~$60/yr</td><td>~$36/yr</td></tr>
+  </tbody>
+</table>
+<div class="legend"><span>● shipped &amp; documented</span><span>◐ partial / adjacent</span><span>○ not offered / not documented</span></div>
+<ol class="footnotes">
+  <li>Intent chips (acknowledge / accept / decline / request info) plus length control on every suggestion — no surveyed client documents discrete intent steering; Superhuman is closest with tone/length adjustment.</li>
+  <li>Executive Briefing: window-scoped digest over Inbox + Sent with needs-decision / waiting-on-you / you-promised / deadlines sections, every claim linked to its source message, coverage always disclosed.</li>
+  <li>Roadmap, agreed and sequenced: persistent triage labels (phase 2) and commitment tracker (phase 3) industrialize sections the briefing already computes per-run; chat-with-inbox and semantic search are phase 4. ◐ reflects the briefing's per-run coverage today.</li>
+  <li>Proton Scribe local mode runs Mistral 7B on the user's device — but English-only, compose-only, per-device; French requires Proton's cloud. No summarization, triage, chat, or search exist at all.</li>
+  <li>Apple Private Cloud Compute is independently verifiable Apple-operated infrastructure — strong privacy, zero customer control; no government can host or substitute the model.</li>
+  <li>Zoho BYOK points Zia at the customer's own OpenAI/Gemini/Claude/Cohere API key; Zoho's docs still describe content as "shared to an external third party" and disclaim liability.</li>
+  <li>Canary keeps triage/indexing on-device, but all generative work (drafting, summaries, Q&amp;A) calls privacy-controlled cloud AI.</li>
+  <li>Sentinel fencing of untrusted mail, an injection-attempt detector driving a visible warning badge, a reduce-stage firewall (the briefing composer never sees raw email text), output scrubbing — with measured limits documented in the codebase rather than asserted.</li>
+  <li>Both published programs have documented real-world bypasses: Microsoft's XPIA classifier (EchoLeak CVE-2025-32711; CVE-2026-26133), Google's six-layer defense (hidden-text summary manipulation incident).</li>
+</ol>
+
+<h2>The sovereignty ladder</h2>
+<p>Where can the model actually run? For a government mailbox this is the decisive axis, and the market clusters at the bottom.</p>
+<div class="ladder">
+  <div class="rung top">
+    <span class="step">5</span>
+    <h3>Full stack on customer hardware</h3>
+    <p>Every AI feature — summarize, rewrite, steerable replies, executive briefing — runs against a model the organization deploys, updates, and firewalls itself. Mail content never leaves the network; the model is swappable by the administrator.</p>
+    <span class="who">1GOV MAIL — alone on this rung in the survey</span>
+  </div>
+  <div class="rung">
+    <span class="step">4</span>
+    <h3>Per-device local inference, partial</h3>
+    <p>An open-weight model (Mistral 7B) downloads to each user's machine — genuinely outside any vendor cloud, but per-device rather than centrally managed, English-only, and covering compose/rewrite alone.</p>
+    <span class="who">PROTON SCRIBE (local mode)</span>
+  </div>
+  <div class="rung">
+    <span class="step">3</span>
+    <h3>Bring your own key</h3>
+    <p>The customer supplies API credentials and picks the provider — commercial control, not data control. Zoho's own documentation: content "may be shared to an external third party," liability on the configuring admin.</p>
+    <span class="who">ZOHO ZIA (BYOK)</span>
+  </div>
+  <div class="rung">
+    <span class="step">2</span>
+    <h3>Compliance-isolated vendor cloud</h3>
+    <p>Sovereign-cloud programs (GCC High / DoD IL5, Gemini for Government, Apple Private Cloud Compute) constrain where and how the vendor processes mail — inference still runs exclusively on vendor hardware, on vendor-chosen models.</p>
+    <span class="who">MICROSOFT · GOOGLE · APPLE</span>
+  </div>
+  <div class="rung">
+    <span class="step">1</span>
+    <h3>Vendor cloud, vendor model</h3>
+    <p>Mail content flows to the vendor's chosen third-party model providers (OpenAI, Anthropic, Azure OpenAI, Google Cloud) under contractual no-training promises. No customer choice of model or hosting.</p>
+    <span class="who">SUPERHUMAN · SHORTWAVE · SPARK · CANARY (generative) · GMAIL · OUTLOOK (standard)</span>
+  </div>
+</div>
+
+<h2>Security posture, honestly compared</h2>
+<p>Only three products in this comparison document any defense against prompt injection in mail — and the two big ones have both been publicly bypassed. The honest claim is not "immune"; it is "smaller blast radius, verifiable claims."</p>
+<div class="sec-grid">
+  <div class="sec-card">
+    <h3>Microsoft Copilot</h3>
+    <ul>
+      <li>XPIA classifier blocks malicious instructions in grounding data; Defender ships injection detections.</li>
+      <li>Bypassed in the wild: <span class="incident">CVE-2025-32711 EchoLeak</span> zero-click exfiltration, then <span class="incident">CVE-2026-26133</span> summary hijacking. Both patched.</li>
+      <li>Deep agentic reach (Graph, files, calendar) means a successful injection touches far more than mail.</li>
+    </ul>
+  </div>
+  <div class="sec-card">
+    <h3>Google Gemini</h3>
+    <ul>
+      <li>Published six-layer defense: classifiers, security thought reinforcement, sanitization, confirmations, notifications, adversarial training.</li>
+      <li>Documented incident: hidden white-on-white text injected a fake "security alert" into an email summary.</li>
+      <li>Google's own framing: continuous mitigation, not a solved problem.</li>
+    </ul>
+  </div>
+  <div class="sec-card us">
+    <h3>1Gov Mail</h3>
+    <ul>
+      <li>Structural, not semantic: per-message sentinel fencing, injection-attempt detection with a visible ⚠ badge, and a briefing composer that never sees raw email text — only length-clamped extracted fields.</li>
+      <li>Every briefing claim links to its source message; AI output only ever lands in a human-reviewed draft. Nothing is actioned autonomously.</li>
+      <li>Measured limits are documented in the code — including where small-model defenses fail — instead of marketing assurances. Blast radius is inherently bounded: one tenant, no agentic actions, model behind the firewall.</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Where the field is ahead</h2>
+<p>An honest benchmark cuts both ways. Four capabilities are shipped and mature in several competitors and absent or partial in 1Gov Mail today — three of them are already sequenced on the roadmap.</p>
+<div class="gap-list">
+  <div class="gap"><b>Chat with your inbox</b> <span class="phase">ROADMAP · PHASE 4</span><p>Copilot, Gemini, Superhuman, Shortwave, Zia, and Spark all answer natural-language questions over mail. Our card pipeline is the designed foundation; retrieval infrastructure is the missing piece.</p></div>
+  <div class="gap"><b>Persistent AI triage labels</b> <span class="phase">ROADMAP · PHASE 2</span><p>Superhuman Auto Labels, Copilot Prioritize-my-inbox, Canary's on-device triage run continuously. Our briefing computes the same classifications per-run; phase 2 persists them as inbox labels and filters.</p></div>
+  <div class="gap"><b>Commitment / follow-up tracking</b> <span class="phase">ROADMAP · PHASE 3</span><p>Superhuman's Follow Up Faster is the reference. The briefing's "you promised / waiting on you" sections become a persistent ledger in phase 3.</p></div>
+  <div class="gap"><b>Semantic search</b> <span class="phase">ROADMAP · PHASE 4</span><p>Most of the field ships natural-language search. Ours is keyword-based; a self-hosted embedding model would be required to close this without leaving the network.</p></div>
+  <div class="gap"><b>Frontier-model output quality</b> <span class="phase">STRUCTURAL TRADE-OFF</span><p>Competitors ride GPT/Gemini/Claude-class models. Our self-hosted qwen3-30b is capable but not frontier-class; quality scales with whatever hardware and open-weight models the government chooses to deploy — a tunable, not a ceiling.</p></div>
+</div>
+<div class="note">The trade is explicit: the field buys quality and breadth by sending mail to someone else's model. 1Gov Mail buys sovereignty, Kinyarwanda, and auditability by running its own — and closes the breadth gap on a roadmap it controls.</div>
+
+<h2>Method &amp; caveats</h2>
+<ul class="caveats">
+  <li>Competitor claims trace to primary vendor documentation (help centers, feature pages, engineering blogs), researched 2026-09-03; full citations live in <code>docs/research/2026-09-03-ai-email-clients-benchmark.md</code> in the repository.</li>
+  <li>1Gov Mail entries reflect the build deployed 2026-09-03 (branch ft-hyperscale), verified in this working session — not aspirational.</li>
+  <li>Superhuman's help center blocked direct fetches; those rows rely on search-extracted snippets of the same pages. Spark and Canary pricing came from secondary sources — re-verify before quoting in procurement.</li>
+  <li>No canonical language matrix exists for Gmail-specific Gemini, Outlook-specific Copilot, Zia, Shortwave, Spark, or Canary; ◐ marks reflect that documentation gap, not confirmed absence.</li>
+  <li>"Not documented" for injection defenses means no published mitigation was found — vendors may hold undisclosed controls.</li>
+</ul>
+
+<footer>1Gov Mail · RISA · benchmark compiled 2026-09-03 · review copy</footer>

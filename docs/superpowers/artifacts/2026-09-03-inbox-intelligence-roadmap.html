@@ -1,0 +1,131 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/d9103bfb-94d1-451f-b246-590022aee552 — content-faithful, original styling not preserved -->
+<title>Inbox Intelligence Roadmap</title>
+<style>
+  body { max-width: 740px; margin: 0 auto; padding: 2rem 1.25rem 4rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; color: #1F2B33; background: #FAF9F5; }
+  @media (prefers-color-scheme: dark) { body { color: #E6EAE8; background: #121A1E; } }
+  code, .mono { font-family: ui-monospace, "SF Mono", monospace; font-size: 0.9em; background: rgba(127,127,127,0.12); border-radius: 3px; padding: 1px 5px; }
+  h1 { font-size: 2rem; margin: 0 0 0.5rem; }
+  h2 { font-size: 1.4rem; margin: 2.2rem 0 0.5rem; }
+  h3 { font-size: 1.05rem; margin: 1rem 0 0.4rem; }
+  .eyebrow, .meta { font-family: ui-monospace, monospace; font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
+  .standfirst { font-size: 1.1rem; opacity: 0.85; max-width: 62ch; }
+  .keystone { border: 1px solid #B8860B; background: rgba(184,134,11,0.08); border-radius: 6px; padding: 1.2rem 1.3rem; margin-top: 1.5rem; }
+  .keystone h3 { margin-top: 0; color: #B8860B; }
+  .phase-card { border: 1px solid #ccc; border-radius: 6px; padding: 1.3rem 1.4rem; margin-top: 1.2rem; }
+  .phase-head { display: flex; align-items: baseline; gap: 0.8rem; flex-wrap: wrap; }
+  .phase-num { font-family: ui-monospace, monospace; font-size: 0.72rem; letter-spacing: 0.06em; color: #0E7C6B; background: rgba(14,124,107,0.12); border-radius: 3px; padding: 2px 9px; }
+  .effort { margin-left: auto; font-family: ui-monospace, monospace; font-size: 0.7rem; opacity: 0.6; }
+  .lead { opacity: 0.8; font-size: 0.95rem; margin: 0.5rem 0 1rem; }
+  .how { border-top: 1px solid #ccc; padding-top: 0.8rem; }
+  .lbl { font-family: ui-monospace, monospace; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.6; display: block; margin-bottom: 0.3rem; }
+  .reuse { background: rgba(14,124,107,0.08); border-radius: 4px; padding: 0.6rem 0.9rem; font-size: 0.88rem; margin: 0.7rem 0; }
+  .risk { background: rgba(168,116,21,0.08); border-radius: 4px; padding: 0.6rem 0.9rem; font-size: 0.88rem; }
+  .seq { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 1.4rem 0 0.5rem; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+  .seq .node { border: 1px solid #ccc; border-radius: 5px; padding: 0.4rem 0.8rem; }
+  .seq .node.done { border-color: #0E7C6B; color: #0E7C6B; }
+  .seq-note { font-size: 0.85rem; opacity: 0.8; }
+  table.infra { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.8rem; }
+  .infra th, .infra td { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 1px solid #ccc; vertical-align: top; }
+  .infra th { font-family: ui-monospace, monospace; font-size: 0.7rem; text-transform: uppercase; opacity: 0.6; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #ccc; font-family: ui-monospace, monospace; font-size: 0.75rem; opacity: 0.6; }
+</style>
+
+<p class="eyebrow">Implementation Proposal · For Review</p>
+<h1>Inbox Intelligence Roadmap</h1>
+<p class="standfirst">How 1Gov Mail closes the four benchmark gaps — persistent triage, commitment tracking, semantic search, and chat-with-inbox — building on the card pipeline that already ships in the Executive Briefing. Everything stays behind the government firewall.</p>
+<p class="meta">Proposal date 2026-09-03 · assumes the phase-1 codebase as deployed · each phase gets its own spec + plan before any code</p>
+
+<div class="keystone">
+  <h3>The keystone move: cards go server-side, once</h3>
+  <p>Phase 1's <code>BriefingCard</code> — gist, asks-of-me, deadlines, commitments, waiting-on, importance, injection flag — was designed as the shared data model for everything that follows. Today it is computed in the browser per briefing run and cached in localStorage. Phase 2's first task moves that extraction into the NestJS API as a background worker and persists cards in PostgreSQL. Every later feature then <em>reads</em> cards instead of reinventing analysis: triage labels are queries over cards, the commitment ledger is a projection of cards, chat retrieval feeds on cards before raw mail — and the Executive Briefing itself becomes near-instant because its map phase is already done.</p>
+</div>
+
+<div class="phase-card">
+  <div class="phase-head"><span class="phase-num">PHASE 2</span><h2 style="margin:0">Persistent triage labels</h2><span class="effort">EFFORT: MEDIUM · builds the shared foundation</span></div>
+  <p class="lead">What Superhuman's Auto Labels and Copilot's Prioritize-my-inbox do — computed continuously on our own model, surfaced as inbox filters.</p>
+  <div class="how">
+    <span class="lbl">How it works</span>
+    <ul>
+      <li><b>Card worker in the API.</b> A NestJS scheduled worker (the repo already runs <code>MailScheduler</code> jobs) classifies newly synced messages: same card prompt, same fencing, calling the remote Ollama directly (<code>OLLAMA_BASE_URL</code> is already API-side). Concurrency-capped and budget-aware; newest mail first.</li>
+      <li><b>New table <code>MessageCard</code></b> (Prisma): messageId, userId, model, the card JSON fields as columns, injectionSuspected, extractedAt. One row per message per model — the DB twin of today's localStorage cache, with a retention policy.</li>
+      <li><b>Labels are derived, not stored:</b> <em>Needs decision · Waiting on you · Deadline · FYI</em> computed from card fields. Surfaced as filter chips above the message list and a priority marker on rows. Zimbra-tag sync is deliberately out of scope (one-way derived state stays cheap to change).</li>
+      <li><b>Briefing upgrade for free:</b> <code>generateBriefing</code> gains a "fetch cards from API" fast path; the browser maps only messages the worker hasn't reached yet. First-brief-of-the-day drops from minutes to seconds.</li>
+    </ul>
+    <div class="reuse"><b>Reused from phase 1:</b> the card prompt and parser move nearly verbatim (they live in one module); fencing/scrub/detection helpers already exist; the reduce stage is untouched.</div>
+    <div class="risk"><b>Main risk:</b> background classification load on the shared GPU server — needs a per-tenant budget and off-peak catch-up, sized in the spec against real mail volume.</div>
+  </div>
+</div>
+
+<div class="phase-card">
+  <div class="phase-head"><span class="phase-num">PHASE 3</span><h2 style="margin:0">Commitment &amp; follow-up tracker</h2><span class="effort">EFFORT: SMALL–MEDIUM · a projection over phase 2</span></div>
+  <p class="lead">Superhuman's Follow Up Faster, but grounded: a persistent ledger of what you promised and what you're owed, each entry linked to its source message.</p>
+  <div class="how">
+    <span class="lbl">How it works</span>
+    <ul>
+      <li><b>New table <code>Commitment</code>:</b> userId, messageId, conversationId, type (<code>promised</code> | <code>waiting</code>), text, dueHint, status (<code>open</code> | <code>done</code> | <code>dismissed</code>), timestamps. Populated by the phase-2 worker whenever a card carries <code>commitmentsIMade</code> or <code>waitingOn</code>; deduped per conversation.</li>
+      <li><b>Resolution stays human in v1.</b> Done/dismiss/snooze buttons; the system <em>suggests</em> resolution when the counterparty replies in the same conversation, but never auto-closes — an AI false-closure on a minister's commitment is worse than a stale entry.</li>
+      <li><b>UI:</b> a Commitments panel (same slide-over idiom as the briefing) with two lists and due-date grouping; a badge count in the mail toolbar.</li>
+      <li><b>Briefing integration:</b> "You promised / Waiting on you" sections read from the ledger — persistent state instead of per-run recomputation, so items stop reappearing after you've dealt with them.</li>
+    </ul>
+    <div class="reuse"><b>Reused:</b> extraction is entirely phase 2's worker; UI reuses the briefing panel's section/item/source-link components.</div>
+    <div class="risk"><b>Main risk:</b> extraction precision — a noisy ledger erodes trust fast. Mitigation: only card fields with explicit language qualify, and every entry is one click from its source for verification.</div>
+  </div>
+</div>
+
+<div class="phase-card">
+  <div class="phase-head"><span class="phase-num">PHASE 4A</span><h2 style="margin:0">Semantic search</h2><span class="effort">EFFORT: MEDIUM · first new infrastructure</span></div>
+  <p class="lead">Natural-language search over the mailbox — the one gap that needs a second model, and the prerequisite for chat.</p>
+  <div class="how">
+    <span class="lbl">How it works</span>
+    <ul>
+      <li><b>Self-hosted embeddings:</b> a multilingual embedding model (candidate: <code>bge-m3</code>, ~100 languages) served by the same Ollama host as the 30B chat model. Kinyarwanda embedding quality must be validated empirically in the spec phase — this is the go/no-go check.</li>
+      <li><b>Storage: pgvector</b> in the existing PostgreSQL. New table <code>MessageEmbedding</code> (messageId, chunkIndex, vector, snippet), populated by extending the phase-2 worker: extract body → chunk (~512 tokens) → embed → store.</li>
+      <li><b>Hybrid retrieval:</b> query embedding → cosine top-K, blended with Zimbra keyword results (keyword still wins exact names/ids; vectors win "that email about the budget ceiling"). One new API endpoint; the search bar gains an "ask" mode.</li>
+      <li><b>Deployment note:</b> the test VM's embedded PostgreSQL build has no pgvector — the VM moves to a full PostgreSQL install (or a pgvector-included build) as a deploy task, which is worth doing regardless.</li>
+    </ul>
+    <div class="reuse"><b>Reused:</b> <code>extractEmailText</code> for clean chunking input; the worker's sync hook; the API's existing auth/throttle patterns.</div>
+    <div class="risk"><b>Main risk:</b> embedding quality for Kinyarwanda is unproven in open models. Fallback: hybrid search still improves French/English dramatically; Kinyarwanda falls back to keyword until a better model exists.</div>
+  </div>
+</div>
+
+<div class="phase-card">
+  <div class="phase-head"><span class="phase-num">PHASE 4B</span><h2 style="margin:0">Chat with your inbox</h2><span class="effort">EFFORT: LARGE · the capstone</span></div>
+  <p class="lead">"What did the Minister's office ask for this week?" — answered with citations, by a model that never leaves the building.</p>
+  <div class="how">
+    <span class="lbl">How it works</span>
+    <ul>
+      <li><b>Server-side tool loop:</b> a new API endpoint runs qwen3-30b (tool-calling capable) with <em>read-only</em> tools: <code>search_mail</code> (phase 4a hybrid), <code>get_cards</code> (phase 2 store), <code>get_thread</code>, <code>get_commitments</code> (phase 3). The API orchestrates the loop and streams the answer.</li>
+      <li><b>Cards-first retrieval as the injection firewall,</b> exactly like the briefing's reduce stage: the model reasons over structured cards by default; raw bodies are hydrated only for the top few hits and always sentinel-fenced, with suspicious sources badged in the answer.</li>
+      <li><b>Citations are mandatory:</b> the answer schema requires messageIds per claim (the briefing's discipline); the UI renders source chips that open the message. No sources → the claim is dropped, not shown.</li>
+      <li><b>No write actions in v1.</b> The chat reads; it never sends, deletes, or schedules. Every agentic-email incident in the benchmark (EchoLeak class) exploited write reach — we decline that surface until the read path has earned trust.</li>
+      <li><b>UI:</b> a chat side panel on the mail page, streaming, with the same ⚠ verify-at-source affordances.</li>
+    </ul>
+    <div class="reuse"><b>Reused:</b> everything — cards (P2), ledger (P3), retrieval (P4a), fencing/scrubbing/citation patterns (P1), the streaming client.</div>
+    <div class="risk"><b>Main risk:</b> tool-loop reliability on an open 30B model (malformed tool calls, retrieval misses). Mitigations: strict JSON tool schemas with the tolerate-and-retry pattern already proven, capped loop depth, and honest "I couldn't find that" over confident fabrication.</div>
+  </div>
+</div>
+
+<h2>Sequence &amp; why this order</h2>
+<div class="seq">
+  <span class="node done">P1 Briefing ✓</span>→
+  <span class="node">P2 Cards server-side + labels</span>→
+  <span class="node">P3 Commitment ledger</span>→
+  <span class="node">P4a Semantic search</span>→
+  <span class="node">P4b Chat</span>
+</div>
+<p class="seq-note">Each phase is the next one's foundation: P2 creates the persistent card store every later feature reads; P3 is a thin projection over it; P4a adds the retrieval layer; P4b composes all of it. Doing chat first (the tempting order) would mean building retrieval, extraction, and safety plumbing ad hoc inside the hardest feature — this order means P4b is mostly assembly. P2 also pays back immediately: briefings become near-instant, which the execs will feel on day one.</p>
+
+<h2>Infrastructure prerequisites</h2>
+<table class="infra">
+  <tr><th>Item</th><th>Needed for</th><th>Note</th></tr>
+  <tr><td>Background AI worker</td><td>P2+</td><td>Lives in the existing NestJS API; scheduler infra already present. Needs a per-tenant model-call budget.</td></tr>
+  <tr><td>GPU capacity plan</td><td>P2+</td><td>Continuous classification adds steady load to the 192.168.100.2 host; size against real daily mail volume, consider the 4B model for cards with the 30B reserved for reduce/chat.</td></tr>
+  <tr><td>PostgreSQL with pgvector</td><td>P4a+</td><td>Test VM must move off the embedded Postgres build; production should run full PostgreSQL anyway.</td></tr>
+  <tr><td>Embedding model (bge-m3 or similar)</td><td>P4a+</td><td>Served by the same Ollama host; Kinyarwanda quality validation is the spec-phase gate.</td></tr>
+  <tr><td>Data retention policy</td><td>P2+</td><td>Cards, commitments, and embeddings are derived mail data in the gov Postgres — retention and deletion rules should be decided with the DPO before P2 ships.</td></tr>
+</table>
+
+<h2>What happens next</h2>
+<p>Pick a phase and it goes through the same cycle the briefing did: brainstorm the open decisions, write the spec, generate the task-level implementation plan, execute with per-task review. The open decisions I'd bring to the phase-2 brainstorm: which labels ship first, worker scheduling policy (on-sync vs interval), card retention length, and whether the 4B model is good enough for card extraction (it would cut GPU load ~7×).</p>
+
+<footer>1Gov Mail · RISA · implementation proposal 2026-09-03 · review copy</footer>

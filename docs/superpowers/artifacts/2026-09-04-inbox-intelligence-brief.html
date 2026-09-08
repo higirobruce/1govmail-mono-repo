@@ -1,0 +1,119 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/0074466f-a33d-45e6-b9ee-991d77f8f0f9 — content-faithful, original styling not preserved -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inbox Intelligence Brief</title>
+<style>
+  :root {
+    --bg: #fdfcf9; --card: #ffffff; --ink: #1c2430; --ink-2: #4d5a68; --ink-3: #85919e;
+    --border: #e4ded0; --primary: #0f4c81; --accent: #00a1de;
+    --success: #1f8a5b; --success-bg: #e4f3ea;
+    --warning: #9a6b12; --warning-bg: #fbf0dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --card: #181e27; --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+      --border: #2b3441; --primary: #4f9fd8; --accent: #43c2ee;
+      --success: #57caa0; --success-bg: #143427;
+      --warning: #e3b45a; --warning-bg: #3a2c11;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --card: #181e27; --ink: #e9ecf1; --ink-2: #a9b3c1; --ink-3: #717d8c;
+    --border: #2b3441; --primary: #4f9fd8; --accent: #43c2ee;
+    --success: #57caa0; --success-bg: #143427;
+    --warning: #e3b45a; --warning-bg: #3a2c11;
+  }
+  * { box-sizing: border-box; }
+  body {
+    max-width: 740px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem;
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    line-height: 1.6; font-size: 16px;
+  }
+  .eyebrow { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--primary); }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0.5rem 0 0.7rem; }
+  .lede { font-size: 1.05rem; color: var(--ink-2); max-width: 60ch; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); gap: 0.9rem; margin: 1rem 0; }
+  .pillar { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.1rem; }
+  .pillar .t { font-weight: 700; font-size: 0.95rem; margin-bottom: 0.25rem; color: var(--primary); }
+  .pillar .d { font-size: 0.88rem; color: var(--ink-2); }
+  h2 { font-size: 1.35rem; margin: 3rem 0 0.2rem; }
+  .h2sub { color: var(--ink-2); font-size: 0.92rem; margin: 0 0 1.1rem; max-width: 60ch; }
+  .cap { display: grid; grid-template-columns: 172px 1fr; gap: 1rem; padding: 0.9rem 0.1rem; border-bottom: 1px solid var(--border); }
+  .cap:last-of-type { border-bottom: none; }
+  .cap .name { font-weight: 700; font-size: 0.95rem; }
+  .badge { display: inline-block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; border-radius: 999px; padding: 0.05rem 0.55rem; margin-left: 0.5rem; background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning); }
+  .cap .where { display: block; font-weight: 500; font-size: 0.75rem; color: var(--ink-3); margin-top: 0.15rem; }
+  .cap .what { font-size: 0.92rem; max-width: 58ch; }
+  @media (max-width: 540px) { .cap { grid-template-columns: 1fr; gap: 0.25rem; } }
+  .status { display: flex; gap: 0.6rem; align-items: baseline; background: var(--success-bg); border: 1px solid var(--success); border-radius: 10px; padding: 0.9rem 1.1rem; margin-top: 2.5rem; font-size: 0.88rem; }
+  .status b { color: var(--success); white-space: nowrap; }
+  .footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--ink-3); font-size: 0.8rem; }
+  .footer code { font-family: ui-monospace, monospace; background: var(--card); border-radius: 4px; padding: 0.05em 0.35em; }
+</style>
+</head>
+<body>
+
+<div class="eyebrow">1Gov Mail · Executive summary · September 2026</div>
+<h1>Inbox Intelligence Brief</h1>
+<p class="lede">1Gov Mail now includes a full AI layer that helps staff <strong>write faster, read less, and miss nothing</strong> — built entirely on <strong>government-hosted infrastructure</strong>. No email content ever leaves the RISA network, and no AI output is ever sent or acted on without a person approving it.</p>
+
+<div class="pillars">
+  <div class="pillar">
+    <div class="t">Sovereign by design</div>
+    <div class="d">All AI runs on our own servers. No foreign cloud AI services, no data sharing, no per-use fees.</div>
+  </div>
+  <div class="pillar">
+    <div class="t">Works in three languages</div>
+    <div class="d">English, French, and Kinyarwanda — the AI answers, summarizes, and searches in the language of the email.</div>
+  </div>
+  <div class="pillar">
+    <div class="t">People stay in control</div>
+    <div class="d">The AI drafts, flags, and suggests. A person always reviews before anything is sent or closed.</div>
+  </div>
+</div>
+
+<h2>What staff can do today</h2>
+<p class="h2sub">Seven capabilities, in the order a working day meets them.</p>
+
+<div class="cap">
+  <div class="name">Executive Briefing<span class="where">one click, every morning</span></div>
+  <div class="what">A single card summarizing what needs attention right now: requests directed at you, stated deadlines, and what you're waiting on from others.</div>
+</div>
+<div class="cap">
+  <div class="name">Triage labels<span class="where">automatic, in the inbox</span></div>
+  <div class="what">Every recent email is automatically tagged <em>Needs decision</em>, <em>Waiting on you</em>, <em>Deadline</em>, or <em>FYI</em> — the inbox sorts itself by urgency instead of arrival time.</div>
+</div>
+<div class="cap">
+  <div class="name">Commitment tracker<span class="where">running ledger</span></div>
+  <div class="what">Keeps a list of what you promised others and what others promised you, drawn from real correspondence. It suggests when something looks settled — it never closes an item on its own.</div>
+</div>
+<div class="cap">
+  <div class="name">Ask Your Inbox<span class="badge">In progress</span><span class="where">question in, answer out</span></div>
+  <div class="what">Ask a plain question — "what did finance approve last month?" — and get an answer built only from your own mail, with every claim linked to the email it came from.</div>
+</div>
+<div class="cap">
+  <div class="name">Smarter search<span class="badge">In progress</span><span class="where">meaning, not just keywords</span></div>
+  <div class="what">Search finds emails that match what you mean, not only the exact words you typed — across all three languages.</div>
+</div>
+<div class="cap">
+  <div class="name">Summarize<span class="where">long emails &amp; threads</span></div>
+  <div class="what">Condenses a long email or a whole back-and-forth thread into a few sentences, in the message's own language.</div>
+</div>
+<div class="cap">
+  <div class="name">Writing help<span class="where">rewrite &amp; suggest reply</span></div>
+  <div class="what">Polishes a draft — formal for official correspondence, shorter, friendlier, or grammar-checked — or proposes a reply (accept, decline, acknowledge, request details) that the sender reviews and edits before sending.</div>
+</div>
+
+<div class="status">
+  <b>Status</b>
+  <span>All seven capabilities are built, reviewed, and fully tested. Five are ready for the pilot; <em>Ask Your Inbox</em> and <em>Smarter search</em> are marked in progress while their language-understanding model (bge-m3) is installed on the AI server — the final step before the staff pilot.</span>
+</div>
+
+<div class="footer">Prepared 4 September 2026 · 1Gov Mail — RISA · Technical companion: <em>Inbox Intelligence</em> (full capability reference, <code>ft-hyperscale</code> @ <code>40be375</code>)</div>
+
+</body>
+</html>

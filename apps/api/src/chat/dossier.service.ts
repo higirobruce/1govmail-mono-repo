@@ -35,7 +35,14 @@ export class DossierService {
 
   async prepare(userId: string, rawEmail: string): Promise<PreparedGeneration> {
     const email = rawEmail.trim().toLowerCase();
-    const me = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    // Dossier is identity-tier only (see buildGenerationPrompt below) — it
+    // never reads aiProfile's card fields, so the select doesn't request
+    // them at all. This keeps a future change to this method from
+    // accidentally leaking profile card data into the dossier prompt.
+    const me = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, displayName: true },
+    });
     if (me?.email?.toLowerCase() === email) {
       throw new BadRequestException('cannot open a dossier on yourself');
     }
@@ -85,7 +92,11 @@ export class DossierService {
         )
       : undefined;
 
-    const system = buildGenerationPrompt('dossier', subject, internal, extra);
+    // Dossier is identity-tier only (see buildGenerationPrompt): pass just
+    // displayName/email, never the card fields, so a future builder change
+    // can't accidentally leak profile card data into the dossier prompt.
+    const profile = me?.displayName || me?.email ? { displayName: me?.displayName ?? null, email: me?.email ?? null } : null;
+    const system = buildGenerationPrompt('dossier', subject, internal, extra, profile);
 
     return {
       kind: 'dossier',

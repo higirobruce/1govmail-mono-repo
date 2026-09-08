@@ -1,20 +1,30 @@
+import { buildProfileBlock } from '@email-client/shared';
 import { AIClient } from './client';
 import { extractEmailText } from './extract';
 import {
   UNTRUSTED_CONTENT_RULE,
-  customInstructionsBlock,
   fenceUntrusted,
   languageRule,
   scrubOutput,
 } from './prompt';
+import { useAIStore } from '@/stores/ai.store';
 
 /**
- * Append the user's configured style preferences to a task's system prompt.
- * Placed last: the hard rules come first so they stay dominant, while recency
- * keeps a small model attentive to the style asks.
+ * Append the account owner's identity card (job title/institution/
+ * department/language) and their configured style preferences to a task's
+ * system prompt, via the shared `buildProfileBlock` renderer — the single
+ * source of truth for this block's shape, also used by ask/dossier/meeting
+ * prep on the API side. Placed last: the hard rules come first so they stay
+ * dominant, while recency keeps a small model attentive to the style asks.
+ *
+ * The card is read from the store at call time (not a hook) since these are
+ * plain async functions, not components. No displayName/email is passed, so
+ * `buildProfileBlock` emits only the card + instructions — never an
+ * identity line (these tasks already know who they're addressing).
  */
 function withCustomInstructions(system: string, customInstructions?: string): string {
-  const block = customInstructionsBlock(customInstructions);
+  const card = useAIStore.getState().profileCard;
+  const block = buildProfileBlock({ ...card, instructions: customInstructions }, 'full');
   return block ? `${system}\n\n${block}` : system;
 }
 

@@ -1,0 +1,125 @@
+<!-- Reconstructed 2026-09-06 from https://claude.ai/code/artifact/170f8709-9c65-49df-b7d8-aa99e2185f66 — content-faithful, original styling not preserved -->
+<title>1Gov Mail vs. Zimbra — Feature Readiness</title>
+<style>
+  body { max-width: 740px; margin: 0 auto; padding: 2rem 1.25rem 4rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; color: #1b2027; background: #f4f5f7; }
+  @media (prefers-color-scheme: dark) { body { color: #e7e9ec; background: #14171b; } }
+  code, .note-path { font-family: ui-monospace, "SF Mono", monospace; font-size: 0.78rem; opacity: 0.7; }
+  h1 { font-size: 1.9rem; margin: 0 0 0.5rem; max-width: 22ch; }
+  h2 { font-size: 1.3rem; margin: 2.2rem 0 0.4rem; }
+  h3 { font-size: 1rem; margin: 1rem 0 0.3rem; }
+  .eyebrow { font-family: ui-monospace, monospace; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
+  .dek { opacity: 0.85; max-width: 58ch; }
+  .meta-row { display: flex; gap: 1.2rem; font-size: 0.82rem; opacity: 0.6; border-top: 1px solid #ccc; margin-top: 0.6rem; padding-top: 0.8rem; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: #ccc; border: 1px solid #ccc; border-radius: 10px; overflow: hidden; margin: 1rem 0; }
+  .stat { background: #fff; padding: 1rem; }
+  @media (prefers-color-scheme: dark) { .stat { background: #1b1f25; } }
+  .stat .n { font-size: 1.7rem; font-weight: 700; }
+  .stat .l { font-size: 0.75rem; opacity: 0.65; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; margin: 0.8rem 0; }
+  th, td { border-bottom: 1px solid #ccc; padding: 0.55rem 0.8rem; text-align: left; vertical-align: top; }
+  thead th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.6; }
+  tr.group-row td { background: rgba(127,127,127,0.08); font-family: ui-monospace, monospace; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+  .feat { font-weight: 600; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 100px; font-size: 0.76rem; font-weight: 600; white-space: nowrap; }
+  .pill.present { background: rgba(47,122,79,0.12); color: #2f7a4f; }
+  .pill.partial { background: rgba(156,107,31,0.12); color: #9c6b1f; }
+  .pill.missing { background: rgba(168,67,58,0.12); color: #a8433a; }
+  .gains { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.9rem; margin-top: 0.8rem; }
+  .gain-card { border: 1px solid #ccc; border-radius: 10px; padding: 1rem 1.2rem; }
+  .gain-card h3 { margin: 0 0 0.4rem; }
+  .gain-card p { margin: 0; font-size: 0.9rem; opacity: 0.8; }
+  .priority-list { border: 1px solid #ccc; border-radius: 10px; overflow: hidden; margin-top: 0.8rem; }
+  .priority-item { display: grid; grid-template-columns: 32px 1fr; gap: 1rem; padding: 0.9rem 1.1rem; border-bottom: 1px solid #ccc; }
+  .priority-item:last-child { border-bottom: none; }
+  .priority-item .num { font-size: 1.2rem; font-weight: 700; opacity: 0.6; }
+  .priority-item h3 { margin: 0 0 0.2rem; }
+  .priority-item p { margin: 0; font-size: 0.85rem; opacity: 0.8; }
+  .caveat { border-left: 3px solid #2f5d8a; background: rgba(47,93,138,0.08); padding: 0.8rem 1.1rem; border-radius: 0 8px 8px 0; font-size: 0.88rem; }
+  footer { border-top: 1px solid #ccc; padding-top: 1rem; font-size: 0.8rem; opacity: 0.6; margin-top: 3rem; }
+  @media (max-width: 640px) { .gains { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2,1fr); } }
+</style>
+
+<span class="eyebrow">Feature readiness review</span>
+<h1>What changes for users when they move off Zimbra</h1>
+<p class="dek">A side-by-side of Zimbra's Modern web client against 1Gov Mail, checked live against the RISA Zimbra instance and against this codebase — so the migration promise to users holds up.</p>
+<div class="meta-row">
+  <span>31 August 2026</span>
+  <span>Reviewed: mail, calendar, contacts, tasks, files, accounts, security, offline, admin</span>
+</div>
+
+<h2>The short version</h2>
+<p>1Gov Mail already covers the workflows people use in Zimbra every day, and adds three things Zimbra has none of: an AI writing assistant, real-time collaborative documents, and an offline-first mailbox. Nine areas still need work before "you'll lose nothing" is fully true — three are real gaps to build, the rest are Zimbra workflows this app's interface doesn't surface yet, even though the underlying Zimbra account often still supports them.</p>
+<div class="stats">
+  <div class="stat"><div class="n">9</div><div class="l">At parity or ahead</div></div>
+  <div class="stat"><div class="n">6</div><div class="l">Partial — needs finishing</div></div>
+  <div class="stat"><div class="n">9</div><div class="l">Missing from the UI</div></div>
+  <div class="stat"><div class="n">4</div><div class="l">Net-new, Zimbra has none</div></div>
+</div>
+
+<h2>Feature-by-feature</h2>
+<p>Checked directly in the live Zimbra Modern UI (mail, calendar, contacts, briefcase, settings) against what's implemented in this repo.</p>
+<table>
+  <thead><tr><th>Feature</th><th>Status</th><th>What we found</th></tr></thead>
+  <tbody>
+    <tr class="group-row"><td colspan="3">Mail</td></tr>
+    <tr><td class="feat">Folders &amp; tags</td><td><span class="pill partial">Partial</span></td><td>Folders are fully built. Tags exist in the data model but have no management UI yet.<br><span class="note-path">apps/api/prisma/schema.prisma — Message.tags</span></td></tr>
+    <tr><td class="feat">Compose</td><td><span class="pill partial">Partial</span></td><td>Rich-text editor and per-identity signatures work. No plain-text toggle, no priority flag, no read-receipt request.<br><span class="note-path">apps/web/components/mail/ComposeModal.tsx</span></td></tr>
+    <tr><td class="feat">Filters / rules</td><td><span class="pill partial">Partial</span></td><td>Rule CRUD exists. No drag-to-reorder, no "create filter from this message" shortcut like Zimbra's.<br><span class="note-path">apps/api/src/mail/mail.controller.ts</span></td></tr>
+    <tr><td class="feat">Blocked / allowed senders</td><td><span class="pill missing">Missing</span></td><td>No sender allow/block list anywhere in the app.</td></tr>
+    <tr><td class="feat">Out-of-office</td><td><span class="pill present">Present</span></td><td>Internal/external messaging and date range, same as Zimbra.<br><span class="note-path">apps/web/app/(app)/settings/page.tsx — VacationSection</span></td></tr>
+    <tr><td class="feat">Search</td><td><span class="pill partial">Partial</span></td><td>Keyword search only. Zimbra's structured builder (date range, size, attachment type, tags) has no equivalent yet.<br><span class="note-path">mail.controller.ts — /mail/search</span></td></tr>
+    <tr><td class="feat">Threading &amp; attachments</td><td><span class="pill present">Present</span></td><td>Conversation view, upload/forward, attachment download, PDF export.<br><span class="note-path">apps/web/components/mail/ThreadView.tsx</span></td></tr>
+
+    <tr class="group-row"><td colspan="3">Calendar</td></tr>
+    <tr><td class="feat">Views, recurrence, RSVP, free/busy</td><td><span class="pill present">Present</span></td><td>Every Zimbra view mode, recurring events, and free/busy lookups.<br><span class="note-path">apps/api/src/calendar/calendar.controller.ts</span></td></tr>
+    <tr><td class="feat">Multiple calendars &amp; sharing</td><td><span class="pill missing">Missing</span></td><td>One calendar per user. No calendar creation or ACL-based sharing.</td></tr>
+
+    <tr class="group-row"><td colspan="3">Contacts</td></tr>
+    <tr><td class="feat">Personal contacts &amp; org directory</td><td><span class="pill present">Present</span></td><td>Personal address book plus the Zimbra Global Address List merged into autocomplete.<br><span class="note-path">apps/api/src/contacts/contacts.service.ts — searchGal</span></td></tr>
+    <tr><td class="feat">Distribution lists &amp; sharing</td><td><span class="pill missing">Missing</span></td><td>No distribution-list management, no contact-folder sharing.</td></tr>
+
+    <tr class="group-row"><td colspan="3">Tasks</td></tr>
+    <tr><td class="feat">Task management</td><td><span class="pill present">Present, ahead</span></td><td>Full CRUD, subtasks, comments, plus AI extraction of action items straight from a thread — Zimbra's Tasks pane has none of that.<br><span class="note-path">apps/api/src/tasks/tasks.service.ts</span></td></tr>
+
+    <tr class="group-row"><td colspan="3">Files</td></tr>
+    <tr><td class="feat">General file storage (Briefcase equivalent)</td><td><span class="pill missing">Missing</span></td><td>Docs is a Notion-style page editor with real-time co-editing — not a drive for arbitrary files, folders, and versioning the way Briefcase is.<br><span class="note-path">apps/api/src/docs/</span></td></tr>
+
+    <tr class="group-row"><td colspan="3">Accounts &amp; delegation</td></tr>
+    <tr><td class="feat">Multiple accounts, personas, shared mailboxes</td><td><span class="pill missing">Missing</span></td><td>Only one identity is used, and only to pick a default signature. No added accounts, send-as personas, or delegated/shared inboxes.<br><span class="note-path">apps/web/app/(app)/settings/page.tsx</span></td></tr>
+    <tr><td class="feat">IMAP / POP client access</td><td><span class="pill missing">Missing (UI)</span></td><td>No toggle in this app. The Zimbra account underneath may still allow it outside 1Gov Mail — worth confirming with the Zimbra admin before calling this a real loss.</td></tr>
+
+    <tr class="group-row"><td colspan="3">Security</td></tr>
+    <tr><td class="feat">Sessions &amp; device management</td><td><span class="pill missing">Missing (UI)</span></td><td>Session records already exist in the database. There's no page to view active sessions, sign out a device remotely, or manage/wipe a mobile device.<br><span class="note-path">apps/api/prisma/schema.prisma — Session</span></td></tr>
+    <tr><td class="feat">Two-factor authentication</td><td><span class="pill partial">Partial</span></td><td>The TOTP challenge at sign-in works. There's no in-app flow to enroll, reset, or manage 2FA.<br><span class="note-path">apps/api/src/auth/auth.service.ts</span></td></tr>
+
+    <tr class="group-row"><td colspan="3">Offline</td></tr>
+    <tr><td class="feat">Offline access</td><td><span class="pill present">Present, ahead</span></td><td>Local cache, an outbox for queued sends, and a service worker are already built — a deeper offline story than Zimbra's basic browser sync.<br><span class="note-path">apps/web/lib/offline/</span></td></tr>
+
+    <tr class="group-row"><td colspan="3">Administration</td></tr>
+    <tr><td class="feat">Admin console, user &amp; quota management</td><td><span class="pill missing">Missing</span></td><td>No admin app exists. Everything is scoped to a single signed-in user.</td></tr>
+  </tbody>
+</table>
+
+<h2>What users gain that Zimbra never offered</h2>
+<p>This is the part of the pitch, not just the parity check.</p>
+<div class="gains">
+  <div class="gain-card"><h3>AI writing assistant</h3><p>Summarize a thread, rewrite a draft's tone, get reply suggestions — in English, French, or Kinyarwanda — with prompt-injection safeguards on by default.</p></div>
+  <div class="gain-card"><h3>Real-time collaborative docs</h3><p>Notion-style pages with live multi-person editing, nested hierarchy, and government templates. Zimbra's closest equivalent is a single-user document Zimlet.</p></div>
+  <div class="gain-card"><h3>Offline-first mailbox</h3><p>Read, draft, and queue mail with no connection. It syncs the moment the network comes back — already built, not a roadmap item.</p></div>
+  <div class="gain-card"><h3>Faster mail workflows</h3><p>Scheduled send, snooze, mute a thread, message templates, and bulk actions — one click, no equivalent found in the live Zimbra account reviewed.</p></div>
+</div>
+
+<h2>Close these before making the promise</h2>
+<p>Ordered by how directly each one would be felt as a loss on day one.</p>
+<div class="priority-list">
+  <div class="priority-item"><span class="num">1</span><div><h3>Blocked / allowed senders</h3><p>Small, self-contained, and it's the one spam-control habit people will look for immediately.</p></div></div>
+  <div class="priority-item"><span class="num">2</span><div><h3>Sessions &amp; device management</h3><p>The data already exists in the schema — this is a UI gap, not a new subsystem. Matters for security sign-off.</p></div></div>
+  <div class="priority-item"><span class="num">3</span><div><h3>Multi-account &amp; persona support</h3><p>Anyone currently juggling a second identity or a shared departmental inbox in Zimbra will notice this on day one.</p></div></div>
+  <div class="priority-item"><span class="num">4</span><div><h3>Calendar &amp; contact sharing, distribution lists</h3><p>Needed for any team that coordinates schedules or a shared address book today.</p></div></div>
+  <div class="priority-item"><span class="num">5</span><div><h3>Structured search</h3><p>Keyword-only search will feel like a step back for anyone used to Zimbra's filter builder.</p></div></div>
+  <div class="priority-item"><span class="num">6</span><div><h3>Admin console</h3><p>Needed before this runs as an org-wide service rather than a per-user app.</p></div></div>
+</div>
+
+<div class="caveat"><strong>One nuance worth keeping in the messaging:</strong> this client sits on top of a real Zimbra account via SOAP. Some "missing" rows above — IMAP/POP access, GAL, out-of-office — aren't gone at the account level; they're just not exposed in this UI yet. Worth confirming with the Zimbra admin which of those the org actually wants surfaced versus retired.</div>
+
+<footer>Sources: live walkthrough of mail.risa.gov.rw (Modern UI — mail, calendar, contacts, briefcase, settings) and a full read of the apps/api and apps/web source in this repo.</footer>

@@ -263,7 +263,7 @@ export default function MailPage() {
   // ── Create-task-from-email state ───────────────────────────────────────────
   const [createTaskPrefill, setCreateTaskPrefill] = useState<{ linkedMessageId: string; linkedSubject: string } | null>(null);
 
-  // ── Ask your inbox — store-driven (Ask panel is mounted once, app-wide, by
+  // ── Ask 1Gov — store-driven (Ask panel is mounted once, app-wide, by
   //    AskLauncher); this page only reads open/collapsed and calls openAsk() ──
   const askOpen = useAskStore((s) => s.open);
   const askCollapsed = useAskStore((s) => s.collapsed);
@@ -283,7 +283,7 @@ export default function MailPage() {
     openMessage(openId);
   }, [hydrated, isAuthenticated, activeFolderId]); // eslint-disable-line
 
-  // ── Deep-link: prefill Ask your inbox via ?ask=<question> (used by GlobalSearch) ─
+  // ── Deep-link: prefill Ask 1Gov via ?ask=<question> (used by GlobalSearch) ─
   useEffect(() => {
     if (!hydrated || !isAuthenticated) return;
     const params = new URLSearchParams(window.location.search);
@@ -1678,8 +1678,8 @@ export default function MailPage() {
           type="button"
           onClick={() => { setCommitmentsOpen(false); setBriefingOpen(false); openAsk(); }}
           className="md:hidden fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl hover:bg-primary/90 transition-colors"
-          aria-label="Ask your inbox"
-          title="Ask your inbox"
+          aria-label="Ask 1Gov"
+          title="Ask 1Gov"
         >
           <MessageCircleQuestion className="w-5 h-5" />
         </button>

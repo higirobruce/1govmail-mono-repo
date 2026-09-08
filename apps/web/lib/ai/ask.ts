@@ -24,7 +24,7 @@ export interface AskSource {
   snippet: string;
 }
 
-export interface AskDegraded { vector: boolean; keyword: boolean; docs: boolean; calendar: boolean }
+export interface AskDegraded { vector: boolean; keyword: boolean; docs: boolean; calendar: boolean; attachment?: boolean }
 
 export type AskTurn = { role: 'user' | 'assistant'; content: string };
 

@@ -24,7 +24,7 @@ export function buildCalendarTools(calendar: CalendarService): ToolDef[] {
           parseDate(args.endDate, 'endDate'),
         );
         const refs: ToolRef[] = events.map((e) => ({
-          alias: ctx.nextAlias(),
+          alias: ctx.aliasFor('event', String(e.id)),
           type: 'event',
           id: String(e.id),
           title: e.title ?? null,

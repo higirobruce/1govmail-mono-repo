@@ -4,7 +4,7 @@ import type { ToolContext } from '../tool-registry';
 
 function makeCtx(): ToolContext {
   let n = 0;
-  return { userId: 'u1', userEmail: 'u1@x.rw', nextAlias: () => `s${++n}`, emitChart: jest.fn() };
+  return { userId: 'u1', userEmail: 'u1@x.rw', aliasFor: () => `s${++n}`, emitChart: jest.fn() };
 }
 
 describe('read_attachment', () => {

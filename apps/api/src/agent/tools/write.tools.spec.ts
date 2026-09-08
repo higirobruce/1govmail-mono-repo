@@ -6,7 +6,7 @@ function makeCtx(): ToolContext & { charts: ChartSpec[] } {
   const charts: ChartSpec[] = [];
   return {
     userId: 'u1', userEmail: 'u1@x.rw',
-    nextAlias: () => `s${++n}`,
+    aliasFor: () => `s${++n}`,
     emitChart: (spec) => charts.push(spec),
     charts,
   } as any;

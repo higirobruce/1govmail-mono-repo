@@ -57,10 +57,18 @@ export class AgentService {
     const turnId = randomUUID();
     const startedAt = Date.now();
     let aliasCount = 0;
+    const aliasByKey = new Map<string, string>();
     const ctx: ToolContext = {
       userId,
       userEmail: user?.email ?? '',
-      nextAlias: () => `s${++aliasCount}`,
+      aliasFor: (type, id) => {
+        const k = `${type}:${id}`;
+        const hit = aliasByKey.get(k);
+        if (hit) return hit;
+        const alias = `s${++aliasCount}`;
+        aliasByKey.set(k, alias);
+        return alias;
+      },
       emitChart: (spec) => emit('chart', spec),
     };
 

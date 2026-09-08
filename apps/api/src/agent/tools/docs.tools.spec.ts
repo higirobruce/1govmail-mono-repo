@@ -3,7 +3,7 @@ import type { ToolContext } from '../tool-registry';
 
 function makeCtx(): ToolContext {
   let n = 0;
-  return { userId: 'u1', userEmail: 'u1@x.rw', nextAlias: () => `s${++n}`, emitChart: jest.fn() };
+  return { userId: 'u1', userEmail: 'u1@x.rw', aliasFor: () => `s${++n}`, emitChart: jest.fn() };
 }
 
 const tiptap = JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Policy body' }] }] });

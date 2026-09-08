@@ -6,7 +6,7 @@ import type { ToolDef, ToolRef, ToolContext } from '../tool-registry';
 
 function docRef(ctx: ToolContext, d: { id: string; title?: string | null; date?: string; snippet?: string }): ToolRef {
   return {
-    alias: ctx.nextAlias(),
+    alias: ctx.aliasFor('doc', String(d.id)),
     type: 'doc',
     id: String(d.id),
     title: d.title ?? null,

@@ -22,7 +22,7 @@ export function stripHtml(html: string): string {
 function mailRef(ctx: ToolContext, m: any): ToolRef {
   const date = toIsoDate(m.date ?? m.receivedAt);
   return {
-    alias: ctx.nextAlias(),
+    alias: ctx.aliasFor('mail', String(m.id)),
     type: 'mail',
     id: String(m.id),
     title: m.subject ?? null,

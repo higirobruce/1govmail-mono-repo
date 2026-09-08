@@ -50,6 +50,7 @@ model User {
   messageEmbeddings      MessageEmbedding[]
   aiGenerations          AiGeneration[]
   agentToolLogs          AgentToolLog[]
+  attachmentEmbeddings   AttachmentEmbedding[]
 
   @@map("users")
 }
@@ -164,6 +165,7 @@ model Message {
   folder     Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
   card       MessageCard?
   embeddings MessageEmbedding[]
+  attachmentEmbeddings AttachmentEmbedding[]
 
   @@unique([userId, zimbraId])
   @@index([userId, folderId])
@@ -594,6 +596,28 @@ model DocumentEmbedding {
   @@unique([documentId, chunkIndex, model])
   @@index([documentId])
   @@map("document_embeddings")
+}
+
+model AttachmentEmbedding {
+  id          String   @id @default(cuid())
+  messageId   String
+  userId      String
+  partId      String                        // Zimbra MIME part id ("!" on tombstone rows)
+  filename    String
+  mimeType    String
+  chunkIndex  Int                           // 0-based; <= 6 chunks per attachment
+  model       String                        // embed-model tag; model change => re-extract
+  chunkText   String                        // embedded text — prompt context + snippet
+  embedding   Unsupported("vector(1024)")?  // null on tombstone rows; written via $executeRaw
+  failed      Boolean  @default(false)      // tombstone: extraction/embedding gave up
+  extractedAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, partId, chunkIndex, model])
+  @@index([userId, extractedAt])
+  @@map("attachment_embeddings")
 }
 
 enum InviteRole {

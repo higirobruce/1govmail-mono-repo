@@ -141,6 +141,22 @@ describe('SettingsService AI profile', () => {
         create: { userId: 'u1', department: 'IT' },
       });
     });
+
+    it('does not throw on an explicit JSON null and treats it like undefined (field ignored)', async () => {
+      const prisma = makePrisma();
+      const zimbra = makeZimbra();
+      const service = new SettingsService(prisma, zimbra);
+
+      await expect(
+        service.updateAiProfile('u1', { jobTitle: null, department: 'IT' } as any),
+      ).resolves.toBeDefined();
+
+      expect(prisma.userAiProfile.upsert).toHaveBeenCalledWith({
+        where: { userId: 'u1' },
+        update: { department: 'IT' },
+        create: { userId: 'u1', department: 'IT' },
+      });
+    });
   });
 
   describe('getAiProfileSuggestions', () => {

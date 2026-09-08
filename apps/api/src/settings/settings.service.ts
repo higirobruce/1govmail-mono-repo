@@ -223,7 +223,7 @@ export class SettingsService {
   }
 
   async updateAiProfile(userId: string, dto: UpdateAiProfileDto) {
-    const norm = (v?: string) => (v === undefined ? undefined : v.trim() || null);
+    const norm = (v?: string | null) => (v == null ? undefined : v.trim() || null);
     const data = {
       instructions: norm(dto.instructions), jobTitle: norm(dto.jobTitle),
       institution: norm(dto.institution), department: norm(dto.department), language: norm(dto.language),

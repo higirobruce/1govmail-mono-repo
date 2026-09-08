@@ -83,7 +83,7 @@ export class AskService {
     const system = buildAskPrompt(
       internal,
       turns,
-      user?.aiProfile ? { ...user.aiProfile, displayName: user.displayName, email: user.email } : null,
+      user ? { ...user.aiProfile, displayName: user.displayName, email: user.email } : null,
     );
     // buildAskPrompt returns the system string only — turn clamping used to
     // live inside the now-deleted `buildInboxChatPrompt` alias; reintroduced

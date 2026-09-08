@@ -18,11 +18,18 @@ export interface AiProfileInput {
 }
 
 /**
- * `identity` renders only the "who am I acting for" line — used where the
- * builder already states identity elsewhere and only needs the extra
- * personalization card, or where a lighter touch is wanted (dossier).
- * `full` adds the profile card and, when present, the user's own style
- * instructions.
+ * `identity` renders ONLY the "who am I acting for" line (from
+ * displayName/email) — no card fields, no instructions. Used where a
+ * lighter touch is wanted, e.g. dossier and meeting prep, which intentionally
+ * never surface the profile card to keep those prompts focused on the
+ * counterparty rather than the account owner.
+ *
+ * `full` renders the profile card (job title/institution/department/
+ * language) and, when present, the user's own style instructions — plus the
+ * identity line, but only when displayName or email is actually present on
+ * the input (both are optional; omit them to get card + instructions with
+ * no identity line at all, e.g. client-side tasks that already know who
+ * they're addressing).
  */
 export type ProfileTier = 'identity' | 'full';
 

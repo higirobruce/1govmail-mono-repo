@@ -147,6 +147,20 @@ describe('AskService.prepare', () => {
     expect(retrieval.retrieve).toHaveBeenCalledWith('u1', '', 'What did finance say about the budget?', undefined);
   });
 
+  it('includes the identity line even when the user has NO aiProfile row (profile arg must not be gated on the row)', async () => {
+    const { retrieval, prisma, docsService } = makeFakes([MAIL_SRC]);
+    prisma.user.findUnique.mockResolvedValue({
+      email: 'u1@x.rw',
+      displayName: 'Bruce',
+      aiProfile: null,
+    });
+    const svc = new AskService(retrieval as any, prisma as any, docsService as any);
+    const prep = await svc.prepare('u1', turns);
+
+    const system = prep.upstreamBody!.messages[0].content;
+    expect(system).toContain('u1@x.rw');
+  });
+
   it('includes the identity line and profile card when aiProfile is present', async () => {
     const { retrieval, prisma, docsService } = makeFakes([MAIL_SRC]);
     prisma.user.findUnique.mockResolvedValue({

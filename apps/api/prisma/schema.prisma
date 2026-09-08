@@ -51,6 +51,7 @@ model User {
   aiGenerations          AiGeneration[]
   agentToolLogs          AgentToolLog[]
   attachmentEmbeddings   AttachmentEmbedding[]
+  aiProfile              UserAiProfile?
 
   @@map("users")
 }
@@ -742,4 +743,22 @@ model CalendarEvent {
   @@unique([userId, zimbraId])
   @@index([userId, startAt])
   @@map("calendar_events")
+}
+
+// ─── AI profile ──────────────────────────────────────────────────────────────
+
+model UserAiProfile {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  instructions String?             // free-text preferences, hard cap 500 chars (DTO-enforced)
+  jobTitle     String?             // cap 80
+  institution  String?             // cap 80
+  department   String?             // cap 80
+  language     String?             // 'en' | 'fr' | 'rw' | null(auto)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_ai_profiles")
 }

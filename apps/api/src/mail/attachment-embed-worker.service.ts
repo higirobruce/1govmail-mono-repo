@@ -126,36 +126,32 @@ export class AttachmentEmbedWorkerService {
     return atts;
   }
 
-  /** Downloads, extracts, chunks and embeds each part; returns rows inserted. Per-part extraction errors skip that part only; download/embedding errors bubble up to message-level 3-strike counter. */
+  /** Downloads, extracts, chunks and embeds each part; returns rows inserted. Only extraction errors are permanent (per-part); download/embedding errors bubble up to message-level 3-strike counter. */
   private async embedParts(cand: AttachmentCandidate, parts: AttachmentPart[]): Promise<number> {
     const inserts: Array<{ partId: string; filename: string; mimeType: string; chunk: string; vector: number[] }> = [];
     for (const part of parts) {
-      // Download and buffer conversion — failures are transient (Zimbra/network), rethrow for 3-strike.
-      let stream, contentType, filename, buf;
+      // Download and buffer conversion — transient (Zimbra/network) failures rethrow for 3-strike.
+      const dl = await this.mail.downloadAttachment(cand.userId, cand.id, part.id);
+      const buf = await streamToBuffer(dl.stream, MAX_ATTACHMENT_BYTES);
+
+      // Extraction only — permanent (unsupported/corrupt) failures skip this part.
+      let text;
       try {
-        const dl = await this.mail.downloadAttachment(cand.userId, cand.id, part.id);
-        stream = dl.stream;
-        contentType = dl.contentType;
-        filename = dl.filename;
-        buf = await streamToBuffer(stream, MAX_ATTACHMENT_BYTES);
+        text = (await extractAttachmentText(buf, dl.contentType, dl.filename)).trim();
       } catch (err: any) {
-        // Transient: rethrow to surface as zero inserts, triggering message-level 3-strike.
-        throw err;
+        // Permanent extraction error: log and skip this part; other parts in the message still get processed.
+        this.logger.warn(`part ${part.id} of ${cand.id} skipped: ${err?.message}`);
+        continue;
       }
 
-      // Extraction and chunking — failures are permanent (unsupported/corrupt), skip this part.
-      try {
-        const text = (await extractAttachmentText(buf, contentType, filename)).trim();
-        if (!text) continue;
-        const chunks = chunkPlainText(text, `Attachment: ${filename}`, MAX_CHUNKS_PER_ATTACHMENT);
-        const vectors = await this.embedder.embed(chunks);
-        chunks.forEach((chunk, i) =>
-          inserts.push({ partId: part.id, filename, mimeType: contentType, chunk, vector: vectors[i] }),
-        );
-      } catch (err: any) {
-        // Permanent: log and skip this part; other parts in the message still get processed.
-        this.logger.warn(`part ${part.id} of ${cand.id} skipped: ${err?.message}`);
-      }
+      if (!text) continue;
+
+      // Chunking and embedding — transient failures (Ollama down) rethrow for 3-strike.
+      const chunks = chunkPlainText(text, `Attachment: ${dl.filename}`, MAX_CHUNKS_PER_ATTACHMENT);
+      const vectors = await this.embedder.embed(chunks);
+      chunks.forEach((chunk, i) =>
+        inserts.push({ partId: part.id, filename: dl.filename, mimeType: dl.contentType, chunk, vector: vectors[i] }),
+      );
     }
     if (!inserts.length) return 0;
     await this.prisma.$transaction([

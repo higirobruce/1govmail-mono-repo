@@ -119,9 +119,20 @@ describe('AttachmentEmbedWorkerService', () => {
     expect(res.embedded).toBe(1);     // one message processed
     expect(res.tombstoned).toBe(0);   // no tombstone (had at least one good part)
     expect(prisma.$transaction).toHaveBeenCalled();
+
+    // Verify only the good part's rows are in the inserts, not the corrupt part
+    const executeRawCalls = prisma.$executeRaw.mock.calls;
+    const insertCalls = executeRawCalls.filter(call =>
+      call[0] && call[0][0] && call[0][0].includes('INSERT INTO "attachment_embeddings"')
+    );
+    // Should have at least one INSERT for the good part (id '1')
+    const goodPartPartIds = insertCalls.map(call => call[4]); // partId is at index 4
+    expect(goodPartPartIds).toContain('1');
+    // Should NOT have any inserts for the corrupt part (id '2')
+    expect(goodPartPartIds).not.toContain('2');
   });
 
-  it('verifies per-part chunkIndex in $executeRaw calls', async () => {
+  it('verifies per-part chunkIndex sequences correctly (0..N-1 per part)', async () => {
     const { svc, prisma, mail } = makeService({
       candidates: [cand],
       attachments: [
@@ -130,21 +141,43 @@ describe('AttachmentEmbedWorkerService', () => {
       ],
     });
     // Mock downloadAttachment to return different content for each part
+    // p1 short, p2 long (to generate 2+ chunks)
     let callCount = 0;
     mail.downloadAttachment.mockImplementation(() => {
       callCount++;
-      return Promise.resolve({
-        stream: Readable.from([Buffer.from(`part ${callCount} ` + 'x'.repeat(500))]),
-        contentType: 'text/plain',
-        filename: callCount === 1 ? 'file1.txt' : 'file2.txt',
-      });
+      if (callCount === 1) {
+        // p1: short text -> 1 chunk
+        return Promise.resolve({
+          stream: Readable.from([Buffer.from('short')]),
+          contentType: 'text/plain',
+          filename: 'file1.txt',
+        });
+      } else {
+        // p2: 3200 chars will be hard-split into 3 chunks by chunkPlainText (1500, 1500, 200)
+        return Promise.resolve({
+          stream: Readable.from([Buffer.from('y'.repeat(3200))]),
+          contentType: 'text/plain',
+          filename: 'file2.txt',
+        });
+      }
     });
+    // Mock streamToBuffer to actually consume the stream and return buffer content
+    (attachmentText.streamToBuffer as jest.Mock).mockImplementation(async (stream) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks);
+    });
+    // Mock extractAttachmentText to return the buffer as text (will be chunked by chunkPlainText)
+    (attachmentText.extractAttachmentText as jest.Mock).mockImplementation((buf) =>
+      Promise.resolve(buf.toString())
+    );
+
     await svc.processTick();
 
-    // Inspect the $executeRaw calls to verify partId and chunkIndex
+    // Inspect the $executeRaw calls to verify partId and chunkIndex sequences
     const executeRawCalls = prisma.$executeRaw.mock.calls;
-    // Each call is a tagged template: [strings_array, ...values]
-    // We need to find the INSERT statements and verify chunkIndex values
     const insertCalls = executeRawCalls.filter(call =>
       call[0] && call[0][0] && call[0][0].includes('INSERT INTO "attachment_embeddings"')
     );
@@ -158,19 +191,32 @@ describe('AttachmentEmbedWorkerService', () => {
       partChunks.push({ partId, chunkIndex });
     });
 
-    // Verify each part has chunkIndex starting at 0
-    const p1Chunks = partChunks.filter(pc => pc.partId === 'p1');
-    const p2Chunks = partChunks.filter(pc => pc.partId === 'p2');
+    // Verify each part's chunks start at 0
+    const p1Chunks = partChunks.filter(pc => pc.partId === 'p1').map(pc => pc.chunkIndex).sort((a, b) => a - b);
+    const p2Chunks = partChunks.filter(pc => pc.partId === 'p2').map(pc => pc.chunkIndex).sort((a, b) => a - b);
 
-    // Both parts should have one or more chunks with indices starting at 0
-    if (p1Chunks.length > 0) {
-      expect(p1Chunks[0].chunkIndex).toBe(0);
-    }
-    if (p2Chunks.length > 0) {
-      expect(p2Chunks[0].chunkIndex).toBe(0);
-    }
+    // p1 should have exactly one chunk with index 0
+    expect(p1Chunks.length).toBeGreaterThan(0);
+    expect(p1Chunks[0]).toBe(0);
 
-    // At least one INSERT should have been called
+    // p2 should have multiple chunks with indices [0, 1, ...] (3200 chars hard-splits at 1500-char boundaries)
+    expect(p2Chunks.length).toBeGreaterThanOrEqual(2);
+    expect(p2Chunks[0]).toBe(0);
+    expect(p2Chunks[1]).toBe(1);
+
+    // Verify total INSERTs
     expect(insertCalls.length).toBeGreaterThan(0);
+  });
+
+  it('treats embedder failures as transient — 3-strike path, not per-part skip', async () => {
+    const { svc, embedder } = makeService({ candidates: [cand] });
+    // Embedder fails (Ollama down)
+    embedder.embed.mockRejectedValue(new Error('ollama connection refused'));
+
+    // First tick: skipped (attempt 1)
+    expect((await svc.processTick()).skipped).toBe(1);
+    expect((await svc.processTick()).skipped).toBe(1);
+    // Third tick: 3rd strike, tombstoned
+    expect((await svc.processTick()).tombstoned).toBe(1);
   });
 });

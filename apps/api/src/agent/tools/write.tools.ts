@@ -134,7 +134,7 @@ export function buildChartTool(): ToolDef {
   return {
     name: 'create_chart',
     description:
-      'Render a chart in your answer from numbers you already gathered with other tools. Keep it small: ≤30 points, ≤3 series. For pie charts only the first series is used.',
+      'Render a chart in your answer from numbers you already gathered with other tools. Keep it small: ≤30 points, ≤3 series. For pie charts only the first series is used. The chart renders automatically in the panel — never invent image links or markdown image URLs for it.',
     mode: 'read',
     resultBudget: 300,
     schema: z.object({

@@ -89,6 +89,11 @@ describe('gated tools', () => {
 });
 
 describe('create_chart', () => {
+  it('description warns the model never to invent image links for the chart', () => {
+    const tool = buildChartTool();
+    expect(tool.description).toContain('never invent image links');
+  });
+
   it('validates the spec and emits it', async () => {
     const ctx = makeCtx();
     const tool = buildChartTool();

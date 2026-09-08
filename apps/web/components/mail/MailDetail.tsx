@@ -26,6 +26,7 @@ import { pickHighestClassification } from '@/lib/classification';
 import { AttachmentTile, fileTypeStyle } from '@/components/mail/AttachmentTile';
 import { useAIStore } from '@/stores/ai.store';
 import { usePeopleStore } from '@/stores/people.store';
+import { useAuthStore } from '@/stores/auth.store';
 import { AIClient } from '@/lib/ai/client';
 import { summarizeMessage } from '@/lib/ai/tasks';
 import { useCharStream } from '@/lib/ai/useCharStream';
@@ -310,6 +311,9 @@ export default function MailDetail({
   const aiEnabled = useAIStore((s) => s.enabled);
   const aiModel = useAIStore((s) => s.model);
   const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  const currentUserEmail = useAuthStore((s) => s.user?.email);
+  const isSelfSender = !!currentUserEmail
+    && message?.fromEmail?.toLowerCase() === currentUserEmail.toLowerCase();
   const {
     text: streamedSummary,
     push: pushSummary,
@@ -771,7 +775,7 @@ export default function MailDetail({
               <MailAvatar name={message.fromName} email={message.fromEmail} size="md" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 flex-wrap">
-                  {aiEnabled ? (
+                  {!isSelfSender ? (
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); usePeopleStore.getState().openDossier({ email: message.fromEmail, name: message.fromName }); }}

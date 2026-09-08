@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { usePeopleStore } from '@/stores/people.store';
-import { useAIStore } from '@/stores/ai.store';
+import { useAuthStore } from '@/stores/auth.store';
 import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
@@ -467,7 +467,8 @@ export default function ThreadMessage({
   const [lightboxSelectedId, setLightboxSelectedId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
-  const aiEnabled = useAIStore((s) => s.enabled);
+  const currentUserEmail = useAuthStore((s) => s.user?.email);
+  const isSelf = !!currentUserEmail && message.fromEmail.toLowerCase() === currentUserEmail.toLowerCase();
 
   const handleDownloadAll = useCallback(async () => {
     if (downloadingAll || !fullMessage?.attachments?.length) return;
@@ -592,7 +593,7 @@ export default function ThreadMessage({
         )}
 
         {/* Sender name */}
-        {aiEnabled ? (
+        {!isSelf ? (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); usePeopleStore.getState().openDossier({ email: message.fromEmail, name: message.fromName }); }}
@@ -677,7 +678,7 @@ export default function ThreadMessage({
         >
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              {aiEnabled ? (
+              {!isSelf ? (
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); usePeopleStore.getState().openDossier({ email: message.fromEmail, name: message.fromName }); }}

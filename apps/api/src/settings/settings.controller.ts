@@ -143,4 +143,16 @@ export class SettingsController {
   ) {
     return this.settingsService.updateAiProfile(req.user.sub, body);
   }
+
+  /**
+   * GET /settings/ai-profile/suggestions
+   * Best-effort suggestions to seed the AI-profile form, drawn from the
+   * user's Zimbra identity (display name) and GAL entry (title/org/dept).
+   * Requires Zimbra (401s without a stored authToken), but any Zimbra-leg
+   * failure past that point degrades to nulls rather than a 5xx.
+   */
+  @Get('ai-profile/suggestions')
+  getAiProfileSuggestions(@Req() req: AuthenticatedRequest) {
+    return this.settingsService.getAiProfileSuggestions(req.user.sub);
+  }
 }

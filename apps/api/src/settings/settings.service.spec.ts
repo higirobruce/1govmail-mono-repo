@@ -1,7 +1,11 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 
 function makePrisma() {
   return {
+    user: {
+      findUnique: jest.fn(),
+    },
     userAiProfile: {
       findUnique: jest.fn().mockResolvedValue(null),
       upsert: jest.fn().mockResolvedValue({}),
@@ -20,6 +24,7 @@ function makeZimbra() {
     modifySignature: jest.fn(),
     deleteSignature: jest.fn(),
     changePassword: jest.fn(),
+    galSelfLookup: jest.fn(),
   } as any;
 }
 
@@ -135,6 +140,100 @@ describe('SettingsService AI profile', () => {
         update: { department: 'IT' },
         create: { userId: 'u1', department: 'IT' },
       });
+    });
+  });
+
+  describe('getAiProfileSuggestions', () => {
+    const baseUser = {
+      id: 'u1',
+      email: 'bruce@risa.gov.rw',
+      displayName: 'Bruce H.',
+      zimbraHost: 'zimbra.example.com',
+      authToken: 'tok',
+      csrfToken: 'csrf',
+    };
+
+    it('merges identity displayName with GAL title/department/institution', async () => {
+      const prisma = makePrisma();
+      prisma.user.findUnique.mockResolvedValue(baseUser);
+      const zimbra = makeZimbra();
+      zimbra.getIdentities.mockResolvedValue([
+        { id: '1', name: 'default', attrs: { zimbraPrefFromDisplay: 'Bruce Higiro' } },
+      ]);
+      zimbra.galSelfLookup.mockResolvedValue({
+        title: 'Director', department: 'IT', company: 'MINALOC',
+      });
+      const service = new SettingsService(prisma, zimbra);
+
+      const result = await service.getAiProfileSuggestions('u1');
+
+      expect(result).toEqual({
+        displayName: 'Bruce Higiro',
+        jobTitle: 'Director',
+        institution: 'MINALOC',
+        department: 'IT',
+      });
+      expect(zimbra.getIdentities).toHaveBeenCalledWith('zimbra.example.com', 'tok', 'csrf');
+      expect(zimbra.galSelfLookup).toHaveBeenCalledWith(
+        'zimbra.example.com', 'tok', 'bruce@risa.gov.rw', 'csrf',
+      );
+    });
+
+    it('falls back to user.displayName when no identity display attr is set', async () => {
+      const prisma = makePrisma();
+      prisma.user.findUnique.mockResolvedValue(baseUser);
+      const zimbra = makeZimbra();
+      zimbra.getIdentities.mockResolvedValue([{ id: '1', name: 'default', attrs: {} }]);
+      zimbra.galSelfLookup.mockResolvedValue({ title: null, department: null, company: null });
+      const service = new SettingsService(prisma, zimbra);
+
+      const result = await service.getAiProfileSuggestions('u1');
+
+      expect(result.displayName).toBe('Bruce H.');
+    });
+
+    it('falls back to user.displayName when getIdentities returns no identities', async () => {
+      const prisma = makePrisma();
+      prisma.user.findUnique.mockResolvedValue(baseUser);
+      const zimbra = makeZimbra();
+      zimbra.getIdentities.mockResolvedValue([]);
+      zimbra.galSelfLookup.mockResolvedValue({ title: null, department: null, company: null });
+      const service = new SettingsService(prisma, zimbra);
+
+      const result = await service.getAiProfileSuggestions('u1');
+
+      expect(result.displayName).toBe('Bruce H.');
+    });
+
+    it('returns all-null suggestion fields when both Zimbra legs throw, without raising', async () => {
+      const prisma = makePrisma();
+      prisma.user.findUnique.mockResolvedValue(baseUser);
+      const zimbra = makeZimbra();
+      zimbra.getIdentities.mockRejectedValue(new Error('zimbra down'));
+      zimbra.galSelfLookup.mockRejectedValue(new Error('zimbra down'));
+      const service = new SettingsService(prisma, zimbra);
+
+      const result = await service.getAiProfileSuggestions('u1');
+
+      expect(result).toEqual({
+        displayName: 'Bruce H.',
+        jobTitle: null,
+        institution: null,
+        department: null,
+      });
+    });
+
+    it('rejects with UnauthorizedException when the user has no Zimbra authToken', async () => {
+      const prisma = makePrisma();
+      prisma.user.findUnique.mockResolvedValue({ ...baseUser, authToken: null });
+      const zimbra = makeZimbra();
+      const service = new SettingsService(prisma, zimbra);
+
+      await expect(service.getAiProfileSuggestions('u1')).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(zimbra.getIdentities).not.toHaveBeenCalled();
+      expect(zimbra.galSelfLookup).not.toHaveBeenCalled();
     });
   });
 });

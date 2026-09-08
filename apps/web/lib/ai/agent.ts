@@ -44,6 +44,27 @@ export interface AgentChartSpec {
   series: Array<{ name: string; data: number[] }>;
 }
 
+/** Accumulates rail sources across tool_result frames. Server aliases are
+ * turn-stable (aliasFor), so a repeated alias is the SAME item — drop it,
+ * but let a flagged repeat upgrade the stored injection flag. */
+export function mergeSources(prev: AskSource[], incoming: AskSource[]): AskSource[] {
+  const byAlias = new Map(prev.map((s) => [s.alias, s]));
+  let changed = false;
+  const out = [...prev];
+  for (const s of incoming) {
+    const existing = byAlias.get(s.alias);
+    if (!existing) {
+      byAlias.set(s.alias, s);
+      out.push(s);
+      changed = true;
+    } else if (s.injectionSuspected && !existing.injectionSuspected) {
+      out[out.indexOf(existing)] = { ...existing, injectionSuspected: true };
+      changed = true;
+    }
+  }
+  return changed ? out : prev;
+}
+
 export async function streamAgent(
   turns: AskTurn[],
   opts: {

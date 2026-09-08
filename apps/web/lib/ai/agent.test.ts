@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeAll } from 'vitest';
 import { readEventSse } from './sse';
 
 // NOTE: `new Response(new Blob([raw]))` doesn't work in this repo's Vitest
@@ -125,5 +125,32 @@ describe('readEventSse robustness', () => {
     });
     expect(text).toBe('ok');
     expect(events).toEqual([]);
+  });
+});
+
+const src = (alias: string, flagged = false) =>
+  ({ alias, type: 'mail', id: `id-${alias}`, title: 't', date: '2026-09-08', snippet: '', injectionSuspected: flagged }) as any;
+
+describe('mergeSources', () => {
+  // Dynamic import (not a static top-level import) so this module isn't
+  // pulled into the registry ahead of the streamAgent tests above — those
+  // rely on vi.doMock('../authed-fetch') being installed *before* './agent'
+  // is first imported, or the mock never takes and a real fetch fires.
+  let mergeSources: (prev: any[], incoming: any[]) => any[];
+  beforeAll(async () => {
+    ({ mergeSources } = await import('./agent'));
+  });
+
+  it('appends unseen aliases only', () => {
+    const out = mergeSources([src('s1')], [src('s1'), src('s2')]);
+    expect(out.map((s) => s.alias)).toEqual(['s1', 's2']);
+  });
+  it('upgrades the injection flag on a flagged repeat', () => {
+    const out = mergeSources([src('s1')], [src('s1', true)]);
+    expect(out[0].injectionSuspected).toBe(true);
+  });
+  it('returns the same reference when nothing changes', () => {
+    const prev = [src('s1')];
+    expect(mergeSources(prev, [src('s1')])).toBe(prev);
   });
 });

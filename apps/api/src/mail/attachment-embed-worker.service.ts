@@ -126,13 +126,25 @@ export class AttachmentEmbedWorkerService {
     return atts;
   }
 
-  /** Downloads, extracts, chunks and embeds each part; returns rows inserted. Per-part errors skip that part only. */
+  /** Downloads, extracts, chunks and embeds each part; returns rows inserted. Per-part extraction errors skip that part only; download/embedding errors bubble up to message-level 3-strike counter. */
   private async embedParts(cand: AttachmentCandidate, parts: AttachmentPart[]): Promise<number> {
     const inserts: Array<{ partId: string; filename: string; mimeType: string; chunk: string; vector: number[] }> = [];
     for (const part of parts) {
+      // Download and buffer conversion — failures are transient (Zimbra/network), rethrow for 3-strike.
+      let stream, contentType, filename, buf;
       try {
-        const { stream, contentType, filename } = await this.mail.downloadAttachment(cand.userId, cand.id, part.id);
-        const buf = await streamToBuffer(stream, MAX_ATTACHMENT_BYTES);
+        const dl = await this.mail.downloadAttachment(cand.userId, cand.id, part.id);
+        stream = dl.stream;
+        contentType = dl.contentType;
+        filename = dl.filename;
+        buf = await streamToBuffer(stream, MAX_ATTACHMENT_BYTES);
+      } catch (err: any) {
+        // Transient: rethrow to surface as zero inserts, triggering message-level 3-strike.
+        throw err;
+      }
+
+      // Extraction and chunking — failures are permanent (unsupported/corrupt), skip this part.
+      try {
         const text = (await extractAttachmentText(buf, contentType, filename)).trim();
         if (!text) continue;
         const chunks = chunkPlainText(text, `Attachment: ${filename}`, MAX_CHUNKS_PER_ATTACHMENT);
@@ -141,10 +153,7 @@ export class AttachmentEmbedWorkerService {
           inserts.push({ partId: part.id, filename, mimeType: contentType, chunk, vector: vectors[i] }),
         );
       } catch (err: any) {
-        // Unsupported/corrupt part — skip it; a Zimbra/network error on the
-        // FIRST part surfaces as zero inserts and the caller's failure counter
-        // decides, which keeps transient outages from tombstoning instantly.
-        if (this.isTransient(err)) throw err;
+        // Permanent: log and skip this part; other parts in the message still get processed.
         this.logger.warn(`part ${part.id} of ${cand.id} skipped: ${err?.message}`);
       }
     }
@@ -161,12 +170,6 @@ export class AttachmentEmbedWorkerService {
       ),
     ]);
     return inserts.length;
-  }
-
-  /** Zimbra/network/embedding failures are transient (retry via 3-strike); extraction errors are permanent. */
-  private isTransient(err: any): boolean {
-    const msg = String(err?.message ?? '');
-    return !/unsupported attachment type|10MB read limit/i.test(msg);
   }
 
   private async tombstone(messageId: string): Promise<void> {

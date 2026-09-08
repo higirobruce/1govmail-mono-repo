@@ -98,12 +98,14 @@ One new read tool `search_attachments(query)` (tool count 20 → 21) in the regi
 fresh aliases, so the same message cited across three searches becomes three source cards (live
 testing: 35 cards, mostly dupes) and the model treats one message as three documents.
 
-- `ToolContext` gains `aliasByKey: Map<string /* 'type:id' */, string /* alias */>` scoped to the
-  turn, seeded from conversation-carried sources so aliases stay stable across turns of one
-  conversation. A ref whose `type:id` is already mapped returns the existing alias; only unseen
-  keys mint a new one.
-- The `source` SSE frame is emitted **only on first sighting** of a key — the sources rail gets
-  exactly one card per underlying item. Repeated tool results render the same `[sN]` in the prompt.
+- `ToolContext` replaces `nextAlias()` with `aliasFor(type, id)` backed by an
+  `aliasByKey: Map<'type:id', alias>` scoped to the **turn** (chips resolve against per-answer
+  source maps, so cross-turn seeding is unnecessary). A ref whose `type:id` is already mapped
+  returns the existing alias; only unseen keys mint a new one.
+- Refs still travel on every `tool_result` frame (the model needs the rendered lines), but the
+  panel's source accumulator drops aliases it has already collected (upgrading the injection flag
+  on a flagged repeat) — the sources rail gets exactly one card per underlying item, and repeated
+  tool results render the same `[sN]` in the prompt.
 - The alias-rejection dispatch guard, chip sanitizers, and the citation whitelist are untouched —
   aliases simply become stable. No web changes required beyond what already renders.
 
@@ -114,8 +116,9 @@ retrieval.service.ts:230) — right for cross-doc ranking, but "Ask this documen
 single ~1200-char excerpt.
 
 - When `scope.docId` is set: skip the per-document dedupe and take the **top 6 chunks**
-  (distance-ordered) of that document. They bypass `rrfFuse` (nothing to fuse against in single-doc
-  scope) and land as separate context blocks under **one** source chip.
+  (distance-ordered) of that document, joined into **one deep context block** under **one** source
+  chip (the per-source context clamp is raised for this hit only; cross-doc hits keep the 1200-char
+  clamp). Single-doc scope runs only the docs leg, so fusion order is unaffected.
 - Cross-doc behavior unchanged. Meeting-prep and dossier call `retrieve` without `docId` — unaffected.
 
 ## 4. Testing

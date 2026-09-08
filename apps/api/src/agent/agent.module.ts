@@ -18,7 +18,7 @@ import { TasksService } from '../tasks/tasks.service';
 import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
 import { ToolRegistry } from './tool-registry';
-import { buildAttachmentTool } from './tools/attachment.tools';
+import { buildAttachmentTool, buildAttachmentSearchTool } from './tools/attachment.tools';
 import { buildCalendarTools } from './tools/calendar.tools';
 import { buildDocsTools } from './tools/docs.tools';
 import { buildMailReadTools, buildMailStatsTool } from './tools/mail.tools';
@@ -45,6 +45,7 @@ import { buildChartTool, buildGatedTools, buildWriteTools } from './tools/write.
         const registry = new ToolRegistry();
         registry.registerAll(buildMailReadTools(mail, retrieval));
         registry.register(buildAttachmentTool(mail));
+        registry.register(buildAttachmentSearchTool(retrieval));
         registry.register(buildMailStatsTool(mail));
         registry.registerAll(buildDocsTools(docs, retrieval));
         registry.registerAll(buildCalendarTools(calendar));

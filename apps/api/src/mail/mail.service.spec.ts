@@ -1250,6 +1250,28 @@ describe('MailService.getDefaultSignatureHtml', () => {
 
     await expect(service.getDefaultSignatureHtml('u1')).resolves.toBe('');
   });
+
+  it('inlines /home/ Briefcase images as data URIs (parity with compose GET /settings)', async () => {
+    const { service, zimbra } = makeService();
+    zimbra.getSignatures.mockResolvedValue([
+      {
+        id: 's1',
+        name: 'First',
+        contentHtml: '<p>Bruce</p><img src="/home/bruce@risa.gov.rw/Briefcase/logo.gif">',
+        contentText: 'Bruce',
+      },
+    ]);
+    zimbra.downloadZimbraPath = jest.fn().mockResolvedValue({
+      data: Buffer.from('gifdata'),
+      contentType: 'image/gif',
+    });
+
+    const html = await service.getDefaultSignatureHtml('u1');
+
+    expect(html).toContain('src="data:image/gif;base64,');
+    expect(html).toContain('data-zimbra-src="/home/bruce@risa.gov.rw/Briefcase/logo.gif"');
+    expect(html).not.toMatch(/<img src="\/home\//);
+  });
 });
 
 describe('MailService.sendMessage body formatting', () => {

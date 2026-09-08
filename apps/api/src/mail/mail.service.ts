@@ -6,6 +6,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { TasksService } from '../tasks/tasks.service';
 import { matchSenderRule, type SenderRuleLike } from './sender-rule-matcher';
 import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
+import { inlineSignatureImages } from '../common/signature-images';
 
 const CARD_WINDOWS = ['today', '24h', 'week'] as const;
 type CardWindow = (typeof CARD_WINDOWS)[number];
@@ -1297,11 +1298,13 @@ export class MailService {
 
       const attrs = identities[0]?.attrs ?? {};
       const id = attrs.zimbraPrefDefaultSignatureId || prefs.zimbraPrefDefaultSignatureId || '';
+      let html = '';
       if (id) {
-        const html = resolve(signatures.find((s) => s.id === id));
-        if (html) return html;
+        html = resolve(signatures.find((s) => s.id === id));
       }
-      return resolve(signatures[0]);
+      if (!html) html = resolve(signatures[0]);
+      if (!html) return '';
+      return inlineSignatureImages(this.zimbra, user, html);
     } catch (err: any) {
       this.logger.warn(`getDefaultSignatureHtml failed: ${err?.message}`);
       return '';

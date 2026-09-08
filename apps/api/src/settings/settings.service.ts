@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { inlineSignatureImages } from '../common/signature-images';
 
 export interface SignatureData {
   name: string;
@@ -71,28 +72,7 @@ export class SettingsService {
     html: string,
     user: { zimbraHost: string; authToken: string | null },
   ): Promise<string> {
-    if (!user.authToken) return html;
-    const regex = /src="(\/home\/[^"]+)"/gi;
-    const matches = [...html.matchAll(regex)];
-    if (!matches.length) return html;
-
-    let processed = html;
-    await Promise.all(
-      matches.map(async ([full, path]) => {
-        try {
-          const { data, contentType } = await this.zimbra.downloadZimbraPath(
-            user.zimbraHost, user.authToken!, path,
-          );
-          const dataUri = `data:${contentType};base64,${data.toString('base64')}`;
-          // Keep the original Zimbra path in data-zimbra-src so the editor can
-          // round-trip it back when saving (avoids the 10 KB signature size limit).
-          processed = processed.split(full).join(`src="${dataUri}" data-zimbra-src="${path}"`);
-        } catch {
-          // Leave original path — image will be missing but the rest renders
-        }
-      }),
-    );
-    return processed;
+    return inlineSignatureImages(this.zimbra, user, html);
   }
 
   /**

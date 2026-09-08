@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Personalization</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f7f8f7; --surface: #ffffff; --surface-2: #eef1ef;
+    --ink: #1d2724; --ink-2: #46534e; --ink-3: #6b7a74; --line: #d9e0dc;
+    --accent: #1a6a56; --accent-ink: #10513f; --accent-soft: #e2efe9;
+    --warn: #8a5a12; --warn-soft: #f5ead4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131917; --surface: #1b2320; --surface-2: #232d29;
+      --ink: #e5ece8; --ink-2: #b3c0ba; --ink-3: #83938c; --line: #2e3a35;
+      --accent: #57b596; --accent-ink: #7cc9ae; --accent-soft: #1e3a30;
+      --warn: #d8a24a; --warn-soft: #3a2f18;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #131917; --surface: #1b2320; --surface-2: #232d29;
+    --ink: #e5ece8; --ink-2: #b3c0ba; --ink-3: #83938c; --line: #2e3a35;
+    --accent: #57b596; --accent-ink: #7cc9ae; --accent-soft: #1e3a30;
+    --warn: #d8a24a; --warn-soft: #3a2f18;
+  }
+  body { background: var(--bg); color: var(--ink); font-family: "Public Sans", -apple-system, sans-serif; font-size: 16px; line-height: 1.6; margin: 0; padding: 0 20px 88px; }
+  main { max-width: 840px; margin: 0 auto; }
+  h1, h2, h3 { font-family: "Archivo", sans-serif; text-wrap: balance; }
+  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.015em; margin: 52px 0 6px; }
+  h2 { font-size: 1.3rem; font-weight: 650; margin: 44px 0 8px; padding-top: 20px; border-top: 1px solid var(--line); }
+  h3 { font-size: 1rem; font-weight: 600; margin: 18px 0 4px; }
+  p { margin: 10px 0; max-width: 70ch; }
+  ul { max-width: 74ch; } li { margin: 4px 0; }
+  .sub { color: var(--ink-2); }
+  .kicker { font-size: 0.74rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent-ink); margin: 0 0 6px; }
+  code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.85em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; margin: 12px 0; }
+  th { text-align: left; font-family: "Archivo", sans-serif; font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); }
+  td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink-2); }
+  td:first-child { color: var(--ink); }
+  .note { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 12px 16px; font-size: 0.9rem; color: var(--ink-2); margin: 14px 0; }
+  .note.warn { border-left-color: var(--warn); }
+  .phase { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 18px 22px; margin: 16px 0; }
+  .phase h2 { border: none; padding-top: 0; margin-top: 0; }
+  .pill { display: inline-block; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; border-radius: 999px; padding: 2px 9px; vertical-align: 2px; }
+  .pill.accent { background: var(--accent-soft); color: var(--accent-ink); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+</style>
+
+</head>
+<body>
+<main>
+  <p class="kicker">1Gov Mail · AI personalization · design for review · 8 Sep 2026</p>
+  <h1>AI Personalization</h1>
+  <p class="sub">Profile-contextualized prompts in three phases: account-level instructions, a structured
+  identity card, and a derived writing-style card — always <em>tiered</em>, because on a 16k-context local
+  model every profile token trades against history, tool results, and the anti-fabrication mandates.</p>
+
+  <div class="phase">
+    <h2>P1 · Account-level instructions + identity <span class="pill accent">ship first — small</span></h2>
+    <p>The gap today isn't missing context — it's that the personalization you already built lives on the
+    wrong side: custom instructions sit in device-local storage and reach only client-side tasks. P1 moves
+    them to the account and threads them server-side.</p>
+    <ul>
+      <li>New <code>user_ai_profiles</code> table (one migration carries P1+P2 fields: instructions ≤500,
+      jobTitle/institution/department ≤80, language) — hand-authored per the repo workflow.</li>
+      <li><code>GET/PATCH /settings/ai-profile</code>; DTO enforces the caps.</li>
+      <li>One shared <code>buildProfileBlock()</code> in <code>packages/shared</code> — neutralized, capped,
+      explicitly subordinated to the hard rules, rendered identically everywhere it's consumed.</li>
+      <li>Web auto-migrates the localStorage instructions to the account once, then reads through.</li>
+      <li>Settings gains a <b>Profile</b> panel OUTSIDE the AI section — so it survives builds that lock
+      <code>NEXT_PUBLIC_AI_MODEL</code> and hide the AI section (.155).</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <h2>P2 · Structured identity card + seeding <span class="pill accent">rides with P1</span></h2>
+    <ul>
+      <li><code>Profile: &lt;title&gt;, &lt;department&gt;, &lt;institution&gt;. Preferred language: &lt;lang&gt;.</code>
+      — a short structured card beats a longer free-text blob on small models.</li>
+      <li>Seeded, not typed: <code>GET /settings/ai-profile/suggestions</code> derives candidates from the
+      Zimbra identity and a GAL self-lookup; the user confirms chips, nothing saves silently.</li>
+      <li>Card additionally reaches suggestReply/rewrite and meeting prep (output that speaks <em>as</em> the user).</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <h2>P3 · Derived writing-style card <span class="pill warn">own plan, later</span></h2>
+    <ul>
+      <li>Weekly cron (6th worker) distills ~40 recent Sent messages into a descriptive JSON card
+      (formality, length, greetings/sign-offs, language mix) stored as <code>ai_generations</code> kind
+      <code>style_profile</code>. ~30 generations/hour at full 5,000-mailbox scale — noise on the GPU pool.</li>
+      <li>Consumed only by suggestReply, rewrite, and the agent's drafting guidance (capped ~300 chars).</li>
+      <li>Why it's separate: the card is distilled from email content — an injection surviving distillation
+      would land in a system prompt. Mandatory: fenced distillation, schema validation,
+      <code>detectInjectionAttempt</code> scan (tombstone on suspicion), descriptive-only rendering — never
+      raw quoted sentences.</li>
+    </ul>
+  </div>
+
+  <h2>The tier table (binding)</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Surface</th><th>P1</th><th>P2</th><th>P3</th></tr>
+    <tr><td>Agent (Ask 1Gov)</td><td>instructions</td><td>+ full card</td><td>+ style (drafting section)</td></tr>
+    <tr><td>Ask (scoped RAG)</td><td>identity + instructions</td><td>+ full card</td><td>—</td></tr>
+    <tr><td>Suggest reply / rewrite / compose AI</td><td>instructions (now account-sourced)</td><td>+ full card</td><td>+ style card</td></tr>
+    <tr><td>Meeting prep</td><td>identity line</td><td>+ full card</td><td>—</td></tr>
+    <tr><td>Dossier</td><td>identity line</td><td>identity line</td><td>—</td></tr>
+    <tr><td>Cards · briefing · summaries · embeddings</td><td colspan="3">nothing — a summary of someone else's email doesn't improve by knowing your title, and small-model attention is the scarce resource</td></tr>
+  </table></div>
+
+  <div class="note warn"><b>Why tiered is non-negotiable:</b> the agent runs a 16k context with a 35k-char
+  transcript cap because Ollama truncates oldest-first and drops the security mandates, and long context is
+  qwen3's fabrication trigger — we already trimmed history to 6 turns for exactly this. Injection cost is
+  otherwise trivial (~100 tokens ≈ &lt;70 ms prefill at measured rates).</div>
+
+  <h2>Out of scope</h2>
+  <p>Admin-managed org directory (admin-console stream) · profiles of other users (dossiers cover
+  counterparties) · personalizing summaries/cards/embeddings · multi-language UI.</p>
+
+  <p class="sub"><b>Source of record:</b> <code>docs/superpowers/specs/2026-09-08-ai-personalization-design.md</code>
+  (committed after the in-flight quick-wins batch lands). P1+P2 become one implementation plan; P3 waits
+  for its own confirmation when picked up.</p>
+</main>
+
+</body>
+</html>

@@ -20,7 +20,7 @@ export interface PublicAskSource {
 
 export interface PreparedAsk {
   sources: PublicAskSource[];
-  degraded: { vector: boolean; keyword: boolean; docs: boolean; calendar: boolean };
+  degraded: { vector: boolean; keyword: boolean; docs: boolean; calendar: boolean; attachment: boolean };
   upstreamBody: ChatRequestDto | null; // null => answer with noSourcesReply, no model call
   noSourcesReply: string | null;
 }

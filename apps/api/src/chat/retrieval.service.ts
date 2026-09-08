@@ -35,7 +35,7 @@ export interface AskScope {
 
 export interface RetrievalResult {
   sources: RetrievedSource[];
-  degraded: { vector: boolean; keyword: boolean; docs: boolean; calendar: boolean };
+  degraded: { vector: boolean; keyword: boolean; docs: boolean; calendar: boolean; attachment: boolean };
 }
 
 interface FusableHit {
@@ -66,11 +66,12 @@ export class RetrievalService {
   ) {}
 
   /**
-   * Runs up to four legs (mail-vector, mail-keyword, docs-vector, calendar)
-   * concurrently via allSettled, fuses them with RRF, and assembles clamped,
-   * injection-checked contexts. `scope.types` gates which legs run at all
-   * (undefined = all); `scope.docId` forces docs-only and narrows the docs
-   * SQL to that one document.
+   * Runs up to five legs (mail-vector, mail-keyword, docs-vector, calendar,
+   * attachment-vector) concurrently via allSettled, fuses them with RRF, and
+   * assembles clamped, injection-checked contexts. `scope.types` gates which
+   * legs run at all (undefined = all); `scope.docId` forces docs-only and
+   * narrows the docs SQL to that one document (and, since that also drops
+   * 'mail' from `types`, disables the attachment leg too).
    *
    * ACCESS CONTRACT: this method does NOT authorize `scope.docId` — it only
    * narrows the SQL. The caller MUST call DocsService.verifyReadAccess(userId,
@@ -88,14 +89,16 @@ export class RetrievalService {
     // doubles unscoped wall-clock). Both legs `await` this same promise; if
     // it rejects, BOTH legs reject and BOTH degraded flags below turn true —
     // that's intentional, not a bug, since they'd have used the identical
-    // failed embedding anyway.
+    // failed embedding anyway. The attachment leg also shares it (same
+    // reasoning applies to its degraded flag).
     const vecPromise = (wantMail || wantDoc) ? this.embedQuestion(question) : null;
 
-    const [vectorLeg, keywordLeg, docLeg, calendarLeg] = await Promise.allSettled([
+    const [vectorLeg, keywordLeg, docLeg, calendarLeg, attachLeg] = await Promise.allSettled([
       wantMail ? this.vectorLeg(userId, vecPromise!) : Promise.resolve<FusableHit[]>([]),
       wantMail ? this.keywordLeg(userId, question) : Promise.resolve<FusableHit[]>([]),
       wantDoc ? this.docVectorLeg(userId, userEmail, vecPromise!, scope?.docId) : Promise.resolve<FusableHit[]>([]),
       wantEvent ? this.calendarLeg(userId, question) : Promise.resolve<FusableHit[]>([]),
+      wantMail && !scope?.docId ? this.attachmentLeg(userId, vecPromise!) : Promise.resolve<FusableHit[]>([]),
     ]);
 
     const degraded = {
@@ -103,16 +106,22 @@ export class RetrievalService {
       keyword: keywordLeg.status === 'rejected',
       docs: docLeg.status === 'rejected',
       calendar: calendarLeg.status === 'rejected',
+      attachment: attachLeg.status === 'rejected',
     };
     if (degraded.vector) this.logger.warn(`vector leg failed: ${(vectorLeg as PromiseRejectedResult).reason?.message}`);
     if (degraded.keyword) this.logger.warn(`keyword leg failed: ${(keywordLeg as PromiseRejectedResult).reason?.message}`);
     if (degraded.docs) this.logger.warn(`docs leg failed: ${(docLeg as PromiseRejectedResult).reason?.message}`);
     if (degraded.calendar) this.logger.warn(`calendar leg failed: ${(calendarLeg as PromiseRejectedResult).reason?.message}`);
+    if (degraded.attachment) this.logger.warn(`attachment leg failed: ${(attachLeg as PromiseRejectedResult).reason?.message}`);
 
     // Vector legs first: on a same-type id collision RRF keeps the first-seen
     // payload, and the matching chunkText beats a listing snippet as context.
+    // Attachment sits right after the mail vector leg — a shared-key mail hit
+    // keeps the vector chunk as context, but an attachment-only hit still
+    // outranks (and out-contexts) a keyword snippet for the same message.
     const fused = rrfFuse<FusableHit>([
       vectorLeg.status === 'fulfilled' ? vectorLeg.value : [],
+      attachLeg.status === 'fulfilled' ? attachLeg.value : [],
       docLeg.status === 'fulfilled' ? docLeg.value : [],
       calendarLeg.status === 'fulfilled' ? calendarLeg.value : [],
       keywordLeg.status === 'fulfilled' ? keywordLeg.value : [],
@@ -135,6 +144,24 @@ export class RetrievalService {
         id: r.messageId, subject: r.subject, snippet: r.snippet ?? r.chunkText.slice(0, 160),
         fromEmail: r.fromEmail, fromName: r.fromName, receivedAt: r.receivedAt,
         isRead: r.isRead, hasAttachments: r.hasAttachments, tags: [],
+      });
+    }
+    return out;
+  }
+
+  /** Attachment search for the agent tool layer (Task 6) — dedupes per (messageId, filename), best chunk first. */
+  async searchAttachments(userId: string, query: string, limit = 8) {
+    const vecText = await this.embedQuestion(query);
+    const rows = await this.attachmentRows(userId, vecText, limit * 3);
+    const seen = new Set<string>();
+    const out: Array<{ messageId: string; filename: string; snippet: string; subject: string | null; fromEmail: string; receivedAt: Date }> = [];
+    for (const r of rows) {
+      const k = `${r.messageId}:${r.filename}`;
+      if (seen.has(k) || out.length >= limit) continue;
+      seen.add(k);
+      out.push({
+        messageId: r.messageId, filename: r.filename, snippet: r.chunkText.slice(0, 200),
+        subject: r.subject, fromEmail: r.fromEmail, receivedAt: r.receivedAt,
       });
     }
     return out;
@@ -173,6 +200,38 @@ export class RetrievalService {
       hits.push({
         key: `mail:${r.messageId}`, type: 'mail', id: r.messageId, title: r.subject,
         fromEmail: r.fromEmail, fromName: r.fromName, date: r.receivedAt, context: r.chunkText,
+      });
+    }
+    return hits;
+  }
+
+  private async attachmentRows(userId: string, vecText: string, limit: number) {
+    return this.prisma.$queryRaw<Array<{
+      messageId: string; chunkText: string; filename: string;
+      subject: string | null; fromEmail: string; fromName: string | null;
+      receivedAt: Date; distance: number;
+    }>>`
+      SELECT e."messageId", e."chunkText", e."filename",
+             m."subject", m."fromEmail", m."fromName", m."receivedAt",
+             (e."embedding" <=> ${vecText}::vector) AS distance
+      FROM "attachment_embeddings" e
+      JOIN "messages" m ON m."id" = e."messageId"
+      WHERE e."userId" = ${userId} AND e."failed" = false AND e."embedding" IS NOT NULL AND e."model" = ${this.embedder.model}
+      ORDER BY e."embedding" <=> ${vecText}::vector
+      LIMIT ${limit}`;
+  }
+
+  private async attachmentLeg(userId: string, vecPromise: Promise<string>): Promise<FusableHit[]> {
+    const rows = await this.attachmentRows(userId, await vecPromise, VECTOR_TOP_K);
+    const seen = new Set<string>();
+    const hits: FusableHit[] = [];
+    for (const r of rows) {
+      if (seen.has(r.messageId)) continue; // distance-ordered: best chunk per message
+      seen.add(r.messageId);
+      hits.push({
+        key: `mail:${r.messageId}`, type: 'mail', id: r.messageId, title: r.subject,
+        fromEmail: r.fromEmail, fromName: r.fromName, date: r.receivedAt,
+        context: `[from attachment "${r.filename}"]\n${r.chunkText}`,
       });
     }
     return hits;

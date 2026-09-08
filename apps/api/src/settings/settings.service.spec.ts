@@ -169,13 +169,10 @@ describe('SettingsService AI profile', () => {
       csrfToken: 'csrf',
     };
 
-    it('merges identity displayName with GAL title/department/institution', async () => {
+    it('returns GAL title/department/institution (no displayName — consumed nowhere)', async () => {
       const prisma = makePrisma();
       prisma.user.findUnique.mockResolvedValue(baseUser);
       const zimbra = makeZimbra();
-      zimbra.getIdentities.mockResolvedValue([
-        { id: '1', name: 'default', attrs: { zimbraPrefFromDisplay: 'Bruce Higiro' } },
-      ]);
       zimbra.galSelfLookup.mockResolvedValue({
         title: 'Director', department: 'IT', company: 'MINALOC',
       });
@@ -184,55 +181,26 @@ describe('SettingsService AI profile', () => {
       const result = await service.getAiProfileSuggestions('u1');
 
       expect(result).toEqual({
-        displayName: 'Bruce Higiro',
         jobTitle: 'Director',
         institution: 'MINALOC',
         department: 'IT',
       });
-      expect(zimbra.getIdentities).toHaveBeenCalledWith('zimbra.example.com', 'tok', 'csrf');
+      expect(zimbra.getIdentities).not.toHaveBeenCalled();
       expect(zimbra.galSelfLookup).toHaveBeenCalledWith(
         'zimbra.example.com', 'tok', 'bruce@risa.gov.rw', 'csrf',
       );
     });
 
-    it('falls back to user.displayName when no identity display attr is set', async () => {
+    it('returns all-null suggestion fields when the GAL lookup throws, without raising', async () => {
       const prisma = makePrisma();
       prisma.user.findUnique.mockResolvedValue(baseUser);
       const zimbra = makeZimbra();
-      zimbra.getIdentities.mockResolvedValue([{ id: '1', name: 'default', attrs: {} }]);
-      zimbra.galSelfLookup.mockResolvedValue({ title: null, department: null, company: null });
-      const service = new SettingsService(prisma, zimbra);
-
-      const result = await service.getAiProfileSuggestions('u1');
-
-      expect(result.displayName).toBe('Bruce H.');
-    });
-
-    it('falls back to user.displayName when getIdentities returns no identities', async () => {
-      const prisma = makePrisma();
-      prisma.user.findUnique.mockResolvedValue(baseUser);
-      const zimbra = makeZimbra();
-      zimbra.getIdentities.mockResolvedValue([]);
-      zimbra.galSelfLookup.mockResolvedValue({ title: null, department: null, company: null });
-      const service = new SettingsService(prisma, zimbra);
-
-      const result = await service.getAiProfileSuggestions('u1');
-
-      expect(result.displayName).toBe('Bruce H.');
-    });
-
-    it('returns all-null suggestion fields when both Zimbra legs throw, without raising', async () => {
-      const prisma = makePrisma();
-      prisma.user.findUnique.mockResolvedValue(baseUser);
-      const zimbra = makeZimbra();
-      zimbra.getIdentities.mockRejectedValue(new Error('zimbra down'));
       zimbra.galSelfLookup.mockRejectedValue(new Error('zimbra down'));
       const service = new SettingsService(prisma, zimbra);
 
       const result = await service.getAiProfileSuggestions('u1');
 
       expect(result).toEqual({
-        displayName: 'Bruce H.',
         jobTitle: null,
         institution: null,
         department: null,

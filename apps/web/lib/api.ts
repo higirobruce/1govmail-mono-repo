@@ -622,9 +622,14 @@ export const api = {
       language?: string;
     }) => {
       if (USE_MOCK) {
+        // Mirror the real endpoint's string|null shape — a field the caller
+        // didn't pass comes back as null, never undefined.
         return delay<AiProfile>({
-          instructions: null, jobTitle: null, institution: null, department: null, language: null,
-          ...data,
+          instructions: data.instructions ?? null,
+          jobTitle: data.jobTitle ?? null,
+          institution: data.institution ?? null,
+          department: data.department ?? null,
+          language: data.language ?? null,
         });
       }
       return request<AiProfile>('/settings/ai-profile', {
@@ -633,11 +638,11 @@ export const api = {
       });
     },
 
-    /** GET /settings/ai-profile/suggestions — best-effort form seed from Zimbra identity + GAL. */
+    /** GET /settings/ai-profile/suggestions — best-effort form seed from the Zimbra GAL entry. */
     getAiProfileSuggestions: () => {
       if (USE_MOCK) {
         return delay<AiProfileSuggestions>({
-          displayName: null, jobTitle: null, institution: null, department: null,
+          jobTitle: null, institution: null, department: null,
         });
       }
       return request<AiProfileSuggestions>('/settings/ai-profile/suggestions');
@@ -961,7 +966,6 @@ export interface AiProfile {
 }
 
 export interface AiProfileSuggestions {
-  displayName: string | null;
   jobTitle: string | null;
   institution: string | null;
   department: string | null;

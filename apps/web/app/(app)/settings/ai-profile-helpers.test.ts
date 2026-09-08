@@ -64,7 +64,6 @@ describe('normalizeProfileDraft', () => {
 describe('mergeSuggestions', () => {
   it('fills a blank field from the suggestion', () => {
     const result = mergeSuggestions(draft(), {
-      displayName: 'Jane Doe',
       jobTitle: 'Data Analyst',
       institution: 'RISA',
       department: 'ICT',
@@ -77,7 +76,6 @@ describe('mergeSuggestions', () => {
   it('never overwrites a field the user already filled in, even when the suggestion differs', () => {
     const current = draft({ jobTitle: 'Senior Registrar' });
     const result = mergeSuggestions(current, {
-      displayName: null,
       jobTitle: 'Data Analyst',
       institution: null,
       department: null,
@@ -87,7 +85,6 @@ describe('mergeSuggestions', () => {
 
   it('leaves a blank field blank when the suggestion is null', () => {
     const result = mergeSuggestions(draft(), {
-      displayName: null,
       jobTitle: null,
       institution: null,
       department: null,
@@ -100,7 +97,6 @@ describe('mergeSuggestions', () => {
   it('treats a whitespace-only current field as blank and fills it', () => {
     const current = draft({ department: '   ' });
     const result = mergeSuggestions(current, {
-      displayName: null,
       jobTitle: null,
       institution: null,
       department: 'Finance',
@@ -111,7 +107,7 @@ describe('mergeSuggestions', () => {
   it('does not touch language or instructions (suggestions carry no such fields)', () => {
     const current = draft({ language: 'fr', instructions: 'Keep it short.' });
     const result = mergeSuggestions(current, {
-      displayName: null, jobTitle: 'X', institution: null, department: null,
+      jobTitle: 'X', institution: null, department: null,
     });
     expect(result.language).toBe('fr');
     expect(result.instructions).toBe('Keep it short.');

@@ -239,36 +239,20 @@ export class SettingsService {
 
   /**
    * Suggestions to seed the AI-profile form from the user's existing Zimbra
-   * identity + GAL entry. Needs Zimbra (via getUser, which 401s if there's
-   * no authToken), but any Zimbra-leg failure past that point degrades to
+   * GAL entry. Needs Zimbra (via getUser, which 401s if there's no
+   * authToken), but any Zimbra-leg failure past that point degrades to
    * nulls rather than surfacing a 5xx.
    */
   async getAiProfileSuggestions(userId: string) {
     const user = await this.getUser(userId);
-    const [identitiesResult, galResult] = await Promise.allSettled([
-      this.zimbra.getIdentities(
-        user.zimbraHost, user.authToken!, user.csrfToken ?? undefined,
-      ),
-      this.zimbra.galSelfLookup(
-        user.zimbraHost, user.authToken!, user.email, user.csrfToken ?? undefined,
-      ),
-    ]);
-
-    const identities =
-      identitiesResult.status === 'fulfilled' ? identitiesResult.value : [];
-    const gal =
-      galResult.status === 'fulfilled'
-        ? galResult.value
-        : { title: null, department: null, company: null };
-
-    const displayName =
-      identities[0]?.attrs?.zimbraPrefFromDisplay || user.displayName || null;
+    const galResult = await this.zimbra
+      .galSelfLookup(user.zimbraHost, user.authToken!, user.email, user.csrfToken ?? undefined)
+      .catch(() => ({ title: null, department: null, company: null }));
 
     return {
-      displayName,
-      jobTitle:    gal.title,
-      institution: gal.company,
-      department:  gal.department,
+      jobTitle:    galResult.title,
+      institution: galResult.company,
+      department:  galResult.department,
     };
   }
 }

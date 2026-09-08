@@ -491,7 +491,12 @@ export default function SettingsPage() {
       {/* ── Main content ── */}
       <ScrollArea className="flex-1 min-w-0 min-h-0 md:h-full">
         <div className="max-w-2xl mx-auto px-4 py-6 sm:px-6 md:px-8 md:py-8">
-          {loading ? (
+          {section === 'ai-profile' ? (
+            // AI Profile fetches its own DB-only data (never Zimbra-backed) —
+            // it must render even when the Zimbra settings load below fails
+            // or is still pending, so it lives OUTSIDE the loading/data guard.
+            <AiProfileSection />
+          ) : loading ? (
             <div className="flex items-center justify-center py-24">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/40" />
             </div>
@@ -503,7 +508,6 @@ export default function SettingsPage() {
               {section === 'blocked-senders' && <BlockedSendersSection />}
               {section === 'preferences' && <PreferencesSection  data={data} onUpdate={loadSettings} />}
               {section === 'ai' && !AI_LOCKED && <AISection />}
-              {section === 'ai-profile'  && <AiProfileSection />}
               {section === 'security'    && <SecuritySection     data={data} />}
             </>
           ) : null}

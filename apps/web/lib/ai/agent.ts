@@ -58,8 +58,13 @@ export function mergeSources(prev: AskSource[], incoming: AskSource[]): AskSourc
       out.push(s);
       changed = true;
     } else if (s.injectionSuspected && !existing.injectionSuspected) {
-      out[out.indexOf(existing)] = { ...existing, injectionSuspected: true };
-      changed = true;
+      const idx = out.indexOf(existing);
+      if (idx >= 0) {
+        const upgraded = { ...existing, injectionSuspected: true };
+        out[idx] = upgraded;
+        byAlias.set(s.alias, upgraded);
+        changed = true;
+      }
     }
   }
   return changed ? out : prev;

@@ -6,7 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmbedderService } from './embedder.service';
 import { MailService } from './mail.service';
 import { pickFairBatch } from './card-worker.service';
-import { extractAttachmentText, streamToBuffer, MAX_ATTACHMENT_BYTES } from '../common/attachment-text';
+import { extractAttachmentText, streamToBuffer, MAX_ATTACHMENT_BYTES, TEXT_TYPES, DOCX_MIME } from '../common/attachment-text';
 
 const ATTACH_EMBED_PER_TICK = Number(process.env.ATTACH_EMBED_PER_TICK ?? 3);
 const ATTACH_EMBED_PER_USER_PER_TICK = Number(process.env.ATTACH_EMBED_PER_USER_PER_TICK ?? 2);
@@ -17,9 +17,6 @@ export const TOMBSTONE_PART = '!';
 
 interface AttachmentCandidate { id: string; userId: string }
 interface AttachmentPart { id: string; filename?: string; mimeType?: string; size?: number }
-
-const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-const TEXT_TYPES = /^(text\/|application\/(json|xml|csv))/;
 
 /** Mirrors extractAttachmentText support — anything this rejects would throw there. */
 export function eligiblePart(a: AttachmentPart): boolean {

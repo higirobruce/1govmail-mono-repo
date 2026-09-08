@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { extractEmailText, extractKeywords, rrfFuse, detectInjectionAttempt, STOPWORDS, type SourceType } from '@email-client/shared';
+import { extractEmailText, extractKeywords, rrfFuse, detectInjectionAttempt, STOPWORDS, EMBED_CHUNK_MAX_CHARS, type SourceType } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { EmbedderService } from '../mail/embedder.service';
@@ -299,7 +299,9 @@ export class RetrievalService {
   }
 
   private static readonly DOC_SCOPED_CHUNKS = 6;
-  private static readonly DOC_SCOPED_MAX_CHARS = 7400; // 6 chunks × 1200 + separators
+  // Doc embedding chunks are packed up to EMBED_CHUNK_MAX_CHARS (chunk.ts) each;
+  // 200 chars is generous headroom for the '\n[…]\n' join separators between them.
+  private static readonly DOC_SCOPED_MAX_CHARS = RetrievalService.DOC_SCOPED_CHUNKS * EMBED_CHUNK_MAX_CHARS + 200;
 
   /** docId scope: the top chunks of ONE document, joined into one deep context under one chip. */
   private async docDeepLeg(userId: string, userEmail: string, vecPromise: Promise<string>, docId: string): Promise<FusableHit[]> {

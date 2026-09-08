@@ -6,8 +6,8 @@ import mammoth from 'mammoth';
 // PDF branch.
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
-const TEXT_TYPES = /^(text\/|application\/(json|xml|csv))/;
-const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+export const TEXT_TYPES = /^(text\/|application\/(json|xml|csv))/;
+export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 type PdfParseFn = (dataBuffer: Buffer) => Promise<{ text?: string }>;
 

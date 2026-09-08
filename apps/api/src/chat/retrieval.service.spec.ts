@@ -321,10 +321,15 @@ describe('RetrievalService.retrieve — docs leg', () => {
     expect(result.sources[0].context).toBe('best chunk');
   });
 
-  it('scope.docId joins the top 6 chunks of that ONE doc into a single deep context past the normal 1200-char clamp', async () => {
+  it('scope.docId joins the top 6 chunks of that ONE doc into a single deep context past the normal 1200-char clamp, at real embedding chunk size (~1500 chars)', async () => {
     const { prisma, embedder, mailService } = makeFakes();
+    // Real doc-embedding chunks are packed up to EMBED_CHUNK_MAX_CHARS (1500) each.
+    // Build 6 mocked chunks at that size so the assembled context (6 * 1500 +
+    // separators ≈ 9025 chars) exercises the real clamp instead of a
+    // toy-sized one — a too-small DOC_SCOPED_MAX_CHARS would truncate the
+    // tail of chunk 6, which the sentinel below would catch.
     const chunkRows = Array.from({ length: 6 }, (_, i) =>
-      docRow('d1', { chunkText: `chunk-${i + 1}-`.padEnd(250, 'x'), distance: 0.1 + i * 0.01 }),
+      docRow('d1', { chunkText: `chunk-${i + 1}-`.padEnd(1490, 'x') + `-END${i + 1}`, distance: 0.1 + i * 0.01 }),
     );
     prisma.$queryRaw.mockResolvedValue(chunkRows);
     const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
@@ -337,6 +342,9 @@ describe('RetrievalService.retrieve — docs leg', () => {
     expect(source.id).toBe('d1');
     expect(source.context).toContain('chunk-1-');
     expect(source.context).toContain('chunk-6-');
+    // The END-of-chunk-6 sentinel must survive the clamp — proves the cap is
+    // derived from the real ~1500-char chunk size, not the old 1200-based one.
+    expect(source.context).toContain('-END6');
     expect(source.context.length).toBeGreaterThan(1200);
   });
 

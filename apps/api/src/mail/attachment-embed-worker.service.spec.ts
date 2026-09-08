@@ -2,7 +2,16 @@ import { AttachmentEmbedWorkerService } from './attachment-embed-worker.service'
 import { Readable } from 'node:stream';
 import * as attachmentText from '../common/attachment-text';
 
-jest.mock('../common/attachment-text');
+// Partial mock: only the two functions the worker calls out to (extraction,
+// streaming) are mocked. TEXT_TYPES/DOCX_MIME/MAX_ATTACHMENT_BYTES must stay
+// real — the worker's eligiblePart() imports and calls them directly, and a
+// full automock would replace the RegExp/string constants with mocks that
+// have no .test()/value, breaking eligibility filtering.
+jest.mock('../common/attachment-text', () => ({
+  ...jest.requireActual('../common/attachment-text'),
+  extractAttachmentText: jest.fn(),
+  streamToBuffer: jest.fn(),
+}));
 
 const pdfPart = { id: '2', filename: 'report.txt', mimeType: 'text/plain', size: 1000 };
 

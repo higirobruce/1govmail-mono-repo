@@ -153,4 +153,12 @@ describe('mergeSources', () => {
     const prev = [src('s1')];
     expect(mergeSources(prev, [src('s1')])).toBe(prev);
   });
+  it('upgrades once when the same alias appears flagged twice in one incoming batch, without corrupting the array (no out[-1])', () => {
+    const out = mergeSources([src('s1')], [src('s1', true), src('s1', true)]);
+    expect(out.map((s) => s.alias)).toEqual(['s1']);
+    expect(out[0].injectionSuspected).toBe(true);
+    expect(out.length).toBe(1);
+    expect(Object.keys(out)).toEqual(['0']);
+    expect('-1' in out).toBe(false);
+  });
 });

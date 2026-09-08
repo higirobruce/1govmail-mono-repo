@@ -126,8 +126,9 @@ single ~1200-char excerpt.
 - **jest (api):** worker candidate-selection SQL (staleness, budgets, per-user cap, tombstones,
   backfill window); extractor-reuse parity (tool and worker produce identical text for a fixture
   PDF/DOCX); retrieval-leg fusion (attachment hit + body hit on same message → one fused source);
-  degraded.attachment flag; alias stability across repeated tool results; SSE first-sighting-only
-  source emission; docId depth (6 chunks, one source; dedupe intact without docId);
+  degraded.attachment flag; alias stability across repeated tool results; panel accumulator drops
+  already-collected aliases (mergeSources), upgrading the injection flag on flagged repeats;
+  docId depth (6 chunks, one source; dedupe intact without docId);
   `search_attachments` tool (schema pattern-free, ref exposure).
 - **vitest (web):** rail renders one card per source on a repeated-search transcript; attachment-
   labeled snippet display.

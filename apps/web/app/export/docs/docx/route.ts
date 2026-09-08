@@ -6,8 +6,25 @@ type HtmlToDocxFn = (html: string, headerHtml: null, options: Record<string, unk
 const _mod = require('html-to-docx');
 const HtmlToDocx: HtmlToDocxFn = _mod.default ?? _mod;
 
+// Generous because images are inlined as base64 data URIs (the 10 MB upload
+// cap is ~13.4 MB once encoded).
+const MAX_BODY_BYTES = 25 * 1024 * 1024;
+
 export async function POST(req: NextRequest) {
-  const { html, title } = (await req.json()) as { html: string; title: string };
+  const raw = await req.text();
+  if (raw.length > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: 'Payload too large' }, { status: 413 });
+  }
+  let html: string;
+  let title: string;
+  try {
+    ({ html, title } = JSON.parse(raw) as { html: string; title: string });
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  if (typeof html !== 'string' || typeof title !== 'string') {
+    return NextResponse.json({ error: 'html and title are required' }, { status: 400 });
+  }
 
   const buffer = await HtmlToDocx(html, null, {
     title,

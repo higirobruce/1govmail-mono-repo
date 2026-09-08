@@ -20,6 +20,7 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@email-client/shared": "workspace:*",
     "@hocuspocus/extension-database": "^3.4.4",
     "@hocuspocus/server": "^3.4.4",
     "@nestjs/common": "^11.0.1",
@@ -39,15 +40,18 @@
     "helmet": "^8.1.0",
     "isomorphic-dompurify": "^3.9.0",
     "jsonwebtoken": "^9.0.3",
+    "mammoth": "^1.12.2",
     "multer": "^2.1.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
+    "pdf-parse": "1.1.1",
     "pg": "^8.13.3",
     "prisma": "^7.4.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "yjs": "^13.6.29"
+    "yjs": "^13.6.29",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -62,6 +66,7 @@
     "@types/node": "^22.10.7",
     "@types/passport-jwt": "^4.0.1",
     "@types/passport-local": "^1.0.38",
+    "@types/pdf-parse": "^1.1.5",
     "@types/supertest": "^6.0.2",
     "dotenv": "^17.3.1",
     "eslint": "^9.18.0",

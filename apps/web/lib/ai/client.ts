@@ -1,11 +1,13 @@
 /**
- * Thin OpenAI-compatible chat-completions client.
+ * AI client — calls the server's /ai/chat proxy.
  *
- * Talks `POST {baseUrl}/chat/completions` with the OpenAI JSON shape — the
- * lingua franca of Ollama, LM Studio, llama.cpp server, vLLM, LocalAI,
- * OpenRouter, OpenAI itself, and most provider proxies. Switching between
- * local and remote inference is just a different baseUrl + (optional) apiKey.
+ * The browser never talks to Ollama directly. Instead the NestJS API on the
+ * deployment host forwards to a local Ollama (loopback only) using the same
+ * OpenAI chat-completions shape. This keeps Ollama unexposed, lets us reuse
+ * the JWT for auth, and avoids browser-side CORS / mixed-content issues.
  */
+
+import { authedFetch } from '../authed-fetch';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -18,32 +20,48 @@ export interface ChatOptions {
   temperature?: number;
   /** Cap response length. Most local 7B models are happy with 256–512 tokens. */
   maxTokens?: number;
+  /** Ask the backend for strict-JSON output (Ollama/OpenAI json mode). */
+  responseFormat?: 'json';
   signal?: AbortSignal;
 }
 
-export interface AIClientConfig {
-  baseUrl: string;
-  apiKey?: string;
+/** HTTP failure from the AI proxy, carrying the status so callers can react
+ *  to throttling (429) differently from hard failures. */
+export class AIHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'AIHttpError';
+  }
 }
 
 export class AIClient {
-  constructor(private readonly config: AIClientConfig) {}
+  /** Model names actually installed on the API host, so the UI can offer real choices. */
+  async listModels(signal?: AbortSignal): Promise<string[]> {
+    const res = await authedFetch('/ai/models', { method: 'GET', signal });
+    if (!res.ok) throw new AIHttpError(await errorText(res), res.status);
+    const json = await res.json();
+    const models: unknown = json?.models;
+    if (!Array.isArray(models)) return [];
+    return models
+      .map((m) => (typeof m === 'string' ? m : (m as { id?: unknown })?.id))
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  }
 
   /** Non-streaming completion — returns the full assistant text. */
   async chat(opts: ChatOptions): Promise<string> {
-    const res = await fetch(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    const res = await authedFetch('/ai/chat', {
       method: 'POST',
-      headers: this.headers(),
       body: JSON.stringify({
         model: opts.model,
         messages: opts.messages,
         temperature: opts.temperature ?? 0.3,
         max_tokens: opts.maxTokens ?? 512,
         stream: false,
+        ...(opts.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: opts.signal,
     });
-    if (!res.ok) throw new Error(`AI request failed (${res.status} ${res.statusText})`);
+    if (!res.ok) throw new AIHttpError(await errorText(res), res.status);
     const json = await res.json();
     return json?.choices?.[0]?.message?.content ?? '';
   }
@@ -53,21 +71,19 @@ export class AIClient {
    * the concatenated full text once the stream ends.
    */
   async chatStream(opts: ChatOptions, onChunk: (delta: string) => void): Promise<string> {
-    const res = await fetch(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    const res = await authedFetch('/ai/chat', {
       method: 'POST',
-      headers: this.headers(),
       body: JSON.stringify({
         model: opts.model,
         messages: opts.messages,
         temperature: opts.temperature ?? 0.3,
         max_tokens: opts.maxTokens ?? 512,
         stream: true,
+        ...(opts.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: opts.signal,
     });
-    if (!res.ok || !res.body) {
-      throw new Error(`AI request failed (${res.status} ${res.statusText})`);
-    }
+    if (!res.ok || !res.body) throw new AIHttpError(await errorText(res), res.status);
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -101,10 +117,15 @@ export class AIClient {
 
     return full;
   }
+}
 
-  private headers(): HeadersInit {
-    const h: Record<string, string> = { 'content-type': 'application/json' };
-    if (this.config.apiKey) h['authorization'] = `Bearer ${this.config.apiKey}`;
-    return h;
+async function errorText(res: Response): Promise<string> {
+  // The NestJS proxy returns JSON on errors ({ message, statusCode }); fall
+  // back to the status text if the body isn't parseable (e.g. on a stream).
+  try {
+    const json = await res.json();
+    return `AI request failed (${res.status}): ${json?.message ?? res.statusText}`;
+  } catch {
+    return `AI request failed (${res.status} ${res.statusText})`;
   }
 }

@@ -62,7 +62,7 @@ function StatusSelect({ status, onChange }: { status: Status; onChange: (s: Stat
         onChange={(e) => onChange(e.target.value as Status)}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
-        className="text-[10px] bg-transparent border-none outline-none cursor-pointer"
+        className="text-[0.625rem] bg-transparent border-none outline-none cursor-pointer"
       >
         {STATUSES.map((s) => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
       </select>
@@ -99,7 +99,7 @@ function BoardView({ data, update }: { data: DbData; update: (d: DbData) => void
             <div className="flex items-center gap-1.5 mb-2">
               <span className={cn('w-2 h-2 rounded-full', dot)} />
               <span className="text-xs font-medium">{label}</span>
-              <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">{cards.length}</span>
+              <span className="text-[0.625rem] text-muted-foreground ml-auto tabular-nums">{cards.length}</span>
             </div>
             <div className="flex flex-col gap-1.5">
               {cards.map((c) => (
@@ -114,7 +114,7 @@ function BoardView({ data, update }: { data: DbData; update: (d: DbData) => void
                 type="button"
                 onClick={() => update({ records: [...data.records, { ...blankRecord(), status }] })}
                 onKeyDown={(e) => e.stopPropagation()}
-                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground py-0.5 transition-colors"
+                className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground py-0.5 transition-colors"
               >
                 <Plus className="w-3 h-3" /> New
               </button>
@@ -138,7 +138,7 @@ function ListView({ data, update }: { data: DbData; update: (d: DbData) => void 
         <thead>
           <tr className="border-b border-border">
             {['Name', 'Status', 'Date'].map((h) => (
-              <th key={h} className="text-left px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">{h}</th>
+              <th key={h} className="text-left px-2 py-1.5 text-[0.6875rem] font-semibold text-muted-foreground">{h}</th>
             ))}
           </tr>
         </thead>
@@ -158,7 +158,7 @@ function ListView({ data, update }: { data: DbData; update: (d: DbData) => void 
                   onBlur={(e) => patch(r.id, { date: e.target.value })}
                   onClick={(e) => e.stopPropagation()}
                   onKeyDown={(e) => e.stopPropagation()}
-                  className="text-[11px] bg-transparent outline-none cursor-pointer text-muted-foreground"
+                  className="text-[0.6875rem] bg-transparent outline-none cursor-pointer text-muted-foreground"
                 />
               </td>
             </tr>
@@ -169,7 +169,7 @@ function ListView({ data, update }: { data: DbData; update: (d: DbData) => void 
         type="button"
         onClick={() => update({ records: [...data.records, blankRecord()] })}
         onKeyDown={(e) => e.stopPropagation()}
-        className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground mt-2 px-2 py-0.5 transition-colors"
+        className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground mt-2 px-2 py-0.5 transition-colors"
       >
         <Plus className="w-3 h-3" /> New record
       </button>
@@ -265,7 +265,7 @@ function TimelineView({ data, update }: { data: DbData; update: (d: DbData) => v
               <div
                 key={i}
                 style={{ flex: days / totalDays }}
-                className="text-[10px] text-muted-foreground font-medium border-l border-border/30 first:border-l-0 px-1 truncate"
+                className="text-[0.625rem] text-muted-foreground font-medium border-l border-border/30 first:border-l-0 px-1 truncate"
               >
                 {MONTH_NAMES[month]} {year}
               </div>
@@ -285,7 +285,7 @@ function TimelineView({ data, update }: { data: DbData; update: (d: DbData) => v
       {/* Rows */}
       <div className="flex flex-col gap-1.5">
         {data.records.length === 0 && (
-          <p className="text-[11px] text-muted-foreground/50 text-center py-4">No items yet — add one below</p>
+          <p className="text-[0.6875rem] text-muted-foreground/50 text-center py-4">No items yet — add one below</p>
         )}
         {data.records.map((r) => {
           const l = leftPct(r.startDate);
@@ -317,27 +317,27 @@ function TimelineView({ data, update }: { data: DbData; update: (d: DbData) => v
       {/* Date range inputs */}
       {data.records.length > 0 && (
         <div className="mt-3 border-t border-border/40 pt-2">
-          <p className="text-[10px] text-muted-foreground font-medium mb-1.5">Date ranges</p>
+          <p className="text-[0.625rem] text-muted-foreground font-medium mb-1.5">Date ranges</p>
           <div className="flex flex-col gap-1">
             {data.records.map((r) => (
               <div key={r.id} className="flex items-center gap-2">
-                <span className="w-36 shrink-0 truncate text-[11px] text-muted-foreground">{r.name}</span>
+                <span className="w-36 shrink-0 truncate text-[0.6875rem] text-muted-foreground">{r.name}</span>
                 <input
                   type="date"
                   defaultValue={r.startDate}
                   onBlur={(e) => patch(r.id, { startDate: e.target.value })}
                   onClick={(e) => e.stopPropagation()}
                   onKeyDown={(e) => e.stopPropagation()}
-                  className="bg-transparent outline-none text-[11px] text-muted-foreground cursor-pointer"
+                  className="bg-transparent outline-none text-[0.6875rem] text-muted-foreground cursor-pointer"
                 />
-                <span className="text-muted-foreground/40 text-[11px]">→</span>
+                <span className="text-muted-foreground/40 text-[0.6875rem]">→</span>
                 <input
                   type="date"
                   defaultValue={r.endDate}
                   onBlur={(e) => patch(r.id, { endDate: e.target.value })}
                   onClick={(e) => e.stopPropagation()}
                   onKeyDown={(e) => e.stopPropagation()}
-                  className="bg-transparent outline-none text-[11px] text-muted-foreground cursor-pointer"
+                  className="bg-transparent outline-none text-[0.6875rem] text-muted-foreground cursor-pointer"
                 />
               </div>
             ))}
@@ -349,7 +349,7 @@ function TimelineView({ data, update }: { data: DbData; update: (d: DbData) => v
         type="button"
         onClick={addRow}
         onKeyDown={(e) => e.stopPropagation()}
-        className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground mt-2 transition-colors"
+        className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground mt-2 transition-colors"
       >
         <Plus className="w-3 h-3" /> New item
       </button>
@@ -413,7 +413,7 @@ function CalendarView({ data, update }: { data: DbData; update: (d: DbData) => v
       {/* Day headers */}
       <div className="grid grid-cols-7 mb-0.5">
         {DAY_LABELS.map((d) => (
-          <div key={d} className="text-[10px] text-muted-foreground text-center py-0.5 font-medium">{d}</div>
+          <div key={d} className="text-[0.625rem] text-muted-foreground text-center py-0.5 font-medium">{d}</div>
         ))}
       </div>
 
@@ -430,7 +430,7 @@ function CalendarView({ data, update }: { data: DbData; update: (d: DbData) => v
             {day !== null && (
               <>
                 <span className={cn(
-                  'text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-medium self-end',
+                  'text-[0.625rem] w-5 h-5 flex items-center justify-center rounded-full font-medium self-end',
                   isToday(day) ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
                 )}>
                   {day}
@@ -438,7 +438,7 @@ function CalendarView({ data, update }: { data: DbData; update: (d: DbData) => v
                 {(byDay[day] ?? []).map((r) => (
                   <div
                     key={r.id}
-                    className={cn('text-[9px] rounded px-1 py-px truncate leading-tight', STATUS_META[r.status].badge)}
+                    className={cn('text-[0.5625rem] rounded px-1 py-px truncate leading-tight', STATUS_META[r.status].badge)}
                   >
                     {r.name}
                   </div>
@@ -447,7 +447,7 @@ function CalendarView({ data, update }: { data: DbData; update: (d: DbData) => v
                   type="button"
                   onClick={() => addOnDay(day)}
                   onKeyDown={(e) => e.stopPropagation()}
-                  className="mt-auto text-[10px] text-muted-foreground/40 hover:text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity self-start leading-none"
+                  className="mt-auto text-[0.625rem] text-muted-foreground/40 hover:text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity self-start leading-none"
                 >
                   +
                 </button>
@@ -492,7 +492,7 @@ function DatabaseNodeView({
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border bg-muted/30">
           <Icon className="w-3.5 h-3.5 text-muted-foreground" />
           <span className="text-xs font-semibold text-muted-foreground">{node.attrs.title || label}</span>
-          <span className="ml-auto text-[10px] text-muted-foreground/50 tabular-nums">{data.records.length} items</span>
+          <span className="ml-auto text-[0.625rem] text-muted-foreground/50 tabular-nums">{data.records.length} items</span>
         </div>
 
         {/* View */}

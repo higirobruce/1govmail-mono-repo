@@ -35,8 +35,8 @@ export function KeyboardShortcutsModal({ open, onClose }: Props) {
         <div className="p-5 grid grid-cols-2 gap-x-8 gap-y-2.5 max-h-[70vh] overflow-y-auto">
           {SHORTCUTS.map(({ key, description }) => (
             <div key={key} className="flex items-center justify-between gap-3">
-              <span className="text-[13px] text-muted-foreground">{description}</span>
-              <kbd className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-md border border-border/60 bg-muted/50 text-[11px] font-mono font-medium text-foreground/70">
+              <span className="text-[0.8125rem] text-muted-foreground">{description}</span>
+              <kbd className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-md border border-border/60 bg-muted/50 text-[0.6875rem] font-mono font-medium text-foreground/70">
                 {key}
               </kbd>
             </div>
@@ -44,7 +44,7 @@ export function KeyboardShortcutsModal({ open, onClose }: Props) {
         </div>
 
         <div className="px-5 py-3 border-t border-border/30 text-center">
-          <span className="text-[11px] text-muted-foreground/40">Press <kbd className="font-mono">?</kbd> to toggle this panel</span>
+          <span className="text-[0.6875rem] text-muted-foreground/40">Press <kbd className="font-mono">?</kbd> to toggle this panel</span>
         </div>
       </div>
     </div>

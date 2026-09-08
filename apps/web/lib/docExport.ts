@@ -16,6 +16,7 @@ import { EmbedNode } from '@/components/docs/extensions/EmbedNode';
 import { MathBlock } from '@/components/docs/extensions/MathBlock';
 import { MermaidBlock } from '@/components/docs/extensions/MermaidBlock';
 import { CommentMark } from '@/components/docs/CommentMark';
+import { getAuthToken } from '@/lib/authed-fetch';
 
 // Extensions must mirror every node/mark used in DocsEditor — generateHTML()
 // throws "Unknown node type" on the first unknown node, which silently fails
@@ -41,6 +42,14 @@ const RENDER_EXTENSIONS = [
   MermaidBlock,
   CommentMark,
 ];
+
+function authHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -116,7 +125,7 @@ export async function generateDocPdfBlob(
   const html = contentToHtml(content, title);
   const res = await fetch('/export/docs/pdf', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders(),
     body: JSON.stringify({ html, title }),
   });
   if (!res.ok) throw new Error(await res.text().catch(() => 'PDF export failed'));
@@ -224,7 +233,7 @@ export async function exportAsDocx(title: string, content: string | null | undef
   const html = contentToHtml(content, title);
   const res = await fetch('/export/docs/docx', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders(),
     body: JSON.stringify({ html, title }),
   });
   if (!res.ok) throw new Error('Docx export failed');

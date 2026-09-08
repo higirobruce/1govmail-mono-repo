@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Param, Body, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -47,5 +47,25 @@ export class AuthController {
       ip: req.ip,
       userAgent: req.headers['user-agent'] ?? null,
     });
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('sessions')
+  getSessions(@Req() req: AuthenticatedRequest) {
+    return this.authService.getSessions(req.user.sub, req.user.sessionId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('sessions/:id')
+  @HttpCode(HttpStatus.OK)
+  revokeSession(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.authService.revokeSession(req.user.sub, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('sessions/revoke-others')
+  @HttpCode(HttpStatus.OK)
+  revokeOtherSessions(@Req() req: AuthenticatedRequest) {
+    return this.authService.revokeOtherSessions(req.user.sub, req.user.sessionId);
   }
 }

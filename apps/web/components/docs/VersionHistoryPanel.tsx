@@ -83,15 +83,15 @@ export function VersionHistoryPanel({ docId, onClose, onRestored }: Props) {
               )}
             >
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-medium truncate">{v.title || 'Untitled'}</p>
-                <p className="text-[10px] text-muted-foreground">{formatDate(v.createdAt)}</p>
+                <p className="text-[0.6875rem] font-medium truncate">{v.title || 'Untitled'}</p>
+                <p className="text-[0.625rem] text-muted-foreground">{formatDate(v.createdAt)}</p>
                 {v.authorName && (
-                  <p className="text-[10px] text-muted-foreground/60">{v.authorName}</p>
+                  <p className="text-[0.625rem] text-muted-foreground/60">{v.authorName}</p>
                 )}
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 {i === 0 && (
-                  <span className="text-[9px] bg-primary/10 text-primary rounded px-1 py-0.5 font-medium">Latest</span>
+                  <span className="text-[0.5625rem] bg-primary/10 text-primary rounded px-1 py-0.5 font-medium">Latest</span>
                 )}
                 <ChevronRight className={cn('w-3 h-3 text-muted-foreground transition-transform', expanded === v.id && 'rotate-90')} />
               </div>
@@ -103,7 +103,7 @@ export function VersionHistoryPanel({ docId, onClose, onRestored }: Props) {
                   type="button"
                   disabled={restoring === v.id}
                   onClick={() => restore(v)}
-                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted transition-colors w-full disabled:opacity-40"
+                  className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted transition-colors w-full disabled:opacity-40"
                 >
                   <RotateCcw className="w-3 h-3" />
                   {restoring === v.id ? 'Restoring…' : 'Restore this version'}

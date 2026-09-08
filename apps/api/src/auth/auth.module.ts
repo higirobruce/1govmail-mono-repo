@@ -4,13 +4,16 @@ import { PassportModule } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { AuthScheduler } from './auth.scheduler';
 import { ZimbraModule } from '../zimbra/zimbra.module';
+import { PrismaModule } from '../prisma/prisma.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
   imports: [
     PassportModule,
     ZimbraModule,
+    PrismaModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -21,7 +24,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       }),
     }),
   ],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, AuthScheduler],
   controllers: [AuthController],
   exports: [AuthService],
 })

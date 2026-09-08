@@ -13,6 +13,7 @@ import { Loader2, Mail, Lock, Building2, ShieldCheck } from 'lucide-react';
 const INSTITUTIONS = [
   { label: 'RISA', host: 'mail.risa.gov.rw:8443' },
   { label: 'MINICT', host: 'mail.minict.gov.rw' },
+  { label: 'MINAFFET', host: 'mail.minaffet.gov.rw' },
 ];
 
 export default function LoginPage() {
@@ -259,7 +260,7 @@ export default function LoginPage() {
           Your credentials are used only to authenticate with your Zimbra server.
         </p>
 
-        <p className="text-center text-[11px] text-muted-foreground/30 mt-3 tracking-wide">
+        <p className="text-center text-[0.6875rem] text-muted-foreground/30 mt-3 tracking-wide">
           Powered by{' '}
           <span className="font-semibold tracking-wider text-muted-foreground/45">RISA</span>
         </p>

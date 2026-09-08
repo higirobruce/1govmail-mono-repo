@@ -426,7 +426,12 @@ export class ZimbraService {
         Body: {
           GetMsgRequest: {
             _jsns: 'urn:zimbraMail',
-            m: { id: messageId, html: 1, needExp: 1, read: 1 },
+            // NO `read` flag: this method is a pure body fetch. Background jobs
+            // (card worker, embed worker, Ask-inbox hydration) fetch bodies
+            // through here — `read: 1` was silently marking users' unread mail
+            // as read before they ever saw it. Read-marking happens only via
+            // the explicit markRead (MsgActionRequest) path.
+            m: { id: messageId, html: 1, needExp: 1 },
           },
         },
         Header: this.soapHeader(csrfToken),

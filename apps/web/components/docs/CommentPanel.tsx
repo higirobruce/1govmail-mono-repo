@@ -185,7 +185,7 @@ function MentionTextarea({
               )}
             >
               <span className="font-medium">{m.displayName ?? m.email}</span>
-              {m.displayName && <span className="text-[10px] text-muted-foreground">{m.email}</span>}
+              {m.displayName && <span className="text-[0.625rem] text-muted-foreground">{m.email}</span>}
             </button>
           ))}
         </div>
@@ -326,7 +326,7 @@ export function CommentPanel({ docId, editor, onClose, pendingAnchorId, onPendin
           <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
           <span className="text-xs font-semibold">Comments</span>
           {open.length > 0 && (
-            <span className="text-[10px] bg-primary/10 text-primary rounded-full px-1.5 py-0.5 font-medium">
+            <span className="text-[0.625rem] bg-primary/10 text-primary rounded-full px-1.5 py-0.5 font-medium">
               {open.length}
             </span>
           )}
@@ -340,7 +340,7 @@ export function CommentPanel({ docId, editor, onClose, pendingAnchorId, onPendin
         {/* Pending new comment */}
         {pendingAnchorId && (
           <div className="m-2 rounded-lg border border-primary/40 bg-primary/5 p-2.5">
-            <p className="text-[10px] text-primary font-medium mb-1.5">New comment</p>
+            <p className="text-[0.625rem] text-primary font-medium mb-1.5">New comment</p>
             <MentionTextarea
               docId={docId}
               value={pendingText}
@@ -358,7 +358,7 @@ export function CommentPanel({ docId, editor, onClose, pendingAnchorId, onPendin
               <button
                 type="button"
                 onClick={cancelPending}
-                className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-0.5 rounded"
+                className="text-[0.6875rem] text-muted-foreground hover:text-foreground px-2 py-0.5 rounded"
               >
                 Cancel
               </button>
@@ -366,7 +366,7 @@ export function CommentPanel({ docId, editor, onClose, pendingAnchorId, onPendin
                 type="button"
                 disabled={!pendingText.trim() || submitting === 'pending'}
                 onClick={submitPending}
-                className="text-[11px] bg-primary text-primary-foreground px-2 py-0.5 rounded disabled:opacity-40"
+                className="text-[0.6875rem] bg-primary text-primary-foreground px-2 py-0.5 rounded disabled:opacity-40"
               >
                 Save
               </button>
@@ -405,7 +405,7 @@ export function CommentPanel({ docId, editor, onClose, pendingAnchorId, onPendin
 
         {resolved.length > 0 && (
           <div className="mt-2">
-            <p className="text-[10px] text-muted-foreground font-medium px-3 py-1.5 uppercase tracking-wide">
+            <p className="text-[0.625rem] text-muted-foreground font-medium px-3 py-1.5 uppercase tracking-wide">
               Resolved ({resolved.length})
             </p>
             {resolved.map((comment) => (
@@ -458,7 +458,7 @@ function ReactionBar({ reactions, onReaction }: { reactions: Reaction[]; onReact
           title={r.users.join(', ')}
           onClick={(e) => { e.stopPropagation(); onReaction(r.emoji); }}
           className={cn(
-            'flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full border transition-colors',
+            'flex items-center gap-0.5 text-[0.6875rem] px-1.5 py-0.5 rounded-full border transition-colors',
             r.selfReacted
               ? 'border-primary/40 bg-primary/10 text-primary'
               : 'border-border bg-muted/30 text-muted-foreground hover:border-border/80',
@@ -472,7 +472,7 @@ function ReactionBar({ reactions, onReaction }: { reactions: Reaction[]; onReact
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setShowPicker((v) => !v); }}
-          className="text-[11px] px-1.5 py-0.5 rounded-full border border-dashed border-border text-muted-foreground hover:border-border/60 hover:text-foreground transition-colors"
+          className="text-[0.6875rem] px-1.5 py-0.5 rounded-full border border-dashed border-border text-muted-foreground hover:border-border/60 hover:text-foreground transition-colors"
         >
           +
         </button>
@@ -517,16 +517,16 @@ function CommentThread({
       {/* Root comment */}
       <div className="flex items-start gap-2">
         <div className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
-          <span className="text-[9px] font-bold text-primary">
+          <span className="text-[0.5625rem] font-bold text-primary">
             {initials(comment.authorName, comment.author?.email ?? '?')}
           </span>
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-1">
-            <span className="text-[11px] font-semibold truncate">
+            <span className="text-[0.6875rem] font-semibold truncate">
               {comment.authorName ?? comment.author?.email ?? 'Unknown'}
             </span>
-            <span className="text-[10px] text-muted-foreground shrink-0">
+            <span className="text-[0.625rem] text-muted-foreground shrink-0">
               {relativeTime(comment.createdAt)}
             </span>
           </div>
@@ -547,8 +547,8 @@ function CommentThread({
           <CornerDownRight className="w-3 h-3 text-muted-foreground/40 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1">
-              <span className="text-[10px] font-semibold">{reply.authorName ?? reply.author?.email ?? 'Unknown'}</span>
-              <span className="text-[10px] text-muted-foreground">{relativeTime(reply.createdAt)}</span>
+              <span className="text-[0.625rem] font-semibold">{reply.authorName ?? reply.author?.email ?? 'Unknown'}</span>
+              <span className="text-[0.625rem] text-muted-foreground">{relativeTime(reply.createdAt)}</span>
             </div>
             <p className="text-xs mt-0.5 break-words">{renderMentions(reply.content)}</p>
             {(reply.reactions?.length ?? 0) > 0 && (
@@ -564,21 +564,21 @@ function CommentThread({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setShowReply((v) => !v); }}
-            className="text-[10px] text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted transition-colors"
+            className="text-[0.625rem] text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted transition-colors"
           >
             Reply
           </button>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onResolve(); }}
-            className="text-[10px] text-muted-foreground hover:text-green-600 px-1.5 py-0.5 rounded hover:bg-muted transition-colors flex items-center gap-0.5"
+            className="text-[0.625rem] text-muted-foreground hover:text-green-600 px-1.5 py-0.5 rounded hover:bg-muted transition-colors flex items-center gap-0.5"
           >
             <Check className="w-2.5 h-2.5" /> Resolve
           </button>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            className="ml-auto text-[10px] text-muted-foreground hover:text-destructive p-0.5 rounded hover:bg-muted transition-colors"
+            className="ml-auto text-[0.625rem] text-muted-foreground hover:text-destructive p-0.5 rounded hover:bg-muted transition-colors"
           >
             <Trash2 className="w-3 h-3" />
           </button>
@@ -590,14 +590,14 @@ function CommentThread({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onResolve(); }}
-            className="text-[10px] text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted"
+            className="text-[0.625rem] text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded hover:bg-muted"
           >
             Reopen
           </button>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            className="ml-auto text-[10px] text-muted-foreground hover:text-destructive p-0.5 rounded hover:bg-muted"
+            className="ml-auto text-[0.625rem] text-muted-foreground hover:text-destructive p-0.5 rounded hover:bg-muted"
           >
             <Trash2 className="w-3 h-3" />
           </button>
@@ -620,12 +620,12 @@ function CommentThread({
             className="w-full text-xs bg-muted/40 rounded p-1.5 outline-none resize-none placeholder:text-muted-foreground/50"
           />
           <div className="flex justify-end gap-1.5 mt-1">
-            <button type="button" onClick={() => setShowReply(false)} className="text-[10px] text-muted-foreground px-2 py-0.5 rounded hover:bg-muted">Cancel</button>
+            <button type="button" onClick={() => setShowReply(false)} className="text-[0.625rem] text-muted-foreground px-2 py-0.5 rounded hover:bg-muted">Cancel</button>
             <button
               type="button"
               disabled={!replyText.trim() || submitting}
               onClick={() => { onReply(); setShowReply(false); }}
-              className="text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded disabled:opacity-40"
+              className="text-[0.625rem] bg-primary text-primary-foreground px-2 py-0.5 rounded disabled:opacity-40"
             >
               Reply
             </button>

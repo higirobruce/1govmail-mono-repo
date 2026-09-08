@@ -27,33 +27,33 @@ export function fileTypeStyle({ filename, mimeType }: { filename: string; mimeTy
   const mt  = mimeType.toLowerCase();
 
   if (mt === 'application/pdf' || ext === 'pdf') {
-    return { label: 'PDF', color: 'text-red-600 dark:text-red-400', bgTint: 'bg-red-50 dark:bg-red-950/30', document: true };
+    return { label: 'PDF', color: 'text-file-pdf', bgTint: 'bg-file-pdf/10', document: true };
   }
   if (mt.startsWith('image/') || /^(png|jpe?g|gif|webp|bmp|svg|heic)$/.test(ext)) {
-    return { label: 'IMG', color: 'text-emerald-600 dark:text-emerald-400', bgTint: 'bg-emerald-50 dark:bg-emerald-950/30' };
+    return { label: 'IMG', color: 'text-file-image', bgTint: 'bg-file-image/10' };
   }
   if (mt.includes('word') || ext === 'doc' || ext === 'docx') {
-    return { label: 'DOC', color: 'text-blue-600 dark:text-blue-400', bgTint: 'bg-blue-50 dark:bg-blue-950/30', document: true };
+    return { label: 'DOC', color: 'text-file-doc', bgTint: 'bg-file-doc/10', document: true };
   }
   if (mt.includes('sheet') || mt.includes('excel') || ext === 'xls' || ext === 'xlsx' || ext === 'csv') {
-    return { label: ext === 'csv' ? 'CSV' : 'XLS', color: 'text-green-700 dark:text-green-400', bgTint: 'bg-green-50 dark:bg-green-950/30', document: true };
+    return { label: ext === 'csv' ? 'CSV' : 'XLS', color: 'text-file-sheet', bgTint: 'bg-file-sheet/10', document: true };
   }
   if (mt.includes('presentation') || ext === 'ppt' || ext === 'pptx' || ext === 'key') {
-    return { label: 'PPT', color: 'text-orange-600 dark:text-orange-400', bgTint: 'bg-orange-50 dark:bg-orange-950/30', document: true };
+    return { label: 'PPT', color: 'text-file-slides', bgTint: 'bg-file-slides/10', document: true };
   }
   if (/^(zip|rar|7z|tar|gz|bz2)$/.test(ext)) {
-    return { label: 'ZIP', color: 'text-amber-600 dark:text-amber-400', bgTint: 'bg-amber-50 dark:bg-amber-950/30', document: true };
+    return { label: 'ZIP', color: 'text-file-archive', bgTint: 'bg-file-archive/10', document: true };
   }
   if (mt.startsWith('audio/') || /^(mp3|wav|m4a|flac|ogg)$/.test(ext)) {
-    return { label: 'AUD', color: 'text-violet-600 dark:text-violet-400', bgTint: 'bg-violet-50 dark:bg-violet-950/30' };
+    return { label: 'AUD', color: 'text-file-media', bgTint: 'bg-file-media/10' };
   }
   if (mt.startsWith('video/') || /^(mp4|mov|avi|mkv|webm)$/.test(ext)) {
-    return { label: 'VID', color: 'text-pink-600 dark:text-pink-400', bgTint: 'bg-pink-50 dark:bg-pink-950/30' };
+    return { label: 'VID', color: 'text-file-media', bgTint: 'bg-file-media/10' };
   }
   if (mt.startsWith('text/') || /^(txt|md|rtf|json|xml|yml|yaml)$/.test(ext)) {
-    return { label: ext.toUpperCase().slice(0, 3) || 'TXT', color: 'text-slate-600 dark:text-slate-300', bgTint: 'bg-slate-50 dark:bg-slate-800/40', document: true };
+    return { label: ext.toUpperCase().slice(0, 3) || 'TXT', color: 'text-file-generic', bgTint: 'bg-file-generic/10', document: true };
   }
-  return { label: ext.toUpperCase().slice(0, 3) || 'FILE', color: 'text-slate-600 dark:text-slate-300', bgTint: 'bg-slate-50 dark:bg-slate-800/40', document: true };
+  return { label: ext.toUpperCase().slice(0, 3) || 'FILE', color: 'text-file-generic', bgTint: 'bg-file-generic/10', document: true };
 }
 
 function formatBytes(bytes: number): string {
@@ -170,7 +170,7 @@ export function AttachmentTile({
         className={cn(
           'w-[100px] h-[112px] rounded-2xl flex items-center justify-center transition-all',
           style.bgTint,
-          'hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)]',
+          'hover:shadow-active-row',
         )}
         title={`${attachment.filename} — ${formatBytes(attachment.size)}`}
       >
@@ -179,12 +179,12 @@ export function AttachmentTile({
 
       {/* Hover actions */}
       {(onPreview || onDownload) && (
-        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
           {onPreview && (
             <button
               type="button"
               onClick={onPreview}
-              className="p-1 rounded-md bg-card/95 backdrop-blur border border-border/50 text-muted-foreground hover:text-foreground transition-colors"
+              className="p-1 rounded-md bg-card/95 backdrop-blur border border-border text-ink-2 hover:text-foreground transition-colors"
               title="Preview"
             >
               <Eye className="w-3.5 h-3.5" />
@@ -195,7 +195,7 @@ export function AttachmentTile({
               type="button"
               onClick={onDownload}
               disabled={downloading}
-              className="p-1 rounded-md bg-card/95 backdrop-blur border border-border/50 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+              className="p-1 rounded-md bg-card/95 backdrop-blur border border-border text-ink-2 hover:text-foreground transition-colors disabled:opacity-50"
               title="Download"
             >
               {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
@@ -205,12 +205,18 @@ export function AttachmentTile({
       )}
 
       {/* Filename pill */}
-      <div className="mt-1.5 inline-flex items-center gap-1 max-w-[112px] px-2 py-1 rounded-md bg-muted/60 text-[10.5px] text-foreground/80">
-        <span className={cn('text-[9px] font-bold tracking-wide shrink-0', style.color)}>
+      <div className="mt-1.5 inline-flex items-center gap-1 max-w-[112px] px-2 py-1 rounded-md bg-muted/60 text-micro font-normal text-ink-2">
+        <span className={cn('text-micro leading-none font-bold tracking-[0.06em] shrink-0', style.color)}>
           {style.label}
         </span>
         <span className="truncate">{attachment.filename}</span>
       </div>
+
+      {attachment.size > 0 && (
+        <span className="mt-0.5 text-micro leading-none font-normal text-ink-3 tabular-nums">
+          {formatBytes(attachment.size)}
+        </span>
+      )}
     </div>
   );
 }

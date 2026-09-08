@@ -19,6 +19,8 @@ export interface UseCharStream {
   push: (delta: string) => void;
   flush: () => void;
   reset: () => void;
+  /** Swap the streamed text for a final value (e.g. the scrubbed result). */
+  replace: (next: string) => void;
 }
 
 const TICK_MS = 15;
@@ -72,7 +74,16 @@ export function useCharStream(): UseCharStream {
     setText('');
   }, [stopTicker]);
 
+  const replace = useCallback(
+    (next: string) => {
+      stopTicker();
+      queueRef.current = '';
+      setText(next);
+    },
+    [stopTicker],
+  );
+
   useEffect(() => stopTicker, [stopTicker]);
 
-  return { text, push, flush, reset };
+  return { text, push, flush, reset, replace };
 }

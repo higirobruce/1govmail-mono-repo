@@ -10,5 +10,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
   imports: [PrismaModule, ZimbraModule, NotificationsModule],
   providers: [TasksService, TasksScheduler],
   controllers: [TasksController],
+  exports: [TasksService],
 })
 export class TasksModule {}

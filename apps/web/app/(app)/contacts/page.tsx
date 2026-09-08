@@ -105,7 +105,7 @@ function DetailField({ icon: Icon, label, value }: { icon: React.ElementType; la
     <div className="flex items-start gap-3 py-2">
       <Icon className="w-4 h-4 text-muted-foreground/40 mt-0.5 shrink-0" />
       <div className="min-w-0">
-        <p className="text-[11px] text-muted-foreground/50 uppercase tracking-wider mb-0.5">{label}</p>
+        <p className="text-[0.6875rem] text-muted-foreground/50 uppercase tracking-wider mb-0.5">{label}</p>
         <p className="text-sm text-foreground break-all">{value}</p>
       </div>
     </div>
@@ -485,7 +485,7 @@ export default function ContactsPage() {
             <button
               onClick={() => setTab('contacts')}
               className={cn(
-                'flex-1 flex items-center justify-center gap-1.5 py-1 rounded-md text-[12px] font-medium transition-all',
+                'flex-1 flex items-center justify-center gap-1.5 py-1 rounded-md text-[0.75rem] font-medium transition-all',
                 tab === 'contacts'
                   ? 'bg-card text-foreground shadow-sm'
                   : 'text-muted-foreground/60 hover:text-foreground',
@@ -497,7 +497,7 @@ export default function ContactsPage() {
             <button
               onClick={() => setTab('groups')}
               className={cn(
-                'flex-1 flex items-center justify-center gap-1.5 py-1 rounded-md text-[12px] font-medium transition-all',
+                'flex-1 flex items-center justify-center gap-1.5 py-1 rounded-md text-[0.75rem] font-medium transition-all',
                 tab === 'groups'
                   ? 'bg-card text-foreground shadow-sm'
                   : 'text-muted-foreground/60 hover:text-foreground',
@@ -549,14 +549,14 @@ export default function ContactsPage() {
                   >
                     <Avatar contact={c} size="sm" />
                     <div className="min-w-0">
-                      <p className="text-[13px] font-medium text-foreground truncate">
+                      <p className="text-[0.8125rem] font-medium text-foreground truncate">
                         {contactDisplayName(c)}
                       </p>
                       {c.company && (
-                        <p className="text-[11px] text-muted-foreground/55 truncate">{c.company}</p>
+                        <p className="text-[0.6875rem] text-muted-foreground/55 truncate">{c.company}</p>
                       )}
                       {!c.company && c.emails[0] && (
-                        <p className="text-[11px] text-muted-foreground/55 truncate">{c.emails[0].email}</p>
+                        <p className="text-[0.6875rem] text-muted-foreground/55 truncate">{c.emails[0].email}</p>
                       )}
                     </div>
                   </button>
@@ -594,8 +594,8 @@ export default function ContactsPage() {
                       <UsersRound className="w-4 h-4 text-violet-600 dark:text-violet-400" />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[13px] font-medium text-foreground truncate">{g.name}</p>
-                      <p className="text-[11px] text-muted-foreground/55 truncate">
+                      <p className="text-[0.8125rem] font-medium text-foreground truncate">{g.name}</p>
+                      <p className="text-[0.6875rem] text-muted-foreground/55 truncate">
                         {g.members.length} {g.members.length === 1 ? 'member' : 'members'}
                       </p>
                     </div>
@@ -655,7 +655,7 @@ export default function ContactsPage() {
                   <FormField label="Company"     value={form.company}    onChange={setF('company')}    placeholder="Acme Inc." />
                   <FormField label="Job title"   value={form.jobTitle}   onChange={setF('jobTitle')}   placeholder="Engineer" />
                   <div className="pt-2 border-t border-border/30">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Email</p>
+                    <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Email</p>
                     <div className="space-y-2">
                       <FormField label="Work email"     value={form.email}  onChange={setF('email')}  placeholder="work@company.com"    type="email" />
                       <FormField label="Personal email" value={form.email2} onChange={setF('email2')} placeholder="personal@gmail.com"  type="email" />
@@ -663,7 +663,7 @@ export default function ContactsPage() {
                     </div>
                   </div>
                   <div className="pt-2 border-t border-border/30">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Phone</p>
+                    <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Phone</p>
                     <div className="space-y-2">
                       <FormField label="Work phone"   value={form.phone}     onChange={setF('phone')}     placeholder="+1 555 0100" type="tel" />
                       <FormField label="Mobile"       value={form.mobile}    onChange={setF('mobile')}    placeholder="+1 555 0101" type="tel" />
@@ -835,7 +835,7 @@ export default function ContactsPage() {
                   </div>
 
                   <div className="pt-1 border-t border-border/30">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Members</p>
+                    <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Members</p>
 
                     {/* Add member input with autocomplete */}
                     <Popover open={memberPopoverOpen} onOpenChange={setMemberPopoverOpen}>
@@ -885,9 +885,9 @@ export default function ContactsPage() {
                                     </div>
                                     <div className="min-w-0">
                                       {s.display !== s.email && (
-                                        <p className="text-[13px] font-medium truncate">{s.display}</p>
+                                        <p className="text-[0.8125rem] font-medium truncate">{s.display}</p>
                                       )}
-                                      <p className="text-[12px] text-muted-foreground/65 truncate">{s.email}</p>
+                                      <p className="text-[0.75rem] text-muted-foreground/65 truncate">{s.email}</p>
                                     </div>
                                   </div>
                                 </CommandItem>
@@ -906,7 +906,7 @@ export default function ContactsPage() {
                         {groupMembers.map((m) => (
                           <span
                             key={m.email}
-                            className="flex items-center gap-1 px-2 py-1 rounded-full bg-muted/50 border border-border/50 text-[12px] text-foreground/80"
+                            className="flex items-center gap-1 px-2 py-1 rounded-full bg-muted/50 border border-border/50 text-[0.75rem] text-foreground/80"
                           >
                             <Mail className="w-3 h-3 text-muted-foreground/50 shrink-0" />
                             {m.email}
@@ -968,7 +968,7 @@ export default function ContactsPage() {
                       {selectedGroup.description && (
                         <p className="text-sm text-muted-foreground/60 mt-0.5">{selectedGroup.description}</p>
                       )}
-                      <p className="text-[12px] text-muted-foreground/40 mt-1">
+                      <p className="text-[0.75rem] text-muted-foreground/40 mt-1">
                         {selectedGroup.members.length} {selectedGroup.members.length === 1 ? 'member' : 'members'}
                       </p>
                     </div>
@@ -976,7 +976,7 @@ export default function ContactsPage() {
 
                   {/* Member list */}
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Members</p>
+                    <p className="text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Members</p>
                     {selectedGroup.members.length === 0 ? (
                       <p className="text-sm text-muted-foreground/40">No members in this group.</p>
                     ) : (
@@ -990,8 +990,8 @@ export default function ContactsPage() {
                               <Mail className="w-3.5 h-3.5 text-muted-foreground/50" />
                             </div>
                             <div className="min-w-0">
-                              {m.name && <p className="text-[13px] font-medium text-foreground truncate">{m.name}</p>}
-                              <p className="text-[12px] text-muted-foreground/65 truncate">{m.email}</p>
+                              {m.name && <p className="text-[0.8125rem] font-medium text-foreground truncate">{m.name}</p>}
+                              <p className="text-[0.75rem] text-muted-foreground/65 truncate">{m.email}</p>
                             </div>
                           </div>
                         ))}

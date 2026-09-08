@@ -13,6 +13,8 @@
  * no real benefit — they always need server-side session data at request time.
  */
 import { OfflineProvider } from '@/lib/offline/provider';
+import { AskLauncher } from '@/components/ai/AskLauncher';
+import PersonDossierPanel from '@/components/people/PersonDossierPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,5 +23,11 @@ export default function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return <OfflineProvider>{children}</OfflineProvider>;
+  return (
+    <OfflineProvider>
+      {children}
+      <AskLauncher />
+      <PersonDossierPanel />
+    </OfflineProvider>
+  );
 }

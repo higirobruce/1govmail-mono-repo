@@ -61,7 +61,7 @@ export function ElectronTitleBar() {
 
         {/* App name — centred, non-interactive */}
         <div className="flex-1 flex items-center justify-center pointer-events-none">
-          <span className="text-[11px] font-medium text-foreground/30 tracking-wide">
+          <span className="text-[0.6875rem] font-medium text-foreground/30 tracking-wide">
             1Gov Mail
           </span>
         </div>

@@ -34,6 +34,20 @@
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-warning-strong: var(--warning-strong);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-border-strong: var(--border-strong);
+  --color-border-faint: var(--border-faint);
+  --color-file-pdf: var(--file-pdf);
+  --color-file-image: var(--file-image);
+  --color-file-doc: var(--file-doc);
+  --color-file-sheet: var(--file-sheet);
+  --color-file-slides: var(--file-slides);
+  --color-file-archive: var(--file-archive);
+  --color-file-media: var(--file-media);
+  --color-file-generic: var(--file-generic);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -50,6 +64,35 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* ── Named type scale — the ONLY text sizes used in app chrome ──────────────
+ * display > title > body > ui > micro. Hierarchy within a step is expressed
+ * with font-weight and the muted text tiers, never with a new size. */
+@theme {
+  --text-display: 1.375rem;
+  --text-display--line-height: 1.2;
+  --text-display--letter-spacing: -0.02em;
+  --text-display--font-weight: 700;
+
+  --text-title: 0.9375rem;
+  --text-title--line-height: 1.35;
+  --text-title--letter-spacing: -0.01em;
+  --text-title--font-weight: 600;
+
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.55;
+
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.4;
+
+  --text-micro: 0.6875rem;
+  --text-micro--line-height: 1.3;
+  --text-micro--font-weight: 500;
+
+  /* Shadows — tinted from primary via color-mix so they re-theme */
+  --shadow-active-row: 0 2px 8px color-mix(in oklch, var(--primary) 8%, transparent);
+  --shadow-pill: 0 1px 2px color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+
 /* ── 1Gov Mail theme — state blue + Rwandan accents ─────────────────────────
  * Primary: deep state blue (#0F4C81) — trust, authority, long-session friendly.
  * Accent:  Rwanda flag blue (#00A1DE) — used sparingly for focus/CTAs.
@@ -59,10 +102,10 @@
 :root {
   --radius: 0.625rem;
 
-  /* App canvas — slight warm off-white so white cards (active row, reader,
-   * popovers) stand out without harsh contrast. Matches the soft-card aesthetic
-   * of the reference mockup. */
-  --background:           oklch(0.975 0.003 250);
+  /* App canvas — pure white, per the email-native reference direction.
+   * Card-on-canvas float is gone by design; row emphasis comes from rings,
+   * shadows, the unread rail, and muted tints instead. */
+  --background:           oklch(1 0 0);
   --foreground:           oklch(0.18 0.03 258);    /* deep navy-black text     */
   --card:                 oklch(1 0 0);            /* white cards on the canvas */
   --card-foreground:      oklch(0.18 0.03 258);
@@ -93,6 +136,25 @@
   --success-foreground:   oklch(0.99 0 0);
   --warning:              oklch(0.72 0.16 80);     /* #E1A100 flag gold        */
   --warning-foreground:   oklch(0.20 0.03 70);
+  --warning-strong:       oklch(0.55 0.13 80);    /* darker gold — legible text on light tints */
+
+  /* Muted text tiers — replaces the /30–/80 opacity soup */
+  --ink-2:                oklch(0.45 0.015 252);  /* secondary — labels, meta          */
+  --ink-3:                oklch(0.55 0.012 250);  /* tertiary — snippets, timestamps   */
+  --ink-4:                oklch(0.68 0.010 250);  /* faint — placeholders, disabled    */
+
+  --border-strong:        oklch(0.85 0.008 240);
+  --border-faint:         oklch(0.94 0.005 240);
+
+  /* Attachment file-type accents */
+  --file-pdf:             oklch(0.55 0.18 25);
+  --file-image:           oklch(0.55 0.13 160);
+  --file-doc:             oklch(0.50 0.13 255);
+  --file-sheet:           oklch(0.48 0.12 150);
+  --file-slides:          oklch(0.62 0.15 55);
+  --file-archive:         oklch(0.60 0.13 85);
+  --file-media:           oklch(0.55 0.16 300);
+  --file-generic:         oklch(0.50 0.012 250);
 
   --chart-1: oklch(0.40 0.12 255);
   --chart-2: oklch(0.66 0.16 237);
@@ -140,6 +202,23 @@
   --success-foreground:   oklch(0.12 0.02 255);
   --warning:              oklch(0.78 0.16 80);
   --warning-foreground:   oklch(0.15 0.03 70);
+  --warning-strong:       oklch(0.80 0.13 80);
+
+  --ink-2:                oklch(0.75 0.010 245);
+  --ink-3:                oklch(0.62 0.010 245);
+  --ink-4:                oklch(0.48 0.010 245);
+
+  --border-strong:        oklch(0.32 0.016 255);
+  --border-faint:         oklch(0.20 0.014 255);
+
+  --file-pdf:             oklch(0.70 0.16 25);
+  --file-image:           oklch(0.72 0.13 160);
+  --file-doc:             oklch(0.72 0.12 255);
+  --file-sheet:           oklch(0.70 0.12 150);
+  --file-slides:          oklch(0.74 0.14 55);
+  --file-archive:         oklch(0.78 0.12 85);
+  --file-media:           oklch(0.72 0.14 300);
+  --file-generic:         oklch(0.70 0.010 245);
 
   --chart-1: oklch(0.72 0.12 240);
   --chart-2: oklch(0.72 0.14 237);
@@ -262,9 +341,16 @@ html[data-electron='true'] body {
 .ProseMirror ol { list-style-type: decimal; }
 .ProseMirror a { text-decoration: underline; }
 .ProseMirror blockquote {
-  border-left: 2px solid hsl(var(--border));
+  border-left: 2px solid var(--border);
   padding-left: 0.75rem;
-  color: hsl(var(--muted-foreground));
+  color: var(--muted-foreground);
+}
+
+/* Mini reply composer — compact editor, grows with content */
+.mini-composer-editor.ProseMirror {
+  min-height: 24px;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 /* ── Code block (lowlight / highlight.js) ──────────────────────────────────── */
@@ -342,9 +428,17 @@ html[data-electron='true'] body {
 .ProseMirror li code,
 .ProseMirror td code,
 .ProseMirror th code {
-  background: hsl(var(--muted));
-  color: hsl(var(--foreground));
+  background: var(--muted);
+  color: var(--foreground);
   font-size: 0.8em;
   padding: 0.15em 0.35em;
   border-radius: 0.25rem;
+}
+
+/* Hide scrollbars on horizontally scrollable chip/pill rows */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }

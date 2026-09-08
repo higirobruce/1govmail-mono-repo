@@ -45,13 +45,17 @@ export function useKeyboardShortcuts(
 
       if (isTyping(e)) return;
 
+      // Never hijack browser/OS chords (⌘C copy, ⌘R reload, Ctrl+F find, …) —
+      // single-letter shortcuts fire only on unmodified keys.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
       switch (e.key) {
         case 'j':        handlers.j?.(); break;
         case 'k':        handlers.k?.(); break;
         case 'c':        handlers.c?.(); break;
-        case 'r':        if (!e.metaKey && !e.ctrlKey) handlers.r?.(); break;
-        case 'a':        if (!e.metaKey && !e.ctrlKey) handlers.a?.(); break;
-        case 'f':        if (!e.metaKey && !e.ctrlKey) handlers.f?.(); break;
+        case 'r':        handlers.r?.(); break;
+        case 'a':        handlers.a?.(); break;
+        case 'f':        handlers.f?.(); break;
         case 's':        handlers.s?.(); break;
         case 'e':        handlers.e?.(); break;
         case 'd':        handlers.d?.(); break;

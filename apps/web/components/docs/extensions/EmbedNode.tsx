@@ -103,7 +103,7 @@ function EmbedView({ node, updateAttributes, deleteNode }: any) {
             </button>
           </div>
           {error && <p className="text-xs text-destructive mt-1.5">{error}</p>}
-          <p className="text-[11px] text-muted-foreground mt-2">
+          <p className="text-[0.6875rem] text-muted-foreground mt-2">
             Supports: YouTube · Figma · Loom · Google Maps
           </p>
         </div>
@@ -123,7 +123,7 @@ function EmbedView({ node, updateAttributes, deleteNode }: any) {
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-auto text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5"
+            className="ml-auto text-[0.625rem] text-muted-foreground hover:text-foreground flex items-center gap-0.5"
           >
             <Link2 className="w-3 h-3" /> Open
           </a>

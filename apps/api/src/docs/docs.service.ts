@@ -15,11 +15,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InviteRole, Prisma } from '@prisma/client';
+import { InviteRole, Prisma, SharePermission } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
+import { ShareDocDto } from './dto/share-doc.dto';
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { UpdateInviteDto } from './dto/update-invite.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -274,13 +275,19 @@ export class DocsService {
 
   // ── Share link ────────────────────────────────────────────────────────────
 
-  async enableSharing(userId: string, id: string) {
-    await this.verifyOwnership(userId, id);
-    const shareToken = shortToken();
+  async enableSharing(userId: string, id: string, dto: ShareDocDto) {
+    const doc = await this.verifyOwnership(userId, id);
+    // Keep the existing token when re-sharing so permission changes don't
+    // invalidate links already handed out.
+    const shareToken = doc.shareToken ?? shortToken();
     const result = await this.prisma.document.update({
       where: { id },
-      data: { shareToken, isShared: true },
-      select: { shareToken: true, isShared: true },
+      data: {
+        shareToken,
+        isShared: true,
+        sharePermission: dto.sharePermission ?? SharePermission.VIEW,
+      },
+      select: { shareToken: true, isShared: true, sharePermission: true },
     });
     return result;
   }
@@ -304,6 +311,9 @@ export class DocsService {
   async updateByShareToken(token: string, dto: UpdateDocDto) {
     const doc = await this.prisma.document.findUnique({ where: { shareToken: token } });
     if (!doc || !doc.isShared) throw new NotFoundException('Shared document not found');
+    if (doc.sharePermission !== SharePermission.EDIT) {
+      throw new ForbiddenException('This share link is view-only');
+    }
     return this.prisma.document.update({
       where: { id: doc.id },
       data: {
@@ -471,11 +481,17 @@ export class DocsService {
   }
 
   async updateComment(userId: string, docId: string, commentId: string, dto: UpdateCommentDto) {
+    await this.verifyReadAccess(userId, docId);
     const comment = await this.prisma.docComment.findFirst({ where: { id: commentId, documentId: docId } });
     if (!comment) throw new NotFoundException('Comment not found');
 
     if (dto.content !== undefined && comment.authorId !== userId) {
       throw new ForbiddenException('Only the comment author may edit its content');
+    }
+
+    // Resolving/unresolving requires write access, unless it's your own comment
+    if (dto.resolved !== undefined && comment.authorId !== userId) {
+      await this.verifyWriteAccess(userId, docId);
     }
 
     const wasResolved = !!comment.resolvedAt;
@@ -727,7 +743,13 @@ export class DocsService {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  private async verifyReadAccess(userId: string, id: string) {
+  /**
+   * Public: also called by AskService (apps/api/src/chat/ask.service.ts)
+   * BEFORE it invokes RetrievalService.retrieve() with a scope.docId — see
+   * that method's ACCESS CONTRACT note. Throws NotFoundException /
+   * ForbiddenException, which the Nest exception filter turns into 404/403.
+   */
+  async verifyReadAccess(userId: string, id: string) {
     const doc = await this.prisma.document.findUnique({ where: { id } });
     if (!doc) throw new NotFoundException('Document not found');
     if (doc.userId === userId) return doc;
@@ -793,5 +815,37 @@ export class DocsService {
       { to: [toEmail], subject, body },
       inviter.csrfToken ?? undefined,
     );
+  }
+
+  /**
+   * Agent tool support: title search under the same owner-OR-invite ACL as
+   * verifyReadAccess/getInviteForUser. NOTE the schema's Document→
+   * DocumentInvite relation field is `invites`, and its email column is
+   * `invitedEmail` (NOT `email` — see the `DocumentInvite` model in
+   * prisma/schema.prisma). The invite predicate deliberately mirrors
+   * RetrievalService.docVectorRows and verifyReadAccess/getInviteForUser
+   * exact-case: `invitedEmail` is compared verbatim, with no `.toLowerCase()`
+   * or `mode: 'insensitive'`, so a search hit here can never be broader than
+   * what those two ACL checks would allow (a case-insensitive compare would
+   * leak a document's title/id into search results for a user whose invite
+   * was stored with different casing than their JWT email, even though
+   * verifyReadAccess and the vector leg would both deny them). Invite-email
+   * casing normalization more broadly is known systemic debt tracked outside
+   * this task. Title matching itself stays `contains`/`insensitive` — only
+   * the ACL email comparison is exact-case.
+   */
+  async searchByTitle(userId: string, userEmail: string, query: string, limit = 8) {
+    return this.prisma.document.findMany({
+      where: {
+        title: { contains: query, mode: 'insensitive' },
+        OR: [
+          { userId },
+          { invites: { some: { invitedEmail: userEmail } } },
+        ],
+      },
+      select: { id: true, title: true, emoji: true, updatedAt: true },
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+    });
   }
 }

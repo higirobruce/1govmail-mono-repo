@@ -69,7 +69,7 @@ function CodeBlockNodeView({
             value={lang}
             onChange={(e) => updateAttributes({ language: e.target.value || null })}
             onKeyDown={(e) => e.stopPropagation()}
-            className="text-[10px] bg-transparent text-white/50 hover:text-white/80 cursor-pointer outline-none border-none appearance-none pr-1 transition-colors"
+            className="text-[0.625rem] bg-transparent text-white/50 hover:text-white/80 cursor-pointer outline-none border-none appearance-none pr-1 transition-colors"
           >
             {LANGUAGES.map(({ value, label }) => (
               <option key={value} value={value} className="bg-[#1e1e2e] text-white">

@@ -3,7 +3,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
+import { useResizable } from '@/hooks/useResizable';
+import { ResizeHandle } from '@/components/layout/ResizeHandle';
 import { useConfirmStore } from '@/stores/confirm.store';
+import { useAIStore } from '@/stores/ai.store';
+import { useAskStore } from '@/stores/ask.store';
+import { usePeopleStore } from '@/stores/people.store';
+import { MeetingPrepView } from '@/components/calendar/MeetingPrepView';
+import { AIClient } from '@/lib/ai/client';
+import { parseEventFromEmail } from '@/lib/ai/eventParse';
+import { mergeParsedEvent, sameAttendees, toFormDateTime } from '@/lib/calendar/eventPrefill';
+import { quickAddEventPrefill } from '@/lib/calendar/quickAddEvent';
+import type { EventFormValues, EventFieldKey } from '@/lib/calendar/eventPrefill';
+import { parseMailDragPayload, dropPrefillFromPayload } from '@/lib/calendar/dropPrefill';
+import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
@@ -18,7 +31,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
   Clock, MapPin, Calendar as CalendarIcon, Trash2, Users,
   Video, Repeat, ExternalLink, Pencil, CheckCircle2,
-  HelpCircle, XCircle, Menu, Mail, Sparkles,
+  HelpCircle, XCircle, Menu, Mail, CalendarSearch,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth,
@@ -304,7 +317,21 @@ function AttendeePicker({
 
 // ── Create / Edit event modal ──────────────────────────────────────────────────
 
-function CreateEventModal({
+export interface CreateEventPrefillData {
+  title?: string;
+  description?: string;
+  startAt?: string; // "yyyy-MM-dd'T'HH:mm" LOCAL
+  endAt?: string;
+  allDay?: boolean;
+  location?: string;
+  attendees?: string[];
+  linkedMessageId?: string;
+  linkedSubject?: string;
+  /** Message id to live-fill the form from via AI once the modal opens. */
+  aiFillMessageId?: string;
+}
+
+export function CreateEventModal({
   initialDate,
   initialData,
   prefillData,
@@ -315,7 +342,7 @@ function CreateEventModal({
 }: {
   initialDate?: Date;
   initialData?: CalEvent;
-  prefillData?: { title?: string; description?: string; linkedMessageId?: string; linkedSubject?: string };
+  prefillData?: CreateEventPrefillData;
   isEdit?: boolean;
   onClose: () => void;
   onCreated: (event: CalEvent) => void;
@@ -326,19 +353,84 @@ function CreateEventModal({
   const endStr   = format(new Date(base.getTime() + 3_600_000), "yyyy-MM-dd'T'HH:mm");
 
   const [title, setTitle]       = useState(initialData?.title ?? prefillData?.title ?? '');
-  const [location, setLocation] = useState(initialData?.location ?? '');
+  const [location, setLocation] = useState(initialData?.location ?? prefillData?.location ?? '');
   const [description, setDesc]  = useState(initialData?.description ?? prefillData?.description ?? '');
   const [startAt, setStart]     = useState(
-    initialData ? format(parseISO(initialData.startAt), "yyyy-MM-dd'T'HH:mm") : todayStr,
+    initialData ? format(parseISO(initialData.startAt), "yyyy-MM-dd'T'HH:mm") : prefillData?.startAt ?? todayStr,
   );
   const [endAt, setEnd]         = useState(
-    initialData ? format(parseISO(initialData.endAt), "yyyy-MM-dd'T'HH:mm") : endStr,
+    initialData ? format(parseISO(initialData.endAt), "yyyy-MM-dd'T'HH:mm") : prefillData?.endAt ?? endStr,
   );
-  const [allDay, setAllDay]     = useState(initialData?.allDay ?? false);
+  const [allDay, setAllDay]     = useState(initialData?.allDay ?? prefillData?.allDay ?? false);
   const [attendees, setAttendees] = useState<string[]>(
-    initialData?.attendees?.map((a) => a.email) ?? [],
+    initialData?.attendees?.map((a) => a.email) ?? prefillData?.attendees ?? [],
   );
   const [saving, setSaving]     = useState(false);
+
+  // ── AI live-fill from the linked email (drag/right-click entry paths) ──
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiModel   = useAIStore((s) => s.model);
+  const [aiFilling, setAiFilling] = useState(false);
+  const dirtyRef = useRef<Set<EventFieldKey>>(new Set());
+  const fillAbortRef = useRef<AbortController | null>(null);
+  // Mirrors the six merge-eligible fields so the async fill can read the
+  // latest values (not the ones captured when the effect first ran). Written
+  // after commit, never during render: a concurrent render that React discards
+  // must not leave the mirror holding values the form never actually took.
+  const currentRef = useRef<EventFormValues>({ title, startAt, endAt, allDay, location, attendees });
+  useEffect(() => {
+    currentRef.current = { title, startAt, endAt, allDay, location, attendees };
+  });
+
+  useEffect(() => {
+    const messageId = prefillData?.aiFillMessageId;
+    if (!messageId || !aiEnabled) return;
+
+    const abort = new AbortController();
+    fillAbortRef.current = abort;
+    setAiFilling(true);
+
+    (async () => {
+      try {
+        const msg = await api.mail.getMessage(messageId, { signal: abort.signal }) as {
+          subject?: string; fromEmail?: string; fromName?: string;
+          bodyText?: string | null; bodyHtml?: string | null;
+        };
+        if (abort.signal.aborted) return;
+
+        const client = new AIClient();
+        const from = msg.fromName ? `${msg.fromName} <${msg.fromEmail ?? ''}>` : (msg.fromEmail ?? '');
+        const parsed = await parseEventFromEmail(
+          client,
+          { subject: msg.subject ?? '', from, bodyText: msg.bodyText, bodyHtml: msg.bodyHtml },
+          { model: aiModel, signal: abort.signal },
+        );
+        if (abort.signal.aborted || !parsed) return;
+
+        const current = currentRef.current;
+        const merged = mergeParsedEvent(current, parsed, dirtyRef.current);
+        if (merged.title !== current.title) setTitle(merged.title);
+        if (merged.startAt !== current.startAt) setStart(merged.startAt);
+        if (merged.endAt !== current.endAt) setEnd(merged.endAt);
+        if (merged.allDay !== current.allDay) setAllDay(merged.allDay);
+        if (merged.location !== current.location) setLocation(merged.location);
+        if (!sameAttendees(merged.attendees, current.attendees)) setAttendees([...merged.attendees]);
+      } catch (err) {
+        if ((err as { name?: string })?.name !== 'AbortError') {
+          console.warn('AI event fill failed', err);
+        }
+      } finally {
+        if (!abort.signal.aborted) setAiFilling(false);
+      }
+    })();
+
+    // Runs on unmount AND whenever deps change (aiEnabled toggled off, or a
+    // re-render with a different aiFillMessageId). Reset aiFilling here too —
+    // the in-flight fill's own `finally` skips the reset once aborted, so
+    // without this the indicator would otherwise spin forever. Calling
+    // setState from an unmount cleanup is a safe no-op in React 18+.
+    return () => { abort.abort(); setAiFilling(false); };
+  }, [prefillData?.aiFillMessageId, aiEnabled]); // eslint-disable-line
 
   // ── Find-a-time (scheduling assistant inline in the event modal) ────────
   const [showFindTime, setShowFindTime] = useState(false);
@@ -384,6 +476,8 @@ function CreateEventModal({
   const applySlot = (slot: SuggestedSlot) => {
     setStart(format(slot.start, "yyyy-MM-dd'T'HH:mm"));
     setEnd(format(slot.end, "yyyy-MM-dd'T'HH:mm"));
+    dirtyRef.current.add('startAt');
+    dirtyRef.current.add('endAt');
     setShowFindTime(false);
   };
 
@@ -393,6 +487,12 @@ function CreateEventModal({
 
   const handleSave = async () => {
     if (!title.trim()) { toast.error('Title is required'); return; }
+    // Abort any in-flight AI fill and clear its indicator now — the fill's
+    // own `finally` skips the reset once aborted (signal.aborted is true by
+    // then), and if this save fails the modal stays open with the component
+    // otherwise showing a permanently-stuck "Reading the email…" indicator.
+    fillAbortRef.current?.abort();
+    setAiFilling(false);
     setSaving(true);
     try {
       const startIso = allDay
@@ -434,17 +534,24 @@ function CreateEventModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-card border border-border/60 rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border/40 shrink-0">
-          <h2 className="text-sm font-semibold text-foreground">{isEdit ? 'Edit Event' : 'New Event'}</h2>
-          <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-foreground">{isEdit ? 'Edit Event' : 'New Event'}</h2>
+            {aiFilling && <AIWorkingIndicator step="Reading the email" className="mt-0.5" />}
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0 shrink-0">
             <X className="w-4 h-4" />
           </Button>
         </div>
-        <ScrollArea className="flex-1 min-h-0">
+        {/* Plain scroller (not Radix ScrollArea): its intrinsic-width viewport
+            let a long focused title push the whole form wider than the dialog
+            and strand it on a horizontal scroll. overflow-x-hidden pins the
+            form to the dialog width; the title input scrolls internally. */}
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           <div className="px-5 py-4 space-y-3">
             <Input
               autoFocus
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => { setTitle(e.target.value); dirtyRef.current.add('title'); }}
               placeholder="Event title"
               className="text-base font-medium h-10 bg-transparent border-0 border-b border-border/50 rounded-none px-0 focus-visible:ring-0 focus-visible:border-primary/60"
               onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
@@ -453,7 +560,7 @@ function CreateEventModal({
               <Checkbox
                 id="allday"
                 checked={allDay}
-                onCheckedChange={(v) => setAllDay(v === true)}
+                onCheckedChange={(v) => { setAllDay(v === true); dirtyRef.current.add('allDay'); }}
               />
               <Label htmlFor="allday" className="text-sm text-muted-foreground/70 cursor-pointer">All day</Label>
             </div>
@@ -462,7 +569,7 @@ function CreateEventModal({
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Start</Label>
                 <DateTimePicker
                   value={allDay ? startAt.split('T')[0] : startAt}
-                  onChange={setStart}
+                  onChange={(v) => { setStart(toFormDateTime(v, 'start')); dirtyRef.current.add('startAt'); }}
                   dateOnly={allDay}
                 />
               </div>
@@ -470,7 +577,7 @@ function CreateEventModal({
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">End</Label>
                 <DateTimePicker
                   value={allDay ? endAt.split('T')[0] : endAt}
-                  onChange={setEnd}
+                  onChange={(v) => { setEnd(toFormDateTime(v, 'end')); dirtyRef.current.add('endAt'); }}
                   dateOnly={allDay}
                 />
               </div>
@@ -483,18 +590,18 @@ function CreateEventModal({
                   size="sm"
                   onClick={handleFindTime}
                   disabled={fbLoading || attendees.length === 0}
-                  className="h-7 px-2 text-[11px] gap-1.5 text-muted-foreground/70 hover:text-primary"
+                  className="h-7 px-2 text-[0.6875rem] gap-1.5 text-muted-foreground/70 hover:text-primary"
                   title={attendees.length === 0 ? 'Add attendees below first' : 'Find a time that works for everyone'}
                 >
                   {fbLoading
                     ? <><Loader2 className="w-3 h-3 animate-spin" /> Checking…</>
-                    : <><Sparkles className="w-3 h-3" /> Find a time</>}
+                    : <><CalendarSearch className="w-3 h-3" /> Find a time</>}
                 </Button>
                 {showFindTime && (
                   <button
                     type="button"
                     onClick={() => setShowFindTime(false)}
-                    className="text-[10px] text-muted-foreground/50 hover:text-foreground"
+                    className="text-[0.625rem] text-muted-foreground/50 hover:text-foreground"
                   >
                     hide
                   </button>
@@ -503,7 +610,7 @@ function CreateEventModal({
             )}
             {showFindTime && !allDay && (
               <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2 space-y-1.5">
-                <p className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
+                <p className="text-[0.625rem] font-semibold text-muted-foreground/60 uppercase tracking-wider">
                   Suggested slots ({Math.round(durationMs / 60_000)} min, weekdays 9–5)
                 </p>
                 {suggestedSlots.length === 0 ? (
@@ -518,10 +625,10 @@ function CreateEventModal({
                         className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-emerald-500/8 border border-emerald-500/20 hover:bg-emerald-500/12 transition-colors"
                       >
                         <div className="min-w-0">
-                          <p className="text-[11px] font-medium text-foreground/80 truncate">
+                          <p className="text-[0.6875rem] font-medium text-foreground/80 truncate">
                             {format(slot.start, 'EEE, MMM d')}
                           </p>
-                          <p className="text-[10px] text-muted-foreground/60">
+                          <p className="text-[0.625rem] text-muted-foreground/60">
                             {format(slot.start, 'h:mm a')} – {format(slot.end, 'h:mm a')}
                           </p>
                         </div>
@@ -530,7 +637,7 @@ function CreateEventModal({
                           size="sm"
                           variant="ghost"
                           onClick={() => applySlot(slot)}
-                          className="h-6 px-2 text-[10px] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1"
+                          className="h-6 px-2 text-[0.625rem] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1"
                         >
                           Use <ChevronRight className="w-3 h-3" />
                         </Button>
@@ -542,7 +649,7 @@ function CreateEventModal({
             )}
             <div>
               <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Location</Label>
-              <Input value={location} onChange={(e) => setLocation(e.target.value)}
+              <Input value={location} onChange={(e) => { setLocation(e.target.value); dirtyRef.current.add('location'); }}
                 placeholder="Add location" className="h-8 text-sm bg-muted/30 border-border/50" />
             </div>
             <div>
@@ -550,7 +657,10 @@ function CreateEventModal({
               <Input value={description} onChange={(e) => setDesc(e.target.value)}
                 placeholder="Add description" className="h-8 text-sm bg-muted/30 border-border/50" />
             </div>
-            <AttendeePicker attendees={attendees} onChange={setAttendees} />
+            <AttendeePicker
+              attendees={attendees}
+              onChange={(next) => { setAttendees(next); dirtyRef.current.add('attendees'); }}
+            />
             {linkedMessageId && linkedSubject && (
               <div>
                 <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider mb-1 block">Linked email</Label>
@@ -565,7 +675,7 @@ function CreateEventModal({
               </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
         <div className="flex justify-end gap-2 px-5 py-3 border-t border-border/40 shrink-0">
           <Button variant="ghost" size="sm" onClick={onClose} className="text-muted-foreground/60 h-8">Cancel</Button>
           <Button size="sm" onClick={handleSave} disabled={saving || !title.trim()}
@@ -610,7 +720,7 @@ function MonthView({
       {/* Day-of-week headers */}
       <div className="grid grid-cols-7 border-b border-border/30 shrink-0">
         {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d) => (
-          <div key={d} className="py-2 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+          <div key={d} className="py-2 text-center text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/50">
             {d}
           </div>
         ))}
@@ -638,12 +748,12 @@ function MonthView({
               <div className="space-y-0.5">
                 {dayEvs.slice(0, 3).map((ev) => (
                   <button key={ev.id} onClick={() => onSelectEvent(ev)}
-                    className={cn('w-full text-left px-1.5 py-0.5 rounded text-[11px] font-medium truncate transition-opacity hover:opacity-80', eventColor(ev.id))}>
+                    className={cn('w-full text-left px-1.5 py-0.5 rounded text-[0.6875rem] font-medium truncate transition-opacity hover:opacity-80', eventColor(ev.id))}>
                     {ev.allDay ? ev.title : `${fmtTime(ev.startAt)} ${ev.title}`}
                   </button>
                 ))}
                 {dayEvs.length > 3 && (
-                  <p className="text-[10px] text-muted-foreground/50 px-1">+{dayEvs.length - 3} more</p>
+                  <p className="text-[0.625rem] text-muted-foreground/50 px-1">+{dayEvs.length - 3} more</p>
                 )}
               </div>
             </div>
@@ -686,13 +796,13 @@ function YearView({
           return (
             <div key={month.toISOString()} className="bg-card/50 border border-border/30 rounded-lg p-3 hover:border-primary/30 transition-colors">
               <button onClick={() => onMonthClick(month)}
-                className="text-[13px] font-semibold text-foreground mb-2 hover:text-primary transition-colors w-full text-left">
+                className="text-[0.8125rem] font-semibold text-foreground mb-2 hover:text-primary transition-colors w-full text-left">
                 {format(month, 'MMMM')}
               </button>
               {/* Mini grid */}
               <div className="grid grid-cols-7 gap-px">
                 {['M','T','W','T','F','S','S'].map((d, i) => (
-                  <div key={i} className="text-[9px] text-center text-muted-foreground/40 font-medium pb-0.5">{d}</div>
+                  <div key={i} className="text-[0.5625rem] text-center text-muted-foreground/40 font-medium pb-0.5">{d}</div>
                 ))}
                 {mDays.map((day) => {
                   const inM    = isSameMonth(day, month);
@@ -700,7 +810,7 @@ function YearView({
                   const hasEv  = eventDays.has(format(day, 'yyyy-MM-dd'));
                   return (
                     <div key={day.toISOString()}
-                      className={cn('relative text-[10px] text-center h-5 flex items-center justify-center rounded-full',
+                      className={cn('relative text-[0.625rem] text-center h-5 flex items-center justify-center rounded-full',
                         !inM && 'opacity-25',
                         today && 'bg-primary text-primary-foreground font-bold',
                         !today && inM && 'text-muted-foreground/70',
@@ -790,7 +900,7 @@ function TimelineView({
             'flex-1 min-w-0 text-center py-2 border-l border-border/20',
             isToday(day) && 'bg-primary/5',
           )}>
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-semibold">
+            <span className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/50 font-semibold">
               {format(day, 'EEE')}
             </span>
             <div className={cn('text-sm font-semibold mx-auto mt-0.5 w-7 h-7 flex items-center justify-center rounded-full',
@@ -802,7 +912,7 @@ function TimelineView({
               <div className="px-1 mt-1 space-y-0.5">
                 {allDayFor(day).map((ev) => (
                   <button key={ev.id} onClick={() => onSelectEvent(ev)}
-                    className={cn('w-full text-left px-1.5 py-0.5 rounded text-[10px] font-medium truncate', eventColor(ev.id))}>
+                    className={cn('w-full text-left px-1.5 py-0.5 rounded text-[0.625rem] font-medium truncate', eventColor(ev.id))}>
                     {ev.title}
                   </button>
                 ))}
@@ -818,7 +928,7 @@ function TimelineView({
           {/* Hour labels */}
           <div className="w-14 shrink-0 relative">
             {Array.from({ length: DAY_HOURS }, (_, h) => (
-              <div key={h} className="absolute right-2 text-[10px] text-muted-foreground/40 -translate-y-1/2"
+              <div key={h} className="absolute right-2 text-[0.625rem] text-muted-foreground/40 -translate-y-1/2"
                 style={{ top: h * SLOT_H }}>
                 {h === 0 ? '' : format(new Date(2000, 0, 1, h), 'ha').toLowerCase()}
               </div>
@@ -899,10 +1009,10 @@ function TimelineView({
                   const leftPct  = col * widthPct;
                   return (
                     <button key={ev.id} onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
-                      className={cn('absolute rounded px-1.5 py-0.5 text-[11px] font-medium text-left overflow-hidden transition-opacity hover:opacity-80 z-10', eventColor(ev.id))}
+                      className={cn('absolute rounded px-1.5 py-0.5 text-[0.6875rem] font-medium text-left overflow-hidden transition-opacity hover:opacity-80 z-10', eventColor(ev.id))}
                       style={{ top, height: h, left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)` }}>
                       <span className="block truncate leading-tight">{ev.title}</span>
-                      {h > 28 && <span className="block text-[10px] opacity-75 leading-tight truncate">{fmtTime(ev.startAt)}</span>}
+                      {h > 28 && <span className="block text-[0.625rem] opacity-75 leading-tight truncate">{fmtTime(ev.startAt)}</span>}
                     </button>
                   );
                 });
@@ -983,7 +1093,7 @@ function AgendaView({
                   )}>
                     {format(day, 'd')}
                   </p>
-                  <p className="text-[10px] text-muted-foreground/40">{format(day, 'MMM')}</p>
+                  <p className="text-[0.625rem] text-muted-foreground/40">{format(day, 'MMM')}</p>
                 </div>
 
                 {/* Events for the day */}
@@ -1017,7 +1127,7 @@ function AgendaView({
                             </span>
                           )}
                           {ev.isRecurring && (
-                            <span className="text-[10px] text-muted-foreground/40 flex items-center gap-0.5">
+                            <span className="text-[0.625rem] text-muted-foreground/40 flex items-center gap-0.5">
                               <Repeat className="w-3 h-3" /> Recurring
                             </span>
                           )}
@@ -1025,7 +1135,7 @@ function AgendaView({
                       </div>
 
                       {ev.attendees.length > 0 && (
-                        <span className="text-[10px] text-muted-foreground/40 flex items-center gap-1 shrink-0">
+                        <span className="text-[0.625rem] text-muted-foreground/40 flex items-center gap-1 shrink-0">
                           <Users className="w-3 h-3" /> {ev.attendees.length}
                         </span>
                       )}
@@ -1328,7 +1438,7 @@ function AvailabilityPanel({
             : <><Users className="w-3 h-3" /> Check availability</>}
         </Button>
 
-        <p className="text-[10px] text-muted-foreground/40">
+        <p className="text-[0.625rem] text-muted-foreground/40">
           {format(viewStart, 'MMM d')} – {format(viewEnd, 'MMM d, yyyy')}
         </p>
       </div>
@@ -1345,13 +1455,13 @@ function AvailabilityPanel({
             {/* ── Find a time ── */}
             <div className="px-4 pt-4 pb-3 border-b border-border/20 space-y-2.5">
               <div className="flex items-center justify-between">
-                <p className="text-[11px] font-semibold text-foreground/80">Find a time</p>
+                <p className="text-[0.6875rem] font-semibold text-foreground/80">Find a time</p>
                 {/* Duration chips */}
                 <div className="flex items-center gap-1">
                   {([60, 90, 120] as FBDuration[]).map((d) => (
                     <button key={d} onClick={() => setDuration(d)}
                       className={cn(
-                        'px-2 py-0.5 rounded text-[10px] font-medium transition-colors border',
+                        'px-2 py-0.5 rounded text-[0.625rem] font-medium transition-colors border',
                         duration === d
                           ? 'bg-primary text-primary-foreground border-primary'
                           : 'border-border/40 text-muted-foreground/60 hover:border-primary/40 hover:text-foreground',
@@ -1369,14 +1479,14 @@ function AvailabilityPanel({
                   {suggestedSlots.map((slot, i) => (
                     <div key={i} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg bg-emerald-500/8 border border-emerald-500/20 hover:bg-emerald-500/12 transition-colors">
                       <div className="min-w-0">
-                        <p className="text-[11px] font-medium text-foreground/80 truncate">{format(slot.start, 'EEE, MMM d')}</p>
-                        <p className="text-[10px] text-muted-foreground/60">
+                        <p className="text-[0.6875rem] font-medium text-foreground/80 truncate">{format(slot.start, 'EEE, MMM d')}</p>
+                        <p className="text-[0.625rem] text-muted-foreground/60">
                           {format(slot.start, 'h:mm a')} – {format(slot.end, 'h:mm a')}
                         </p>
                       </div>
                       <Button size="sm" variant="ghost"
                         onClick={() => onSuggestTime(slot.start, slot.end, attendees)}
-                        className="h-6 px-2 text-[10px] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1">
+                        className="h-6 px-2 text-[0.625rem] text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/15 shrink-0 gap-1">
                         Use <ChevronRight className="w-3 h-3" />
                       </Button>
                     </div>
@@ -1395,7 +1505,7 @@ function AvailabilityPanel({
                 return (
                   <div key={day.toISOString()} className="px-4 py-2.5 space-y-1.5">
                     {/* Date header */}
-                    <span className={cn('text-[11px] font-semibold', isToday(day) ? 'text-primary' : 'text-muted-foreground/60')}>
+                    <span className={cn('text-[0.6875rem] font-semibold', isToday(day) ? 'text-primary' : 'text-muted-foreground/60')}>
                       {format(day, 'EEE, MMM d')}
                     </span>
 
@@ -1408,7 +1518,7 @@ function AvailabilityPanel({
                           {/* Label */}
                           <div className="flex items-center gap-1 w-24 shrink-0">
                             <span className={cn('w-2 h-2 rounded-full shrink-0', color.dot)} />
-                            <span className="text-[10px] text-muted-foreground/60 truncate">{fb.email.split('@')[0]}</span>
+                            <span className="text-[0.625rem] text-muted-foreground/60 truncate">{fb.email.split('@')[0]}</span>
                           </div>
                           {/* Timeline bar */}
                           <div className="relative flex-1 h-4 bg-muted/20 rounded border border-border/20">
@@ -1442,7 +1552,7 @@ function AvailabilityPanel({
                       <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1 w-24 shrink-0">
                           <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-500/70" />
-                          <span className="text-[10px] text-emerald-600/70 font-medium truncate">Free for all</span>
+                          <span className="text-[0.625rem] text-emerald-600/70 font-medium truncate">Free for all</span>
                         </div>
                         <div className="relative flex-1 h-4 bg-muted/20 rounded border border-border/20">
                           {freeAll.map((fw, fi) => (
@@ -1530,6 +1640,8 @@ function EventDetailPanel({
     (a) => a.email.toLowerCase() === currentUserEmail?.toLowerCase(),
   );
   const showRsvp = !isOrganizer && (isAttendee || event.attendees.length === 0);
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const resize = useResizable({ key: 'calendarDetail', defaultWidth: 320, min: 280, max: 560, edge: 'left' });
 
   const [rsvping, setRsvping] = useState<'ACCEPT' | 'DECLINE' | 'TENTATIVE' | null>(null);
 
@@ -1540,7 +1652,12 @@ function EventDetailPanel({
   };
 
   return (
-    <div className="w-80 shrink-0 border-l border-border/40 flex flex-col h-full bg-card/60 overflow-x-hidden">
+    <div
+      style={{ width: resize.width }}
+      className="relative shrink-0 border-l border-border/40 flex flex-col h-full bg-card/60 overflow-x-hidden"
+    >
+      {/* Drag the left edge to resize the event detail drawer. */}
+      <ResizeHandle edge="left" resizable={resize} label="Resize event details" />
       {/* Header */}
       <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-border/40 shrink-0">
         <h3 className="text-sm font-semibold text-foreground wrap-break-word min-w-0 leading-snug">{event.title}</h3>
@@ -1555,7 +1672,11 @@ function EventDetailPanel({
         </div>
       </div>
 
-      <ScrollArea className="flex-1 min-h-0">
+      {/* Radix ScrollArea wraps content in a `display:table; min-width:100%` div
+          that sizes to content — in this fixed 320px (w-80) drawer that lets long
+          meeting-prep lines and citation chips overflow and clip instead of
+          wrapping. Force that wrapper to block so it respects the viewport width. */}
+      <ScrollArea className="flex-1 min-h-0 [&_[data-radix-scroll-area-viewport]>div]:!block [&_[data-radix-scroll-area-viewport]>div]:!min-w-0">
         <div className="px-4 py-4 space-y-4 overflow-x-hidden">
 
           {/* Badges row */}
@@ -1565,7 +1686,7 @@ function EventDetailPanel({
               {event.allDay ? 'All day' : 'Event'}
             </div>
             {event.isRecurring && (
-              <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium text-muted-foreground/60 bg-muted/40 border border-border/30">
+              <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[0.625rem] font-medium text-muted-foreground/60 bg-muted/40 border border-border/30">
                 <Repeat className="w-3 h-3" />
                 Recurring
               </div>
@@ -1575,7 +1696,7 @@ function EventDetailPanel({
           {/* RSVP buttons — shown for attendees who are not the organizer */}
           {showRsvp && (
             <div className="space-y-1.5">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium">RSVP</p>
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium">RSVP</p>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline"
                   onClick={() => handleRsvp('ACCEPT')}
@@ -1650,7 +1771,7 @@ function EventDetailPanel({
           {/* Description */}
           {event.description && (
             <div className="text-sm text-foreground/70 leading-relaxed wrap-break-word overflow-x-hidden">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Description</p>
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Description</p>
               <Linkified text={event.description} />
             </div>
           )}
@@ -1658,7 +1779,7 @@ function EventDetailPanel({
           {/* Linked source email */}
           {event.linkedMessageId && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Source email</p>
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Source email</p>
               <a
                 href={`/mail?open=${encodeURIComponent(event.linkedMessageId)}`}
                 className="flex items-center gap-2 px-3 py-2 rounded-md border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs hover:bg-amber-100 dark:hover:bg-amber-800/30 transition-colors"
@@ -1673,15 +1794,26 @@ function EventDetailPanel({
           {/* Organizer */}
           {event.organizer && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Organizer</p>
-              <p className="text-xs text-foreground/70 break-all">{event.organizer}</p>
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium mb-1">Organizer</p>
+              {currentUserEmail && event.organizer.toLowerCase() === currentUserEmail.toLowerCase() ? (
+                <p className="text-xs text-foreground/70 break-all">{event.organizer}</p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => usePeopleStore.getState().openDossier({ email: event.organizer!, name: null })}
+                  title="Open dossier"
+                  className="text-xs text-foreground/70 break-all hover:underline cursor-pointer text-left"
+                >
+                  {event.organizer}
+                </button>
+              )}
             </div>
           )}
 
           {/* Attendees */}
           {(attendeesLoading || event.attendees.length > 0) && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-medium mb-2">
+              <p className="text-[0.625rem] uppercase tracking-wider text-muted-foreground/40 font-medium mb-2">
                 {attendeesLoading
                   ? 'Attendees'
                   : `Attendees (${event.attendees.length})`}
@@ -1710,23 +1842,46 @@ function EventDetailPanel({
                         : ptst === 'DE' ? 'text-rose-500'
                         : ptst === 'TE' ? 'text-amber-500'
                         : 'text-muted-foreground/40';
+                      const isSelf = a.email.toLowerCase() === currentUserEmail?.toLowerCase();
                       return (
                         <div key={a.email} className="flex items-start gap-2">
-                          <div className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[9px] font-semibold flex items-center justify-center shrink-0 mt-0.5">
+                          <div className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[0.5625rem] font-semibold flex items-center justify-center shrink-0 mt-0.5">
                             {(a.name ?? a.email).slice(0, 2).toUpperCase()}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {a.name && (
-                                <p className="text-xs font-medium text-foreground/80 truncate">{a.name}</p>
+                                isSelf ? (
+                                  <p className="text-xs font-medium text-foreground/80 truncate">{a.name}</p>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => usePeopleStore.getState().openDossier({ email: a.email, name: a.name })}
+                                    title="Open dossier"
+                                    className="text-xs font-medium text-foreground/80 truncate hover:underline cursor-pointer text-left"
+                                  >
+                                    {a.name}
+                                  </button>
+                                )
                               )}
                               {ptstLabel && (
-                                <span className={cn('text-[10px] font-medium', ptstColor)}>
+                                <span className={cn('text-[0.625rem] font-medium', ptstColor)}>
                                   · {ptstLabel}
                                 </span>
                               )}
                             </div>
-                            <p className="text-[11px] text-muted-foreground/55 break-all">{a.email}</p>
+                            {isSelf ? (
+                              <p className="text-[0.6875rem] text-muted-foreground/55 break-all">{a.email}</p>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => usePeopleStore.getState().openDossier({ email: a.email, name: a.name })}
+                                title="Open dossier"
+                                className="text-[0.6875rem] text-muted-foreground/55 break-all hover:underline cursor-pointer text-left"
+                              >
+                                {a.email}
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -1734,6 +1889,8 @@ function EventDetailPanel({
               </div>
             </div>
           )}
+
+          {aiEnabled && <MeetingPrepView eventId={event.id} />}
         </div>
       </ScrollArea>
 
@@ -1772,8 +1929,26 @@ export default function CalendarPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createForDay, setCreateForDay]  = useState<Date | undefined>();
   const [editingEvent, setEditingEvent]  = useState<CalEvent | null>(null);
-  const [dragPrefill, setDragPrefill] = useState<{ title?: string; description?: string; linkedMessageId?: string; linkedSubject?: string } | null>(null);
+  const [dragPrefill, setDragPrefill] = useState<CreateEventPrefillData | null>(null);
   const [deleting, setDeleting]     = useState(false);
+
+  // Natural-language event quick-add
+  const aiEnabled = useAIStore((s) => s.enabled);
+  const aiModel   = useAIStore((s) => s.model);
+  const [quickAdd, setQuickAdd] = useState('');
+  const [quickAdding, setQuickAdding] = useState(false);
+  // Cancels a stale quick-add parse when a new one is submitted, or on unmount —
+  // otherwise a fallback parse resolving after the fact could still open the modal.
+  const quickAddAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => { quickAddAbortRef.current?.abort(); };
+  }, []);
+  // The shared create modal below is opened by several flows (quick-add, the
+  // New Event buttons, day-click, mail drag-drop, the createFromEmail deep
+  // link). Only a quick-add-originated save should clear the quick-add text —
+  // every other open path resets this to false so a stale true (e.g. from a
+  // cancelled quick-add) can't leak into an unrelated creation.
+  const quickAddOriginRef = useRef(false);
 
   // Availability
   const [showAvailability, setShowAvailability] = useState(false);
@@ -1835,9 +2010,59 @@ export default function CalendarPage() {
     if (!createFromEmail) return;
     window.history.replaceState({}, '', window.location.pathname);
     const subject = params.get('subject') ?? '';
-    setDragPrefill({ title: subject, linkedMessageId: createFromEmail, linkedSubject: subject });
+    quickAddOriginRef.current = false;
+    setDragPrefill({
+      title: subject,
+      linkedMessageId: createFromEmail,
+      linkedSubject: subject,
+      aiFillMessageId: createFromEmail,
+    });
     setShowCreate(true);
   }, [hydrated, isAuthenticated]); // eslint-disable-line
+
+  // Deep link: /calendar?event=<id> selects that event (opening EventDetailPanel)
+  // once events for the current range have loaded, then cleans the URL. Reads
+  // window.location.search (not useSearchParams) to avoid forcing a Suspense
+  // boundary on this client page at build time. If the id isn't among the
+  // loaded events, falls back to fetching it directly; a 404/failure warns
+  // quietly rather than crashing. Consume-once via ref so it doesn't re-fire
+  // as `events`/`loading` change on later range navigation.
+  const openEventById = useCallback((eventId: string) => {
+    const found = events.find((e) => e.id === eventId);
+    if (found) {
+      setSelectedEvent(found);
+      return;
+    }
+    // Outside the loaded range — fetch it directly; a 404/failure warns
+    // quietly rather than crashing.
+    api.calendar.getEvent(eventId)
+      .then((full) => { if (full) setSelectedEvent(full as CalEvent); })
+      .catch((err) => console.warn('Failed to load event by id', err));
+  }, [events]);
+
+  const eventParamConsumedRef = useRef(false);
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated || loading) return;
+    if (eventParamConsumedRef.current) return;
+    const eventId = new URLSearchParams(window.location.search).get('event');
+    if (!eventId) return;
+    eventParamConsumedRef.current = true;
+    openEventById(eventId);
+    router.replace('/calendar');
+  }, [hydrated, isAuthenticated, loading, openEventById, router]);
+
+  // Same-route chip clicks from the Ask panel: /calendar?event=<id> is the
+  // cross-route mechanism, but pushing it while already on /calendar can't
+  // re-trigger the consume-once effect above, so the panel publishes an
+  // openTarget instead. Consume-and-clear whenever the type is ours.
+  const askOpenTarget = useAskStore((s) => s.openTarget);
+  const clearAskOpenTarget = useAskStore((s) => s.clearOpenTarget);
+  useEffect(() => {
+    if (askOpenTarget?.type !== 'event') return;
+    const { id } = askOpenTarget;
+    clearAskOpenTarget();
+    openEventById(id);
+  }, [askOpenTarget, clearAskOpenTarget, openEventById]);
 
   // When an event is selected, fetch full details from Zimbra (complete attendee list)
   useEffect(() => {
@@ -1862,14 +2087,11 @@ export default function CalendarPage() {
     const raw = sessionStorage.getItem('govmail-prefill-calendar');
     if (!raw) return;
     sessionStorage.removeItem('govmail-prefill-calendar');
-    try {
-      const msg = JSON.parse(raw);
-      setDragPrefill({
-        title: msg.subject ?? '',
-        description: msg.snippet ? `From: ${msg.from}\n\n${msg.snippet}` : `From: ${msg.from}`,
-      });
-      setShowCreate(true);
-    } catch { /* ignore */ }
+    const payload = parseMailDragPayload(raw);
+    if (!payload) return;
+    quickAddOriginRef.current = false;
+    setDragPrefill(dropPrefillFromPayload(payload));
+    setShowCreate(true);
   }, [hydrated]); // eslint-disable-line
 
   // Fetch free/busy for a list of emails in one batch call
@@ -1925,18 +2147,41 @@ export default function CalendarPage() {
     }
   }, []);
 
+  const handleQuickAddEvent = async () => {
+    const input = quickAdd.trim();
+    if (!input || quickAdding) return;
+    quickAddAbortRef.current?.abort();
+    const controller = new AbortController();
+    quickAddAbortRef.current = controller;
+    setQuickAdding(true);
+    try {
+      const prefill = await quickAddEventPrefill(input, {
+        enabled: aiEnabled,
+        model: aiModel,
+        client: new AIClient(),
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      quickAddOriginRef.current = true;
+      setDragPrefill(prefill);
+      setShowCreate(true);
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      toast.error('Failed to parse event', { description: err?.message });
+    } finally {
+      if (quickAddAbortRef.current === controller) setQuickAdding(false);
+    }
+  };
+
   const handleMailDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    try {
-      const raw = e.dataTransfer.getData('application/x-govmail-msg');
-      if (!raw) return;
-      const msg = JSON.parse(raw);
-      setDragPrefill({
-        title: msg.subject ?? '',
-        description: msg.snippet ? `From: ${msg.from}\n\n${msg.snippet}` : `From: ${msg.from}`,
-      });
-      setShowCreate(true);
-    } catch { /* ignore */ }
+    const raw = e.dataTransfer.getData('application/x-govmail-msg');
+    if (!raw) return;
+    const payload = parseMailDragPayload(raw);
+    if (!payload) return;
+    quickAddOriginRef.current = false;
+    setDragPrefill(dropPrefillFromPayload(payload));
+    setShowCreate(true);
   };
 
   if (!hydrated) return null;
@@ -1999,7 +2244,7 @@ export default function CalendarPage() {
             </div>
             {/* New Event — shown on mobile right side of row 1 */}
             <Button size="sm"
-              onClick={() => { setCreateForDay(undefined); setShowCreate(true); }}
+              onClick={() => { quickAddOriginRef.current = false; setCreateForDay(undefined); setShowCreate(true); }}
               className="lg:hidden bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-3 gap-1.5">
               <Plus className="w-3.5 h-3.5" /> New
             </Button>
@@ -2031,12 +2276,32 @@ export default function CalendarPage() {
                 <span className="hidden sm:inline">Availability</span>
               </Button>
               <Button size="sm"
-                onClick={() => { setCreateForDay(undefined); setShowCreate(true); }}
+                onClick={() => { quickAddOriginRef.current = false; setCreateForDay(undefined); setShowCreate(true); }}
                 className="hidden lg:flex bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-4 gap-1.5">
                 <Plus className="w-3.5 h-3.5" /> New Event
               </Button>
             </div>
           </div>
+        </div>
+
+        {/* ── Natural-language quick-add ── */}
+        <div className="px-3 lg:px-6 py-2 flex items-center gap-2 shrink-0 border-b border-border/30">
+          <form
+            onSubmit={(e) => { e.preventDefault(); void handleQuickAddEvent(); }}
+            className="flex-1 flex items-center gap-2"
+          >
+            <Input
+              value={quickAdd}
+              onChange={(e) => setQuickAdd(e.target.value)}
+              placeholder='Try "Steering committee Tuesday 10–11 with Erick and Tricia"'
+              className="h-9 text-ui"
+              disabled={quickAdding}
+            />
+            <Button type="submit" size="sm" disabled={quickAdding || !quickAdd.trim()}>
+              {quickAdding ? 'Parsing…' : 'Add'}
+            </Button>
+          </form>
+          {quickAdding && aiEnabled && <AIWorkingIndicator step="Parsing your event" />}
         </div>
 
         {/* ── Main content area ── */}
@@ -2054,7 +2319,7 @@ export default function CalendarPage() {
                 currentDate={currentDate}
                 events={events}
                 onSelectEvent={setSelectedEvent}
-                onCreateForDay={(d) => { setCreateForDay(d); setShowCreate(true); }}
+                onCreateForDay={(d) => { quickAddOriginRef.current = false; setCreateForDay(d); setShowCreate(true); }}
               />
             )}
 
@@ -2064,7 +2329,7 @@ export default function CalendarPage() {
                 events={events}
                 freeBusy={null}
                 onSelectEvent={setSelectedEvent}
-                onCreateForDay={(d) => { setCreateForDay(d); setShowCreate(true); }}
+                onCreateForDay={(d) => { quickAddOriginRef.current = false; setCreateForDay(d); setShowCreate(true); }}
               />
             )}
 
@@ -2122,13 +2387,25 @@ export default function CalendarPage() {
         <CreateEventModal
           initialDate={createForDay}
           prefillData={dragPrefill ?? undefined}
-          onClose={() => { setShowCreate(false); setCreateForDay(undefined); setDragPrefill(null); }}
+          onClose={() => {
+            setShowCreate(false);
+            setCreateForDay(undefined);
+            setDragPrefill(null);
+            // A cancelled quick-add must not clear the input; but the origin
+            // flag itself is spent either way so a later, unrelated open (day
+            // click, New Event, ...) can never inherit it.
+            quickAddOriginRef.current = false;
+          }}
           onCreated={(event) => {
             setEvents((prev) => [...prev, event]);
             setShowCreate(false);
             setCreateForDay(undefined);
             setDragPrefill(null);
             setSelectedEvent(event);
+            if (quickAddOriginRef.current) {
+              setQuickAdd('');
+              quickAddOriginRef.current = false;
+            }
           }}
         />
       )}

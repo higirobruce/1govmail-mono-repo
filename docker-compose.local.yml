@@ -13,7 +13,7 @@ x-api-env: &api-env
 services:
   # ── Database ──────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     ports:
       - "5432:5432"   # exposed so you can connect with TablePlus / psql

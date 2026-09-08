@@ -204,7 +204,7 @@ export function AppTour({
       >
         {/* Step counter + close */}
         <div className="flex items-center justify-between">
-          <span className="text-[11px] text-muted-foreground/50 font-medium uppercase tracking-wider">
+          <span className="text-[0.6875rem] text-muted-foreground/50 font-medium uppercase tracking-wider">
             {step + 1} / {STEPS.length}
           </span>
           <button

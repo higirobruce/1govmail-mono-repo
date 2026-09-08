@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Editor, Range } from '@tiptap/core';
+import { bearerHeaders } from '@/lib/authed-fetch';
 
 // ── Command items ─────────────────────────────────────────────────────────────
 
@@ -160,7 +161,7 @@ export const SLASH_COMMANDS: SlashCommandItem[] = [
         const formData = new FormData();
         formData.append('file', file);
         try {
-          const res = await fetch('/upload/image', { method: 'POST', body: formData });
+          const res = await fetch('/upload/image', { method: 'POST', body: formData, headers: bearerHeaders() });
           const { url } = await res.json();
           editor.chain().focus().setImage({ src: url, alt: file.name }).run();
         } catch { /* ignore */ }
@@ -350,7 +351,7 @@ export const SlashCommandMenu = forwardRef<SlashCommandMenuHandle, SlashCommandM
       <div className="flex flex-col py-1">
         {groups.map(({ category, entries }) => (
           <div key={category}>
-            <div className="px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 select-none">
+            <div className="px-2.5 pt-2 pb-0.5 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground/60 select-none">
               {category}
             </div>
             {entries.map(({ item, index }) => (
@@ -372,7 +373,7 @@ export const SlashCommandMenu = forwardRef<SlashCommandMenuHandle, SlashCommandM
                 </span>
                 <span className="flex flex-col min-w-0">
                   <span className="text-xs font-medium leading-tight">{item.title}</span>
-                  <span className="text-[10px] text-muted-foreground leading-tight truncate">{item.description}</span>
+                  <span className="text-[0.625rem] text-muted-foreground leading-tight truncate">{item.description}</span>
                 </span>
               </button>
             ))}

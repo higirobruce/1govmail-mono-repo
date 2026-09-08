@@ -24,17 +24,28 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
+import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
+import { downloadAll } from '@/lib/downloadAll';
+import { getPreviewKind } from '@/lib/attachmentPreviewKind';
+import { AttachmentPreview } from './AttachmentPreview';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
 import ThreadHeader, { type ThreadParticipant } from './ThreadHeader';
+import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
+import { MailAvatar } from './MailAvatar';
 import { useAIStore } from '@/stores/ai.store';
 import { AIClient } from '@/lib/ai/client';
 import { summarizeMessage, summarizeThread } from '@/lib/ai/tasks';
 import { useCharStream } from '@/lib/ai/useCharStream';
-import { Sparkles, X as XIconSmall } from 'lucide-react';
+import { gatherThreadContent } from '@/lib/ai/threadContent';
+import { draftFromThread, assembleDocContent, templateEmoji } from '@/lib/ai/draftDoc';
+import { fetchBodyCached } from '@/lib/mailBodyCache';
+import { ScrollText, X as XIconSmall } from 'lucide-react';
 import ThreadMessage, { type ThreadMessageMeta } from './ThreadMessage';
 import MailDetail from './MailDetail';
+import ComposeModal from './ComposeModal';
 import TaskModal, { type Task, PRIORITY_META } from '@/components/tasks/TaskModal';
 
 const MAX_VISIBLE = 50;
@@ -68,85 +79,19 @@ function getFileGroup(mimeType: string, filename: string): FileGroup {
 
 const GROUP_ORDER: FileGroup[] = ['Images', 'PDFs', 'Documents', 'Spreadsheets', 'Presentations', 'Archives', 'Other'];
 
-type PreviewType = 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'csv';
-
-function getPreviewType(mimeType: string, filename: string): PreviewType | null {
-  const mt = mimeType.toLowerCase();
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  if (mt.startsWith('image/')) return 'image';
-  if (mt === 'application/pdf' || ext === 'pdf') return 'pdf';
-  if (mt === 'text/csv' || ext === 'csv') return 'csv';
-  if (mt.startsWith('text/')) return 'text';
-  if (mt.startsWith('video/') || ['mp4', 'webm', 'ogg', 'mov'].includes(ext)) return 'video';
-  if (mt.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'aac', 'm4a'].includes(ext)) return 'audio';
-  return null;
-}
-
-// Fetches a text blob URL and returns the raw text for rendering
-function TextFetcher({ url }: { url: string }) {
-  const [text, setText] = useState<string | null>(null);
-  useEffect(() => {
-    fetch(url).then((r) => r.text()).then(setText).catch(() => setText('Failed to load file'));
-  }, [url]);
-  if (text === null) return <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40 mx-auto" />;
-  return <>{text}</>;
-}
-
-// Renders a CSV blob URL as a simple table
-function CsvPreview({ url }: { url: string }) {
-  const [rows, setRows] = useState<string[][]>([]);
-  useEffect(() => {
-    fetch(url)
-      .then((r) => r.text())
-      .then((text) => {
-        const parsed = text.trim().split('\n').map((line) =>
-          line.split(',').map((cell) => cell.replace(/^"|"$/g, '').trim()),
-        );
-        setRows(parsed);
-      })
-      .catch(() => setRows([['Failed to load CSV']]));
-  }, [url]);
-
-  if (rows.length === 0) return <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/40 mx-auto" />;
-  const [header, ...body] = rows;
-  return (
-    <div className="overflow-auto max-h-80 rounded-lg border border-border/30 text-[12px]">
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="bg-muted/50">
-            {header.map((cell, i) => (
-              <th key={i} className="px-3 py-1.5 text-left font-semibold text-foreground/70 border-b border-border/30 whitespace-nowrap">
-                {cell}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {body.slice(0, 200).map((row, ri) => (
-            <tr key={ri} className="even:bg-muted/20 hover:bg-muted/40 transition-colors">
-              {row.map((cell, ci) => (
-                <td key={ci} className="px-3 py-1.5 text-foreground/80 border-b border-border/10 whitespace-nowrap">
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+// Preview classification and rendering are shared with the lightbox — see
+// lib/attachmentPreviewKind and components/mail/AttachmentPreview.
 
 function GroupIcon({ group, className }: { group: FileGroup; className?: string }) {
   const cls = cn('w-4 h-4 shrink-0', className);
   switch (group) {
-    case 'Images':        return <ImageIcon className={cn(cls, 'text-violet-400')} />;
-    case 'PDFs':          return <FileText className={cn(cls, 'text-red-400')} />;
-    case 'Documents':     return <FileText className={cn(cls, 'text-blue-400')} />;
-    case 'Spreadsheets':  return <Table2 className={cn(cls, 'text-emerald-400')} />;
-    case 'Presentations': return <Presentation className={cn(cls, 'text-orange-400')} />;
-    case 'Archives':      return <Archive className={cn(cls, 'text-amber-400')} />;
-    default:              return <File className={cn(cls, 'text-muted-foreground/60')} />;
+    case 'Images':        return <ImageIcon className={cn(cls, 'text-file-image')} />;
+    case 'PDFs':          return <FileText className={cn(cls, 'text-file-pdf')} />;
+    case 'Documents':     return <FileText className={cn(cls, 'text-file-doc')} />;
+    case 'Spreadsheets':  return <Table2 className={cn(cls, 'text-file-sheet')} />;
+    case 'Presentations': return <Presentation className={cn(cls, 'text-file-slides')} />;
+    case 'Archives':      return <Archive className={cn(cls, 'text-file-archive')} />;
+    default:              return <File className={cn(cls, 'text-file-generic')} />;
   }
 }
 
@@ -163,6 +108,9 @@ interface Props {
   loading?: boolean;
   onClose: () => void;
   onComposeWith: (mode: 'reply' | 'replyAll' | 'forward' | 'new', target: any) => void;
+  /** Called after an inline reply is sent — the parent invalidates lists and
+   *  bumps refreshKey so the sent message appears in the thread. */
+  onReplySent?: () => void;
   /** Triggered by the thread toolbar's Quick Reply (AI) button. Should open
    *  compose in 'reply' mode and auto-run the suggestReply task. */
   onQuickReply?: (target: any) => void;
@@ -185,6 +133,7 @@ export default function ThreadView({
   loading,
   onClose,
   onComposeWith,
+  onReplySent,
   onQuickReply,
   onDelete,
   onToggleStar,
@@ -197,6 +146,7 @@ export default function ThreadView({
   onSnooze,
 }: Props) {
   const user = useAuthStore((s) => s.user);
+  const router = useRouter();
 
   const [threadMessages, setThreadMessages] = useState<ThreadMessageMeta[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -208,13 +158,18 @@ export default function ThreadView({
 
   // Tab: 'overview' | 'messages' | 'attachments'
   const [activeTab, setActiveTab] = useState<'overview' | 'messages' | 'attachments'>('messages');
+  const [downloadingAll, setDownloadingAll] = useState(false);
 
   // ── AI summarize state ───────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
-  const aiBaseUrl = useAIStore((s) => s.baseUrl);
   const aiModel = useAIStore((s) => s.model);
-  const aiApiKey = useAIStore((s) => s.apiKey);
-  const { text: streamedSummary, push: pushSummary, reset: resetSummary } = useCharStream();
+  const aiCustomInstructions = useAIStore((s) => s.customInstructions);
+  const {
+    text: streamedSummary,
+    push: pushSummary,
+    reset: resetSummary,
+    replace: replaceSummary,
+  } = useCharStream();
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -243,7 +198,7 @@ export default function ThreadView({
     setSummaryOpen(true);
 
     const activeBody =
-      message?.bodyHtml ?? message?.bodyText ?? message?.snippet ?? '';
+      message?.bodyText ?? message?.bodyHtml ?? message?.snippet ?? '';
     const concatenated = list
       .map((m) => {
         const sender = m.fromName ? `${m.fromName} <${m.fromEmail}>` : m.fromEmail;
@@ -255,11 +210,11 @@ export default function ThreadView({
       .join('\n\n---\n\n');
 
     try {
-      const client = new AIClient({ baseUrl: aiBaseUrl, apiKey: aiApiKey || undefined });
+      const client = new AIClient();
       const last = list[list.length - 1];
       const isThread = list.length > 1;
       const fn = isThread ? summarizeThread : summarizeMessage;
-      await fn(
+      const final = await fn(
         client,
         concatenated,
         {
@@ -268,10 +223,12 @@ export default function ThreadView({
           from: isThread
             ? `Email thread with ${list.length} messages, oldest first`
             : (last?.fromName ?? last?.fromEmail ?? ''),
+          customInstructions: aiCustomInstructions,
           signal: abort.signal,
         },
         pushSummary,
       );
+      if (!abort.signal.aborted) replaceSummary(final);
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') return;
       const m = err instanceof Error ? err.message : String(err);
@@ -279,7 +236,7 @@ export default function ThreadView({
     } finally {
       setSummarizing(false);
     }
-  }, [threadMessages, aiBaseUrl, aiApiKey, aiModel, message, pushSummary, resetSummary]);
+  }, [threadMessages, aiModel, aiCustomInstructions, message, pushSummary, resetSummary, replaceSummary]);
 
   const closeSummary = useCallback(() => {
     summaryAbortRef.current?.abort();
@@ -290,29 +247,105 @@ export default function ThreadView({
     setSummarizing(false);
   }, [resetSummary]);
 
+  // ── AI draft doc state ───────────────────────────────────────────────────
+  // null = idle; a non-null string is the current step shown in the small
+  // popover anchored to the "Draft doc" button (mirrors the summarize
+  // popover's step/abort idioms above).
+  const [draftStep, setDraftStep] = useState<string | null>(null);
+  const draftAbortRef = useRef<AbortController | null>(null);
+
+  // Switching threads aborts any in-flight draft for the previous thread and
+  // hides the popover, same convention as the summary reset effect above.
+  useEffect(() => {
+    draftAbortRef.current?.abort();
+    draftAbortRef.current = null;
+    setDraftStep(null);
+  }, [message?.id]);
+
+  // True unmount-only cleanup (the effect above only fires on thread switch,
+  // not on ThreadView itself unmounting).
+  useEffect(() => () => { draftAbortRef.current?.abort(); }, []);
+
+  const handleDraftDoc = useCallback(async () => {
+    draftAbortRef.current?.abort();
+    const abort = new AbortController();
+    draftAbortRef.current = abort;
+    setDraftStep('Reading thread');
+
+    try {
+      const client = new AIClient();
+      const { text } = await gatherThreadContent(message?.id, {
+        getConversation: api.mail.getConversation,
+        getBody: (id: string) => fetchBodyCached(id, api.mail.getMessage),
+      });
+      if (abort.signal.aborted) return;
+
+      setDraftStep('Choosing template');
+      const draft = await draftFromThread(client, text, {
+        model: aiModel,
+        subject: message?.subject ?? '',
+        customInstructions: aiCustomInstructions,
+        signal: abort.signal,
+      });
+      if (abort.signal.aborted) return;
+
+      setDraftStep('Drafting');
+      const content = assembleDocContent(draft.markdown);
+      const doc = await api.docs.create({
+        title: draft.title,
+        emoji: templateEmoji(draft.templateId),
+        content,
+      });
+      if (abort.signal.aborted) {
+        // The doc was already created server-side by the time Cancel landed —
+        // api.docs.create has no abort signal to race against. Surface that
+        // rather than leaving an orphaned doc with no trace of why it exists.
+        setDraftStep(null);
+        toast.info(`Draft saved to Docs: "${doc.title}"`, {
+          description: 'Cancelled before opening it.',
+          action: { label: 'Open', onClick: () => router.push(`/docs?open=${doc.id}`) },
+        });
+        return;
+      }
+
+      setDraftStep(null);
+      router.push(`/docs?open=${doc.id}`);
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name === 'AbortError') {
+        setDraftStep(null);
+        return;
+      }
+      const m = err instanceof Error ? err.message : String(err);
+      toast.error(m);
+      setDraftStep(null);
+    }
+  }, [message, aiModel, aiCustomInstructions, router]);
+
+  const cancelDraftDoc = useCallback(() => {
+    draftAbortRef.current?.abort();
+    draftAbortRef.current = null;
+    setDraftStep(null);
+  }, []);
+
   // Overview tab: linked tasks
   const [linkedTasks, setLinkedTasks] = useState<Task[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
 
-  // Attachment preview
+  // Attachment preview — blob URLs come from the shared attachment cache
+  // (LRU-revoked), so toggling a preview closed and open again, or previewing
+  // then downloading, never re-downloads the file.
   const [previewState, setPreviewState] = useState<{ id: string; filename: string; mimeType: string; url: string } | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
-  const previewUrlRef = useRef<string | null>(null);
-
-  const router = useRouter();
 
   const handleAttachmentPreview = useCallback(async (att: AttachmentWithSource) => {
     if (previewState?.id === att.id) {
-      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-      previewUrlRef.current = null;
       setPreviewState(null);
       return;
     }
     setPreviewLoadingId(att.id);
     try {
-      const url = await api.mail.downloadAttachment(att.messageId, att.id);
-      previewUrlRef.current = url;
+      const url = await getAttachmentUrl(att.messageId, att.id, () => api.mail.downloadAttachment(att.messageId, att.id));
       setPreviewState({ id: att.id, filename: att.filename, mimeType: att.mimeType, url });
     } catch {
       toast.error('Failed to load preview');
@@ -388,32 +421,67 @@ export default function ThreadView({
     setExpandedId(null);
   }, []);
 
+  // ── Inline reply ───────────────────────────────────────────────────────────
+  // Replies compose in-flow, directly below the message being answered —
+  // the detached floating window is kept for new messages and forwards.
+  const [inlineReply, setInlineReply] = useState<{ mode: 'reply' | 'replyAll'; target: any; initialBody?: string } | null>(null);
+  useEffect(() => { setInlineReply(null); }, [message?.id]);
+
+  const composerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [inlineReply?.target?.id, inlineReply?.mode]);
+
+  const inlineComposer = inlineReply && (
+    <div
+      ref={composerRef}
+      className="mt-2 mb-3"
+    >
+      <ComposeModal
+        inline
+        open
+        mode={inlineReply.mode}
+        originalMessage={inlineReply.target}
+        initialBody={inlineReply.initialBody}
+        onClose={() => setInlineReply(null)}
+        onSent={() => { setInlineReply(null); onReplySent?.(); }}
+      />
+    </div>
+  );
+
   // ── Fallback: single message or conversation not in DB ────────────────────
 
   const fallback = (
-    <MailDetail
-      message={message}
-      loading={loading}
-      onClose={onClose}
-      onReply={() => onComposeWith('reply', message)}
-      onReplyAll={() => onComposeWith('replyAll', message)}
-      onForward={() => onComposeWith('forward', message)}
-      onDelete={onDelete}
-      onToggleStar={onToggleStar}
-      onMoveToInbox={onMoveToInbox}
-      folders={folders}
-      onMoveToFolder={onMoveToFolder}
-      onMute={onMute}
-      isMuted={isMuted}
-      onSnooze={onSnooze}
-    />
+    <div className="h-full flex flex-col">
+      <div className="flex-1 min-h-0">
+        <MailDetail
+          message={message}
+          loading={loading}
+          onClose={onClose}
+          onReply={(initialBody) => setInlineReply({ mode: 'reply', target: message, initialBody })}
+          onReplyAll={(initialBody) => setInlineReply({ mode: 'replyAll', target: message, initialBody })}
+          onForward={() => onComposeWith('forward', message)}
+          onDelete={onDelete}
+          onToggleStar={onToggleStar}
+          onMoveToInbox={onMoveToInbox}
+          folders={folders}
+          onMoveToFolder={onMoveToFolder}
+          onMute={onMute}
+          isMuted={isMuted}
+          onSnooze={onSnooze}
+        />
+      </div>
+      {inlineReply && inlineReply.target?.id === message?.id && (
+        <div className="shrink-0 overflow-y-auto max-h-[60%] px-4 pb-3">{inlineComposer}</div>
+      )}
+    </div>
   );
 
   if (!message?.conversationId) return fallback;
   if (loading || (loadingThread && threadMessages.length === 0)) {
     return (
       <div className="flex h-full items-center justify-center">
-        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/40" />
+        <Loader2 className="w-5 h-5 animate-spin text-ink-4" />
       </div>
     );
   }
@@ -473,6 +541,19 @@ export default function ThreadView({
   });
   const orderedGroups = GROUP_ORDER.filter((g) => grouped[g]?.length);
 
+  const handleDownloadAll = async () => {
+    if (downloadingAll) return;
+    setDownloadingAll(true);
+    const items = allAttachments.map((a) => ({ messageId: a.messageId, id: a.id, filename: a.filename }));
+    const n = await downloadAll(
+      items,
+      (mid, aid) => getAttachmentUrl(mid, aid, () => api.mail.downloadAttachment(mid, aid)),
+      { onError: (f) => toast.error(`Failed to download ${f}`) },
+    );
+    if (n > 0) toast.success(`Downloaded ${n} file${n === 1 ? '' : 's'}`);
+    setDownloadingAll(false);
+  };
+
   // Chronologically last message for header status
   const lastMessage = threadMessages[threadMessages.length - 1];
   const unreadCount = threadMessages.filter((m) => !m.isRead).length;
@@ -484,11 +565,6 @@ export default function ThreadView({
       ? displayMessages.slice(0, MAX_VISIBLE)
       : displayMessages;
   const hiddenCount = displayMessages.length - visibleMessages.length;
-
-  // ── Overview helpers ──────────────────────────────────────────────────────
-  const P_COLORS = ['bg-blue-500','bg-emerald-500','bg-violet-500','bg-amber-500','bg-rose-500','bg-cyan-500','bg-indigo-500','bg-pink-500'];
-  const pColor = (email: string) => { let h = 0; for (let i = 0; i < email.length; i++) h = email.charCodeAt(i) + ((h << 5) - h); return P_COLORS[Math.abs(h) % P_COLORS.length]; };
-  const pInitials = (name: string | null, email: string) => { if (name) { const p = name.trim().split(/\s+/); return ((p[0]?.[0] ?? '') + (p[1]?.[0] ?? '')).toUpperCase() || '?'; } return (email?.[0] ?? '?').toUpperCase(); };
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -504,16 +580,18 @@ export default function ThreadView({
         lastSenderEmail={lastMessage.fromEmail}
         currentUserEmail={user?.email ?? ''}
         onClose={onClose}
-        onReply={() => onComposeWith('reply', lastMessage)}
-        onReplyAll={() => onComposeWith('replyAll', lastMessage)}
+        onReply={() => { setActiveTab('messages'); setInlineReply({ mode: 'reply', target: lastMessage }); }}
+        onReplyAll={() => { setActiveTab('messages'); setInlineReply({ mode: 'replyAll', target: lastMessage }); }}
         onForward={() => onComposeWith('forward', lastMessage)}
         onSummarize={aiEnabled ? handleSummarize : undefined}
         summarizing={summarizing}
+        onDraftDoc={aiEnabled ? handleDraftDoc : undefined}
+        drafting={!!draftStep}
         onQuickReply={aiEnabled && onQuickReply ? () => onQuickReply(lastMessage) : undefined}
       />
 
       {/* Tab bar + Expand All */}
-      <div className="flex items-center border-b border-border/30 px-4 shrink-0 bg-background">
+      <div className="flex items-center border-b border-border-faint px-4 shrink-0 bg-background">
         {/* Tabs */}
         <div className="flex gap-0 flex-1">
           {(['overview', 'messages', 'attachments'] as const).map((tab) => {
@@ -526,10 +604,10 @@ export default function ThreadView({
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={cn(
-                  'px-3 py-2.5 text-[12px] font-medium border-b-2 transition-colors',
+                  'px-3 py-2.5 text-ui font-medium border-b-2 transition-colors',
                   activeTab === tab
                     ? 'border-primary text-foreground'
-                    : 'border-transparent text-muted-foreground/60 hover:text-foreground',
+                    : 'border-transparent text-ink-3 hover:text-foreground',
                 )}
               >
                 {label}
@@ -543,7 +621,7 @@ export default function ThreadView({
           <button
             onClick={handleExpandAll}
             title={expandAll ? 'Collapse all' : 'Expand all'}
-            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-muted-foreground/60 hover:text-foreground hover:bg-muted transition-colors"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-micro font-normal text-ink-3 hover:text-foreground hover:bg-muted transition-colors"
           >
             {expandAll
               ? <><ChevronsDownUp className="w-3.5 h-3.5" /> Collapse all</>
@@ -558,7 +636,7 @@ export default function ThreadView({
 
         {/* ── Overview tab ─────────────────────────────────────────────────── */}
         {activeTab === 'overview' && (
-          <div className="p-4 flex flex-col gap-5 overflow-y-auto">
+          <div className="p-4 flex flex-col gap-5 overflow-y-auto w-full">
 
             {/* Stats row */}
             <div className="flex items-center gap-3 px-1">
@@ -569,17 +647,17 @@ export default function ThreadView({
               ].map(({ value, label }, i, arr) => (
                 <div key={label} className="flex items-center gap-3">
                   <div className="text-center">
-                    <p className="text-[22px] font-semibold text-foreground tabular-nums leading-none">{value}</p>
-                    <p className="text-[11px] text-muted-foreground/45 mt-0.5">{label}{value !== 1 ? 's' : ''}</p>
+                    <p className="text-display font-semibold text-foreground tabular-nums leading-none">{value}</p>
+                    <p className="text-micro font-normal text-ink-3 mt-0.5">{label}{value !== 1 ? 's' : ''}</p>
                   </div>
-                  {i < arr.length - 1 && <div className="w-px h-8 bg-border/40" />}
+                  {i < arr.length - 1 && <div className="w-px h-8 bg-border-faint" />}
                 </div>
               ))}
             </div>
 
             {/* Participants */}
             <div>
-              <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">
+              <p className="text-micro font-semibold text-ink-3 uppercase tracking-[0.06em] mb-2">
                 Participants
               </p>
               <div className="flex flex-col gap-0.5">
@@ -587,21 +665,19 @@ export default function ThreadView({
                   const isMe = p.email === user?.email;
                   return (
                     <div key={p.email} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group">
-                      <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold shrink-0', pColor(p.email))}>
-                        {pInitials(p.name, p.email)}
-                      </div>
+                      <MailAvatar name={p.name} email={p.email} size="sm" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-medium text-foreground truncate">
+                        <p className="text-ui font-medium text-foreground truncate">
                           {isMe ? 'You' : (p.name || p.email)}
                         </p>
                         {!isMe && p.name && (
-                          <p className="text-[11px] text-muted-foreground/50 truncate">{p.email}</p>
+                          <p className="text-micro font-normal text-ink-3 truncate">{p.email}</p>
                         )}
                       </div>
                       {!isMe && (
                         <button
                           onClick={() => onComposeWith('new', { ...message, toRecipients: [{ email: p.email, name: p.name }] })}
-                          className="opacity-0 group-hover:opacity-100 p-1 rounded text-muted-foreground/40 hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded text-ink-4 hover:text-primary hover:bg-primary/10 transition-all shrink-0"
                           title={`New email to ${p.email}`}
                         >
                           <Mail className="w-3.5 h-3.5" />
@@ -614,29 +690,27 @@ export default function ThreadView({
                 {ccParticipants.length > 0 && (
                   <>
                     <div className="flex items-center gap-2 my-1 px-2">
-                      <div className="flex-1 h-px bg-border/30" />
-                      <span className="text-[10px] font-semibold text-muted-foreground/35 uppercase tracking-wider">CC</span>
-                      <div className="flex-1 h-px bg-border/30" />
+                      <div className="flex-1 h-px bg-border-faint" />
+                      <span className="text-micro font-semibold text-ink-4 uppercase tracking-[0.06em]">CC</span>
+                      <div className="flex-1 h-px bg-border-faint" />
                     </div>
                     {ccParticipants.map((p) => {
                       const isMe = p.email === user?.email;
                       return (
                         <div key={p.email} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group">
-                          <div className={cn('w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-semibold shrink-0 opacity-70', pColor(p.email))}>
-                            {pInitials(p.name, p.email)}
-                          </div>
+                          <MailAvatar name={p.name} email={p.email} size="sm" className="opacity-70" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-[13px] text-foreground/80 truncate">
+                            <p className="text-ui text-ink-2 truncate">
                               {isMe ? 'You' : (p.name || p.email)}
                             </p>
                             {!isMe && p.name && (
-                              <p className="text-[11px] text-muted-foreground/50 truncate">{p.email}</p>
+                              <p className="text-micro font-normal text-ink-3 truncate">{p.email}</p>
                             )}
                           </div>
                           {!isMe && (
                             <button
                               onClick={() => onComposeWith('new', { ...message, toRecipients: [{ email: p.email, name: p.name }] })}
-                              className="opacity-0 group-hover:opacity-100 p-1 rounded text-muted-foreground/40 hover:text-primary hover:bg-primary/10 transition-all shrink-0"
+                              className="opacity-0 group-hover:opacity-100 p-1 rounded text-ink-4 hover:text-primary hover:bg-primary/10 transition-all shrink-0"
                               title={`New email to ${p.email}`}
                             >
                               <Mail className="w-3.5 h-3.5" />
@@ -653,12 +727,12 @@ export default function ThreadView({
             {/* Linked Tasks */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider">
+                <p className="text-micro font-semibold text-ink-3 uppercase tracking-[0.06em]">
                   Linked Tasks
                 </p>
                 <button
                   onClick={() => setTaskModalOpen(true)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-ui font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   New Task
@@ -667,12 +741,12 @@ export default function ThreadView({
 
               {loadingTasks ? (
                 <div className="flex justify-center py-6">
-                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/30" />
+                  <Loader2 className="w-5 h-5 animate-spin text-ink-4" />
                 </div>
               ) : linkedTasks.length === 0 ? (
-                <div className="flex items-center gap-2.5 px-3 py-3 rounded-xl border border-dashed border-border/40 text-muted-foreground/40">
+                <div className="flex items-center gap-2.5 px-3 py-3 rounded-xl border border-dashed border-border text-ink-4">
                   <ListTodo className="w-4 h-4 shrink-0" />
-                  <span className="text-[12px]">No tasks linked —{' '}
+                  <span className="text-ui">No tasks linked —{' '}
                     <button onClick={() => setTaskModalOpen(true)} className="text-primary hover:underline">create one</button>
                   </span>
                 </div>
@@ -687,21 +761,21 @@ export default function ThreadView({
                         key={task.id}
                         className={cn(
                           'flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors',
-                          done || cancelled ? 'bg-muted/20 border-border/20' : 'bg-card border-border/30',
+                          done || cancelled ? 'bg-muted/20 border-border-faint' : 'bg-card border-border-faint',
                         )}
                       >
-                        <span className={cn('text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0', pri.cls)}>
+                        <span className={cn('text-micro font-medium px-1.5 py-0.5 rounded-full shrink-0', pri.cls)}>
                           {pri.label}
                         </span>
                         <span className={cn(
-                          'flex-1 text-[13px] min-w-0 truncate',
-                          done || cancelled ? 'line-through text-muted-foreground/50' : 'text-foreground',
+                          'flex-1 text-ui min-w-0 truncate',
+                          done || cancelled ? 'line-through text-ink-3' : 'text-foreground',
                         )}>
                           {task.title}
                         </span>
                         <button
                           onClick={() => router.push('/tasks')}
-                          className="shrink-0 p-1 rounded-md text-muted-foreground/40 hover:text-foreground hover:bg-muted transition-colors"
+                          className="shrink-0 p-1 rounded-md text-ink-4 hover:text-foreground hover:bg-muted transition-colors"
                           title="Open in Tasks"
                         >
                           <ExternalLink className="w-3.5 h-3.5" />
@@ -715,27 +789,27 @@ export default function ThreadView({
 
             {/* Quick reply to thread */}
             <div>
-              <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-wider mb-2">
+              <p className="text-micro font-semibold text-ink-3 uppercase tracking-[0.06em] mb-2">
                 Actions
               </p>
               <div className="flex gap-2">
                 <button
-                  onClick={() => onComposeWith('reply', lastMessage)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[12px] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
+                  onClick={() => { setActiveTab('messages'); setInlineReply({ mode: 'reply', target: lastMessage }); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-ui text-ink-2 hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
                   <Mail className="w-3.5 h-3.5" />
                   Reply
                 </button>
                 <button
-                  onClick={() => onComposeWith('replyAll', lastMessage)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[12px] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
+                  onClick={() => { setActiveTab('messages'); setInlineReply({ mode: 'replyAll', target: lastMessage }); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-ui text-ink-2 hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
                   <MessageSquare className="w-3.5 h-3.5" />
                   Reply all
                 </button>
                 <button
                   onClick={() => onComposeWith('forward', lastMessage)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[12px] text-foreground/70 hover:bg-muted/40 hover:text-foreground transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-ui text-ink-2 hover:bg-muted/40 hover:text-foreground transition-colors"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   Forward
@@ -762,23 +836,28 @@ export default function ThreadView({
         {activeTab === 'messages' && (
           <>
             {hiddenCount > 0 && (
-              <div className="px-4 py-2.5 text-center text-[12px] text-muted-foreground/50 border-b border-border/20 bg-muted/10">
+              <div className="px-4 py-2.5 text-center text-ui text-ink-3 border-b border-border-faint bg-muted/10">
                 Showing {MAX_VISIBLE} most recent messages —{' '}
                 <span className="font-medium">{hiddenCount}</span> earlier not shown
               </div>
             )}
             {/* Timeline spine — centered behind the 28px-wide avatars in px-4 rows */}
-            <div className="relative py-3">
-              <div className="absolute left-[30px] top-0 bottom-0 w-px bg-border/25 pointer-events-none" />
+            <div className="relative py-3 w-full">
+              <div className="absolute left-[30px] top-0 bottom-0 w-px bg-border-faint pointer-events-none" />
               {visibleMessages.map((msg) => (
+              <div key={msg.id}>
               <ThreadMessage
-                key={msg.id}
                 message={msg}
                 isExpanded={!msg.isDraft && (expandAll || expandedId === msg.id)}
                 isOnlyMessage={threadMessages.length === 1}
                 onToggle={() => { if (!msg.isDraft) toggleMessage(msg.id); }}
-                onReply={(detail) => onComposeWith('reply', detail ?? msg)}
-                onReplyAll={(detail) => onComposeWith('replyAll', detail ?? msg)}
+                onMarkedRead={() =>
+                  setThreadMessages((prev) =>
+                    prev.map((m) => (m.id === msg.id ? { ...m, isRead: true } : m)),
+                  )
+                }
+                onReply={(detail) => setInlineReply({ mode: 'reply', target: detail ?? msg })}
+                onReplyAll={(detail) => setInlineReply({ mode: 'replyAll', target: detail ?? msg })}
                 onForward={(detail) => onComposeWith('forward', detail ?? msg)}
                 onDelete={msg.isDraft
                   ? async () => {
@@ -791,8 +870,41 @@ export default function ThreadView({
                         toast.error('Failed to delete draft');
                       }
                     }
-                  : onDelete}
-                onToggleStar={onToggleStar}
+                  // Parent onDelete acts on the SELECTED message — only use it
+                  // for that row; other rows delete their own message.
+                  : msg.id === message.id
+                  ? onDelete
+                  : async () => {
+                      try {
+                        await api.mail.delete(msg.id);
+                        locallyDeletedDraftIds.current.add(msg.id);
+                        setThreadMessages((prev) => prev.filter((m) => m.id !== msg.id));
+                        toast.success('Message moved to Trash');
+                      } catch {
+                        toast.error('Failed to delete message');
+                      }
+                    }}
+                onToggleStar={async () => {
+                  if (msg.id === message.id) {
+                    onToggleStar();
+                    setThreadMessages((prev) =>
+                      prev.map((m) => (m.id === msg.id ? { ...m, isStarred: !m.isStarred } : m)),
+                    );
+                    return;
+                  }
+                  const newStarred = !msg.isStarred;
+                  setThreadMessages((prev) =>
+                    prev.map((m) => (m.id === msg.id ? { ...m, isStarred: newStarred } : m)),
+                  );
+                  try {
+                    // Same persistence call the parent's toggleStar uses.
+                    await api.mail.markRead(msg.id, msg.isRead);
+                  } catch {
+                    setThreadMessages((prev) =>
+                      prev.map((m) => (m.id === msg.id ? { ...m, isStarred: !newStarred } : m)),
+                    );
+                  }
+                }}
                 onOpenDraft={msg.isDraft
                   ? (draftMsg) => {
                       // Build a ComposeMessage-compatible object so ComposeModal can pre-fill
@@ -806,6 +918,11 @@ export default function ThreadView({
                     }
                   : undefined}
               />
+              {/* Inline reply card, directly below the message being answered */}
+              {inlineReply && (inlineReply.target?.id ?? message.id) === msg.id && (
+                <div className="pl-12 pr-2">{inlineComposer}</div>
+              )}
+              </div>
               ))}
             </div>
           </>
@@ -813,23 +930,37 @@ export default function ThreadView({
 
         {/* ── Attachments tab ───────────────────────────────────────────────── */}
         {activeTab === 'attachments' && (
-          <div className="p-4">
+          <div className="p-4 w-full">
             {allAttachments.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-2">
-                <Paperclip className="w-8 h-8 text-muted-foreground/20" />
-                <p className="text-[13px] text-muted-foreground/50">No attachments in this thread</p>
+                <Paperclip className="w-8 h-8 text-ink-4" />
+                <p className="text-ui text-ink-3">No attachments in this thread</p>
               </div>
             ) : (
               <div className="flex flex-col gap-6">
+                {allAttachments.length > 1 && (
+                  <div className="flex items-center">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="ml-auto text-primary hover:bg-muted hover:text-primary"
+                      onClick={handleDownloadAll}
+                      disabled={downloadingAll}
+                    >
+                      {downloadingAll ? <Loader2 className="animate-spin" /> : <Download />}
+                      Download all
+                    </Button>
+                  </div>
+                )}
                 {orderedGroups.map((group) => (
                   <div key={group}>
                     {/* Group header */}
                     <div className="flex items-center gap-2 mb-2">
                       <GroupIcon group={group} />
-                      <span className="text-[12px] font-semibold text-foreground/70 uppercase tracking-wide">
+                      <span className="text-micro font-semibold text-ink-3 uppercase tracking-[0.06em]">
                         {group}
                       </span>
-                      <span className="text-[11px] text-muted-foreground/40">
+                      <span className="text-micro font-normal text-ink-4">
                         ({grouped[group]!.length})
                       </span>
                     </div>
@@ -837,7 +968,7 @@ export default function ThreadView({
                     {/* Attachment rows */}
                     <div className="flex flex-col gap-1">
                       {grouped[group]!.map((att) => {
-                        const pt = getPreviewType(att.mimeType, att.filename);
+                        const pt = getPreviewKind(att.mimeType, att.filename);
                         const isActive = previewState?.id === att.id;
                         return (
                           <div key={`${att.messageId}-${att.id}`}>
@@ -849,20 +980,22 @@ export default function ThreadView({
                             >
                               <GroupIcon group={group} className="opacity-60" />
                               <div className="flex-1 min-w-0">
-                                <p className="text-[13px] text-foreground truncate">{att.filename}</p>
-                                <p className="text-[11px] text-muted-foreground/50 truncate">
+                                <p className="text-ui text-foreground truncate">{att.filename}</p>
+                                <p className="text-micro font-normal text-ink-3 truncate">
                                   {att.fromName ?? att.fromEmail}
                                   {att.size > 0 && ` · ${formatBytes(att.size)}`}
                                 </p>
                               </div>
                               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all shrink-0">
                                 {pt && (
-                                  <button
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
                                     onClick={() => handleAttachmentPreview(att)}
                                     disabled={!!previewLoadingId}
                                     className={cn(
-                                      'p-1.5 rounded-md transition-colors disabled:opacity-30',
-                                      isActive ? 'text-primary' : 'text-muted-foreground/40 hover:text-foreground hover:bg-muted',
+                                      'disabled:opacity-30 hover:bg-muted',
+                                      isActive ? 'text-primary' : 'text-ink-3 hover:text-foreground',
                                     )}
                                     aria-label={isActive ? 'Close preview' : 'Preview'}
                                   >
@@ -871,87 +1004,73 @@ export default function ThreadView({
                                       : pt === 'video' ? <Video className="w-3.5 h-3.5" />
                                       : pt === 'audio' ? <Music className="w-3.5 h-3.5" />
                                       : <Eye className="w-3.5 h-3.5" />}
-                                  </button>
+                                  </Button>
                                 )}
-                                <button
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
                                   onClick={() =>
-                                    api.mail
-                                      .downloadAttachment(att.messageId, att.id)
+                                    getAttachmentUrl(att.messageId, att.id, () => api.mail.downloadAttachment(att.messageId, att.id))
                                       .then((url) => {
                                         const a = document.createElement('a');
                                         a.href = url;
                                         a.download = att.filename;
                                         a.click();
-                                        setTimeout(() => URL.revokeObjectURL(url), 5_000);
                                       })
                                       .catch(() => toast.error('Download failed'))
                                   }
-                                  className="p-1.5 rounded-md text-muted-foreground/40 hover:text-foreground hover:bg-muted transition-all"
+                                  className="text-ink-3 hover:bg-muted hover:text-foreground"
                                   aria-label={`Download ${att.filename}`}
                                 >
                                   <Download className="w-3.5 h-3.5" />
-                                </button>
+                                </Button>
                               </div>
                             </div>
 
                             {/* Inline preview panel */}
                             {isActive && previewState && (
-                              <div className="mt-1 mb-2 border border-border/40 rounded-xl overflow-hidden bg-card">
-                                <div className="flex items-center justify-between px-4 py-2 border-b border-border/30 bg-muted/20">
-                                  <span className="text-[12px] font-medium text-foreground/70 truncate flex-1 mr-3">
+                              <div className="mt-1 mb-2 border border-border rounded-xl overflow-hidden bg-card">
+                                <div className="flex items-center justify-between px-4 py-2 border-b border-border-faint bg-muted/20">
+                                  <span className="text-ui font-medium text-ink-2 truncate flex-1 mr-3">
                                     {previewState.filename}
                                   </span>
                                   <div className="flex items-center gap-1 shrink-0">
-                                    <button
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
                                       onClick={() =>
-                                        api.mail.downloadAttachment(att.messageId, att.id).then((url) => {
+                                        getAttachmentUrl(att.messageId, att.id, () => api.mail.downloadAttachment(att.messageId, att.id)).then((url) => {
                                           const a = document.createElement('a');
                                           a.href = url;
                                           a.download = att.filename;
                                           a.click();
-                                          setTimeout(() => URL.revokeObjectURL(url), 5_000);
                                         })
                                       }
-                                      className="p-1 rounded text-muted-foreground/45 hover:text-foreground transition-colors"
+                                      className="text-ink-3 hover:bg-muted hover:text-foreground"
+                                      aria-label="Download"
                                       title="Download"
                                     >
                                       <Download className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-                                        previewUrlRef.current = null;
-                                        setPreviewState(null);
-                                      }}
-                                      className="p-1 rounded text-muted-foreground/45 hover:text-foreground transition-colors"
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      onClick={() => setPreviewState(null)}
+                                      className="text-ink-3 hover:bg-muted hover:text-foreground"
+                                      aria-label="Close"
                                       title="Close"
                                     >
-                                      <Download className="w-3.5 h-3.5 rotate-180" />
-                                    </button>
+                                      <XIconSmall className="w-3.5 h-3.5" />
+                                    </Button>
                                   </div>
                                 </div>
                                 <div className="p-3 bg-muted/10">
-                                  {(() => {
-                                    const pt2 = getPreviewType(previewState.mimeType, previewState.filename);
-                                    if (pt2 === 'image') return (
-                                      <img src={previewState.url} alt={previewState.filename} className="max-w-full h-auto rounded-lg block mx-auto" style={{ maxHeight: 480 }} />
-                                    );
-                                    if (pt2 === 'video') return (
-                                      <video controls src={previewState.url} className="w-full rounded-lg" style={{ maxHeight: 400 }} />
-                                    );
-                                    if (pt2 === 'audio') return (
-                                      <audio controls src={previewState.url} className="w-full mt-2" />
-                                    );
-                                    if (pt2 === 'csv') return <CsvPreview url={previewState.url} />;
-                                    if (pt2 === 'text') return (
-                                      <pre className="text-[12px] text-foreground/80 whitespace-pre-wrap font-mono overflow-auto max-h-80 bg-muted/20 rounded-lg p-3">
-                                        <TextFetcher url={previewState.url} />
-                                      </pre>
-                                    );
-                                    return (
-                                      <embed src={previewState.url} type={previewState.mimeType} className="w-full rounded-lg border-0" style={{ height: 500 }} />
-                                    );
-                                  })()}
+                                  <AttachmentPreview
+                                    url={previewState.url}
+                                    mimeType={previewState.mimeType}
+                                    filename={previewState.filename}
+                                    variant="inline"
+                                  />
                                 </div>
                               </div>
                             )}
@@ -967,31 +1086,56 @@ export default function ThreadView({
         )}
       </div>
 
+      {/* Draft-doc progress card — floats top-right (bottom sheet on mobile) so
+          the step indicator and Cancel stay reachable from every tab, since the
+          trigger now lives in the always-visible thread header. */}
+      {draftStep && (
+        <div
+          className={cn(
+            'fixed inset-x-2 bottom-2 z-[46]',
+            'lg:absolute lg:inset-x-auto lg:bottom-auto lg:top-3 lg:right-3 lg:w-64',
+            'rounded-xl border border-border bg-card shadow-xl p-3 flex flex-col gap-2',
+          )}
+        >
+          <AIWorkingIndicator step={draftStep} />
+          <button
+            onClick={cancelDraftDoc}
+            className="self-start text-micro font-medium text-ink-3 hover:text-foreground underline"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {aiEnabled && (
         <aside
           aria-hidden={!summaryOpen}
           className={cn(
-            'absolute top-3 right-3 w-[340px] xl:w-[380px] max-h-[55vh] z-20',
-            'rounded-xl border border-border/40 bg-card shadow-xl',
+            // Below lg the floating top-right card has no room — render as a
+            // fixed bottom sheet instead so tapping Summarize on a phone shows
+            // the stream rather than spending tokens into an invisible panel.
+            // z-[45]: above the AI drawers (z-40/41), below compose (z-50).
+            'fixed inset-x-2 bottom-2 z-[45] max-h-[55vh]',
+            'lg:absolute lg:inset-x-auto lg:bottom-auto lg:top-3 lg:right-3 lg:w-[340px] xl:w-[380px] lg:z-20',
+            'rounded-xl border border-border bg-card shadow-xl',
             'flex flex-col overflow-hidden',
             'transition-all duration-200 ease-out',
-            'hidden lg:flex',
             summaryOpen
-              ? 'translate-x-0 opacity-100 scale-100'
-              : 'translate-x-[120%] opacity-0 scale-95 pointer-events-none',
+              ? 'translate-y-0 lg:translate-x-0 opacity-100 scale-100'
+              : 'translate-y-[130%] lg:translate-y-0 lg:translate-x-[120%] opacity-0 scale-95 pointer-events-none',
           )}
         >
-          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border/30 shrink-0">
-            <Sparkles className="w-3.5 h-3.5 text-primary" />
-            <span className="text-[12px] font-semibold text-foreground">
+          <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border-faint shrink-0">
+            <ScrollText className="w-3.5 h-3.5 text-primary" />
+            <span className="text-ui font-semibold text-foreground">
               {threadMessages.length > 1 ? 'Thread summary' : 'Summary'}
             </span>
             {summarizing && (
-              <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/60" />
+              <Loader2 className="w-3 h-3 animate-spin text-ink-3" />
             )}
             <button
               onClick={closeSummary}
-              className="ml-auto p-1 rounded text-muted-foreground/50 hover:text-foreground hover:bg-muted/60 transition-colors"
+              className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors"
               aria-label="Close summary"
             >
               <XIconSmall className="w-3.5 h-3.5" />
@@ -999,20 +1143,20 @@ export default function ThreadView({
           </div>
           <div className="flex-1 overflow-y-auto px-3.5 py-3">
             {threadMessages.length > 1 && (
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/50 mb-1.5">
+              <p className="text-micro font-normal uppercase tracking-[0.06em] text-ink-3 mb-1.5">
                 {threadMessages.length} messages
               </p>
             )}
             {summaryError ? (
-              <div className="text-[12px] text-destructive">
+              <div className="text-ui text-destructive">
                 {summaryError}{' '}
                 <button onClick={handleSummarize} className="underline ml-1">
                   Retry
                 </button>
               </div>
             ) : (
-              <p className="text-[12.5px] text-foreground/85 leading-relaxed whitespace-pre-wrap">
-                {streamedSummary || (summarizing ? 'Thinking…' : '')}
+              <p className="text-ui text-foreground leading-relaxed whitespace-pre-wrap">
+                {streamedSummary || (summarizing ? <AIWorkingIndicator step="Reading the thread" /> : '')}
               </p>
             )}
           </div>

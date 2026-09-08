@@ -49,9 +49,20 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Next.js standalone server (mirrors the electron-builder resource layout)
-COPY --from=builder /repo/apps/web/.next/standalone ./
-COPY --from=builder /repo/apps/web/.next/static     ./apps/web/.next/static/
-COPY --from=builder /repo/apps/web/public           ./apps/web/public/
+COPY --from=builder --chown=node:node /repo/apps/web/.next/standalone ./
+COPY --from=builder --chown=node:node /repo/apps/web/.next/static     ./apps/web/.next/static/
+COPY --from=builder --chown=node:node /repo/apps/web/public           ./apps/web/public/
+
+# Run as the unprivileged `node` user (built into the base image) so Chromium's
+# sandbox is active — puppeteer no longer passes --no-sandbox, and Chrome
+# refuses to sandbox when running as root.
+RUN chown node:node /app
+USER node
+
+# The /export and /upload routes are gated by apps/web/middleware.ts, which
+# verifies the API's JWTs — provide JWT_SECRET (same value as the api service)
+# at runtime, or the middleware falls back to validating tokens against
+# NEXT_PUBLIC_API_URL.
 
 EXPOSE 3000
 

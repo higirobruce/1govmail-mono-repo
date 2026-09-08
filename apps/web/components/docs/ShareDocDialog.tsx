@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Copy, Link, Loader2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -37,11 +37,19 @@ export function ShareDocDialog({
 }: ShareDocDialogProps) {
   const [tab, setTab]       = useState<Tab>('invite');
   const [loading, setLoading] = useState(false);
+  const [permission, setPermission] = useState<'VIEW' | 'EDIT'>('VIEW');
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '') ||
     (typeof window !== 'undefined' ? window.location.origin : '');
-  const viewUrl = shareToken ? `${baseUrl}/d/${shareToken}` : '';
-  const editUrl = shareToken ? `${baseUrl}/d/${shareToken}?edit=1` : '';
+  const shareUrl = shareToken ? `${baseUrl}/d/${shareToken}` : '';
+
+  // Load the current link permission from the server when the dialog opens
+  useEffect(() => {
+    if (!open || !isShared) return;
+    api.docs.getOne(docId)
+      .then((d) => { if (d.sharePermission) setPermission(d.sharePermission); })
+      .catch(() => {});
+  }, [open, isShared, docId]);
 
   const handleToggle = async () => {
     setLoading(true);
@@ -50,13 +58,27 @@ export function ShareDocDialog({
         const result = await api.docs.share.disable(docId);
         onShareChange({ isShared: result.isShared, shareToken: result.shareToken });
       } else {
-        const result = await api.docs.share.enable(docId);
+        const result = await api.docs.share.enable(docId, { sharePermission: permission });
         onShareChange({ isShared: result.isShared, shareToken: result.shareToken });
       }
     } catch {
       toast.error('Failed to update sharing settings');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePermissionChange = async (next: 'VIEW' | 'EDIT') => {
+    if (next === permission) return;
+    const previous = permission;
+    setPermission(next);
+    if (!isShared) return;
+    try {
+      const result = await api.docs.share.enable(docId, { sharePermission: next });
+      onShareChange({ isShared: result.isShared, shareToken: result.shareToken });
+    } catch {
+      setPermission(previous);
+      toast.error('Failed to update link permission');
     }
   };
 
@@ -111,7 +133,7 @@ export function ShareDocDialog({
               <div className="flex flex-col gap-0.5">
                 <span className="text-sm font-medium">Public link sharing</span>
                 <span className="text-xs text-muted-foreground">
-                  Generate shareable links for view-only or editing access
+                  Generate a shareable link with view-only or editing access
                 </span>
               </div>
 
@@ -141,55 +163,58 @@ export function ShareDocDialog({
 
             {isShared && shareToken ? (
               <div className="flex flex-col gap-2">
-                {/* View-only link */}
+                {/* Permission picker */}
                 <div className="flex flex-col gap-1">
-                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">View only</span>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 min-w-0 overflow-hidden">
-                      <Link className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                      <input
-                        readOnly
-                        value={viewUrl}
-                        className="flex-1 min-w-0 bg-transparent text-xs text-muted-foreground outline-none cursor-text"
-                        onFocus={(e) => e.currentTarget.select()}
-                      />
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => handleCopy(viewUrl)} className="gap-1.5 shrink-0">
-                      <Copy className="w-3.5 h-3.5" />
-                      Copy
-                    </Button>
+                  <span className="text-[0.6875rem] font-medium text-muted-foreground uppercase tracking-wider">Anyone with the link</span>
+                  <div className="flex gap-1">
+                    {([
+                      { value: 'VIEW', label: 'Can view' },
+                      { value: 'EDIT', label: 'Can edit' },
+                    ] as const).map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        disabled={!isOwner}
+                        onClick={() => handlePermissionChange(value)}
+                        className={cn(
+                          'px-3 py-1.5 text-xs rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                          permission === value
+                            ? 'border-primary bg-primary/10 text-foreground font-medium'
+                            : 'border-border text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                {/* Edit link */}
-                <div className="flex flex-col gap-1">
-                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Can edit</span>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 min-w-0 overflow-hidden">
-                      <Link className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                      <input
-                        readOnly
-                        value={editUrl}
-                        className="flex-1 min-w-0 bg-transparent text-xs text-muted-foreground outline-none cursor-text"
-                        onFocus={(e) => e.currentTarget.select()}
-                      />
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => handleCopy(editUrl)} className="gap-1.5 shrink-0">
-                      <Copy className="w-3.5 h-3.5" />
-                      Copy
-                    </Button>
+                {/* Share link */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-1 rounded-md border border-border bg-muted/40 px-3 py-2 min-w-0 overflow-hidden">
+                    <Link className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <input
+                      readOnly
+                      value={shareUrl}
+                      className="flex-1 min-w-0 bg-transparent text-xs text-muted-foreground outline-none cursor-text"
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
                   </div>
+                  <Button size="sm" variant="outline" onClick={() => handleCopy(shareUrl)} className="gap-1.5 shrink-0">
+                    <Copy className="w-3.5 h-3.5" />
+                    Copy
+                  </Button>
                 </div>
               </div>
             ) : !isShared ? (
               <p className="text-xs text-muted-foreground/60">
-                Enable the toggle above to generate shareable links.
+                Enable the toggle above to generate a shareable link.
               </p>
             ) : null}
 
             {isShared && (
-              <p className="text-[11px] text-muted-foreground/60">
-                Disabling sharing will revoke access for everyone using these links.
+              <p className="text-[0.6875rem] text-muted-foreground/60">
+                Disabling sharing will revoke access for everyone using this link.
               </p>
             )}
           </div>

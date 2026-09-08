@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { inlineSignatureImages } from '../common/signature-images';
+import { UpdateAiProfileDto } from './dto/ai-profile.dto';
 
 export interface SignatureData {
   name: string;
@@ -206,5 +207,31 @@ export class SettingsService {
       user.csrfToken ?? undefined,
     );
     return { success: true };
+  }
+
+  // ── AI personalization profile (DB-only; never touches Zimbra) ────────────
+
+  private static readonly AI_PROFILE_SELECT = {
+    instructions: true, jobTitle: true, institution: true, department: true, language: true,
+  } as const;
+
+  async getAiProfile(userId: string) {
+    const row = await this.prisma.userAiProfile.findUnique({
+      where: { userId }, select: SettingsService.AI_PROFILE_SELECT,
+    });
+    return row ?? { instructions: null, jobTitle: null, institution: null, department: null, language: null };
+  }
+
+  async updateAiProfile(userId: string, dto: UpdateAiProfileDto) {
+    const norm = (v?: string) => (v === undefined ? undefined : v.trim() || null);
+    const data = {
+      instructions: norm(dto.instructions), jobTitle: norm(dto.jobTitle),
+      institution: norm(dto.institution), department: norm(dto.department), language: norm(dto.language),
+    };
+    const clean = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
+    await this.prisma.userAiProfile.upsert({
+      where: { userId }, update: clean, create: { userId, ...clean },
+    });
+    return this.getAiProfile(userId);
   }
 }

@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import type { SignatureData } from './settings.service';
+import { UpdateAiProfileDto } from './dto/ai-profile.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 
@@ -118,5 +119,28 @@ export class SettingsController {
       body.oldPassword,
       body.newPassword,
     );
+  }
+
+  /**
+   * GET /settings/ai-profile
+   * Returns the account-level AI personalization profile (DB-only, no Zimbra call).
+   */
+  @Get('ai-profile')
+  getAiProfile(@Req() req: AuthenticatedRequest) {
+    return this.settingsService.getAiProfile(req.user.sub);
+  }
+
+  /**
+   * PATCH /settings/ai-profile
+   * Upserts the account-level AI personalization profile. Empty string fields
+   * clear the value (stored as null).
+   */
+  @Patch('ai-profile')
+  @HttpCode(HttpStatus.OK)
+  updateAiProfile(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: UpdateAiProfileDto,
+  ) {
+    return this.settingsService.updateAiProfile(req.user.sub, body);
   }
 }

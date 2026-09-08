@@ -1,24 +1,27 @@
 import { generateJSON } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import { parseJsonObject } from '@email-client/shared';
+import { buildProfileBlock, parseJsonObject } from '@email-client/shared';
 import type { AIClient } from './client';
 import { TEMPLATES } from '@/lib/docs/templates';
 import {
   UNTRUSTED_CONTENT_RULE,
-  customInstructionsBlock,
   fenceUntrusted,
   languageRule,
   neutralizeMarkers,
   scrubOutput,
 } from './prompt';
 import { markdownToHtml } from './markdownToHtml';
+import { useAIStore } from '@/stores/ai.store';
 
 /**
- * Append the user's configured style preferences to the system prompt.
- * Mirrors lib/ai/tasks.ts's withCustomInstructions.
+ * Append the account owner's identity card and configured style preferences
+ * to the system prompt, via the shared `buildProfileBlock` renderer. Mirrors
+ * lib/ai/tasks.ts's withCustomInstructions (see its JSDoc for the full
+ * rationale — same shared renderer, same store-read-at-call-time approach).
  */
 function withCustomInstructions(system: string, customInstructions?: string | null): string {
-  const block = customInstructionsBlock(customInstructions ?? undefined);
+  const card = useAIStore.getState().profileCard;
+  const block = buildProfileBlock({ ...card, instructions: customInstructions ?? undefined }, 'full');
   return block ? `${system}\n\n${block}` : system;
 }
 

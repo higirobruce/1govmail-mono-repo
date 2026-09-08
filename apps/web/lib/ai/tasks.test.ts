@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { AIClient, ChatOptions } from './client';
 import { formatMinutes, rewriteText, suggestReply, summarizeMessage } from './tasks';
 import { UNTRUSTED_CONTENT_RULE } from './prompt';
+import { useAIStore } from '@/stores/ai.store';
 
 /** Captures the request instead of calling the network; returns a canned reply. */
 class FakeClient {
@@ -22,7 +23,13 @@ function systemPrompt(fake: FakeClient): string {
 
 const PREFS = 'Always keep replies under two sentences.';
 
+const EMPTY_PROFILE_CARD = { jobTitle: null, institution: null, department: null, language: null };
+
 describe('custom instructions wiring', () => {
+  beforeEach(() => {
+    useAIStore.getState().setProfileCard(EMPTY_PROFILE_CARD);
+  });
+
   it('summarizeMessage appends them after the base rules', async () => {
     const fake = new FakeClient();
     await summarizeMessage(
@@ -189,5 +196,71 @@ describe('formatMinutes', () => {
     );
     expect(userPrompt(fake)).toContain('Document: Weekly sync');
     expect(systemPrompt(fake)).toContain(PREFS);
+  });
+});
+
+describe('profile card wiring (P2 spec: identity card reaches suggestReply/rewrite/summarize)', () => {
+  afterEach(() => {
+    useAIStore.getState().setProfileCard(EMPTY_PROFILE_CARD);
+  });
+
+  it('summarizeMessage system prompt contains the card AND the instructions when the store has card fields set', async () => {
+    useAIStore.getState().setProfileCard({
+      jobTitle: 'Director of Digital', institution: 'RISA', department: 'ICT', language: 'en',
+    });
+    const fake = new FakeClient();
+    await summarizeMessage(
+      fake as unknown as AIClient,
+      '<p>Please send the quarterly report by Friday.</p>',
+      { model: 'test', customInstructions: PREFS },
+      () => {},
+    );
+    const sys = systemPrompt(fake);
+    expect(sys).toContain('Director of Digital');
+    expect(sys).toContain('RISA');
+    expect(sys).toContain(PREFS);
+  });
+
+  it('suggestReply system prompt contains the card when set', async () => {
+    useAIStore.getState().setProfileCard({
+      jobTitle: 'Registrar', institution: 'MINEDUC', department: null, language: null,
+    });
+    const fake = new FakeClient();
+    await suggestReply(
+      fake as unknown as AIClient,
+      '<p>Can you confirm attendance at the workshop next week?</p>',
+      { model: 'test', userName: 'Bruce' },
+      () => {},
+    );
+    expect(systemPrompt(fake)).toContain('Registrar');
+    expect(systemPrompt(fake)).toContain('MINEDUC');
+  });
+
+  it('rewriteText system prompt contains the card when set', async () => {
+    useAIStore.getState().setProfileCard({
+      jobTitle: 'Analyst', institution: null, department: 'ICT', language: null,
+    });
+    const fake = new FakeClient();
+    await rewriteText(
+      fake as unknown as AIClient,
+      'we will send it over tomorrow',
+      'formal',
+      { model: 'test' },
+      () => {},
+    );
+    expect(systemPrompt(fake)).toContain('Analyst');
+  });
+
+  it('prompts are unchanged from before when nothing is set in the store', async () => {
+    const fake = new FakeClient();
+    await summarizeMessage(
+      fake as unknown as AIClient,
+      '<p>Please send the quarterly report by Friday.</p>',
+      { model: 'test' },
+      () => {},
+    );
+    const sys = systemPrompt(fake);
+    expect(sys).not.toContain('Their profile');
+    expect(sys).not.toContain('USER STYLE PREFERENCES');
   });
 });

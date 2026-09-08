@@ -20,7 +20,7 @@ interface Props {
   onClose: () => void;
   /** If provided, the search is pre-populated */
   initialQuery?: string;
-  /** If provided, "Ask your inbox" opens the panel in-place instead of pushing ?ask= */
+  /** If provided, "Ask 1Gov" opens the panel in-place instead of pushing ?ask= */
   onAsk?: (question: string) => void;
   /** If provided, mail/semantic rows open the message in-place instead of pushing ?messageId= */
   onOpenMessage?: (messageId: string) => void;
@@ -183,7 +183,7 @@ export function GlobalSearch({ open, onClose, initialQuery, onAsk, onOpenMessage
             >
               <MessageCircleQuestion className="w-4 h-4 shrink-0 text-muted-foreground" />
               <p className="text-[0.8125rem] font-medium truncate">
-                Ask your inbox: &ldquo;{query.trim()}&rdquo;
+                Ask 1Gov: &ldquo;{query.trim()}&rdquo;
               </p>
             </CommandItem>
           </CommandGroup>

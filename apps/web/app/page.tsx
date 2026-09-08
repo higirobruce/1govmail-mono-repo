@@ -21,7 +21,7 @@ import {
 const AI_FEATURES = [
   {
     icon: MessageCircleQuestion,
-    title: 'Ask your inbox',
+    title: 'Ask 1Gov',
     description:
       'Ask questions in plain language — “what did finance say about the budget?” — and get answers grounded in your own mail, with citations back to the source messages.',
   },
@@ -113,7 +113,7 @@ function AppMiniature() {
         <div className="w-[26%] shrink-0 border-l border-border-faint bg-card px-3.5 pt-4 hidden md:block">
           <div className="flex items-center gap-1.5 mb-3">
             <MessageCircleQuestion className="w-3 h-3 text-primary" />
-            <span className="text-micro leading-none text-foreground">Ask your inbox</span>
+            <span className="text-micro leading-none text-foreground">Ask 1Gov</span>
           </div>
           <div className="rounded-md bg-muted/50 px-2 py-1.5 mb-2">
             <p className="text-micro leading-tight font-normal text-ink-2">What did finance say about the budget?</p>

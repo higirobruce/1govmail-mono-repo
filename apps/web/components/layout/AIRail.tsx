@@ -84,7 +84,7 @@ export function AIRail({
           <RailButton label="Commitments" active={commitmentsOpen} onClick={onCommitments} badge={commitmentsCount}>
             <ClipboardCheck className="size-4" />
           </RailButton>
-          <RailButton label="Ask your inbox" active={askOpen} onClick={onAsk}>
+          <RailButton label="Ask 1Gov" active={askOpen} onClick={onAsk}>
             <MessageCircleQuestion className="size-4" />
           </RailButton>
         </>

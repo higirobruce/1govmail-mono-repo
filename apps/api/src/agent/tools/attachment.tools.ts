@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { MailService } from '../../mail/mail.service';
 import type { ToolDef } from '../tool-registry';
-import { extractAttachmentText, streamToBuffer, MAX_ATTACHMENT_BYTES } from '../attachment-text';
+import { extractAttachmentText, streamToBuffer, MAX_ATTACHMENT_BYTES } from '../../common/attachment-text';
 
 export function buildAttachmentTool(mail: MailService): ToolDef {
   return {

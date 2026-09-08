@@ -320,6 +320,44 @@ describe('RetrievalService.retrieve — docs leg', () => {
     expect(result.sources).toHaveLength(1);
     expect(result.sources[0].context).toBe('best chunk');
   });
+
+  it('scope.docId joins the top 6 chunks of that ONE doc into a single deep context past the normal 1200-char clamp', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    const chunkRows = Array.from({ length: 6 }, (_, i) =>
+      docRow('d1', { chunkText: `chunk-${i + 1}-`.padEnd(250, 'x'), distance: 0.1 + i * 0.01 }),
+    );
+    prisma.$queryRaw.mockResolvedValue(chunkRows);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'question', { docId: 'd1' });
+
+    expect(result.sources).toHaveLength(1);
+    const source = result.sources[0];
+    expect(source.type).toBe('doc');
+    expect(source.id).toBe('d1');
+    expect(source.context).toContain('chunk-1-');
+    expect(source.context).toContain('chunk-6-');
+    expect(source.context.length).toBeGreaterThan(1200);
+  });
+
+  it('without docId, two docs with 3 chunks each still dedupe to 2 sources with one (best) chunk each (cross-doc dedupe regression guard)', async () => {
+    const { prisma, embedder, mailService } = makeFakes();
+    prisma.$queryRaw.mockResolvedValue([
+      docRow('d1', { chunkText: 'd1 best', distance: 0.1 }),
+      docRow('d1', { chunkText: 'd1 worse', distance: 0.2 }),
+      docRow('d1', { chunkText: 'd1 worst', distance: 0.3 }),
+      docRow('d2', { chunkText: 'd2 best', distance: 0.15 }),
+      docRow('d2', { chunkText: 'd2 worse', distance: 0.25 }),
+      docRow('d2', { chunkText: 'd2 worst', distance: 0.35 }),
+    ]);
+    const svc = new RetrievalService(prisma as any, embedder as any, mailService as any);
+
+    const result = await svc.retrieve('user1', 'user1@x.rw', 'question', { types: ['doc'] });
+
+    expect(result.sources).toHaveLength(2);
+    expect(result.sources.find((s) => s.id === 'd1')?.context).toBe('d1 best');
+    expect(result.sources.find((s) => s.id === 'd2')?.context).toBe('d2 best');
+  });
 });
 
 describe('RetrievalService.retrieve — calendar leg', () => {

@@ -49,6 +49,7 @@ interface FusableHit {
   meta?: string | null;
   context: string | null; // null only for the mail keyword leg — filled by assembleContexts on hydration
   row?: { snippet?: string | null; bodyText?: string | null; bodyHtml?: string | null };
+  contextMax?: number; // per-hit context clamp override — undefined falls back to CONTEXT_MAX_CHARS
 }
 
 function zimbraAfterDate(d: Date): string {
@@ -282,6 +283,7 @@ export class RetrievalService {
   }
 
   private async docVectorLeg(userId: string, userEmail: string, vecPromise: Promise<string>, docId?: string): Promise<FusableHit[]> {
+    if (docId) return this.docDeepLeg(userId, userEmail, vecPromise, docId);
     const rows = await this.docVectorRows(userId, userEmail, await vecPromise, VECTOR_TOP_K, docId);
     const seen = new Set<string>();
     const hits: FusableHit[] = [];
@@ -294,6 +296,21 @@ export class RetrievalService {
       });
     }
     return hits;
+  }
+
+  private static readonly DOC_SCOPED_CHUNKS = 6;
+  private static readonly DOC_SCOPED_MAX_CHARS = 7400; // 6 chunks × 1200 + separators
+
+  /** docId scope: the top chunks of ONE document, joined into one deep context under one chip. */
+  private async docDeepLeg(userId: string, userEmail: string, vecPromise: Promise<string>, docId: string): Promise<FusableHit[]> {
+    const rows = await this.docVectorRows(userId, userEmail, await vecPromise, RetrievalService.DOC_SCOPED_CHUNKS, docId);
+    if (!rows.length) return [];
+    return [{
+      key: `doc:${docId}`, type: 'doc', id: docId, title: rows[0].title,
+      date: rows[0].updatedAt, meta: rows[0].emoji ?? null,
+      context: rows.map((r) => r.chunkText).join('\n[…]\n'),
+      contextMax: RetrievalService.DOC_SCOPED_MAX_CHARS,
+    }];
   }
 
   private async calendarLeg(userId: string, question: string): Promise<FusableHit[]> {
@@ -391,7 +408,7 @@ export class RetrievalService {
       sources.push({
         type: h.type, id: h.id, title: h.title,
         fromEmail: h.fromEmail, fromName: h.fromName, date: h.date, meta: h.meta ?? null,
-        context: context.slice(0, CONTEXT_MAX_CHARS),
+        context: context.slice(0, h.contextMax ?? CONTEXT_MAX_CHARS),
         injectionSuspected: (h.type === 'mail' ? (cardFlags.get(h.id) ?? false) : false) || detectInjectionAttempt(context),
       });
     }

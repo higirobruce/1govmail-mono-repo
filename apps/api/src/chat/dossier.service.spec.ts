@@ -7,9 +7,9 @@ const MAIL_ROW = {
   fromEmail: 'jd@gov.rw', fromName: 'J D', receivedAt: NOW, gist: null, cardFlag: null,
 };
 
-function makePrisma() {
+function makePrisma(me: any = { email: 'me@risa.gov.rw', displayName: 'Bruce', aiProfile: null }) {
   return {
-    user: { findUnique: jest.fn().mockResolvedValue({ email: 'me@risa.gov.rw' }) },
+    user: { findUnique: jest.fn().mockResolvedValue(me) },
     $queryRaw: jest.fn().mockResolvedValue([]),
     calendarEvent: { findMany: jest.fn().mockResolvedValue([]) },
   } as any;
@@ -62,5 +62,20 @@ describe('DossierService.prepare', () => {
     const p = await new DossierService(prisma).prepare('u1', 'jd@gov.rw');
     expect(p.degraded.commitments).toBe(true);
     expect(p.upstreamBody).not.toBeNull();
+  });
+
+  it('includes the identity line but NOT the profile card (dossier is identity-tier only)', async () => {
+    const prisma = makePrisma({
+      email: 'me@risa.gov.rw',
+      displayName: 'Bruce',
+      aiProfile: { jobTitle: 'Director of Digital', institution: 'RISA', department: null, language: null, instructions: null },
+    });
+    prisma.$queryRaw
+      .mockResolvedValueOnce([MAIL_ROW])
+      .mockResolvedValueOnce([]);
+    const p = await new DossierService(prisma).prepare('u1', 'jd@gov.rw');
+    const system = p.upstreamBody!.messages[0].content;
+    expect(system).toContain('me@risa.gov.rw');
+    expect(system).not.toContain('Director of Digital');
   });
 });

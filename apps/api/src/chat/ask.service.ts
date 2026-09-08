@@ -46,7 +46,14 @@ export class AskService {
     }
 
     const question = turns[turns.length - 1].content;
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        email: true,
+        displayName: true,
+        aiProfile: { select: { instructions: true, jobTitle: true, institution: true, department: true, language: true } },
+      },
+    });
     const { sources: retrieved, degraded } = await this.retrieval.retrieve(userId, user?.email ?? '', question, scope);
 
     if (retrieved.length === 0) {
@@ -73,7 +80,11 @@ export class AskService {
       injectionSuspected: s.injectionSuspected,
     }));
 
-    const system = buildAskPrompt(internal, turns);
+    const system = buildAskPrompt(
+      internal,
+      turns,
+      user?.aiProfile ? { ...user.aiProfile, displayName: user.displayName, email: user.email } : null,
+    );
     // buildAskPrompt returns the system string only — turn clamping used to
     // live inside the now-deleted `buildInboxChatPrompt` alias; reintroduced
     // here verbatim (same limits, same '\n\n[…truncated]' 14-char accounting).

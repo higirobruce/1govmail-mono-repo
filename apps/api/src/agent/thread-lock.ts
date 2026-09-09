@@ -17,19 +17,26 @@ export const THREAD_LOCK_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * read_email and read_attachment are addressed by id, not by search — so
- * withholding the search tools alone would still let the model read ANY
- * message the user owns by guessing/reusing an id from earlier in the
- * conversation. That would make "this thread only" a label rather than a
- * guarantee. Bound here, in one place, rather than edited into each tool, so
- * the two id-addressed reads can't drift out of sync with the allowlist above.
+ * read_email, read_attachment AND get_thread are all addressed by id, not by
+ * search — so withholding the search tools alone would still let the model
+ * reach outside the pinned thread by guessing/reusing an id from earlier in
+ * the conversation. get_thread belongs here too, not just the two reads: its
+ * schema is `{ messageId }` and it returns the WHOLE conversation for that
+ * id (subject, date, a snippet per message) — an out-of-thread id there
+ * leaks another conversation's content just as surely as read_email would.
+ * That would make "this thread only" a label rather than a guarantee. Bound
+ * here, in one place, rather than edited into each tool, so these
+ * id-addressed calls can't drift out of sync with the allowlist above.
+ * Every pinned id belongs to the pinned thread, so get_thread on any
+ * *allowed* id still returns exactly the thread the model is entitled to —
+ * this costs nothing legitimate.
  *
  * Reuses ToolValidationError deliberately: the dispatch site's existing catch
  * for that type turns the throw into a tool_result the model sees and can
  * recover from (pick a different id, or fall back to the pinned text) —
  * this must not kill the turn.
  */
-const ID_ADDRESSED: ReadonlySet<string> = new Set(['read_email', 'read_attachment']);
+const ID_ADDRESSED: ReadonlySet<string> = new Set(['read_email', 'read_attachment', 'get_thread']);
 
 export function assertIdInThread(toolName: string, args: unknown, messageIds: string[]): void {
   if (!ID_ADDRESSED.has(toolName)) return;

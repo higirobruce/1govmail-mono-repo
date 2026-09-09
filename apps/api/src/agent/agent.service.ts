@@ -406,6 +406,27 @@ export class AgentService {
       return `Error: "${String(aliasArg[1]).trim()}" is a citation alias from the conversation, not a real id. Call the matching search tool with the item's title or keywords, then use the id from that fresh result.`;
     }
 
+    // The allowlist gate: filtering what openAiTools() advertises (above, in
+    // run()) is NOT the enforcement boundary — the upstream host is on record
+    // (see the tool_choice:'required' comment near the top of this file) as
+    // ignoring tool constraints, and mandate 7 in the system prompt still
+    // tells the model to call search tools for fresh ids regardless of what
+    // was offered. A withheld tool the model calls anyway must be refused
+    // HERE, before any mode branch — write-gated returns a proposal card
+    // below without ever reaching the try/execute block, so a bound placed
+    // only around execute (see assertIdInThread below) would not have
+    // stopped a locked send_email/create_calendar_event from surfacing one.
+    if (threadLock && !THREAD_LOCK_TOOLS.has(call.name)) {
+      emit('tool_result', {
+        id: callId, ok: false, summary: `${call.name} is not available while "this thread only" is on`, refs: [], injectionSuspected: false,
+      });
+      await this.log(ctx.userId, turnId, call.name, args, false, Date.now() - started);
+      return fenceUntrusted(
+        'TOOL_ERROR',
+        `Error: ${call.name} is unavailable — "this thread only" is on. Use get_thread/read_email on the pinned thread's messages, or answer from the pinned text.`,
+      );
+    }
+
     if (def.mode === 'clarify') {
       const clarifyId = randomUUID();
       const { question, options } = args as { question: string; options: string[] };

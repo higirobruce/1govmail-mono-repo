@@ -28,6 +28,9 @@ describe('assertIdInThread', () => {
     // read_attachment's schema is { messageId, part } — verified at
     // apps/api/src/agent/tools/attachment.tools.ts:15. NOT `partId`.
     expect(() => assertIdInThread('read_attachment', { messageId: 'm2', part: '2' }, ids)).not.toThrow();
+    // get_thread is id-addressed too — every pinned id belongs to the
+    // pinned thread, so an in-thread id must still resolve.
+    expect(() => assertIdInThread('get_thread', { messageId: 'm1' }, ids)).not.toThrow();
   });
 
   it('rejects an out-of-thread messageId with a recoverable message', () => {
@@ -40,9 +43,18 @@ describe('assertIdInThread', () => {
     }
   });
 
+  // get_thread's schema is also { messageId } and it returns the whole
+  // conversation for that id (subject, date, a snippet per message) — an
+  // out-of-thread id there leaks another conversation just as surely as
+  // read_email would, so it must be bound too, not left to pass through.
+  it('rejects an out-of-thread messageId for get_thread as well', () => {
+    expect(() => assertIdInThread('get_thread', { messageId: 'other' }, ids))
+      .toThrow(ToolValidationError);
+  });
+
   it('does not constrain tools that are not id-addressed', () => {
-    expect(() => assertIdInThread('get_thread', { messageId: 'other' }, ids)).not.toThrow();
     expect(() => assertIdInThread('ask_user', { question: 'x', options: [] }, ids)).not.toThrow();
+    expect(() => assertIdInThread('draft_email', { to: ['a@b.rw'], subject: 's', body: 'b' }, ids)).not.toThrow();
   });
 
   it('rejects an id-addressed read when the thread has no ids to check against', () => {

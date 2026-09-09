@@ -587,5 +587,77 @@ describe('AgentService.run', () => {
       const emittedToolResults = frames.filter((f) => f.event === 'tool_result').map((f) => f.data);
       expect(emittedToolResults[0]).toMatchObject({ ok: true, summary: 'read ok' });
     });
+
+    // Review fix (Critical): the advertisement filter (openAiTools) is not
+    // the enforcement boundary — the upstream host is documented elsewhere
+    // in this file as ignoring tool_choice, and mandate 7 still tells the
+    // model to call search tools for fresh ids regardless of what was
+    // offered. A withheld tool the model calls anyway must be refused at
+    // dispatch, before execute runs.
+    it('rejects a withheld search tool the model calls anyway on a locked turn', async () => {
+      const searchEmailsTool: ToolDef = {
+        name: 'search_emails', description: 'search mail', mode: 'read', resultBudget: 100,
+        schema: z.object({ query: z.string() }),
+        execute: jest.fn().mockResolvedValue({ summary: 'should not reach', content: 'X', refs: [] }),
+      };
+      const { svc, frames, emit } = makeService(
+        [jsonToolCall('search_emails', '{"query":"budget"}'), sseResponse([text('Recovered')])],
+        [searchEmailsTool],
+      );
+      const pinned = { label: 'x', text: 'hi', messageIds: ['m1'], includedCount: 1, toolScope: 'thread' } as any;
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
+
+      expect(searchEmailsTool.execute).not.toHaveBeenCalled();
+      const emittedToolResults = frames.filter((f) => f.event === 'tool_result').map((f) => f.data);
+      expect(emittedToolResults[0].ok).toBe(false);
+      expect(emittedToolResults[0].summary).toMatch(/not available while "this thread only" is on/i);
+    });
+
+    // Review fix (Critical, continued): write-gated tools return a proposal
+    // card BEFORE the try/execute block, so the earlier id-bound alone
+    // (scoped to inside that try) would not have stopped a locked
+    // send_email from surfacing a proposal. The dispatch-time allowlist gate
+    // must sit ahead of the write-gated branch too.
+    it('a locked send_email never reaches the write-gated branch — no proposal card', async () => {
+      const sendEmailTool: ToolDef = {
+        name: 'send_email', description: 'send mail', mode: 'write-gated', resultBudget: 0,
+        schema: z.object({ to: z.array(z.string()), subject: z.string(), body: z.string() }),
+        execute: jest.fn(),
+      };
+      const { svc, frames, emit } = makeService(
+        [jsonToolCall('send_email', '{"to":["a@b.rw"],"subject":"S","body":"B"}'), sseResponse([text('Recovered')])],
+        [sendEmailTool],
+      );
+      const pinned = { label: 'x', text: 'hi', messageIds: ['m1'], includedCount: 1, toolScope: 'thread' } as any;
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
+
+      expect(frames.some((f) => f.event === 'proposal')).toBe(false);
+      expect(sendEmailTool.execute).not.toHaveBeenCalled();
+      const emittedToolResults = frames.filter((f) => f.event === 'tool_result').map((f) => f.data);
+      expect(emittedToolResults[0].ok).toBe(false);
+      expect(emittedToolResults[0].summary).toMatch(/not available while "this thread only" is on/i);
+    });
+
+    // Review fix (Important): get_thread is id-addressed ({ messageId }, the
+    // whole conversation returned) just like read_email/read_attachment —
+    // an out-of-thread id there must be rejected too, not just withheld from
+    // being unbounded.
+    it('rejects a get_thread call outside the locked thread', async () => {
+      const getThreadTool: ToolDef = {
+        name: 'get_thread', description: 'get thread', mode: 'read', resultBudget: 100,
+        schema: z.object({ messageId: z.string() }),
+        execute: jest.fn().mockResolvedValue({ summary: 'should not reach', content: 'X', refs: [] }),
+      };
+      const { svc, frames, emit } = makeService(
+        [jsonToolCall('get_thread', '{"messageId":"other"}'), sseResponse([text('Recovered')])],
+        [getThreadTool],
+      );
+      const pinned = { label: 'x', text: 'hi', messageIds: ['m1'], includedCount: 1, toolScope: 'thread' } as any;
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
+
+      expect(getThreadTool.execute).not.toHaveBeenCalled();
+      const emittedToolResults = frames.filter((f) => f.event === 'tool_result').map((f) => f.data);
+      expect(emittedToolResults[0].summary).toMatch(/not part of this thread/i);
+    });
   });
 });

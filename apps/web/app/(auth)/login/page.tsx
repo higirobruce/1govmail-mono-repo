@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Loader2, Mail, Lock, Building2, ShieldCheck } from 'lucide-react';
-import { institutionsToOptions, type InstitutionOption } from './institutions';
+import { canSubmit, institutionsToOptions, type InstitutionOption } from './institutions';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -60,6 +60,12 @@ export default function LoginPage() {
   // ── Step 1: credentials ───────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Defense in depth: the submit button is disabled in this state, but an
+    // Enter-key submit can bypass a disabled button in some browsers/flows.
+    // Never let the form submit with no institution selected.
+    if (!canSubmit({ loading, institutionsLoading, institutionsError, institution: form.institution })) {
+      return;
+    }
     setError(null);
     setLoading(true);
     try {
@@ -279,7 +285,7 @@ export default function LoginPage() {
               <Button
                 type="submit"
                 className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium h-10 rounded-lg transition-all duration-150"
-                disabled={loading}
+                disabled={!canSubmit({ loading, institutionsLoading, institutionsError, institution: form.institution })}
               >
                 {loading ? (
                   <>

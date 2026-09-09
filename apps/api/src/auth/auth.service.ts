@@ -1,13 +1,20 @@
-import { Injectable, UnauthorizedException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { AuditService } from '../common/audit/audit.service';
+import { InstitutionRegistry } from './institution.registry';
+import { LoginDto } from './dto/login.dto';
 
 export interface AuthContext {
   ip?: string | null;
   userAgent?: string | null;
+}
+
+interface ResolvedInstitution {
+  provider: string;
+  institutionId: string;
 }
 
 @Injectable()
@@ -19,9 +26,30 @@ export class AuthService {
     private readonly zimbra: ZimbraService,
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
+    private readonly institutionRegistry: InstitutionRegistry,
   ) {}
 
-  async login(email: string, password: string, zimbraHost: string, ctx: AuthContext = {}) {
+  async login(dto: LoginDto, ctx: AuthContext = {}) {
+    const { email, password } = dto;
+
+    const inst = dto.institution
+      ? await this.institutionRegistry.resolve(dto.institution)
+      : dto.zimbraHost
+        ? await this.institutionRegistry.resolveByHost(dto.zimbraHost)
+        : null;
+    if (!inst) {
+      throw new BadRequestException('Unknown institution. Pick your institution from the list.');
+    }
+    if (dto.zimbraHost && !dto.institution) {
+      this.logger.warn(`Legacy zimbraHost login for ${inst.id} — client should send institution`);
+    }
+    if (inst.provider !== 'zimbra') {
+      // Lifted when the ews/memory providers land (Phase 2/3).
+      throw new BadRequestException(`${inst.label} sign-in is not yet supported on this server.`);
+    }
+    const zimbraHost = inst.host;
+    const resolvedInstitution: ResolvedInstitution = { provider: inst.provider, institutionId: inst.id };
+
     let zimbraResult: Awaited<ReturnType<ZimbraService['authenticate']>>;
     try {
       zimbraResult = await this.zimbra.authenticate(zimbraHost, email, password);
@@ -48,6 +76,8 @@ export class AuthService {
           email,
           zimbraHost,
           preAuthToken: zimbraResult.authToken,
+          provider: resolvedInstitution.provider,
+          institutionId: resolvedInstitution.institutionId,
         },
         { expiresIn: '5m' },
       );
@@ -60,11 +90,18 @@ export class AuthService {
       return { requiresTwoFactor: true as const, twoFactorToken };
     }
 
-    return this.createSession(email, zimbraHost, zimbraResult, ctx);
+    return this.createSession(email, zimbraHost, zimbraResult, ctx, resolvedInstitution);
   }
 
   async loginTwoFactor(twoFactorToken: string, code: string, ctx: AuthContext = {}) {
-    let payload: { sub: string; email: string; zimbraHost: string; preAuthToken: string };
+    let payload: {
+      sub: string;
+      email: string;
+      zimbraHost: string;
+      preAuthToken: string;
+      provider?: string;
+      institutionId?: string;
+    };
     try {
       payload = this.jwt.verify(twoFactorToken) as typeof payload;
     } catch {
@@ -74,7 +111,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid two-factor session token.');
     }
 
-    const { email, zimbraHost, preAuthToken } = payload;
+    const { email, zimbraHost, preAuthToken, provider, institutionId } = payload;
 
     let zimbraResult: Awaited<ReturnType<ZimbraService['verifyTwoFactor']>>;
     try {
@@ -95,7 +132,13 @@ export class AuthService {
       throw err;
     }
 
-    return this.createSession(email, zimbraHost, zimbraResult, ctx);
+    return this.createSession(
+      email,
+      zimbraHost,
+      zimbraResult,
+      ctx,
+      provider && institutionId ? { provider, institutionId } : undefined,
+    );
   }
 
   /** Persist the Zimbra session and return a signed JWT for the frontend. */
@@ -104,6 +147,7 @@ export class AuthService {
     originalHost: string,
     zimbraResult: import('../zimbra/zimbra.service').ZimbraAuthResult,
     ctx: AuthContext,
+    institution?: ResolvedInstitution,
   ) {
     const effectiveHost = zimbraResult.refer ?? originalHost;
     // Guard against a misconfigured/omitted Zimbra `lifetime`: if it were
@@ -128,6 +172,7 @@ export class AuthService {
         tokenExpiry,
         displayName: zimbraResult.displayName ?? undefined,
         zimbraHost: effectiveHost,
+        ...(institution ? { provider: institution.provider, institutionId: institution.institutionId } : {}),
       },
       create: {
         email,
@@ -136,6 +181,7 @@ export class AuthService {
         csrfToken: zimbraResult.csrfToken ?? null,
         tokenExpiry,
         displayName: zimbraResult.displayName,
+        ...(institution ? { provider: institution.provider, institutionId: institution.institutionId } : {}),
       },
     });
 

@@ -1,21 +1,43 @@
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { AuditService } from '../common/audit/audit.service';
+import { InstitutionRegistry } from './institution.registry';
+
+// Rows shaped like Task 1's seed (see institution.registry.spec.ts), plus a
+// 'legacy' row whose host matches what the pre-existing tests below already
+// use as their zimbraHost, so the legacy resolveByHost path still resolves.
+const institutionRows = [
+  { id: 'risa', label: 'RISA', provider: 'zimbra', host: 'mail.risa.gov.rw:8443', ewsDomain: null, enabled: true, position: 0 },
+  { id: 'legacy', label: 'Legacy', provider: 'zimbra', host: 'mail.example.com', ewsDomain: null, enabled: true, position: 1 },
+  { id: 'minaffet', label: 'MINAFFET', provider: 'ews', host: 'webmail.minaffet.gov.rw', ewsDomain: 'MINAFFET', enabled: true, position: 2 },
+];
 
 function makeService() {
   const prisma = {
     user: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
     session: { create: jest.fn(), deleteMany: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), delete: jest.fn() },
   } as unknown as PrismaService;
-  const zimbra = { authenticate: jest.fn() } as unknown as ZimbraService;
+  const zimbra = { authenticate: jest.fn(), verifyTwoFactor: jest.fn() } as unknown as ZimbraService;
   const jwt = { sign: jest.fn(() => 'signed.jwt.token'), verify: jest.fn() } as unknown as JwtService;
   const audit = { record: jest.fn() } as unknown as AuditService;
-  const service = new AuthService(prisma, zimbra, jwt, audit);
-  return { service, prisma: prisma as any, zimbra: zimbra as any, jwt: jwt as any, audit: audit as any };
+  const institutionRegistry = {
+    list: jest.fn(),
+    resolve: jest.fn(async (id: string) => institutionRows.find((r) => r.id === id) ?? null),
+    resolveByHost: jest.fn(async (host: string) => institutionRows.find((r) => r.host === host) ?? null),
+  } as unknown as InstitutionRegistry;
+  const service = new AuthService(prisma, zimbra, jwt, audit, institutionRegistry);
+  return {
+    service,
+    prisma: prisma as any,
+    zimbra: zimbra as any,
+    jwt: jwt as any,
+    audit: audit as any,
+    institutionRegistry: institutionRegistry as any,
+  };
 }
 
 describe('AuthService.login', () => {
@@ -33,7 +55,10 @@ describe('AuthService.login', () => {
       id: 'u1', email: 'u1@example.com', displayName: 'Test User', zimbraHost: 'mail.example.com',
     });
 
-    await service.login('u1@example.com', 'pw', 'mail.example.com', { ip: '10.0.0.1', userAgent: 'Vitest/1.0' });
+    await service.login(
+      { email: 'u1@example.com', password: 'pw', zimbraHost: 'mail.example.com' } as any,
+      { ip: '10.0.0.1', userAgent: 'Vitest/1.0' },
+    );
 
     expect(prisma.session.create).toHaveBeenCalledWith({
       data: {
@@ -67,7 +92,10 @@ describe('AuthService.login', () => {
     );
 
     await expect(
-      service.login('u1@example.com', 'pw', 'mail.example.com', { ip: '10.0.0.1', userAgent: 'Vitest/1.0' }),
+      service.login(
+        { email: 'u1@example.com', password: 'pw', zimbraHost: 'mail.example.com' } as any,
+        { ip: '10.0.0.1', userAgent: 'Vitest/1.0' },
+      ),
     ).resolves.toEqual({
       accessToken: 'signed.jwt.token',
       user: {
@@ -101,7 +129,7 @@ describe('AuthService.login lifetime guard', () => {
     });
 
     const before = Date.now();
-    await service.login('u1@example.com', 'pw', 'mail.example.com', {});
+    await service.login({ email: 'u1@example.com', password: 'pw', zimbraHost: 'mail.example.com' } as any, {});
     const after = Date.now();
 
     const { expiresAt } = (prisma.session.create as jest.Mock).mock.calls[0][0].data;
@@ -128,11 +156,75 @@ describe('AuthService.login lifetime guard', () => {
     });
 
     const before = Date.now();
-    await service.login('u1@example.com', 'pw', 'mail.example.com', {});
+    await service.login({ email: 'u1@example.com', password: 'pw', zimbraHost: 'mail.example.com' } as any, {});
 
     const { expiresAt } = (prisma.session.create as jest.Mock).mock.calls[0][0].data;
     expect(expiresAt.getTime()).toBeGreaterThanOrEqual(before + lifetime);
     expect(expiresAt.getTime()).toBeLessThan(before + lifetime + 5_000);
+  });
+});
+
+describe('AuthService.login institution resolution', () => {
+  it('login resolves institution server-side and stamps provider + institutionId', async () => {
+    const { service, prisma, zimbra } = makeService();
+    zimbra.authenticate.mockResolvedValue({
+      twoFactorRequired: false,
+      authToken: 'zimbra-tok',
+      csrfToken: 'csrf',
+      lifetime: 3_600_000,
+      displayName: 'Test User',
+      refer: undefined,
+    });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u1', email: 'u@risa.gov.rw', displayName: 'Test User', zimbraHost: 'mail.risa.gov.rw:8443',
+    });
+
+    const res = await service.login({ institution: 'risa', email: 'u@risa.gov.rw', password: 'pw' } as any);
+
+    expect(zimbra.authenticate).toHaveBeenCalledWith('mail.risa.gov.rw:8443', 'u@risa.gov.rw', 'pw');
+    expect(prisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ provider: 'zimbra', institutionId: 'risa' }),
+      update: expect.objectContaining({ provider: 'zimbra', institutionId: 'risa' }),
+    }));
+    expect(res).toHaveProperty('accessToken');
+  });
+
+  it('rejects unknown or disabled institutions with 400', async () => {
+    const { service } = makeService();
+    await expect(service.login({ institution: 'nope', email: 'a@b', password: 'x' } as any))
+      .rejects.toThrow(BadRequestException);
+  });
+
+  it('legacy zimbraHost still works when it matches a registry row', async () => {
+    const { service, prisma, zimbra } = makeService();
+    zimbra.authenticate.mockResolvedValue({
+      twoFactorRequired: false,
+      authToken: 'zimbra-tok',
+      csrfToken: 'csrf',
+      lifetime: 3_600_000,
+      displayName: 'Test User',
+      refer: undefined,
+    });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u1', email: 'u@risa.gov.rw', displayName: 'Test User', zimbraHost: 'mail.risa.gov.rw:8443',
+    });
+
+    await service.login({ zimbraHost: 'mail.risa.gov.rw:8443', email: 'u@risa.gov.rw', password: 'pw' } as any);
+
+    expect(zimbra.authenticate).toHaveBeenCalledWith('mail.risa.gov.rw:8443', 'u@risa.gov.rw', 'pw');
+  });
+
+  it('rejects a zimbraHost not present in the registry', async () => {
+    const { service } = makeService();
+    await expect(service.login({ zimbraHost: 'evil.example.com', email: 'a@b', password: 'x' } as any))
+      .rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects ews/memory institutions until their providers exist', async () => {
+    const { service } = makeService();
+    // "not yet supported" — lifted in Phase 2/3
+    await expect(service.login({ institution: 'minaffet', email: 'a@minaffet.gov.rw', password: 'x' } as any))
+      .rejects.toThrow(BadRequestException);
   });
 });
 

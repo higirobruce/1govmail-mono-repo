@@ -24,7 +24,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: LoginDto, @Req() req: AuthenticatedRequest) {
-    return this.authService.login(dto.email, dto.password, dto.zimbraHost, {
+    return this.authService.login(dto, {
       ip: req.ip,
       userAgent: req.headers['user-agent'] ?? null,
     });

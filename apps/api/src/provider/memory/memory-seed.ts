@@ -116,11 +116,13 @@ export function seedMailbox(email: string, password: string, now: () => number):
     const isFlagged = i % Math.ceil(totalMessages / flaggedTarget) === 0;
     const hasAttachments = i === attachmentMessageIndex;
 
+    let attachmentData: Buffer | undefined;
     if (hasAttachments) {
+      attachmentData = Buffer.from(`Seeded attachment for message ${id}.\n`, 'utf-8');
       attachments.set(id, {
         filename: 'notes.txt',
         contentType: 'text/plain',
-        data: Buffer.from(`Seeded attachment for message ${id}.\n`, 'utf-8'),
+        data: attachmentData,
       });
     }
 
@@ -149,7 +151,7 @@ export function seedMailbox(email: string, password: string, now: () => number):
               part: '2',
               filename: 'notes.txt',
               contentType: 'text/plain',
-              size: 48,
+              size: attachmentData!.length,
               isInline: false,
             },
           ]

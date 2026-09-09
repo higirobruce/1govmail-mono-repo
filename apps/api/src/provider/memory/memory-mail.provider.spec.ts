@@ -1,6 +1,6 @@
 import { MemoryMailProvider } from './memory-mail.provider';
 import { MemoryStore } from './memory-store';
-import { UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { UnauthorizedException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MailProvider } from '../mail-provider.interface';
 
 const NOW = 1757500000000;
@@ -94,6 +94,27 @@ describe('MemoryMailProvider — auth + reads', () => {
 
     await provider.deleteFolder(sessionFor('demo@memory.local'), created.id);
     expect(mbox.folders.some((f) => f.id === created.id)).toBe(false);
+  });
+
+  it('renameFolder/deleteFolder/emptyFolder on an unknown folderId reject with NotFoundException', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+
+    await expect(provider.renameFolder(s, 'folder-does-not-exist', 'X')).rejects.toThrow(NotFoundException);
+    await expect(provider.deleteFolder(s, 'folder-does-not-exist')).rejects.toThrow(NotFoundException);
+    await expect(provider.emptyFolder(s, 'folder-does-not-exist')).rejects.toThrow(NotFoundException);
+  });
+
+  it('deleteFolder refuses to delete a system folder (e.g. Inbox)', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const inbox = mbox.folders.find((f) => f.type === 'inbox')!;
+
+    await expect(provider.deleteFolder(s, inbox.id)).rejects.toThrow(BadRequestException);
+    expect(mbox.folders.some((f) => f.id === inbox.id)).toBe(true);
   });
 });
 
@@ -403,6 +424,27 @@ describe('MemoryMailProvider — contacts, GAL, calendar, free/busy', () => {
 
     const narrow = await provider.getCalendarEvents(s, NOW + 100 * 864e5, NOW + 200 * 864e5);
     expect(narrow.length).toBe(0);
+  });
+
+  it('getCalendarEvents includes an event that straddles the window start (overlap semantics, not start-in-range)', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const windowStart = NOW + 50 * 864e5;
+    const windowEnd = windowStart + 60 * 60 * 1000;
+
+    // Starts before the window and ends inside it — a start-in-range filter
+    // would miss this event even though it overlaps [windowStart, windowEnd).
+    const straddlingId = await provider.createCalendarEvent(s, {
+      title: 'Straddles window start',
+      startAt: new Date(windowStart - 30 * 60 * 1000),
+      endAt: new Date(windowStart + 15 * 60 * 1000),
+      allDay: false,
+      organizerEmail: 'demo@memory.local',
+    });
+
+    const events = await provider.getCalendarEvents(s, windowStart, windowEnd);
+    expect(events.some((e) => e.id === straddlingId)).toBe(true);
   });
 
   it('createCalendarEvent returns an id and the event appears in range', async () => {

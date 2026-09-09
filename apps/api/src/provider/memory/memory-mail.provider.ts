@@ -1,5 +1,5 @@
 import { Readable } from 'stream';
-import { NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailSession } from '../mail-session';
 import {
   ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderAddress, ProviderAttachmentMeta,
@@ -10,6 +10,8 @@ import { MemoryStore, MemoryMailbox } from './memory-store';
 import {
   MailProvider, SendMessagePayload, DraftPayload, CalendarEventPayload, ModifyCalendarEventPayload,
 } from '../mail-provider.interface';
+
+const SYSTEM_FOLDER_TYPES = new Set(['inbox', 'sent', 'drafts', 'trash', 'junk']);
 
 let folderCounter = 0;
 function nextFolderId(): string {
@@ -127,6 +129,11 @@ export class MemoryMailProvider implements MailProvider {
 
   async deleteFolder(s: MailSession, folderId: string): Promise<void> {
     const mailbox = this.mb(s);
+    const folder = mailbox.folders.find((f) => f.id === folderId);
+    if (!folder) throw new NotFoundException('Folder not found');
+    if (folder.type && SYSTEM_FOLDER_TYPES.has(folder.type)) {
+      throw new BadRequestException('Cannot delete a system folder');
+    }
     mailbox.folders = mailbox.folders.filter((f) => f.id !== folderId);
     mailbox.messages = mailbox.messages.filter((m) => m.folderId !== folderId);
   }
@@ -134,20 +141,18 @@ export class MemoryMailProvider implements MailProvider {
   async renameFolder(s: MailSession, folderId: string, name: string): Promise<void> {
     const mailbox = this.mb(s);
     const folder = mailbox.folders.find((f) => f.id === folderId);
-    if (folder) {
-      folder.name = name;
-      folder.path = `/${name}`;
-    }
+    if (!folder) throw new NotFoundException('Folder not found');
+    folder.name = name;
+    folder.path = `/${name}`;
   }
 
   async emptyFolder(s: MailSession, folderId: string): Promise<void> {
     const mailbox = this.mb(s);
-    mailbox.messages = mailbox.messages.filter((m) => m.folderId !== folderId);
     const folder = mailbox.folders.find((f) => f.id === folderId);
-    if (folder) {
-      folder.totalCount = 0;
-      folder.unreadCount = 0;
-    }
+    if (!folder) throw new NotFoundException('Folder not found');
+    mailbox.messages = mailbox.messages.filter((m) => m.folderId !== folderId);
+    folder.totalCount = 0;
+    folder.unreadCount = 0;
   }
 
   // ---- messages ---------------------------------------------------------------
@@ -439,10 +444,9 @@ export class MemoryMailProvider implements MailProvider {
 
   async getCalendarEvents(s: MailSession, startMs: number, endMs: number): Promise<ProviderEvent[]> {
     const mailbox = this.mb(s);
-    return mailbox.events.filter((e) => {
-      const t = e.startAt.getTime();
-      return t >= startMs && t <= endMs;
-    });
+    return mailbox.events.filter(
+      (e) => e.startAt.getTime() < endMs && e.endAt.getTime() > startMs,
+    );
   }
 
   async getAppointment(s: MailSession, id: string): Promise<ProviderEventDetail | null> {

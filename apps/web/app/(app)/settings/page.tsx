@@ -13,6 +13,9 @@ import { AIClient } from '@/lib/ai/client';
 import { CUSTOM_INSTRUCTIONS_MAX_CHARS } from '@/lib/ai/prompt';
 import { isValidSenderAddress } from './blocked-senders-helpers';
 import {
+  resolveCapabilities, ALL_CAPABILITIES, type SettingsCapabilities,
+} from './capabilities';
+import {
   normalizeProfileDraft, mergeSuggestions, AI_PROFILE_FIELD_MAX_CHARS,
   type AiProfileDraft,
 } from './ai-profile-helpers';
@@ -82,6 +85,9 @@ interface SettingsData {
   prefs: Record<string, string>;
   identities: Identity[];
   signatures: Signature[];
+  /** Optional: a server from before this field simply omits it, and every
+   *  absent flag defaults to supported. See ./capabilities. */
+  capabilities?: Partial<SettingsCapabilities>;
 }
 
 type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'ai-profile' | 'security';
@@ -415,6 +421,11 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<SettingsData | null>(null);
 
+  // Everything the backend has not explicitly disclaimed is rendered, so a
+  // Zimbra account (all flags true) and a pre-capabilities server look the same
+  // as they always did.
+  const caps = data ? resolveCapabilities(data.capabilities) : ALL_CAPABILITIES;
+
   // ── Auth guard ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));
@@ -476,9 +487,17 @@ export default function SettingsPage() {
         <p className="hidden md:block text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/40 px-2 mb-2">
           Settings
         </p>
+        {/* Profile, Blocked Senders and Security always show: their
+            always-present content (address/server, the local block list, the
+            local session list) is not provider-backed. The provider-backed
+            parts inside them are gated further down. */}
         <NavItem icon={User}          label="Profile"       active={section === 'profile'}     onClick={() => setSection('profile')} />
-        <NavItem icon={FileSignature} label="Signatures"    active={section === 'signatures'}  onClick={() => setSection('signatures')} />
-        <NavItem icon={Palmtree}      label="Vacation Reply" active={section === 'vacation'}   onClick={() => setSection('vacation')} />
+        {caps.signatures && (
+          <NavItem icon={FileSignature} label="Signatures"    active={section === 'signatures'}  onClick={() => setSection('signatures')} />
+        )}
+        {caps.serverPrefs && (
+          <NavItem icon={Palmtree}      label="Vacation Reply" active={section === 'vacation'}   onClick={() => setSection('vacation')} />
+        )}
         <NavItem icon={Ban}           label="Blocked Senders" active={section === 'blocked-senders'} onClick={() => setSection('blocked-senders')} />
         <NavItem icon={Settings2}     label="Preferences"   active={section === 'preferences'} onClick={() => setSection('preferences')} />
         {!AI_LOCKED && (
@@ -502,13 +521,13 @@ export default function SettingsPage() {
             </div>
           ) : data ? (
             <>
-              {section === 'profile'     && <ProfileSection     data={data} onUpdate={loadSettings} />}
-              {section === 'signatures'  && <SignaturesSection   data={data} onUpdate={loadSettings} />}
-              {section === 'vacation'    && <VacationSection     data={data} onUpdate={loadSettings} />}
+              {section === 'profile'     && <ProfileSection     data={data} caps={caps} onUpdate={loadSettings} />}
+              {section === 'signatures'  && caps.signatures  && <SignaturesSection   data={data} onUpdate={loadSettings} />}
+              {section === 'vacation'    && caps.serverPrefs && <VacationSection     data={data} onUpdate={loadSettings} />}
               {section === 'blocked-senders' && <BlockedSendersSection />}
-              {section === 'preferences' && <PreferencesSection  data={data} onUpdate={loadSettings} />}
+              {section === 'preferences' && <PreferencesSection  data={data} caps={caps} onUpdate={loadSettings} />}
               {section === 'ai' && !AI_LOCKED && <AISection />}
-              {section === 'security'    && <SecuritySection     data={data} />}
+              {section === 'security'    && <SecuritySection     data={data} caps={caps} />}
             </>
           ) : null}
         </div>
@@ -521,7 +540,9 @@ export default function SettingsPage() {
 // Profile section
 // ══════════════════════════════════════════════════════════════════════════════
 
-function ProfileSection({ data, onUpdate }: { data: SettingsData; onUpdate: () => void }) {
+function ProfileSection({ data, caps, onUpdate }: {
+  data: SettingsData; caps: SettingsCapabilities; onUpdate: () => void;
+}) {
   const primaryIdentity = data.identities[0];
   const attrs = primaryIdentity?.attrs ?? {};
 
@@ -552,7 +573,9 @@ function ProfileSection({ data, onUpdate }: { data: SettingsData; onUpdate: () =
     <div>
       <SectionHeader
         title="Profile"
-        description="Manage how your name and address appear to recipients."
+        description={caps.identities
+          ? 'Manage how your name and address appear to recipients.'
+          : 'Your mailbox address and server.'}
       />
 
       {/* Read-only info */}
@@ -567,9 +590,11 @@ function ProfileSection({ data, onUpdate }: { data: SettingsData; onUpdate: () =
         </div>
       </div>
 
+      {/* Editable — identity attributes; only when the backend serves them. */}
+      {caps.identities && (
+      <>
       <Separator className="mb-6" />
 
-      {/* Editable */}
       <div className="space-y-4">
         <div className="flex flex-col gap-1.5">
           <Label className="text-xs text-muted-foreground/60 uppercase tracking-wider">Display name</Label>
@@ -616,6 +641,8 @@ function ProfileSection({ data, onUpdate }: { data: SettingsData; onUpdate: () =
           Save changes
         </Button>
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -1118,7 +1145,15 @@ function BlockedSendersSection() {
 // Mail preferences section
 // ══════════════════════════════════════════════════════════════════════════════
 
-function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: () => void }) {
+/**
+ * Mixed section: Appearance (theme, font size) and "Consistent email display"
+ * are local-only — they live in localStorage and must render whatever the
+ * backend supports. Everything else here reads and writes server preferences,
+ * so it is gated on `serverPrefs`. With the flag true the markup is unchanged.
+ */
+function PreferencesSection({ data, caps, onUpdate }: {
+  data: SettingsData; caps: SettingsCapabilities; onUpdate: () => void;
+}) {
   const p = data.prefs;
   const primaryIdentity = data.identities[0];
 
@@ -1201,12 +1236,14 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
       {/* Reading */}
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/40 mb-3">Reading</p>
       <div className="divide-y divide-border/30 mb-6">
+        {caps.serverPrefs && (
         <SettingRow
           label="Display messages as HTML"
           description="Render HTML email (disabling shows plain text)."
         >
           <Switch checked={htmlPreferred} onChange={setHtmlPreferred} />
         </SettingRow>
+        )}
 
         <SettingRow
           label="Consistent email display"
@@ -1215,6 +1252,8 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
           <Switch checked={normalizeEmailStyles} onChange={handleNormalizeToggle} />
         </SettingRow>
 
+        {caps.serverPrefs && (
+        <>
         <SettingRow
           label="Mark messages as read"
           description="Delay before a message is marked as read when opened."
@@ -1247,8 +1286,12 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
             ]}
           />
         </SettingRow>
+        </>
+        )}
       </div>
 
+      {caps.serverPrefs && (
+      <>
       {/* Composing */}
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/40 mb-3">Composing</p>
       <div className="divide-y divide-border/30 mb-6">
@@ -1294,6 +1337,8 @@ function PreferencesSection({ data, onUpdate }: { data: SettingsData; onUpdate: 
         {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
         Save changes
       </Button>
+      </>
+      )}
     </div>
   );
 }
@@ -1624,7 +1669,11 @@ function AiProfileSection() {
 // Security section
 // ══════════════════════════════════════════════════════════════════════════════
 
-function SecuritySection({ data }: { data: SettingsData }) {
+/**
+ * The active-session list is this app's own (local Session rows), so it always
+ * renders; only the password form is provider-backed.
+ */
+function SecuritySection({ data, caps }: { data: SettingsData; caps: SettingsCapabilities }) {
   const [oldPwd, setOldPwd]         = useState('');
   const [newPwd, setNewPwd]         = useState('');
   const [confirmPwd, setConfirmPwd] = useState('');
@@ -1697,6 +1746,8 @@ function SecuritySection({ data }: { data: SettingsData }) {
 
   return (
     <div>
+      {caps.changePassword && (
+      <>
       <SectionHeader
         title="Security"
         description={`Change your Zimbra account password for ${data.email}.`}
@@ -1759,6 +1810,8 @@ function SecuritySection({ data }: { data: SettingsData }) {
       </div>
 
       <Separator className="my-6" />
+      </>
+      )}
 
       <SectionHeader
         title="Active sessions"

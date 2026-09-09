@@ -1,7 +1,7 @@
 import { MailSession } from './mail-session';
 import {
   ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderContact,
-  ProviderEvent, ProviderEventAttendee, ProviderFreeBusy, ProviderAuthResult,
+  ProviderEvent, ProviderEventDetail, ProviderFreeBusy, ProviderAuthResult,
   MailProviderCapabilities, ProviderAddress,
 } from './provider-types';
 
@@ -16,6 +16,20 @@ export interface DraftPayload { id?: string; to?: string[]; cc?: string[]; bcc?:
 export interface CalendarEventPayload {
   title: string; location?: string; startAt: Date; endAt: Date; allDay: boolean;
   description?: string; organizerEmail: string; organizerName?: string; attendees?: string[];
+}
+
+/**
+ * Task 8 adjustment: Task 5 declared `modifyCalendarEvent` as taking a
+ * `Partial<CalendarEventPayload>`, but an appointment update is not a patch —
+ * the provider resends the whole component, so title/start/end/allDay/organizer
+ * are all mandatory, and it additionally needs the optimistic-concurrency
+ * counters read off the current appointment. Sending a stale `modifiedSequence`
+ * is what produces the "specified Invite is out of date" failure, so these
+ * cannot be dropped from the neutral payload.
+ */
+export interface ModifyCalendarEventPayload extends CalendarEventPayload {
+  modifiedSequence?: number;
+  rev?: number;
 }
 
 export interface MailProvider {
@@ -79,11 +93,30 @@ export interface MailProvider {
   searchGal(s: MailSession, query: string): Promise<Array<{ email: string; display: string }>>;
 
   // calendar
+  /**
+   * Events overlapping [startMs, endMs). Recurrence is expanded server-side but
+   * only the first occurrence of each appointment inside the window is
+   * returned — that is what the one caller consumes, and widening it would
+   * change the events endpoint's payload. See mapZimbraAppointment.
+   */
   getCalendarEvents(s: MailSession, startMs: number, endMs: number): Promise<ProviderEvent[]>;
-  getAppointment(s: MailSession, id: string): Promise<ProviderEvent & { attendees: ProviderEventAttendee[] }>;
+  /**
+   * Full detail for one appointment: the complete attendee list with
+   * participation status, plus the ids/counters an update has to quote.
+   * Resolves to `null` when the appointment is gone — the caller falls back to
+   * its cached copy rather than erroring. Returns ProviderEventDetail, not a
+   * ProviderEvent — see the type's doc comment for why.
+   */
+  getAppointment(s: MailSession, id: string): Promise<ProviderEventDetail | null>;
   createCalendarEvent(s: MailSession, payload: CalendarEventPayload): Promise<string>;
-  modifyCalendarEvent(s: MailSession, id: string, payload: Partial<CalendarEventPayload>): Promise<void>;
+  modifyCalendarEvent(s: MailSession, id: string, payload: ModifyCalendarEventPayload): Promise<void>;
   deleteCalendarEvent(s: MailSession, id: string): Promise<void>;
+  /**
+   * `inviteId` is the *invite message* id, not the calendar item id.
+   * Task 8 adjustment: the Zimbra implementation also accepted `subject` and
+   * `organizerEmail` arguments, but never read them — dead parameters threaded
+   * through from the caller. Dropped; the request body is unchanged.
+   */
   sendInviteReply(s: MailSession, inviteId: string, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE'): Promise<void>;
   getFreeBusy(s: MailSession, email: string, startMs: number, endMs: number): Promise<ProviderFreeBusy>;
 

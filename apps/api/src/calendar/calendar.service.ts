@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildMailSession } from '../provider/mail-session';
 import { ZimbraService } from '../zimbra/zimbra.service';
 
 export interface CalendarEventData {
@@ -33,94 +34,45 @@ export class CalendarService {
     return user;
   }
 
-  /** Parse a raw Zimbra appointment node into a structured event. */
-  private parseAppt(appt: any): {
-    zimbraId: string;
-    zimbraInviteId: string | null;
-    title: string;
-    description: string | null;
-    location: string | null;
-    startAt: Date;
-    endAt: Date;
-    allDay: boolean;
-    isRecurring: boolean;
-    organizer: string | null;
-    attendees: Array<{ email: string; name?: string }>;
-  } | null {
-    // Appointments may have multiple instances; use the first expanded instance
-    const inst = Array.isArray(appt.inst) ? appt.inst[0] : null;
-    if (!inst) return null;
-
-    const startMs: number = inst.s ?? 0;
-    // inst.dur is not always present in SearchResponse — fall back to appt-level dur
-    const dur: number = inst.dur ?? appt.dur ?? 3_600_000;
-    const allDay = !!(inst.allDay || appt.allDay);
-
-    return {
-      zimbraId: String(appt.id),
-      // invId is the inbox message ID of the original invite — required by SendInviteReplyRequest
-      zimbraInviteId: appt.invId != null ? String(appt.invId) : null,
-      title: appt.name ?? appt.su ?? '(No title)',
-      description: appt.desc ?? null,
-      location: appt.loc ?? null,
-      startAt: new Date(startMs),
-      endAt: new Date(startMs + dur),
-      allDay,
-      isRecurring: !!(appt.recur),
-      organizer: appt.or?.a ?? null,
-      attendees: Array.isArray(appt.at)
-        ? appt.at.map((a: any) => ({ email: a.a, name: a.d ?? undefined }))
-        : [],
-    };
-  }
-
   // ── Get events for a date range ───────────────────────────────────────────
 
+  /**
+   * Wire→app parsing of the appointment search hits (the `inst[]` expansion,
+   * the title/loc/desc fallbacks, the attendee shape) now lives in
+   * zimbra.mappers.mapZimbraAppointment. This method only caches what the
+   * provider returned.
+   */
   async getEvents(userId: string, start: Date, end: Date): Promise<any[]> {
     const user = await this.getUser(userId);
-    const rawAppts = await this.zimbra.getCalendarEvents(
-      user.zimbraHost,
-      user.authToken!,
+    const events = await this.zimbra.getCalendarEvents(
+      buildMailSession(user),
       start.getTime(),
       end.getTime(),
-      user.csrfToken ?? undefined,
     );
 
     const results: any[] = [];
-    for (const appt of rawAppts) {
-      const parsed = this.parseAppt(appt);
-      if (!parsed) continue;
+    for (const ev of events) {
+      // `organizer` is an email column, so only the address survives; nulls are
+      // written explicitly (not left undefined) so that clearing a field
+      // upstream also clears the cached copy on update.
+      const row = {
+        zimbraInviteId: ev.inviteId,
+        title:          ev.title,
+        description:    ev.description ?? null,
+        location:       ev.location ?? null,
+        startAt:        ev.startAt,
+        endAt:          ev.endAt,
+        allDay:         ev.allDay,
+        isRecurring:    ev.isRecurring,
+        organizer:      ev.organizer?.email ?? null,
+        attendees:      ev.attendees as any,
+        syncedAt:       new Date(),
+      };
 
       const cached = await this.prisma.calendarEvent.upsert({
-        where: { userId_zimbraId: { userId, zimbraId: parsed.zimbraId } },
-        create: {
-          userId,
-          zimbraId:       parsed.zimbraId,
-          zimbraInviteId: parsed.zimbraInviteId,
-          title:          parsed.title,
-          description:    parsed.description,
-          location:       parsed.location,
-          startAt:        parsed.startAt,
-          endAt:          parsed.endAt,
-          allDay:         parsed.allDay,
-          isRecurring:    parsed.isRecurring,
-          organizer:      parsed.organizer,
-          attendees:      parsed.attendees as any,
-          syncedAt:       new Date(),
-        },
-        update: {
-          zimbraInviteId: parsed.zimbraInviteId,
-          title:          parsed.title,
-          description:    parsed.description,
-          location:       parsed.location,
-          startAt:        parsed.startAt,
-          endAt:          parsed.endAt,
-          allDay:         parsed.allDay,
-          isRecurring:    parsed.isRecurring,
-          organizer:      parsed.organizer,
-          attendees:      parsed.attendees as any,
-          syncedAt:       new Date(),
-        },
+        where: { userId_zimbraId: { userId, zimbraId: ev.id } },
+        create: { userId, zimbraId: ev.id, ...row },
+        update: row,
       });
       results.push(cached);
     }
@@ -141,28 +93,14 @@ export class CalendarService {
     });
     if (!event) throw new NotFoundException('Event not found');
 
-    const raw = await this.zimbra.getAppointment(
-      user.zimbraHost,
-      user.authToken!,
-      event.zimbraId,
-      user.csrfToken ?? undefined,
-    );
+    const detail = await this.zimbra.getAppointment(buildMailSession(user), event.zimbraId);
 
-    if (!raw) return event;
+    if (!detail) return event;
 
-    // GetAppointmentResponse: attendees live in inv[0].comp[0].at
-    const comp = raw.inv?.[0]?.comp?.[0];
-    const attendees: Array<{ email: string; name?: string; ptst?: string }> = Array.isArray(comp?.at)
-      ? comp.at.map((a: any) => ({
-          email: a.a,
-          name: a.d ?? undefined,
-          ptst: a.ptst ?? undefined, // participation status: AC/DE/TE/NE
-        }))
-      : (Array.isArray(raw.at)
-          ? raw.at.map((a: any) => ({ email: a.a, name: a.d ?? undefined, ptst: a.ptst ?? undefined }))
-          : (event.attendees as any) ?? []);
-
-    const organizer: string | null = comp?.or?.a ?? raw.or?.a ?? event.organizer;
+    // A null attendee list means the response carried none at all — keep the
+    // cached one rather than blanking it.
+    const attendees = detail.attendees ?? ((event.attendees as any) ?? []);
+    const organizer: string | null = detail.organizer?.email ?? event.organizer;
 
     // Persist the enriched attendees so the event list is also up to date
     return this.prisma.calendarEvent.update({
@@ -178,22 +116,17 @@ export class CalendarService {
     const startAt = new Date(data.startAt);
     const endAt   = new Date(data.endAt);
 
-    const zimbraId = await this.zimbra.createCalendarEvent(
-      user.zimbraHost,
-      user.authToken!,
-      {
-        title:          data.title,
-        location:       data.location,
-        startAt,
-        endAt,
-        allDay:         data.allDay ?? false,
-        description:    data.description,
-        organizerEmail: user.email,
-        organizerName:  user.displayName ?? undefined,
-        attendees:      data.attendees ?? [],
-      },
-      user.csrfToken ?? undefined,
-    );
+    const zimbraId = await this.zimbra.createCalendarEvent(buildMailSession(user), {
+      title:          data.title,
+      location:       data.location,
+      startAt,
+      endAt,
+      allDay:         data.allDay ?? false,
+      description:    data.description,
+      organizerEmail: user.email,
+      organizerName:  user.displayName ?? undefined,
+      attendees:      data.attendees ?? [],
+    });
 
     return this.prisma.calendarEvent.create({
       data: {
@@ -227,51 +160,31 @@ export class CalendarService {
     const startAt = new Date(data.startAt);
     const endAt   = new Date(data.endAt);
 
-    // Fetch the current Zimbra appointment to get the latest sequence number.
+    // Fetch the current appointment to get the latest sequence number.
     // ModifyAppointmentRequest requires seq to match what's on the server;
     // sending an outdated seq results in the "The specified Invite is out of date" 502 error.
-    const appt = await this.zimbra.getAppointment(
-      user.zimbraHost,
-      user.authToken!,
-      event.zimbraId,
-      user.csrfToken ?? undefined,
-    );
+    const session = buildMailSession(user);
+    const detail = await this.zimbra.getAppointment(session, event.zimbraId);
 
-    // Zimbra's JSON bridge may return single-item arrays as plain objects at any level
-    const firstOf = <T>(x: T | T[] | undefined): T | undefined =>
-      Array.isArray(x) ? x[0] : x;
-    const inv = firstOf(appt?.inv);
-
-    // ModifyAppointmentRequest.id must be "{calItemId}-{invMsgId}", not just the calItemId.
-    // The invite message ID lives in inv[0].id (or inv.id when the bridge returns an object).
-    const invMsgId = inv?.id != null ? String(inv.id) : null;
-    const modifyId = invMsgId
-      ? `${event.zimbraId}-${invMsgId}`
+    // ModifyAppointmentRequest.id must be "{calItemId}-{invMsgId}", not just the
+    // calItemId — the provider surfaces the invite half, we own the join.
+    const modifyId = detail?.inviteMessageId
+      ? `${event.zimbraId}-${detail.inviteMessageId}`
       : (event.zimbraInviteId ?? event.zimbraId);
 
-    // modifiedSequence and rev are sent at the request level for Zimbra conflict detection
-    const modifiedSequence = appt?.ms  != null ? Number(appt.ms)  : undefined;
-    const rev              = appt?.rev != null ? Number(appt.rev) : undefined;
-
-    await this.zimbra.modifyCalendarEvent(
-      user.zimbraHost,
-      user.authToken!,
-      modifyId,
-      {
-        title:             data.title,
-        location:          data.location,
-        startAt,
-        endAt,
-        allDay:            data.allDay ?? false,
-        description:       data.description,
-        organizerEmail:    user.email,
-        organizerName:     user.displayName ?? undefined,
-        attendees:         data.attendees ?? [],
-        modifiedSequence,
-        rev,
-      },
-      user.csrfToken ?? undefined,
-    );
+    await this.zimbra.modifyCalendarEvent(session, modifyId, {
+      title:             data.title,
+      location:          data.location,
+      startAt,
+      endAt,
+      allDay:            data.allDay ?? false,
+      description:       data.description,
+      organizerEmail:    user.email,
+      organizerName:     user.displayName ?? undefined,
+      attendees:         data.attendees ?? [],
+      modifiedSequence:  detail?.modifiedSequence,
+      rev:               detail?.rev,
+    });
 
     return this.prisma.calendarEvent.update({
       where: { id: eventId },
@@ -302,12 +215,7 @@ export class CalendarService {
     });
     if (!event) throw new NotFoundException('Event not found');
 
-    await this.zimbra.deleteCalendarEvent(
-      user.zimbraHost,
-      user.authToken!,
-      event.zimbraId,
-      user.csrfToken ?? undefined,
-    );
+    await this.zimbra.deleteCalendarEvent(buildMailSession(user), event.zimbraId);
     await this.prisma.calendarEvent.delete({ where: { id: eventId } });
     return { success: true };
   }
@@ -328,15 +236,7 @@ export class CalendarService {
     // SendInviteReplyRequest requires the invite message ID (invId), not the
     // calendar item ID. Fall back to zimbraId for events created locally.
     const replyId = event.zimbraInviteId ?? event.zimbraId;
-    await this.zimbra.sendInviteReply(
-      user.zimbraHost,
-      user.authToken!,
-      replyId,
-      verb,
-      event.title,
-      event.organizer ?? undefined,
-      user.csrfToken ?? undefined,
-    );
+    await this.zimbra.sendInviteReply(buildMailSession(user), replyId, verb);
     return { success: true };
   }
 
@@ -360,12 +260,10 @@ export class CalendarService {
   }> {
     const user = await this.getUser(userId);
     const data = await this.zimbra.getFreeBusy(
-      user.zimbraHost,
-      user.authToken!,
+      buildMailSession(user),
       email,
       start.getTime(),
       end.getTime(),
-      user.csrfToken ?? undefined,
     );
     return { email, ...data };
   }
@@ -387,17 +285,11 @@ export class CalendarService {
     unavailable: Array<{ s: number; e: number }>;
   }>> {
     const user = await this.getUser(userId);
+    const session = buildMailSession(user);
     return Promise.all(
       emails.map((email) =>
         this.zimbra
-          .getFreeBusy(
-            user.zimbraHost,
-            user.authToken!,
-            email,
-            start.getTime(),
-            end.getTime(),
-            user.csrfToken ?? undefined,
-          )
+          .getFreeBusy(session, email, start.getTime(), end.getTime())
           .then((data) => ({ email, ...data })),
       ),
     );

@@ -53,14 +53,66 @@ export interface ProviderContact {
   notes?: string | null;
 }
 
+/** `ptst` is Zimbra's participation status — AC/DE/TE/NE. Kept as the raw
+ *  two-letter code because apps/web renders it directly off the
+ *  CalendarEvent.attendees JSON column. */
 export interface ProviderEventAttendee extends ProviderAddress { ptst?: string }
 
+/**
+ * One calendar event as the app layer wants it.
+ *
+ * Task 8 adjustments (all additive except the two widenings noted):
+ *  - `inviteId` — Zimbra's `invId`, the *inbox message* id of the original
+ *    invite. SendInviteReplyRequest needs this, not the calendar item id, so
+ *    CalendarService persists it as CalendarEvent.zimbraInviteId.
+ *  - `isRecurring` — presence of a recurrence rule on the appointment. Persisted
+ *    as CalendarEvent.isRecurring; the expansion itself is not modelled here
+ *    because the only consumer takes the first expanded instance per appointment.
+ *  - `location` / `description` widened from `string` to `string | null`. They
+ *    are written straight into nullable Prisma columns on both create AND
+ *    update; `undefined` on an update means "leave unchanged" in Prisma, so
+ *    collapsing null to undefined would stop a cleared field from ever being
+ *    cleared in the cache. The null has to survive the neutral DTO.
+ */
 export interface ProviderEvent {
-  id: string; title: string; location?: string;
+  id: string; title: string; location?: string | null;
   startAt: Date; endAt: Date; allDay: boolean;
-  description?: string;
+  description?: string | null;
   organizer?: ProviderAddress; attendees: ProviderEventAttendee[];
-  // extend with the fields calendar.service actually reads (recurrence, ptst, apptId…) during Task 8
+  inviteId: string | null;
+  isRecurring: boolean;
+}
+
+/**
+ * The extra detail a single-appointment fetch returns beyond a list hit.
+ *
+ * Task 8 adjustment: Task 5 declared `getAppointment` as
+ * `Promise<ProviderEvent & { attendees: ProviderEventAttendee[] }>`. The real
+ * call sites (CalendarService.getEvent and .updateEvent) never read the
+ * title/start/end off this response — they only want the enriched attendee
+ * list, the organizer, and the three ids/counters an appointment update needs.
+ * Modelling it as a full ProviderEvent would force the mapper to invent
+ * start/end values from a wire node that does not reliably carry them, so this
+ * is a separate, narrower shape.
+ */
+export interface ProviderEventDetail {
+  id: string;
+  /**
+   * `null` — not `[]` — when the response carried no attendee list at all.
+   * The distinction is load-bearing: CalendarService keeps its cached attendee
+   * list in that case rather than blanking it.
+   */
+  attendees: ProviderEventAttendee[] | null;
+  organizer?: ProviderAddress;
+  /**
+   * Id of the invite message *inside* the appointment. An appointment update
+   * has to be addressed as "{calendarItemId}-{inviteMessageId}"; the caller
+   * owns the join because it holds the calendar item id.
+   */
+  inviteMessageId: string | null;
+  /** Optimistic-concurrency counters the provider requires on an update. */
+  modifiedSequence?: number;
+  rev?: number;
 }
 
 export interface ProviderFreeBusy {

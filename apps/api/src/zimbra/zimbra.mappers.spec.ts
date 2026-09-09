@@ -1,4 +1,13 @@
-import { mapProviderContactToZimbraAttrs, mapZimbraContact, mapZimbraFolder, mapZimbraMessage } from './zimbra.mappers';
+import {
+  mapProviderContactToZimbraAttrs,
+  mapCalendarEventPayloadToZimbraMessage,
+  mapZimbraAppointment,
+  mapZimbraAppointmentDetail,
+  mapZimbraContact,
+  mapZimbraFolder,
+  mapZimbraFreeBusy,
+  mapZimbraMessage,
+} from './zimbra.mappers';
 
 // These fixtures pin the wire→app parsing that MailService used to do inline
 // (flag chars in `f`, address roles in `e[]`, the `mp[]` part walk). The REST
@@ -227,5 +236,240 @@ describe('mapProviderContactToZimbraAttrs', () => {
   it('omits attrs for fields that are absent, null, or empty string', () => {
     const attrs = mapProviderContactToZimbraAttrs({ firstName: 'X', emails: [], phones: [] });
     expect(attrs).toEqual([{ n: 'firstName', _content: 'X' }]);
+  });
+});
+
+// ─── Calendar ────────────────────────────────────────────────────────────────
+//
+// Two different wire shapes, two mappers. `SearchRequest types=appointment`
+// (with calExpandInstStart/End) returns `appt` nodes carrying *expanded
+// instances* in `inst[]`; `GetAppointmentRequest` returns a much richer `appt`
+// node whose attendees hide under `inv[0].comp[0].at` and which carries the
+// `ms`/`rev` conflict-detection counters plus the invite message id.
+//
+// Every expectation below was read off CalendarService.parseAppt (search hits)
+// and CalendarService.getEvent/updateEvent (detail) — the task brief's starting
+// fixture was corrected in three places, see the comments inline.
+
+describe('mapZimbraAppointment', () => {
+  // Correction #1 vs the brief fixture: the description comes off `desc`, not
+  // `fr` — parseAppt reads `appt.desc ?? null` and never looks at the fragment.
+  const rawAppt = {
+    id: '401', name: 'Working session with COK',
+    loc: 'KG1 Roundabout', allDay: false,
+    inst: [{ s: 1757500200000 }],
+    dur: 3600000,
+    or: { a: 'bruce.higiro@risa.gov.rw', d: 'Bruce' },
+    at: [{ a: 'alice@risa.gov.rw', d: 'Alice', ptst: 'AC' }],
+    desc: 'Agenda: processes automation',
+  } as any;
+
+  it('maps a Zimbra appointment search hit to ProviderEvent', () => {
+    const ev = mapZimbraAppointment(rawAppt)!;
+    expect(ev).toMatchObject({
+      id: '401', title: 'Working session with COK', location: 'KG1 Roundabout',
+      allDay: false,
+      description: 'Agenda: processes automation',
+      isRecurring: false,
+      inviteId: null,
+      organizer: { email: 'bruce.higiro@risa.gov.rw', name: 'Bruce' },
+    });
+    expect(ev.startAt).toEqual(new Date(1757500200000));
+    expect(ev.endAt).toEqual(new Date(1757500200000 + 3600000));
+  });
+
+  // Correction #2 vs the brief fixture: search-hit attendees are {email,name}
+  // only. parseAppt never read `ptst` here, and this array is persisted verbatim
+  // into the CalendarEvent.attendees JSON column that the REST list response
+  // returns — adding a key would change the payload. Per-attendee ptst arrives
+  // through the detail mapper below, which is where getEvent reads it.
+  it('maps attendees to {email,name} without ptst (parseAppt fidelity)', () => {
+    const ev = mapZimbraAppointment(rawAppt)!;
+    expect(ev.attendees).toEqual([{ email: 'alice@risa.gov.rw', name: 'Alice' }]);
+    expect(ev.attendees[0]).not.toHaveProperty('ptst');
+  });
+
+  it('returns null when the search hit has no expanded instance', () => {
+    expect(mapZimbraAppointment({ id: '1', name: 'x' } as any)).toBeNull();
+    expect(mapZimbraAppointment({ id: '1', inst: {} } as any)).toBeNull();
+  });
+
+  it('prefers the per-instance duration and allDay over the appointment-level ones', () => {
+    const ev = mapZimbraAppointment({
+      id: '9', inst: [{ s: 1000, dur: 500, allDay: true }], dur: 999, allDay: false,
+    } as any)!;
+    expect(ev.endAt).toEqual(new Date(1500));
+    expect(ev.allDay).toBe(true);
+  });
+
+  it('defaults a missing duration to one hour and a missing start to the epoch', () => {
+    const ev = mapZimbraAppointment({ id: '9', inst: [{}] } as any)!;
+    expect(ev.startAt).toEqual(new Date(0));
+    expect(ev.endAt).toEqual(new Date(3_600_000));
+  });
+
+  it('falls back title → su → (No title) and nulls a missing loc/desc/organizer', () => {
+    expect(mapZimbraAppointment({ id: '9', su: 'From subject', inst: [{ s: 0 }] } as any)!.title)
+      .toBe('From subject');
+    const bare = mapZimbraAppointment({ id: '9', inst: [{ s: 0 }] } as any)!;
+    expect(bare.title).toBe('(No title)');
+    expect(bare.location).toBeNull();
+    expect(bare.description).toBeNull();
+    expect(bare.organizer).toBeUndefined();
+    expect(bare.attendees).toEqual([]);
+  });
+
+  it('carries invId (the invite message id SendInviteReply needs) and the recurrence flag', () => {
+    const ev = mapZimbraAppointment({
+      id: '401', invId: 512, recur: { add: {} }, inst: [{ s: 0 }],
+    } as any)!;
+    expect(ev.inviteId).toBe('512');
+    expect(ev.isRecurring).toBe(true);
+  });
+});
+
+describe('mapZimbraAppointmentDetail', () => {
+  it('reads attendees with ptst and the organizer out of inv[0].comp[0]', () => {
+    const d = mapZimbraAppointmentDetail({
+      id: '401', ms: 3, rev: 17,
+      inv: [{ id: '512', comp: [{
+        or: { a: 'bruce.higiro@risa.gov.rw', d: 'Bruce' },
+        at: [
+          { a: 'alice@risa.gov.rw', d: 'Alice', ptst: 'AC' },
+          { a: 'bob@risa.gov.rw' },
+        ],
+      }] }],
+    } as any);
+    expect(d.attendees).toEqual([
+      { email: 'alice@risa.gov.rw', name: 'Alice', ptst: 'AC' },
+      { email: 'bob@risa.gov.rw', name: undefined, ptst: undefined },
+    ]);
+    expect(d.organizer).toEqual({ email: 'bruce.higiro@risa.gov.rw', name: 'Bruce' });
+  });
+
+  it('exposes the invite message id and the ms/rev conflict counters as numbers', () => {
+    const d = mapZimbraAppointmentDetail({ id: '401', ms: '3', rev: '17', inv: [{ id: 512 }] } as any);
+    // ModifyAppointmentRequest.id must be "{calItemId}-{invMsgId}" — the caller
+    // joins them, so the mapper surfaces the invite half on its own.
+    expect(d.inviteMessageId).toBe('512');
+    expect(d.modifiedSequence).toBe(3);
+    expect(d.rev).toBe(17);
+  });
+
+  it('resolves the invite message id through a bridge-collapsed object inv', () => {
+    // Zimbra's JSON bridge returns single-item arrays as plain objects at any
+    // level; updateEvent's firstOf() handled that for inv.id.
+    const d = mapZimbraAppointmentDetail({ id: '401', inv: { id: '512' } } as any);
+    expect(d.inviteMessageId).toBe('512');
+  });
+
+  it('falls back to the top-level at[]/or when the invite carries no attendee list', () => {
+    const d = mapZimbraAppointmentDetail({
+      id: '401', at: [{ a: 'carol@risa.gov.rw', ptst: 'NE' }], or: { a: 'org@risa.gov.rw' },
+    } as any);
+    expect(d.attendees).toEqual([{ email: 'carol@risa.gov.rw', name: undefined, ptst: 'NE' }]);
+    expect(d.organizer).toEqual({ email: 'org@risa.gov.rw', name: undefined });
+  });
+
+  it('reports attendees as null when neither leg carries a list, so the caller can keep its cache', () => {
+    const d = mapZimbraAppointmentDetail({ id: '401', inv: [{ id: '512', comp: [{}] }] } as any);
+    expect(d.attendees).toBeNull();
+    expect(d.organizer).toBeUndefined();
+    expect(d.modifiedSequence).toBeUndefined();
+    expect(d.rev).toBeUndefined();
+  });
+
+  it('does NOT read comp out of a bridge-collapsed object inv (preserves getEvent behaviour)', () => {
+    // getEvent indexed `raw.inv?.[0]?.comp?.[0]` without firstOf, so an object
+    // `inv` fell through to the top-level at[] leg. Reproduced deliberately —
+    // "fixing" it here would change which attendee list the REST response
+    // returns. See the note on mapZimbraAppointmentDetail.
+    const d = mapZimbraAppointmentDetail({
+      id: '401',
+      inv: { id: '512', comp: [{ at: [{ a: 'from-comp@risa.gov.rw' }] }] },
+      at: [{ a: 'from-top@risa.gov.rw' }],
+    } as any);
+    expect(d.attendees).toEqual([{ email: 'from-top@risa.gov.rw', name: undefined, ptst: undefined }]);
+  });
+});
+
+describe('mapZimbraFreeBusy', () => {
+  it('normalises the busy/tentative/unavailable slot arrays to numeric {s,e} pairs', () => {
+    expect(mapZimbraFreeBusy({
+      b: [{ s: '1000', e: '2000' }],
+      t: [{ s: 3000, e: 4000 }],
+      u: [{ s: 5000, e: 6000 }],
+    } as any)).toEqual({
+      busy: [{ s: 1000, e: 2000 }],
+      tentative: [{ s: 3000, e: 4000 }],
+      unavailable: [{ s: 5000, e: 6000 }],
+    });
+  });
+
+  it('returns empty arrays for absent or non-array legs', () => {
+    expect(mapZimbraFreeBusy({} as any)).toEqual({ busy: [], tentative: [], unavailable: [] });
+    expect(mapZimbraFreeBusy({ b: {} } as any).busy).toEqual([]);
+  });
+});
+
+// createCalendarEvent and modifyCalendarEvent built byte-identical `m` nodes
+// from two verbatim copies of the same code. Hoisted into one reverse mapper;
+// this test pins the request body so the hoist cannot drift it.
+describe('mapCalendarEventPayloadToZimbraMessage', () => {
+  it('builds the CreateAppointmentRequest `m` node with organizer, attendees and UTC times', () => {
+    const m = mapCalendarEventPayloadToZimbraMessage({
+      title: 'Working session with COK',
+      location: 'KG1 Roundabout',
+      startAt: new Date(Date.UTC(2026, 8, 10, 8, 30)),
+      endAt: new Date(Date.UTC(2026, 8, 10, 9, 30)),
+      allDay: false,
+      description: 'Agenda: processes automation',
+      organizerEmail: 'bruce.higiro@risa.gov.rw',
+      organizerName: 'Bruce',
+      attendees: ['alice@risa.gov.rw'],
+    });
+
+    expect(m).toEqual({
+      su: 'Working session with COK',
+      // 'f' = from (organizer); 't' = to (each attendee gets an invite email)
+      e: [
+        { t: 'f', a: 'bruce.higiro@risa.gov.rw', p: 'Bruce' },
+        { t: 't', a: 'alice@risa.gov.rw' },
+      ],
+      inv: {
+        comp: [{
+          name: 'Working session with COK',
+          loc: 'KG1 Roundabout',
+          allDay: 0,
+          fb: 'B',
+          transp: 'O',
+          s: { d: '20260910T083000Z' },
+          e: { d: '20260910T093000Z' },
+          or: { a: 'bruce.higiro@risa.gov.rw', p: 'Bruce' },
+          at: [{ a: 'alice@risa.gov.rw', role: 'REQ', ptst: 'NE', rsvp: 1 }],
+          desc: { _content: 'Agenda: processes automation' },
+        }],
+      },
+    });
+  });
+
+  it('uses the date-only form for all-day events and omits at/desc/organizer name when absent', () => {
+    const m = mapCalendarEventPayloadToZimbraMessage({
+      title: 'Public holiday',
+      startAt: new Date(Date.UTC(2026, 0, 1, 0, 0)),
+      endAt: new Date(Date.UTC(2026, 0, 2, 0, 0)),
+      allDay: true,
+      organizerEmail: 'bruce.higiro@risa.gov.rw',
+    });
+
+    const comp = (m.inv.comp as any[])[0];
+    expect(comp.s).toEqual({ d: '20260101' });
+    expect(comp.e).toEqual({ d: '20260102' });
+    expect(comp.allDay).toBe(1);
+    expect(comp.loc).toBe('');
+    expect(comp.or).toEqual({ a: 'bruce.higiro@risa.gov.rw' });
+    expect(comp).not.toHaveProperty('at');
+    expect(comp).not.toHaveProperty('desc');
+    expect(m.e).toEqual([{ t: 'f', a: 'bruce.higiro@risa.gov.rw' }]);
   });
 });

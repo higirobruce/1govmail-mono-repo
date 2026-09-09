@@ -9,21 +9,36 @@ import axios, { AxiosInstance } from 'axios';
 import { MailSession } from '../provider/mail-session';
 import {
   ProviderContact,
+  ProviderEvent,
+  ProviderEventDetail,
   ProviderFolder,
+  ProviderFreeBusy,
   ProviderMessage,
   ProviderMessagePage,
 } from '../provider/provider-types';
-import { DraftPayload, SendMessagePayload } from '../provider/mail-provider.interface';
 import {
+  CalendarEventPayload,
+  DraftPayload,
+  ModifyCalendarEventPayload,
+  SendMessagePayload,
+} from '../provider/mail-provider.interface';
+import {
+  mapCalendarEventPayloadToZimbraMessage,
   mapProviderContactToZimbraAttrs,
+  mapZimbraAppointment,
+  mapZimbraAppointmentDetail,
   mapZimbraContact,
   mapZimbraFolder,
+  mapZimbraFreeBusy,
   mapZimbraMessage,
+  ZimbraAppointment,
 } from './zimbra.mappers';
 
 // The Zimbra wire shapes live in zimbra.mappers.ts (the only place that knows
-// `su`/`fr`/`e[]`/`mp[]`/flag chars); re-exported here for existing importers.
+// `su`/`fr`/`e[]`/`mp[]`/flag chars, and the calendar's `inst[]`/`inv[].comp[]`
+// nesting); re-exported here for existing importers.
 export type {
+  ZimbraAppointmentDetail,
   ZimbraEmailAddress,
   ZimbraFolder,
   ZimbraMessage,
@@ -1033,14 +1048,17 @@ export class ZimbraService {
 
   // ─── Calendar ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Events overlapping the window. `calExpandInstStart/End` makes Zimbra expand
+   * recurrence rules server-side into `inst[]`; appointments whose expansion is
+   * empty for the window are dropped by the mapper.
+   */
   async getCalendarEvents(
-    host: string,
-    authToken: string,
+    s: MailSession,
     startMs: number,
     endMs: number,
-    csrfToken?: string,
-  ): Promise<any[]> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  ): Promise<ProviderEvent[]> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -1053,9 +1071,12 @@ export class ZimbraService {
             limit: 500,
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
-      return response.data?.Body?.SearchResponse?.appt ?? [];
+      const raw: ZimbraAppointment[] = response.data?.Body?.SearchResponse?.appt ?? [];
+      return raw
+        .map(mapZimbraAppointment)
+        .filter((e): e is ProviderEvent => e !== null);
     } catch (err: any) {
       this.handleZimbraError(err, 'getCalendarEvents');
     }
@@ -1064,16 +1085,15 @@ export class ZimbraService {
   /**
    * Fetch full details for a single appointment via GetAppointmentRequest.
    * Unlike SearchRequest, this always returns the complete attendee list with
-   * participation status (ptst) for each invitee.
-   * Returns the raw appointment node, or null if not found.
+   * participation status (ptst) for each invitee, plus the invite message id
+   * and the modifiedSequence/rev counters an update must quote.
+   * Returns null if not found.
    */
   async getAppointment(
-    host: string,
-    authToken: string,
+    s: MailSession,
     zimbraId: string,
-    csrfToken?: string,
-  ): Promise<any | null> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  ): Promise<ProviderEventDetail | null> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -1083,94 +1103,31 @@ export class ZimbraService {
             includeContent: 1,
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
       // Zimbra's JSON bridge sometimes returns a single-item array as a plain object
       const apptData = response.data?.Body?.GetAppointmentResponse?.appt;
-      return (Array.isArray(apptData) ? apptData[0] : apptData) ?? null;
+      const appt = (Array.isArray(apptData) ? apptData[0] : apptData) ?? null;
+      return appt ? mapZimbraAppointmentDetail(appt) : null;
     } catch (err: any) {
       this.handleZimbraError(err, `getAppointment(${zimbraId})`);
     }
   }
 
   async createCalendarEvent(
-    host: string,
-    authToken: string,
-    payload: {
-      title: string;
-      location?: string;
-      startAt: Date;
-      endAt: Date;
-      allDay: boolean;
-      description?: string;
-      organizerEmail: string;
-      organizerName?: string;
-      attendees?: string[];
-    },
-    csrfToken?: string,
+    s: MailSession,
+    payload: CalendarEventPayload,
   ): Promise<string> {
-    const client = this.buildClient(host, authToken, csrfToken);
-
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const fmtDt = (d: Date, allDay: boolean) => {
-      if (allDay) {
-        return {
-          d: `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`,
-        };
-      }
-      return {
-        d:
-          `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` +
-          `T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00Z`,
-      };
-    };
-
-    const or = {
-      a: payload.organizerEmail,
-      ...(payload.organizerName ? { p: payload.organizerName } : {}),
-    };
-
-    const at = (payload.attendees ?? []).map((email) => ({
-      a: email,
-      role: 'REQ',
-      ptst: 'NE',
-      rsvp: 1,
-    }));
-
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
           CreateAppointmentRequest: {
             _jsns: 'urn:zimbraMail',
-            m: {
-              su: payload.title,
-              // 'f' = from (organizer); 't' = to (each attendee gets an invite email)
-              e: [
-                { t: 'f', ...or },
-                ...(payload.attendees ?? []).map((a) => ({ t: 't', a })),
-              ],
-              inv: {
-                comp: [
-                  {
-                    name: payload.title,
-                    loc: payload.location ?? '',
-                    allDay: payload.allDay ? 1 : 0,
-                    fb: 'B',
-                    transp: 'O',
-                    s: fmtDt(payload.startAt, payload.allDay),
-                    e: fmtDt(payload.endAt, payload.allDay),
-                    or,
-                    ...(at.length ? { at } : {}),
-                    ...(payload.description
-                      ? { desc: { _content: payload.description } }
-                      : {}),
-                  },
-                ],
-              },
-            },
+            m: mapCalendarEventPayloadToZimbraMessage(payload),
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
       const id =
         response.data?.Body?.CreateAppointmentResponse?.calItemId ??
@@ -1183,50 +1140,11 @@ export class ZimbraService {
   }
 
   async modifyCalendarEvent(
-    host: string,
-    authToken: string,
+    s: MailSession,
     zimbraId: string,
-    payload: {
-      title: string;
-      location?: string;
-      startAt: Date;
-      endAt: Date;
-      allDay: boolean;
-      description?: string;
-      organizerEmail: string;
-      organizerName?: string;
-      attendees?: string[];
-      modifiedSequence?: number;
-      rev?: number;
-    },
-    csrfToken?: string,
+    payload: ModifyCalendarEventPayload,
   ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
-
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const fmtDt = (d: Date, allDay: boolean) => {
-      if (allDay) {
-        return { d: `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` };
-      }
-      return {
-        d:
-          `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}` +
-          `T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00Z`,
-      };
-    };
-
-    const or = {
-      a: payload.organizerEmail,
-      ...(payload.organizerName ? { p: payload.organizerName } : {}),
-    };
-
-    const at = (payload.attendees ?? []).map((email) => ({
-      a: email,
-      role: 'REQ',
-      ptst: 'NE',
-      rsvp: 1,
-    }));
-
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
@@ -1238,77 +1156,47 @@ export class ZimbraService {
             // modifiedSequence and rev are required for Zimbra's conflict detection
             ...(payload.modifiedSequence !== undefined ? { modifiedSequence: payload.modifiedSequence } : {}),
             ...(payload.rev !== undefined ? { rev: payload.rev } : {}),
-            m: {
-              su: payload.title,
-              // 'f' = from (organizer); 't' = to (attendees receive update email)
-              e: [
-                { t: 'f', ...or },
-                ...(payload.attendees ?? []).map((a) => ({ t: 't', a })),
-              ],
-              inv: {
-                comp: [
-                  {
-                    name: payload.title,
-                    // No seq in comp — Zimbra manages it internally
-                    loc: payload.location ?? '',
-                    allDay: payload.allDay ? 1 : 0,
-                    fb: 'B',
-                    transp: 'O',
-                    s: fmtDt(payload.startAt, payload.allDay),
-                    e: fmtDt(payload.endAt, payload.allDay),
-                    or,
-                    ...(at.length ? { at } : {}),
-                    ...(payload.description
-                      ? { desc: { _content: payload.description } }
-                      : {}),
-                  },
-                ],
-              },
-            },
+            // Same `m` node as the create path — no seq in comp, Zimbra manages
+            // it internally. Attendees on `e` receive the update email.
+            m: mapCalendarEventPayloadToZimbraMessage(payload),
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
       this.handleZimbraError(err, `modifyCalendarEvent(${zimbraId})`);
     }
   }
 
+  /** `inviteId` is the invite *message* id (Zimbra's invId), not the calendar
+   *  item id. `updateOrganizer: '0'` keeps Zimbra from mailing the organizer a
+   *  second notification on top of the reply itself. */
   async sendInviteReply(
-    host: string,
-    authToken: string,
-    zimbraId: string,
+    s: MailSession,
+    inviteId: string,
     verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE',
-    subject: string,
-    organizerEmail?: string,
-    csrfToken?: string,
   ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
           SendInviteReplyRequest: {
             _jsns: 'urn:zimbraMail',
-            id: zimbraId,
+            id: inviteId,
             compNum: 0,
             verb,
             updateOrganizer: '0',
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
-      this.handleZimbraError(err, `sendInviteReply(${zimbraId}, ${verb})`);
+      this.handleZimbraError(err, `sendInviteReply(${inviteId}, ${verb})`);
     }
   }
 
-  async deleteCalendarEvent(
-    host: string,
-    authToken: string,
-    zimbraId: string,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async deleteCalendarEvent(s: MailSession, zimbraId: string): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
@@ -1317,7 +1205,7 @@ export class ZimbraService {
             action: { id: zimbraId, op: 'trash' },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
       this.handleZimbraError(err, `deleteCalendarEvent(${zimbraId})`);
@@ -1651,18 +1539,12 @@ export class ZimbraService {
    * tentative, and unavailable (out-of-office) intervals.
    */
   async getFreeBusy(
-    host: string,
-    authToken: string,
+    s: MailSession,
     email: string,
     startMs: number,
     endMs: number,
-    csrfToken?: string,
-  ): Promise<{
-    busy:        Array<{ s: number; e: number }>;
-    tentative:   Array<{ s: number; e: number }>;
-    unavailable: Array<{ s: number; e: number }>;
-  }> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  ): Promise<ProviderFreeBusy> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -1673,20 +1555,11 @@ export class ZimbraService {
             uid: email,
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
 
       const usr = response.data?.Body?.GetFreeBusyResponse?.usr?.[0] ?? {};
-      const norm = (arr: any): Array<{ s: number; e: number }> =>
-        Array.isArray(arr)
-          ? arr.map((i: any) => ({ s: Number(i.s), e: Number(i.e) }))
-          : [];
-
-      return {
-        busy:        norm(usr.b),
-        tentative:   norm(usr.t),
-        unavailable: norm(usr.u),
-      };
+      return mapZimbraFreeBusy(usr);
     } catch (err: any) {
       this.handleZimbraError(err, `getFreeBusy(${email})`);
     }

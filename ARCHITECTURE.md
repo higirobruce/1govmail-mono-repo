@@ -17,7 +17,7 @@
 5. [Frontend — Next.js Web App](#5-frontend--nextjs-web-app)
 6. [Desktop — Electron Shell](#6-desktop--electron-shell)
 7. [Authentication Flow](#7-authentication-flow)
-8. [Zimbra Integration Layer](#8-zimbra-integration-layer)
+8. [Mail Provider Layer & Zimbra Integration](#8-mail-provider-layer--zimbra-integration)
 9. [Real-Time Collaboration (Docs)](#9-real-time-collaboration-docs)
 10. [Background Jobs & Schedulers](#10-background-jobs--schedulers)
 11. [API Endpoint Reference](#11-api-endpoint-reference)
@@ -100,8 +100,9 @@ email-client/
 apps/api/src/
 ├── main.ts                  Express bootstrap + Hocuspocus startup
 ├── app.module.ts            Root NestJS module (imports all below)
-├── auth/                    JWT auth, 2FA, login/logout
-├── zimbra/                  All Zimbra SOAP calls (single service, 1600 lines)
+├── auth/                    JWT auth, 2FA, login/logout, Institution registry
+├── provider/                MailProvider interface, MailSession, MailProviderResolver
+├── zimbra/                  All Zimbra SOAP calls (the MailProvider implementation)
 ├── prisma/                  PrismaService (singleton, better-sqlite3 adapter)
 ├── mail/                    Folder/message CRUD, snooze, scheduled send, templates, rules
 ├── contacts/                Contact CRUD + distribution group management
@@ -158,16 +159,19 @@ apps/web/
 ```
 AppModule
  ├── PrismaModule          (global — injected by all other modules)
- ├── AuthModule            depends on: ZimbraModule, PrismaModule, JwtModule
- ├── ZimbraModule          no NestJS deps (pure axios SOAP client)
- ├── MailModule            depends on: ZimbraModule, PrismaModule, ScheduleModule
- ├── ContactsModule        depends on: ZimbraModule, PrismaModule
- ├── CalendarModule        depends on: ZimbraModule, PrismaModule
- ├── TasksModule           depends on: ZimbraModule, PrismaModule, ScheduleModule
- ├── SettingsModule        depends on: ZimbraModule, PrismaModule
+ ├── ProviderModule        depends on: ZimbraModule — exports MailProviderResolver
+ │    └── ZimbraModule     no NestJS deps (pure axios SOAP client)
+ ├── AuthModule            depends on: ProviderModule, PrismaModule, JwtModule
+ ├── MailModule            depends on: ProviderModule, PrismaModule, ScheduleModule
+ ├── ContactsModule        depends on: ProviderModule, PrismaModule
+ ├── CalendarModule        depends on: ProviderModule, PrismaModule
+ ├── TasksModule           depends on: ProviderModule, PrismaModule, ScheduleModule
+ ├── SettingsModule        depends on: ProviderModule, PrismaModule
  ├── NotificationsModule   depends on: PrismaModule
- ├── DocsModule            depends on: PrismaModule
+ ├── DocsModule            depends on: ProviderModule, PrismaModule, MailModule
  └── CollabModule          (standalone — started outside NestJS HTTP lifecycle)
+
+No feature module imports ZimbraModule any more — see §8, Mail provider layer.
 ```
 
 ### Module responsibilities
@@ -175,7 +179,8 @@ AppModule
 | Module | Controller prefix | Key responsibilities |
 |--------|------------------|---------------------|
 | **Auth** | `/auth` | Login (Zimbra SOAP AuthRequest), 2FA (TOTP), JWT issuance, session management |
-| **Zimbra** | *(no controller)* | All Zimbra SOAP calls — single service injected everywhere |
+| **Provider** | *(no controller)* | `MailProviderResolver` — the seam every feature service injects; picks the backend off `User.provider` |
+| **Zimbra** | *(no controller)* | All Zimbra SOAP calls — the `MailProvider` implementation behind the resolver |
 | **Mail** | `/mail` | Message list/fetch/search, send (with attachments), drafts, snooze, scheduled send, templates, mail rules, mute, bulk ops |
 | **Contacts** | `/contacts` | Contact CRUD (synced from/to Zimbra), autocomplete, distribution groups (local SQLite only) |
 | **Calendar** | `/calendar` | Event CRUD (synced from/to Zimbra), free/busy lookup (single + batch), RSVP |
@@ -194,8 +199,9 @@ HTTP request
   → JwtAuthGuard (validates Bearer token via Passport JWT strategy)
   → Controller method (extracts req.user.sub = userId)
   → Service method
-    → PrismaService (local SQLite)   ← for enrichment data
-    → ZimbraService (axios SOAP)     ← for mail/contacts/calendar
+    → PrismaService (local SQLite)     ← for enrichment data
+    → resolver.forUser(user)           ← picks the MailProvider off User.provider
+      → ZimbraService (axios SOAP)     ← for mail/contacts/calendar
   → Response JSON
 ```
 
@@ -442,9 +448,39 @@ Each login upserts a `Session` row tracking `token`, `expiresAt`, `userAgent`, `
 
 ---
 
-## 8. Zimbra Integration Layer
+## 8. Mail Provider Layer & Zimbra Integration
 
-`ZimbraService` (`apps/api/src/zimbra/zimbra.service.ts`) is the **only place** in the codebase that communicates with Zimbra. All other services depend on this one.
+### Mail provider layer
+
+No feature service knows which mail backend it is talking to. Everything provider-facing goes through `apps/api/src/provider/`:
+
+| File | Role |
+|------|------|
+| `mail-provider.interface.ts` | `MailProvider` — the neutral contract: auth, folders, messages, attachments, contacts/GAL, calendar, and the settings surface. Every method takes a `MailSession` as its first argument. Payloads/results are the neutral `Provider*` types in `provider-types.ts` — no wire vocabulary (`su`, `fr`, `_jsns`) escapes the implementation. |
+| `mail-session.ts` | `MailSession` (`host`, `email`, `authToken`/`csrfToken`, and — Phase 3 — decrypted `credentials`) plus `buildMailSession(user)`, the **only** place `User` columns map to a provider session. It requires `User.provider`, which forces every narrowed `select` that feeds a session to carry the column. `MailSessionUser` is that `Pick<User, …>`, for the few internal helpers handed a row instead of a `userId`. |
+| `mail-provider.resolver.ts` | `MailProviderResolver` — the injection seam. `forUser(user)` switches on `User.provider` and returns the `MailProvider`; an unregistered provider raises a `BadRequestException` reading *Mail provider "ews" is not supported on this server yet.* `zimbra()` hands back the Zimbra service itself for the two sanctioned extras below. |
+| `provider.module.ts` | `ProviderModule` imports `ZimbraModule` and exports the resolver. The seven feature modules (`auth`, `mail`, `contacts`, `calendar`, `settings`, `tasks`, `docs`) import **ProviderModule, never ZimbraModule** — `provider.module.spec.ts` compiles `AppModule` to fail loudly if one regresses. |
+| `capability.error.ts` | `CapabilityNotSupportedError` — what a provider throws for a surface it cannot serve (see capability flags below). |
+
+Usage is the same everywhere: resolve per request, then call the interface.
+
+```ts
+const user = await this.getUser(userId);       // the User row (carries `provider`)
+const provider = this.resolver.forUser(user);  // MailProvider for this account
+await provider.markRead(buildMailSession(user), id, true);
+```
+
+**Institution registry & login.** Hosts and providers are server-side data, never client input: `Institution` rows (`id`, `label`, `provider`, `host`, `ewsDomain`, `enabled`, `position`) back the login dropdown, and `AuthService.login` resolves the chosen institution (or a legacy `zimbraHost`) through `InstitutionRegistry`. It then calls `resolver.forUser({ provider: inst.provider })` — so **the resolver is the login gate**: an institution whose provider this build does not register fails there with the same 400, and registering the provider is all it takes to enable those logins. The winning provider + institution id are stamped onto the `User` row (`provider`, `institutionId`) at session creation, and every later request branches off that column. The 2FA challenge token carries them through the second leg.
+
+**Capability flags.** `MailProvider.capabilities` (`signatures`, `identities`, `serverPrefs`, `changePassword`, `twoFactor`) declares which settings sections a backend can serve. `GET /settings` forwards them (the one sanctioned Phase 1 addition to the REST surface) and the client hides what is unsupported, defaulting every absent flag to `true` so older clients render exactly as before. Zimbra declares all five true.
+
+**The two sanctioned Zimbra-only extras.** `downloadZimbraPath` (Briefcase/REST path fetch, used to inline signature images) and `galSelfLookup` (seeds the AI-profile form) have no equivalent elsewhere, so they stay **off** the interface. Call sites reach them via `resolver.zimbra()` and must check `user.provider === 'zimbra'` first, degrading gracefully otherwise: signature HTML and image URLs are left untouched, and the suggestions endpoint returns its all-null shape instead of erroring.
+
+**Phases 2 and 3 plug in behind the resolver.** A memory provider (Phase 2, for tests/demo) and EWS (Phase 3, for Exchange institutions) each add their module to `ProviderModule` and their `case` to `forUser` — no feature service, controller, or REST payload changes.
+
+### The Zimbra implementation
+
+`ZimbraService` (`apps/api/src/zimbra/zimbra.service.ts`) `implements MailProvider` (`name: 'zimbra'`) and is the **only place** in the codebase that communicates with Zimbra — wire↔neutral mapping lives beside it in `zimbra.mappers.ts`. Feature services depend on the resolver, not on this class.
 
 ### SOAP transport
 
@@ -461,6 +497,8 @@ buildClient(host, authToken, csrfToken): AxiosInstance
 Some Zimbra deployments respond to `AuthRequest` with a `refer` field containing the actual mailbox server hostname. `ZimbraService.authenticate()` detects this and returns the correct `zimbraHost` to be stored in the `User` record, preventing `AUTH_EXPIRED` errors.
 
 ### Method catalogue
+
+Every method below (apart from `authenticate`/`verifyTwoFactor`, which run before a session exists) takes a `MailSession` first — the pre-Phase-1 `(host, authToken, csrfToken, …)` argument lists are gone. `downloadZimbraPath` and `galSelfLookup` are the two extras that stay off the `MailProvider` interface (see above).
 
 | Domain | Methods |
 |--------|---------|

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { format, parseISO, startOfDay, subDays } from 'date-fns';
-import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip, AlertTriangle } from 'lucide-react';
+import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip, AlertTriangle, MessagesSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MailAvatar } from './MailAvatar';
 import { ClassificationChip } from './ClassificationChip';
@@ -42,7 +42,7 @@ const TRIAGE_LABEL_META: Record<string, { text: string; textClass: string; dotCl
 };
 
 export interface ContextAction {
-  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'createEvent' | 'snooze' | 'mute' | 'print';
+  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'createEvent' | 'snooze' | 'mute' | 'print' | 'askThread';
   messageId: string;
   targetFolderId?: string;
 }
@@ -242,6 +242,7 @@ function ContextMenu({
       {item(BellOff,    isMuted ? 'Unmute conversation' : 'Mute conversation', 'mute')}
       {item(ListTodo,     'Create Task',    'createTask')}
       {item(CalendarPlus, 'Create Event',   'createEvent')}
+      {item(MessagesSquare, 'Ask about this thread', 'askThread')}
       {labelFolders.length > 0 && (
         <>
           <div className="my-1 h-px bg-border-faint" />

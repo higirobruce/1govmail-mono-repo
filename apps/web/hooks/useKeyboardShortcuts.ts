@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 
 export type ShortcutKey =
-  | 'j' | 'k' | 'c' | 'r' | 'a' | 'f' | 's' | 'e' | 'd' | 'u'
+  | 'j' | 'k' | 'c' | 'r' | 'a' | 'f' | 's' | 'e' | 'd' | 'u' | 'q'
   | 'escape' | 'slash' | 'cmdK' | 'question';
 
 export const SHORTCUTS: { key: ShortcutKey; label: string; description: string }[] = [
@@ -15,6 +15,7 @@ export const SHORTCUTS: { key: ShortcutKey; label: string; description: string }
   { key: 'e',        label: 'E',      description: 'Archive' },
   { key: 'd',        label: 'D',      description: 'Delete' },
   { key: 'u',        label: 'U',      description: 'Mark unread' },
+  { key: 'q',        label: 'Q',      description: 'Ask about this thread' },
   { key: 'slash',    label: '/',      description: 'Focus search' },
   { key: 'cmdK',     label: '⌘K',     description: 'Global search' },
   { key: 'escape',   label: 'Esc',    description: 'Close / deselect' },
@@ -60,6 +61,7 @@ export function useKeyboardShortcuts(
         case 'e':        handlers.e?.(); break;
         case 'd':        handlers.d?.(); break;
         case 'u':        handlers.u?.(); break;
+        case 'q':        handlers.q?.(); break;
         case '/':        e.preventDefault(); handlers.slash?.(); break;
         case 'Escape':   handlers.escape?.(); break;
         case '?':        handlers.question?.(); break;

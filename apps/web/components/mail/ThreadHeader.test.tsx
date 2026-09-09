@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import ThreadHeader from './ThreadHeader';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
@@ -41,5 +41,33 @@ describe('ThreadHeader toolbar on narrow screens', () => {
     const pill = screen.getByText('Awaiting reply');
     expect(pill.className).not.toContain('shrink-0');
     expect(pill.className).toContain('truncate');
+  });
+});
+
+const base = {
+  subject: 'Re: RHEMIS inception report',
+  participants: [{ email: 'a@risa.gov.rw', name: 'A' }],
+  messageCount: 6,
+  unreadCount: 0,
+  lastReceivedAt: '2026-09-08T10:00:00.000Z',
+  lastSenderEmail: 'a@risa.gov.rw',
+  currentUserEmail: 'bruce.higiro@risa.gov.rw',
+  onClose: () => {},
+  onReply: () => {},
+  onReplyAll: () => {},
+  onForward: () => {},
+};
+
+describe('ThreadHeader ask-thread action', () => {
+  it('renders nothing when onAskThread is undefined (AI off)', () => {
+    render(<TooltipProvider><ThreadHeader {...base} /></TooltipProvider>);
+    expect(screen.queryByRole('button', { name: /ask about this thread/i })).toBeNull();
+  });
+
+  it('renders the pill and calls back when provided', () => {
+    const onAskThread = vi.fn();
+    render(<TooltipProvider><ThreadHeader {...base} onAskThread={onAskThread} /></TooltipProvider>);
+    fireEvent.click(screen.getByRole('button', { name: /ask about this thread/i }));
+    expect(onAskThread).toHaveBeenCalledTimes(1);
   });
 });

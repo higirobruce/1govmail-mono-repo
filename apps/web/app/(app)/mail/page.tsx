@@ -960,6 +960,22 @@ export default function MailPage() {
       return;
     }
 
+    if (type === 'askThread') {
+      // Unlike mute, a message with no conversationId is fine here — pin the
+      // single message; it is still the thing the user asked about.
+      openAsk({
+        scope: {
+          kind: 'thread',
+          conversationId: (msg.conversationId as string | undefined) ?? null,
+          seedMessageId: messageId,
+          subject: msg.subject ?? null,
+          messageCount: 1,
+          locked: false,
+        },
+      });
+      return;
+    }
+
     if (type === 'mute') {
       const convId = msg.conversationId as string | undefined;
       if (!convId) { toast.info('This message is not part of a conversation'); return; }
@@ -1066,7 +1082,7 @@ export default function MailPage() {
         },
       });
     }
-  }, [messages, searchResults, activeMessage, activeMessageId, openMessage, openCompose, folders, activeFolderId, updateFolderCounts, updateMessageInCache, removeMessageFromCache, invalidateMessages, offline]); // eslint-disable-line
+  }, [messages, searchResults, activeMessage, activeMessageId, openMessage, openCompose, folders, activeFolderId, updateFolderCounts, updateMessageInCache, removeMessageFromCache, invalidateMessages, offline, openAsk]); // eslint-disable-line
 
   // Debounce search input → fire query after 400 ms of silence
   const handleSearchInput = useCallback((value: string) => {
@@ -1162,6 +1178,19 @@ export default function MailPage() {
       if (activeMessageId && archiveFolder) handleMoveToFolder(archiveFolder.id);
     },
     d: () => { if (activeMessageId) deleteMessage(); },
+    q: () => {
+      if (!activeMessage) return;
+      openAsk({
+        scope: {
+          kind: 'thread',
+          conversationId: (activeMessage.conversationId as string | undefined) ?? null,
+          seedMessageId: activeMessage.id,
+          subject: activeMessage.subject ?? null,
+          messageCount: 1,
+          locked: false,
+        },
+      });
+    },
     u: () => {
       if (activeMessage) {
         const read = activeMessage.isRead;

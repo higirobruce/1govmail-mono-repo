@@ -31,6 +31,7 @@ import { downloadAll } from '@/lib/downloadAll';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { AttachmentPreview } from './AttachmentPreview';
 import { useAuthStore } from '@/stores/auth.store';
+import { useAskStore } from '@/stores/ask.store';
 import { cn } from '@/lib/utils';
 import ThreadHeader, { type ThreadParticipant } from './ThreadHeader';
 import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
@@ -162,6 +163,7 @@ export default function ThreadView({
 
   // ── AI summarize state ───────────────────────────────────────────────────
   const aiEnabled = useAIStore((s) => s.enabled);
+  const openAsk = useAskStore((s) => s.openAsk);
   const aiModel = useAIStore((s) => s.model);
   const aiCustomInstructions = useAIStore((s) => s.customInstructions);
   const {
@@ -588,6 +590,16 @@ export default function ThreadView({
         onDraftDoc={aiEnabled ? handleDraftDoc : undefined}
         drafting={!!draftStep}
         onQuickReply={aiEnabled && onQuickReply ? () => onQuickReply(lastMessage) : undefined}
+        onAskThread={aiEnabled ? () => openAsk({
+          scope: {
+            kind: 'thread',
+            conversationId: (message as any).conversationId ?? null,
+            seedMessageId: message.id,
+            subject: message.subject ?? null,
+            messageCount: threadMessages.length || 1,
+            locked: false,
+          },
+        }) : undefined}
       />
 
       {/* Tab bar + Expand All */}

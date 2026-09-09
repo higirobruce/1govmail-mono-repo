@@ -87,6 +87,16 @@ pinned?: {
 any pinned thread, and the ids are what make that lookup possible. Under a lock the same ids
 additionally bound the id-addressed reads (§3.3).
 
+**`messageIds` is the whole thread; `includedCount` is what reached the model.** (Amended
+2026-09-09 during implementation.) The two differ whenever budgeting drops blocks: on a
+25-message thread the ids say 25 while `text` may hold 3. Keeping the full list is deliberate —
+it is the right bound for the lock, since a locked `read_email` of an older in-thread message
+that budgeting dropped is legitimate, and a superset is safer for the card lookup. But any
+count shown to a user or stated to the model must come from `includedCount`, so `gatherThreadContent`
+also returns the ids whose blocks survived and `buildPinned` forwards their count. Deriving the
+count from `messageIds.length` instead would make §5.1's "N of M messages" branch dead code and
+would over-claim to the model — the mandate-6 risk §3.1 warns about.
+
 `toolScope: 'thread'` is sent only when the chip is locked; its absence means the full registry.
 
 ## 2. Gathering the thread text

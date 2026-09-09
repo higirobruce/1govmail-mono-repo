@@ -478,6 +478,16 @@ await provider.markRead(buildMailSession(user), id, true);
 
 **Phases 2 and 3 plug in behind the resolver.** A memory provider (Phase 2, for tests/demo) and EWS (Phase 3, for Exchange institutions) each add their module to `ProviderModule` and their `case` to `forUser` — no feature service, controller, or REST payload changes.
 
+### The memory implementation (Phase 2)
+
+`MemoryMailProvider` (`apps/api/src/provider/memory/`) `implements MailProvider` (`name: 'memory'`) against an in-process store — no mail server, database, or network. It exists so the **whole app** (inbox, threads, compose/send, drafts, move-to-folder, search, contacts, calendar, settings) can be run and tested end-to-end against a deterministic fake: `MemoryStore` seeds a mailbox on first `authenticate` for any email (`seedFor` is idempotent and time-injected, so seeded content is reproducible), and every later call mutates that in-memory mailbox. It declares **all capability flags true**, so every settings section renders.
+
+It is **gated by `MAIL_PROVIDER_MEMORY`**. Two things read the flag, and both must agree:
+- `InstitutionRegistry` surfaces a synthetic `memory` row (`id: 'memory'`, `provider: 'memory'`, `host: 'memory.local'`) in `list()`/`resolve()` **only** when `MAIL_PROVIDER_MEMORY === 'true'`.
+- `MailProviderResolver.forUser({ provider: 'memory' })` returns the `MemoryMailProvider` **only** when the same flag is set; with the flag off it falls through to the standard `BadRequestException`, refusing `memory` exactly as it refuses an unregistered provider (`ews`).
+
+`ProviderModule` always provides the pair (`MemoryStore` as a single shared instance → `MemoryMailProvider`, injected `@Optional()` into the resolver); the env flag, not their presence, decides whether logins can reach them. The memory subtree depends on nothing in the feature modules, so it adds no edge to the module graph. With the flag on and a seeded `memory` institution, `AuthService.login` resolves it through the registry, the resolver hands back the fake, `authenticate` seeds + issues a token, and the account is stamped `provider: 'memory'` — the Postgres cache layer then upserts the memory provider's messages exactly as it does for Zimbra.
+
 ### The Zimbra implementation
 
 `ZimbraService` (`apps/api/src/zimbra/zimbra.service.ts`) `implements MailProvider` (`name: 'zimbra'`) and is the **only place** in the codebase that communicates with Zimbra — wire↔neutral mapping lives beside it in `zimbra.mappers.ts`. Feature services depend on the resolver, not on this class.

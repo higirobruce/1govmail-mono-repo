@@ -53,20 +53,30 @@ function formatFrom(meta: Pick<ThreadMessageMeta, 'fromEmail' | 'fromName'>): st
 }
 
 /**
+ * A single gathered message: its id kept alongside the formatted block so
+ * capToBudget's oldest-first drop can report which ids actually survived —
+ * the id is otherwise unrecoverable once blocks are joined into one string.
+ */
+interface GatheredBlock {
+  id: string;
+  block: string;
+}
+
+/**
  * Drop the oldest blocks until the joined text fits the budget. Never
  * truncates a block's own text (a block is From/Date/body, dropped whole),
  * and always keeps at least the newest block even if it alone exceeds the
  * budget — some context beats none.
  */
-function capToBudget(blocks: string[], budget: number): string[] {
+function capToBudget(blocks: GatheredBlock[], budget: number): GatheredBlock[] {
   let kept = blocks;
-  while (kept.length > 1 && kept.join(BLOCK_SEPARATOR).length > budget) {
+  while (kept.length > 1 && kept.map((b) => b.block).join(BLOCK_SEPARATOR).length > budget) {
     kept = kept.slice(1);
   }
   return kept;
 }
 
-async function gatherOne(meta: ThreadMessageMeta, getBody: ThreadContentDeps['getBody']): Promise<string> {
+async function gatherOne(meta: ThreadMessageMeta, getBody: ThreadContentDeps['getBody']): Promise<GatheredBlock> {
   let content = '';
   try {
     const body = await getBody(meta.id);
@@ -75,7 +85,7 @@ async function gatherOne(meta: ThreadMessageMeta, getBody: ThreadContentDeps['ge
     // Fall through to the snippet fallback below.
   }
   if (!content) content = meta.snippet ?? '';
-  return `From: ${formatFrom(meta)}\nDate: ${meta.receivedAt}\n\n${content}`;
+  return { id: meta.id, block: `From: ${formatFrom(meta)}\nDate: ${meta.receivedAt}\n\n${content}` };
 }
 
 /**
@@ -88,10 +98,16 @@ export async function gatherThreadContent(
   messageId: string,
   deps: ThreadContentDeps,
   opts: { totalCharBudget?: number; maxMessages?: number } = {},
-): Promise<{ text: string; messageCount: number }> {
+): Promise<{ text: string; messageCount: number; includedIds: string[] }> {
   const { messages } = await deps.getConversation(messageId);
   const capped = messages.slice(-(opts.maxMessages ?? DEFAULT_MAX_MESSAGES));
   const blocks = await Promise.all(capped.map((meta) => gatherOne(meta, deps.getBody)));
   const budgeted = capToBudget(blocks, opts.totalCharBudget ?? DEFAULT_TOTAL_CHAR_BUDGET);
-  return { text: budgeted.join(BLOCK_SEPARATOR), messageCount: messages.length };
+  return {
+    text: budgeted.map((b) => b.block).join(BLOCK_SEPARATOR),
+    messageCount: messages.length,
+    /** Ids whose blocks actually survived the budget — NOT the whole thread. The
+     *  honest answer to "how many messages reached the model". */
+    includedIds: budgeted.map((b) => b.id),
+  };
 }

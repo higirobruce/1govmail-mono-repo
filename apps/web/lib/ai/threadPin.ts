@@ -18,8 +18,12 @@ export const MAX_AGENT_TURNS = 6;
 export interface PinnedPayload {
   label: string;
   text: string;
-  /** Sent in BOTH modes: the server needs them for injection-card lookup, and under a lock to bound id-addressed reads. */
+  /** Ids of the messages the pin was gathered FROM — the whole thread. Bounds
+   *  the locked reads and feeds the injection-card lookup. */
   messageIds: string[];
+  /** How many of them actually reached the model after budgeting. May be lower
+   *  than messageIds.length on a long thread; never higher. */
+  includedCount: number;
   toolScope?: 'thread';
 }
 
@@ -34,12 +38,13 @@ export function historyLimitFor(scope: AskScope | null): number {
 
 export function buildPinned(
   scope: AskThreadScope,
-  gathered: { text: string; messageIds: string[] },
+  gathered: { text: string; messageIds: string[]; includedCount: number },
 ): PinnedPayload {
   return {
     label: scope.subject ?? '(no subject)',
     text: gathered.text,
     messageIds: gathered.messageIds,
+    includedCount: gathered.includedCount,
     ...(scope.locked ? { toolScope: 'thread' as const } : {}),
   };
 }

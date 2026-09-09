@@ -36,7 +36,7 @@ describe('historyLimitFor', () => {
 });
 
 describe('buildPinned', () => {
-  const gathered = { text: 'thread text', messageIds: ['m7', 'm8', 'm9'] };
+  const gathered = { text: 'thread text', messageIds: ['m7', 'm8', 'm9'], includedCount: 3 };
 
   it('labels with the subject and always carries the message ids', () => {
     const p = buildPinned(thread, gathered);
@@ -53,5 +53,11 @@ describe('buildPinned', () => {
   it('falls back to a readable label when the subject is null', () => {
     const p = buildPinned({ ...thread, subject: null }, gathered);
     expect(p.label).toBe('(no subject)');
+  });
+
+  it('carries includedCount through, independent of messageIds length', () => {
+    const p = buildPinned(thread, { text: 't', messageIds: ['m1', 'm2', 'm3'], includedCount: 2 });
+    expect(p.messageIds).toHaveLength(3);
+    expect(p.includedCount).toBe(2);
   });
 });

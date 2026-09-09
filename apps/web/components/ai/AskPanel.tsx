@@ -340,7 +340,7 @@ export default function AskPanel() {
   // Pinned thread text is gathered ONCE per thread, on the first send — never
   // on open, because opening the panel from a list row would otherwise cost up
   // to ten body fetches for a panel the user may immediately close.
-  const pinCacheRef = useRef<{ seedMessageId: string; text: string; messageIds: string[] } | null>(null);
+  const pinCacheRef = useRef<{ seedMessageId: string; text: string; messageIds: string[]; includedCount: number } | null>(null);
   // How much of the pin actually reached the model, per the server's ack.
   const [pinnedAck, setPinnedAck] = useState<PinnedAck | null>(null);
 
@@ -363,7 +363,7 @@ export default function AskPanel() {
     // passes through keeps this to ONE conversation request while still
     // yielding the thread's message ids for the pinned payload.
     let messageIds: string[] = [];
-    const { text } = await gatherThreadContent(
+    const { text, includedIds } = await gatherThreadContent(
       s.seedMessageId,
       {
         getConversation: async (id) => {
@@ -375,7 +375,7 @@ export default function AskPanel() {
       },
       { totalCharBudget: PINNED_THREAD_CHAR_BUDGET },
     );
-    const entry = { seedMessageId: s.seedMessageId, text, messageIds };
+    const entry = { seedMessageId: s.seedMessageId, text, messageIds, includedCount: includedIds.length };
     pinCacheRef.current = entry;
     return entry;
   }, []);
@@ -453,7 +453,7 @@ export default function AskPanel() {
       if (scope?.kind === 'thread') {
         try {
           const entry = await ensurePinned(scope);
-          pinned = buildPinned(scope, { text: entry.text, messageIds: entry.messageIds });
+          pinned = buildPinned(scope, { text: entry.text, messageIds: entry.messageIds, includedCount: entry.includedCount });
         } catch {
           // A thread we could not read is not a reason to lose the question —
           // send it unpinned; the agent still has get_thread.

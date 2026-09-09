@@ -153,7 +153,7 @@ describe('streamAgent pinned context', () => {
     }));
     const { streamAgent } = await import('./agent');
 
-    const pinned = { label: 'Re: RHEMIS', text: 'thread text', messageIds: ['m1'], toolScope: 'thread' as const };
+    const pinned = { label: 'Re: RHEMIS', text: 'thread text', messageIds: ['m1'], includedCount: 1, toolScope: 'thread' as const };
     await streamAgent([{ role: 'user', content: 'hi' }], { ...noopHandlers, pinned });
 
     expect(sentBody.pinned).toEqual(pinned);

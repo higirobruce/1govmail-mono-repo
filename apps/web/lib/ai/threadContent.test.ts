@@ -164,6 +164,28 @@ describe('gatherThreadContent budget options', () => {
     expect(tight.messageCount).toBe(6);        // true length, not the kept count
   });
 
+  it('includedIds names only the blocks that survived the budget', async () => {
+    const messages = Array.from({ length: 6 }, (_, i) => meta(i + 1));
+    const deps = makeDeps({
+      getConversation: async () => ({ conversationId: 'c1', messages }),
+      getBody: async (id: string) => ({ bodyText: `${id}-`.repeat(300) }),
+    });
+
+    const { includedIds, messageCount } = await gatherThreadContent('m6', deps, { totalCharBudget: 2000 });
+
+    expect(messageCount).toBe(6);
+    expect(includedIds).toContain('m6');       // newest always survives
+    expect(includedIds).not.toContain('m1');   // oldest dropped
+    expect(includedIds.length).toBeLessThan(6);
+  });
+
+  it('includedIds is every message when nothing is dropped', async () => {
+    const messages = Array.from({ length: 3 }, (_, i) => meta(i + 1));
+    const deps = makeDeps({ getConversation: async () => ({ conversationId: 'c1', messages }) });
+    const { includedIds } = await gatherThreadContent('m3', deps);
+    expect(includedIds).toEqual(['m1', 'm2', 'm3']);
+  });
+
   it('maxMessages caps how many bodies are hydrated', async () => {
     const messages = Array.from({ length: 8 }, (_, i) => meta(i + 1));
     const fetched: string[] = [];

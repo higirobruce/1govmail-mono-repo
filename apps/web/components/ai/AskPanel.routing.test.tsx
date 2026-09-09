@@ -9,7 +9,9 @@ import { api } from '@/lib/api';
 const { streamAsk, streamAgent, gatherThreadContent } = vi.hoisted(() => ({
   streamAsk: vi.fn(async (..._a: any[]) => 'ask answer'),
   streamAgent: vi.fn(async (..._a: any[]) => 'agent answer'),
-  gatherThreadContent: vi.fn(async (..._a: any[]) => ({ text: 'THREAD TEXT', messageCount: 6 })),
+  gatherThreadContent: vi.fn(async (..._a: any[]) => ({
+    text: 'THREAD TEXT', messageCount: 6, includedIds: ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'],
+  })),
 }));
 
 vi.mock('@/lib/ai/ask', async (orig) => ({ ...(await orig() as any), streamAsk }));

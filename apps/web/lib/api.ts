@@ -545,15 +545,12 @@ export const api = {
      * Fetches prefs, identities, signatures and basic profile in one shot.
      */
     get: () => {
-      if (USE_MOCK) return delay<any>({ email: '', zimbraHost: '', displayName: '', prefs: {}, identities: [], signatures: [] });
-      return request<{
-        email: string;
-        zimbraHost: string;
-        displayName: string | null;
-        prefs: Record<string, string>;
-        identities: Array<{ id: string; name: string; attrs: Record<string, string> }>;
-        signatures: Array<{ id: string; name: string; contentHtml: string; contentText: string }>;
-      }>('/settings');
+      if (USE_MOCK) {
+        return delay<SettingsResponse>({
+          email: '', zimbraHost: '', displayName: '', prefs: {}, identities: [], signatures: [],
+        });
+      }
+      return request<SettingsResponse>('/settings');
     },
 
     /** PATCH /settings/prefs — update one or more Zimbra preference keys */
@@ -973,6 +970,42 @@ export interface AiProfileSuggestions {
   jobTitle: string | null;
   institution: string | null;
   department: string | null;
+}
+
+/**
+ * Which of the provider-backed settings sections the mail backend behind this
+ * account can actually serve. Zimbra reports every flag true.
+ *
+ * Consumers must treat both an absent object and an absent individual flag as
+ * "supported" — a server from before this field, a request that races a
+ * deploy, and a backend that grows a capability this client does not know
+ * about all have to keep rendering everything. Run it through
+ * `resolveCapabilities` (app/(app)/settings/capabilities.ts) rather than
+ * reading the flags off the response directly.
+ */
+export interface SettingsCapabilities {
+  /** Stored signatures can be listed, created, edited and deleted. */
+  signatures: boolean;
+  /** Sending identities (display name, reply-to) can be read and edited. */
+  identities: boolean;
+  /** Server-side mail preferences (reading/composing/vacation) can be read and written. */
+  serverPrefs: boolean;
+  /** The account password can be changed from the settings page. */
+  changePassword: boolean;
+  /** The backend can run a two-factor challenge. Consumed at login, not in settings. */
+  twoFactor: boolean;
+}
+
+export interface SettingsResponse {
+  email: string;
+  zimbraHost: string;
+  displayName: string | null;
+  prefs: Record<string, string>;
+  identities: Array<{ id: string; name: string; attrs: Record<string, string> }>;
+  signatures: Array<{ id: string; name: string; contentHtml: string; contentText: string }>;
+  /** Optional: a server from before this field simply omits it, and a partial
+   *  object is legal — every absent flag defaults to supported. */
+  capabilities?: Partial<SettingsCapabilities>;
 }
 
 export interface Doc {

@@ -8,7 +8,7 @@ import { useConfirmStore } from '@/stores/confirm.store';
 import { useThemeStore, type FontSize } from '@/stores/theme.store';
 import { useAIStore } from '@/stores/ai.store';
 import { AI_LOCKED } from '@/lib/ai/config';
-import { api } from '@/lib/api';
+import { api, type SettingsResponse } from '@/lib/api';
 import { AIClient } from '@/lib/ai/client';
 import { CUSTOM_INSTRUCTIONS_MAX_CHARS } from '@/lib/ai/prompt';
 import { isValidSenderAddress } from './blocked-senders-helpers';
@@ -65,30 +65,11 @@ const ZimbraAwareImage = TiptapImage.extend({
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface Identity {
-  id: string;
-  name: string;
-  attrs: Record<string, string>;
-}
-
-interface Signature {
-  id: string;
-  name: string;
-  contentHtml: string;
-  contentText: string;
-}
-
-interface SettingsData {
-  email: string;
-  zimbraHost: string;
-  displayName: string | null;
-  prefs: Record<string, string>;
-  identities: Identity[];
-  signatures: Signature[];
-  /** Optional: a server from before this field simply omits it, and every
-   *  absent flag defaults to supported. See ./capabilities. */
-  capabilities?: Partial<SettingsCapabilities>;
-}
+/** The GET /settings payload, straight off the API client — no local mirror to
+ *  drift out of sync with it. `capabilities` is optional there: a server from
+ *  before the field omits it, and every absent flag defaults to supported. */
+type SettingsData = SettingsResponse;
+type Signature = SettingsResponse['signatures'][number];
 
 type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'ai-profile' | 'security';
 
@@ -442,7 +423,7 @@ export default function SettingsPage() {
     setLoading(true);
     try {
       const d = await api.settings.get();
-      setData(d as SettingsData);
+      setData(d);
       // Invalidate the React Query ['settings'] cache so ComposeModal (and any
       // other component using useQuery(['settings'])) refetches the latest data,
       // including updated zimbraPrefDefaultSignatureId and signature content.

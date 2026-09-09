@@ -1,30 +1,22 @@
 /**
- * Which of the provider-backed settings sections the mail backend behind this
- * account can actually serve. `GET /settings` reports them as `capabilities`;
- * Zimbra reports every flag true.
+ * Resolution policy for the `capabilities` object on `GET /settings`. The wire
+ * shape itself lives with the rest of the response types in `@/lib/api`; this
+ * module owns what an absent value means.
  *
- * Everything here defaults to **true**. An absent object (a server that
- * predates the field, or a request that raced a deploy) and an absent
- * individual flag (a server that grew a new capability we do not know about)
- * both mean "render it" — so the gating can only ever hide a section a backend
- * has explicitly disclaimed, never hide one by accident.
+ * Everything defaults to **true**. An absent object (a server that predates
+ * the field, or a request that raced a deploy) and an absent individual flag
+ * (a server that grew a new capability we do not know about) both mean
+ * "render it" — so the gating can only ever hide a section a backend has
+ * explicitly disclaimed, never hide one by accident.
+ *
+ * Note `twoFactor` gates nothing on the settings page: 2FA is login-time and
+ * there is no enrolment UI here. It is carried so the flag set matches the
+ * API's.
  */
-export interface SettingsCapabilities {
-  /** Stored signatures can be listed, created, edited and deleted. */
-  signatures: boolean;
-  /** Sending identities (display name, reply-to) can be read and edited. */
-  identities: boolean;
-  /** Server-side mail preferences (reading/composing/vacation) can be read and written. */
-  serverPrefs: boolean;
-  /** The account password can be changed from here. */
-  changePassword: boolean;
-  /**
-   * The backend can run a two-factor challenge. Consumed at login, not on this
-   * page — there is no 2FA enrolment UI in settings today — so nothing here is
-   * gated on it. It is carried through so the flag set matches the API's.
-   */
-  twoFactor: boolean;
-}
+import type { SettingsCapabilities } from '@/lib/api';
+
+/** Re-exported so the settings page has one import for the type and the policy. */
+export type { SettingsCapabilities };
 
 export const ALL_CAPABILITIES: SettingsCapabilities = {
   signatures: true,

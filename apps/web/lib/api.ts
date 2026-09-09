@@ -213,15 +213,19 @@ export const api = {
   },
 
   auth: {
-    login: (email: string, password: string, zimbraHost: string) => {
+    institutions: () => {
+      if (USE_MOCK) return delay<Array<{ id: string; label: string }>>([{ id: 'memory', label: 'Demo (local)' }]);
+      return request<Array<{ id: string; label: string }>>('/auth/institutions');
+    },
+    login: (email: string, password: string, institution: string) => {
       if (USE_MOCK)
-        return delay({ accessToken: 'mock-token', user: { id: 'u1', email, displayName: 'Demo User', zimbraHost } });
+        return delay({ accessToken: 'mock-token', user: { id: 'u1', email, displayName: 'Demo User', zimbraHost: 'mail.company.com' } });
       return request<
         | { accessToken: string; user: any }
         | { requiresTwoFactor: true; twoFactorToken: string }
       >('/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password, zimbraHost }),
+        body: JSON.stringify({ email, password, institution }),
       });
     },
     twoFactor: (twoFactorToken: string, code: string) => {

@@ -28,7 +28,7 @@ export interface ThreadContentDeps {
 
 /** Only the last N messages are hydrated with full bodies — enough context
  *  for a draft without fanning out to dozens of bodies on a long thread. */
-const MAX_MESSAGES = 10;
+const DEFAULT_MAX_MESSAGES = 10;
 /** Per-message character budget handed to extractEmailText. */
 const PER_MESSAGE_MAX_CHARS = 2000;
 /**
@@ -38,7 +38,14 @@ const PER_MESSAGE_MAX_CHARS = 2000;
  * so the joined result is additionally capped here by dropping the oldest
  * blocks first, same "newest survives" bias as the MAX_MESSAGES cap above.
  */
-const TOTAL_CHAR_BUDGET = 12000;
+const DEFAULT_TOTAL_CHAR_BUDGET = 12000;
+/**
+ * Budget for a thread pinned into an Ask 1Gov conversation. Lower than the
+ * draft-a-doc default because a pinned block re-rides EVERY turn against a
+ * 6-turn agent history — the agent can call get_thread or read_email when it
+ * needs more than this digest.
+ */
+export const PINNED_THREAD_CHAR_BUDGET = 6000;
 const BLOCK_SEPARATOR = '\n\n---\n\n';
 
 function formatFrom(meta: Pick<ThreadMessageMeta, 'fromEmail' | 'fromName'>): string {
@@ -78,11 +85,13 @@ async function gatherOne(meta: ThreadMessageMeta, getBody: ThreadContentDeps['ge
  * the user when older history was left out.
  */
 export async function gatherThreadContent(
-  messageId: string, deps: ThreadContentDeps,
+  messageId: string,
+  deps: ThreadContentDeps,
+  opts: { totalCharBudget?: number; maxMessages?: number } = {},
 ): Promise<{ text: string; messageCount: number }> {
   const { messages } = await deps.getConversation(messageId);
-  const capped = messages.slice(-MAX_MESSAGES);
+  const capped = messages.slice(-(opts.maxMessages ?? DEFAULT_MAX_MESSAGES));
   const blocks = await Promise.all(capped.map((meta) => gatherOne(meta, deps.getBody)));
-  const budgeted = capToBudget(blocks, TOTAL_CHAR_BUDGET);
+  const budgeted = capToBudget(blocks, opts.totalCharBudget ?? DEFAULT_TOTAL_CHAR_BUDGET);
   return { text: budgeted.join(BLOCK_SEPARATOR), messageCount: messages.length };
 }

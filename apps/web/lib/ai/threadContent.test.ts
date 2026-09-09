@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { gatherThreadContent, type ThreadContentDeps } from './threadContent';
+import { gatherThreadContent, PINNED_THREAD_CHAR_BUDGET, type ThreadContentDeps } from './threadContent';
 
 // Thread messages are oldest-first, matching api.mail.getConversation's real
 // shape. Each fixture message carries a distinguishing marker in its snippet
@@ -144,5 +144,45 @@ describe('gatherThreadContent', () => {
     const { text } = await gatherThreadContent('m1', deps);
 
     expect(text).toContain('From: sender1@risa.gov.rw\n');
+  });
+});
+
+describe('gatherThreadContent budget options', () => {
+  it('a smaller totalCharBudget drops more of the oldest blocks', async () => {
+    const messages = Array.from({ length: 6 }, (_, i) => meta(i + 1));
+    const deps = makeDeps({
+      getConversation: async () => ({ conversationId: 'c1', messages }),
+      getBody: async (id: string) => ({ bodyText: `${id}-`.repeat(300) }), // ~1200 chars each
+    });
+
+    const wide = await gatherThreadContent('m6', deps);
+    const tight = await gatherThreadContent('m6', deps, { totalCharBudget: 2000 });
+
+    expect(tight.text.length).toBeLessThan(wide.text.length);
+    expect(tight.text).toContain('m6-');       // newest always survives
+    expect(tight.text).not.toContain('m1-');   // oldest dropped first
+    expect(tight.messageCount).toBe(6);        // true length, not the kept count
+  });
+
+  it('maxMessages caps how many bodies are hydrated', async () => {
+    const messages = Array.from({ length: 8 }, (_, i) => meta(i + 1));
+    const fetched: string[] = [];
+    const deps = makeDeps({
+      getConversation: async () => ({ conversationId: 'c1', messages }),
+      getBody: async (id: string) => { fetched.push(id); return { bodyText: `body-${id}` }; },
+    });
+
+    await gatherThreadContent('m8', deps, { maxMessages: 3 });
+
+    expect(fetched.sort()).toEqual(['m6', 'm7', 'm8']);
+  });
+
+  it('PINNED_THREAD_CHAR_BUDGET is 6000 and smaller than the default', async () => {
+    const messages = Array.from({ length: 3 }, (_, i) => meta(i + 1));
+    const deps = makeDeps({ getConversation: async () => ({ conversationId: 'c1', messages }) });
+    expect(PINNED_THREAD_CHAR_BUDGET).toBe(6000);
+    // default path unchanged
+    const { messageCount } = await gatherThreadContent('m3', deps);
+    expect(messageCount).toBe(3);
   });
 });

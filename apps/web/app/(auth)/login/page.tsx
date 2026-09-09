@@ -125,7 +125,7 @@ export default function LoginPage() {
           <p className="text-sm text-muted-foreground mt-1">
             {isTwoFactorStep
               ? 'Enter your authenticator code'
-              : 'Sign in to your Zimbra account'}
+              : 'Sign in to your account'}
           </p>
         </div>
 
@@ -301,7 +301,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-muted-foreground/50 mt-6">
-          Your credentials are used only to authenticate with your Zimbra server.
+          Your credentials are used only to authenticate with your institution's mail server.
         </p>
 
         <p className="text-center text-[0.6875rem] text-muted-foreground/30 mt-3 tracking-wide">

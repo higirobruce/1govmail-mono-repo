@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { ProviderAuthResult } from '../provider/provider-types';
+import { MailProvider } from '../provider/mail-provider.interface';
 import { AuditService } from '../common/audit/audit.service';
 import { InstitutionRegistry } from './institution.registry';
 import { LoginDto } from './dto/login.dto';
@@ -48,8 +49,18 @@ export class AuthService {
     // throw is gone, so an institution on a backend this build does not speak
     // yet fails here with the resolver's BadRequestException — and the moment
     // Phase 2/3 registers that provider, login starts working with no change
-    // to this method.
-    const provider = this.resolver.forUser({ provider: inst.provider });
+    // to this method. The resolver's message names the internal provider key
+    // (fine for its other call sites); re-wrap it here so a user-facing login
+    // error never leaks that key — only the institution's own label.
+    let provider: MailProvider;
+    try {
+      provider = this.resolver.forUser({ provider: inst.provider });
+    } catch (err) {
+      if (err instanceof BadRequestException) {
+        throw new BadRequestException(`${inst.label} sign-in is not supported on this server yet.`);
+      }
+      throw err;
+    }
     const zimbraHost = inst.host;
     const resolvedInstitution: ResolvedInstitution = { provider: inst.provider, institutionId: inst.id };
 

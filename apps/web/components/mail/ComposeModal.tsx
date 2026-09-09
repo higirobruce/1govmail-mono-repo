@@ -432,6 +432,9 @@ export default function ComposeModal({
   // ── TipTap editor ─────────────────────────────────────────────────────────
   const editor = useEditor({
     immediatelyRender: false,
+    // TipTap v3 defaults this to false, so render-time reads (the isEmpty
+    // placeholder gate, toolbar isActive states) go stale as the user types.
+    shouldRerenderOnTransaction: true,
     extensions: [
       StarterKit,
       Underline,

@@ -137,6 +137,19 @@ describe('MemoryMailProvider — mutations, send, drafts, attachments', () => {
     expect(junk.totalCount).toBe(junkTotalBefore + 1);
   });
 
+  it('moveMessage to an unknown folderId rejects with NotFoundException and leaves the message untouched', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const mbox = store.get('demo@memory.local')!;
+    const inbox = mbox.folders.find((f) => f.type === 'inbox')!;
+    const msg = mbox.messages.find((m) => m.folderId === inbox.id)!;
+
+    await expect(
+      provider.moveMessage(sessionFor('demo@memory.local'), msg.id, 'folder-does-not-exist'),
+    ).rejects.toThrow(NotFoundException);
+    expect(mbox.messages.find((m) => m.id === msg.id)!.folderId).toBe(inbox.id);
+  });
+
   it('deleteMessage soft-deletes by moving the message to Trash', async () => {
     const { store, provider } = setup();
     await provider.authenticate('memory.local', 'demo@memory.local', 'x');
@@ -260,6 +273,29 @@ describe('MemoryMailProvider — mutations, send, drafts, attachments', () => {
     const part = sentMsg.attachments![0].part;
     const { data: roundTripped, contentType } = await provider.downloadAttachmentBuffer(s, id, part);
     expect(roundTripped.toString('utf-8')).toBe('hello attachment');
+    expect(contentType).toBe('text/plain');
+  });
+
+  it('sendMessage delivery copies attachment bytes so the recipient can download them too', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    await provider.authenticate('memory.local', 'peer@memory.local', 'x'); // seed the recipient
+    const sender = sessionFor('demo@memory.local');
+    const data = Buffer.from('shared attachment bytes', 'utf-8');
+    const aid = await provider.uploadAttachment(sender, 'shared.txt', 'text/plain', data);
+
+    await provider.sendMessage(sender, { to: ['peer@memory.local'], subject: 'File for you', body: 'x' }, [aid]);
+
+    const peer = store.get('peer@memory.local')!;
+    const peerInbox = peer.folders.find((f) => f.type === 'inbox')!;
+    const delivered = peer.messages.find((m) => m.subject === 'File for you' && m.folderId === peerInbox.id)!;
+    expect(delivered.attachments!.length).toBe(1);
+
+    const part = delivered.attachments![0].part;
+    const { data: downloaded, contentType } = await provider.downloadAttachmentBuffer(
+      sessionFor('peer@memory.local'), delivered.id, part,
+    );
+    expect(downloaded.toString('utf-8')).toBe('shared attachment bytes');
     expect(contentType).toBe('text/plain');
   });
 });

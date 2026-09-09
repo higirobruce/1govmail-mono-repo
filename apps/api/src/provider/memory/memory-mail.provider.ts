@@ -179,6 +179,7 @@ export class MemoryMailProvider {
     const mailbox = this.mb(s);
     const message = mailbox.messages.find((m) => m.id === messageId);
     if (!message) throw new NotFoundException('Message not found');
+    if (!mailbox.folders.some((f) => f.id === folderId)) throw new NotFoundException('Folder not found');
     const oldFolderId = message.folderId;
     message.folderId = folderId;
     this.recomputeFolderCounts(mailbox, oldFolderId);
@@ -254,7 +255,20 @@ export class MemoryMailProvider {
         id: nextMessageId(),
         folderId: recipientInbox.id,
         isRead: false,
+        to: [...message.to],
+        cc: [...message.cc],
+        bcc: [...message.bcc],
+        tags: [...message.tags],
+        attachments: message.attachments ? message.attachments.map((a) => ({ ...a })) : message.attachments,
       });
+      // Attachment metadata is copied above, but the bytes live in the
+      // sender's own mailbox.attachments Map — copy them into the
+      // recipient's Map too, keyed the same way (by aid/part), so the
+      // recipient can download them.
+      for (const meta of message.attachments ?? []) {
+        const bytes = mailbox.attachments.get(meta.part);
+        if (bytes) recipientMailbox.attachments.set(meta.part, { ...bytes });
+      }
       this.recomputeFolderCounts(recipientMailbox, recipientInbox.id);
     }
 

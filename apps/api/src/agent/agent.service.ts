@@ -83,10 +83,15 @@ export class AgentService {
     };
 
     // A pinned thread becomes one extra user message between the system
-    // prompt and the conversation turns (below). The injection flag looks at
-    // both sides: MessageCard rows already computed for these messages
-    // (cheap — no re-extraction) OR'd with a live detector pass over the
-    // pinned text itself, mirroring retrieval's posture (retrieval.service.ts:414).
+    // prompt and the conversation turns (below). The injection flag combines
+    // MessageCard rows already computed for these messages (cheap — no
+    // re-extraction) with a live detector pass over the label AND the pinned
+    // text — the label is the mail Subject, just as attacker-controlled as
+    // the body, so a subject-only injection attempt ("Ignore all previous
+    // instructions") must still flag even when the body is clean. Unlike
+    // retrieval.service.ts:414, this query is NOT wrapped in a try/catch: a
+    // failed lookup here fails the whole turn instead of silently degrading
+    // to detector-only, so a DB error can never let an unflagged pin through.
     let pinnedMessage: string | null = null;
     if (pinned) {
       const ids = pinned.messageIds ?? [];
@@ -98,7 +103,7 @@ export class AgentService {
         });
         for (const c of cards) cardFlags.set(c.messageId, c.injectionSuspected);
       }
-      const flagged = pinnedIsSuspect(pinned.text, cardFlags, ids);
+      const flagged = pinnedIsSuspect(`${pinned.label}\n${pinned.text}`, cardFlags, ids);
       pinnedMessage = buildPinnedMessage(pinned, flagged);
       // `includedIn`, never ids.length — the frame's `included` is what the
       // chip renders as "N of M messages", and deriving it from the full

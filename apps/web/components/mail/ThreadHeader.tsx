@@ -1,7 +1,7 @@
 'use client';
 
 import { formatDistanceToNow, parseISO } from 'date-fns';
-import { X, Reply, ReplyAll, Forward, ScrollText, FileText, MessageSquareReply } from 'lucide-react';
+import { X, Reply, ReplyAll, Forward, ScrollText, FileText, MessageSquareReply, MessagesSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,7 @@ interface Props {
   onDraftDoc?: () => void;
   drafting?: boolean;
   onQuickReply?: () => void;
+  onAskThread?: () => void;
 }
 
 function deriveStatus(
@@ -71,6 +72,7 @@ export default function ThreadHeader({
   onDraftDoc,
   drafting,
   onQuickReply,
+  onAskThread,
 }: Props) {
   const status = deriveStatus(lastSenderEmail, currentUserEmail, unreadCount);
 
@@ -108,7 +110,9 @@ export default function ThreadHeader({
           <div className="flex-1" />
           <span
             className={cn(
-              'text-micro px-2 py-0.5 rounded-full shrink-0 font-medium whitespace-nowrap',
+              // Truncatable (not shrink-0): if the row still gets tight, the status
+              // text gives way instead of pushing the action buttons off-screen.
+              'text-micro px-2 py-0.5 rounded-full font-medium min-w-0 truncate',
               status.className,
             )}
           >
@@ -146,9 +150,11 @@ export default function ThreadHeader({
                   : 'bg-primary/10 text-primary hover:bg-primary/20',
               )}
               aria-label="Summarize"
+              title="Summarize"
             >
               <ScrollText className={cn('w-3.5 h-3.5', summarizing && 'animate-pulse')} />
-              Summarize
+              {/* Icon-only below sm — the labeled pills don't fit a phone-width toolbar */}
+              <span className="hidden sm:inline">Summarize</span>
             </button>
           )}
           {onDraftDoc && (
@@ -162,9 +168,24 @@ export default function ThreadHeader({
                   : 'bg-primary/10 text-primary hover:bg-primary/20',
               )}
               aria-label="Draft doc"
+              title="Draft doc"
             >
               <FileText className={cn('w-3.5 h-3.5', drafting && 'animate-pulse')} />
-              Draft doc
+              <span className="hidden sm:inline">Draft doc</span>
+            </button>
+          )}
+          {onAskThread && (
+            <button
+              onClick={onAskThread}
+              className={cn(
+                'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-ui font-medium transition-colors',
+                'bg-primary/10 text-primary hover:bg-primary/20',
+              )}
+              aria-label="Ask about this thread"
+              title="Ask about this thread"
+            >
+              <MessagesSquare className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Ask</span>
             </button>
           )}
           {onQuickReply && (

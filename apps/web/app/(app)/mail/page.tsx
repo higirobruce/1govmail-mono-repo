@@ -960,6 +960,30 @@ export default function MailPage() {
       return;
     }
 
+    if (type === 'askThread') {
+      // Defensive: the menu row itself is gated on aiEnabled, but the branch
+      // stays inert even if it somehow renders (or fires) while AI is off.
+      if (!aiEnabled) return;
+      // Unlike mute, a message with no conversationId is fine here — the
+      // gather resolves the thread through the seed id, and for a standalone
+      // message that thread is just the message itself.
+      openAsk({
+        scope: {
+          kind: 'thread',
+          conversationId: (msg.conversationId as string | undefined) ?? null,
+          seedMessageId: messageId,
+          subject: msg.subject ?? null,
+          // Placeholder only. A list row carries no thread length, and this
+          // path pins the WHOLE conversation (ensurePinned → getConversation),
+          // so the chip replaces this with the gather's real messageCount on
+          // the first send — see AskPanel's pinnedCount.
+          messageCount: 1,
+          locked: false,
+        },
+      });
+      return;
+    }
+
     if (type === 'mute') {
       const convId = msg.conversationId as string | undefined;
       if (!convId) { toast.info('This message is not part of a conversation'); return; }
@@ -1066,7 +1090,7 @@ export default function MailPage() {
         },
       });
     }
-  }, [messages, searchResults, activeMessage, activeMessageId, openMessage, openCompose, folders, activeFolderId, updateFolderCounts, updateMessageInCache, removeMessageFromCache, invalidateMessages, offline]); // eslint-disable-line
+  }, [messages, searchResults, activeMessage, activeMessageId, openMessage, openCompose, folders, activeFolderId, updateFolderCounts, updateMessageInCache, removeMessageFromCache, invalidateMessages, offline, openAsk, aiEnabled]); // eslint-disable-line
 
   // Debounce search input → fire query after 400 ms of silence
   const handleSearchInput = useCallback((value: string) => {
@@ -1162,6 +1186,22 @@ export default function MailPage() {
       if (activeMessageId && archiveFolder) handleMoveToFolder(archiveFolder.id);
     },
     d: () => { if (activeMessageId) deleteMessage(); },
+    q: () => {
+      if (!activeMessage || !aiEnabled) return;
+      openAsk({
+        scope: {
+          kind: 'thread',
+          conversationId: (activeMessage.conversationId as string | undefined) ?? null,
+          seedMessageId: activeMessage.id,
+          subject: activeMessage.subject ?? null,
+          // Placeholder — the open message alone does not know its thread's
+          // length, and this pins the whole conversation. The chip takes the
+          // gather's real count on the first send (AskPanel's pinnedCount).
+          messageCount: 1,
+          locked: false,
+        },
+      });
+    },
     u: () => {
       if (activeMessage) {
         const read = activeMessage.isRead;
@@ -1440,6 +1480,7 @@ export default function MailPage() {
             folders={folders}
             mutedConversationIds={mutedConversationIds}
             filterTagNames={selectedLabelNames}
+            aiEnabled={aiEnabled}
           />
         ) : (
           <>
@@ -1495,6 +1536,7 @@ export default function MailPage() {
               folders={folders}
               mutedConversationIds={mutedConversationIds}
               cardsById={cardsById}
+              aiEnabled={aiEnabled}
               emptyState={showInboxZeroEmptyState ? (
                 <InboxZero celebrate={pendingInboxZero} onCelebrated={handleInboxZeroCelebrated} />
               ) : undefined}

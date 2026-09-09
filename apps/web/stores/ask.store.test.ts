@@ -1,7 +1,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useAskStore } from './ask.store';
 
-const SCOPE = { docId: 'doc-1', docTitle: 'Budget Memo' };
+const SCOPE = { kind: 'doc', docId: 'doc-1', docTitle: 'Budget Memo' } as const;
+
+const THREAD_SCOPE = {
+  kind: 'thread',
+  conversationId: 'c-1',
+  seedMessageId: 'm-9',
+  subject: 'Re: RHEMIS inception report',
+  messageCount: 6,
+  locked: false,
+} as const;
 
 describe('useAskStore', () => {
   beforeEach(() => {
@@ -133,5 +142,46 @@ describe('useAskStore', () => {
     expect(useAskStore.getState().handlers).toBe(handlers);
     useAskStore.getState().setHandlers(null);
     expect(useAskStore.getState().handlers).toBeNull();
+  });
+});
+
+describe('thread scope', () => {
+  it('openAsk() accepts a thread scope', () => {
+    useAskStore.getState().openAsk({ scope: { ...THREAD_SCOPE } });
+    const s = useAskStore.getState();
+    expect(s.open).toBe(true);
+    expect(s.scope).toEqual(THREAD_SCOPE);
+  });
+
+  it('toggleScopeLock() flips locked on a thread scope', () => {
+    useAskStore.getState().openAsk({ scope: { ...THREAD_SCOPE } });
+    useAskStore.getState().toggleScopeLock();
+    expect((useAskStore.getState().scope as any).locked).toBe(true);
+    useAskStore.getState().toggleScopeLock();
+    expect((useAskStore.getState().scope as any).locked).toBe(false);
+  });
+
+  it('toggleScopeLock() is a no-op on a doc scope and on a null scope', () => {
+    useAskStore.getState().openAsk({ scope: { ...SCOPE } });
+    useAskStore.getState().toggleScopeLock();
+    expect(useAskStore.getState().scope).toEqual(SCOPE);
+
+    useAskStore.setState({ scope: null });
+    useAskStore.getState().toggleScopeLock();
+    expect(useAskStore.getState().scope).toBeNull();
+  });
+
+  it('clearScope() drops a thread scope but keeps the panel open', () => {
+    useAskStore.getState().openAsk({ scope: { ...THREAD_SCOPE } });
+    useAskStore.getState().clearScope();
+    const s = useAskStore.getState();
+    expect(s.scope).toBeNull();
+    expect(s.open).toBe(true);
+  });
+
+  it('close() clears a thread scope', () => {
+    useAskStore.getState().openAsk({ scope: { ...THREAD_SCOPE } });
+    useAskStore.getState().close();
+    expect(useAskStore.getState().scope).toBeNull();
   });
 });

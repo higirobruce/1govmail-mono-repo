@@ -85,11 +85,18 @@ export class ToolRegistry {
     return [...this.tools.values()];
   }
 
-  openAiTools(): Array<{
+  /**
+   * `only`, when given, restricts what is advertised to the model to that
+   * allowlist (e.g. THREAD_LOCK_TOOLS) — names the registry does not have are
+   * silently ignored rather than erroring, since the allowlist is a filter,
+   * not a manifest the registry is expected to satisfy.
+   */
+  openAiTools(only?: ReadonlySet<string>): Array<{
     type: 'function';
     function: { name: string; description: string; parameters: Record<string, unknown> };
   }> {
-    return this.list().map((t) => ({
+    const defs = only ? this.list().filter((t) => only.has(t.name)) : this.list();
+    return defs.map((t) => ({
       type: 'function' as const,
       function: {
         name: t.name,

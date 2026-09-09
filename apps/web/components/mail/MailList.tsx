@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { format, parseISO, startOfDay, subDays } from 'date-fns';
-import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip, AlertTriangle } from 'lucide-react';
+import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip, AlertTriangle, MessagesSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MailAvatar } from './MailAvatar';
 import { ClassificationChip } from './ClassificationChip';
@@ -42,7 +42,7 @@ const TRIAGE_LABEL_META: Record<string, { text: string; textClass: string; dotCl
 };
 
 export interface ContextAction {
-  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'createEvent' | 'snooze' | 'mute' | 'print';
+  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'createEvent' | 'snooze' | 'mute' | 'print' | 'askThread';
   messageId: string;
   targetFolderId?: string;
 }
@@ -73,6 +73,8 @@ interface MailListProps {
   filterTagNames?: Set<string>;
   /** Persisted triage cards keyed by message id — drives the row label badge. */
   cardsById?: Record<string, TriageCard>;
+  /** Gates the "Ask about this thread" context-menu row — omitted entirely when AI is off. */
+  aiEnabled?: boolean;
 }
 
 type Tab = 'all' | 'unread' | 'starred';
@@ -160,12 +162,14 @@ function ContextMenu({
   onClose,
   folders = [],
   mutedConversationIds = [],
+  aiEnabled = false,
 }: {
   state: CtxMenuState;
   onAction: (action: ContextAction) => void;
   onClose: () => void;
   folders?: FolderItem[];
   mutedConversationIds?: string[];
+  aiEnabled?: boolean;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [showFolders, setShowFolders] = useState(false);
@@ -242,6 +246,7 @@ function ContextMenu({
       {item(BellOff,    isMuted ? 'Unmute conversation' : 'Mute conversation', 'mute')}
       {item(ListTodo,     'Create Task',    'createTask')}
       {item(CalendarPlus, 'Create Event',   'createEvent')}
+      {aiEnabled && item(MessagesSquare, 'Ask about this thread', 'askThread')}
       {labelFolders.length > 0 && (
         <>
           <div className="my-1 h-px bg-border-faint" />
@@ -281,7 +286,7 @@ function ContextMenu({
 
 // ── Mail row ──────────────────────────────────────────────────────────────────
 
-function MailRow({
+export function MailRow({
   message,
   active,
   onClick,
@@ -320,12 +325,16 @@ function MailRow({
           }));
           e.dataTransfer.effectAllowed = 'copy';
         }}
+        data-read={message.isRead || undefined}
         className={cn(
           'group relative rounded-2xl transition-all',
           active
             ? 'bg-muted ring-1 ring-border-strong'
             : selected
             ? 'bg-primary/5 ring-1 ring-primary/20'
+            : message.isRead
+            // Read rows sit on a soft tinted band so read/unread scan as blocks.
+            ? 'bg-muted/30 hover:bg-muted/50'
             : 'hover:bg-muted/40',
         )}
       >
@@ -362,8 +371,9 @@ function MailRow({
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-2 mb-0.5">
                 <span className={cn(
-                  'text-body font-semibold truncate',
-                  message.isRead ? 'text-foreground' : 'text-primary',
+                  'text-body truncate',
+                  // Weight is the primary read/unread cue; color is secondary.
+                  message.isRead ? 'font-normal text-foreground' : 'font-semibold text-primary',
                 )}>
                   {message.fromName ?? message.fromEmail}
                 </span>
@@ -378,7 +388,7 @@ function MailRow({
 
               <p className={cn(
                 'text-ui truncate mb-0.5 text-foreground',
-                message.isRead ? 'font-medium' : 'font-semibold',
+                message.isRead ? 'font-normal' : 'font-semibold',
               )}>
                 {message.subject ?? '(no subject)'}
               </p>
@@ -453,6 +463,7 @@ export default function MailList({
   emptyState,
   filterTagNames,
   cardsById,
+  aiEnabled = false,
 }: MailListProps) {
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
@@ -686,6 +697,7 @@ export default function MailList({
           onClose={() => setCtxMenu(null)}
           folders={folders}
           mutedConversationIds={mutedConversationIds}
+          aiEnabled={aiEnabled}
         />
       )}
 

@@ -30,3 +30,41 @@ describe('AgentRequestDto', () => {
     expect((await errorsFor({ messages: many })).length).toBeGreaterThan(0);
   });
 });
+
+const withPinned = (pinned: unknown) => ({
+  messages: [{ role: 'user', content: 'hi' }], pinned,
+});
+
+describe('AgentRequestDto pinned', () => {
+  it('accepts a well-formed pinned block', async () => {
+    expect(await errorsFor(withPinned({
+      label: 'Re: RHEMIS', text: 'thread text', messageIds: ['m1', 'm2'], toolScope: 'thread',
+    }))).toHaveLength(0);
+  });
+
+  it('accepts a request with no pinned block at all', async () => {
+    expect(await errorsFor({ messages: [{ role: 'user', content: 'hi' }] })).toHaveLength(0);
+  });
+
+  it('rejects empty text — an empty pin would silently widen a thread ask', async () => {
+    expect((await errorsFor(withPinned({ label: 'x', text: '' }))).length).toBeGreaterThan(0);
+  });
+
+  it('rejects text over 8000 chars', async () => {
+    expect((await errorsFor(withPinned({ label: 'x', text: 'a'.repeat(8001) }))).length).toBeGreaterThan(0);
+  });
+
+  it('rejects an empty label and a label over 200 chars', async () => {
+    expect((await errorsFor(withPinned({ label: '', text: 'ok' }))).length).toBeGreaterThan(0);
+    expect((await errorsFor(withPinned({ label: 'a'.repeat(201), text: 'ok' }))).length).toBeGreaterThan(0);
+  });
+
+  it('rejects a toolScope other than "thread"', async () => {
+    expect((await errorsFor(withPinned({ label: 'x', text: 'ok', toolScope: 'mailbox' }))).length).toBeGreaterThan(0);
+  });
+
+  it('rejects more than 50 message ids', async () => {
+    const ids = Array.from({ length: 51 }, (_, i) => `m${i}`);
+    expect((await errorsFor(withPinned({ label: 'x', text: 'ok', messageIds: ids }))).length).toBeGreaterThan(0);
+  });
+});

@@ -51,6 +51,8 @@ export function QuickReplyBar({ message, onSent, onExpand }: Props) {
     extensions: [StarterKit.configure({ heading: false })],
     content: '',
     immediatelyRender: false,
+    // v3 default is false — isEmpty (send gating, hint text) must track typing.
+    shouldRerenderOnTransaction: true,
     editorProps: {
       attributes: {
         class: 'mini-composer-editor text-ui text-foreground outline-none',

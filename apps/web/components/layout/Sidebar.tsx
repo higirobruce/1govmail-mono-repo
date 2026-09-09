@@ -80,6 +80,10 @@ interface SidebarProps {
   onClose?: () => void;
   /** Extra classes for the root div — used to override hidden-on-mobile inside Sheet */
   className?: string;
+  /** Always render fully expanded — the mobile Sheet is an overlay drawer, so the
+   *  persisted desktop collapse state (icon rail) must not leak into it. Also hides
+   *  the collapse toggle and resize handle, which only make sense docked. */
+  forceExpanded?: boolean;
   /** Multi-select label filter: names of label-folders the user has checkboxed
    *  to filter the active list by (matches against `message.tags`). Optional —
    *  when omitted, label rows render without checkboxes. */
@@ -364,6 +368,7 @@ export default function Sidebar({
   onRenameFolder,
   onClose,
   className,
+  forceExpanded = false,
   selectedLabelNames,
   onToggleLabelFilter,
   onClearLabelFilter,
@@ -517,7 +522,7 @@ export default function Sidebar({
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const isTablet = useIsTabletBand();
-  const railMode = collapsed || isTablet; // effective collapsed state
+  const railMode = !forceExpanded && (collapsed || isTablet); // effective collapsed state
   const resize = useResizable({
     key: 'sidebar',
     defaultWidth: 220,
@@ -540,20 +545,20 @@ export default function Sidebar({
   return (
     <div
       data-collapsed={railMode}
-      style={railMode ? undefined : { width: resize.width, transition: resize.dragging ? 'none' : undefined }}
+      style={railMode || forceExpanded ? undefined : { width: resize.width, transition: resize.dragging ? 'none' : undefined }}
       className={cn(
         'group/sidebar relative shrink-0 hidden md:flex flex-col h-full bg-sidebar border-r border-sidebar-border transition-[width] duration-150',
         railMode && 'w-[60px]',
         className,
       )}
     >
-      {/* Drag-resize the sidebar (expanded only; the icon rail is fixed-width). */}
-      {!railMode && <ResizeHandle edge="right" resizable={resize} label="Resize sidebar" />}
+      {/* Drag-resize the sidebar (docked + expanded only; the icon rail is fixed-width). */}
+      {!railMode && !forceExpanded && <ResizeHandle edge="right" resizable={resize} label="Resize sidebar" />}
 
       {/* User / org header + collapse toggle */}
       <div className={cn('pt-4 pb-2', railMode ? 'px-2' : 'px-3')}>
         <div className={cn('flex items-center py-1.5 rounded-lg', railMode ? 'justify-center px-0' : 'px-2')}>
-          {!isTablet && (
+          {!isTablet && !forceExpanded && (
             railMode ? (
               <Tooltip>
                 <TooltipTrigger asChild>

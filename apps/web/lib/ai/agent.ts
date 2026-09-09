@@ -8,6 +8,7 @@ import { authedFetch } from '../authed-fetch';
 import { AIHttpError } from './client';
 import { readEventSse } from './sse';
 import type { AskSource, AskTurn } from './ask';
+import type { PinnedPayload } from './threadPin';
 
 export interface AgentStep {
   id: string;
@@ -44,6 +45,16 @@ export interface AgentChartSpec {
   series: Array<{ name: string; data: number[] }>;
 }
 
+/** Server acknowledgement that a pinned thread took. `included` is how many
+ *  of the pinned messages actually reached the model after budgeting — NOT
+ *  the thread's true length, which the client already knows locally.
+ *
+ *  Nullable because the server declines to state a count it cannot
+ *  substantiate: `includedIn` (pinned-context.ts) returns null when a client
+ *  sends includedCount with no messageIds to clamp it against, and the frame
+ *  carries that null through rather than inventing a number. */
+export interface PinnedAck { included: number | null; injectionSuspected: boolean }
+
 /** Accumulates rail sources across tool_result frames. Server aliases are
  * turn-stable (aliasFor), so a repeated alias is the SAME item — drop it,
  * but let a flagged repeat upgrade the stored injection flag. */
@@ -79,12 +90,19 @@ export async function streamAgent(
     onChart: (c: AgentChartSpec) => void;
     onClarify: (c: AgentClarify) => void;
     onChunk: (delta: string) => void;
+    onPinned?: (p: PinnedAck) => void;
+    pinned?: PinnedPayload | null;
     signal?: AbortSignal;
   },
 ): Promise<string> {
   const res = await authedFetch('/ai/agent', {
     method: 'POST',
-    body: JSON.stringify({ messages: turns.map(({ role, content }) => ({ role, content })) }),
+    body: JSON.stringify({
+      messages: turns.map(({ role, content }) => ({ role, content })),
+      // Conditional spread, not `pinned: opts.pinned ?? null` — the key must
+      // be absent when there's no pinned context, not present with a null.
+      ...(opts.pinned ? { pinned: opts.pinned } : {}),
+    }),
     signal: opts.signal,
   });
   if (!res.ok || !res.body) {
@@ -98,6 +116,7 @@ export async function streamAgent(
       else if (name === 'proposal') opts.onProposal(data as AgentProposal);
       else if (name === 'chart') opts.onChart(data as AgentChartSpec);
       else if (name === 'clarify') opts.onClarify(data as AgentClarify);
+      else if (name === 'pinned') opts.onPinned?.(data as PinnedAck);
     },
   });
 }

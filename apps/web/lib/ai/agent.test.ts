@@ -128,6 +128,73 @@ describe('readEventSse robustness', () => {
   });
 });
 
+describe('streamAgent pinned context', () => {
+  // Mirrors the vi.doMock('../authed-fetch') + dynamic import('./agent')
+  // idiom from the 'streamAgent' describe block above, rather than
+  // vi.stubGlobal('fetch', ...): streamAgent calls authedFetch (not bare
+  // fetch), and this file already has a working seam for that call.
+  const noopHandlers = {
+    onStep: () => {},
+    onStepResult: () => {},
+    onProposal: () => {},
+    onChart: () => {},
+    onClarify: () => {},
+    onChunk: () => {},
+  };
+
+  it('sends the pinned payload in the request body', async () => {
+    vi.resetModules();
+    let sentBody: any = null;
+    vi.doMock('../authed-fetch', () => ({
+      authedFetch: vi.fn(async (_path: string, init: any) => {
+        sentBody = JSON.parse(init.body);
+        return sseResponse('data: [DONE]\n\n');
+      }),
+    }));
+    const { streamAgent } = await import('./agent');
+
+    const pinned = { label: 'Re: RHEMIS', text: 'thread text', messageIds: ['m1'], includedCount: 1, toolScope: 'thread' as const };
+    await streamAgent([{ role: 'user', content: 'hi' }], { ...noopHandlers, pinned });
+
+    expect(sentBody.pinned).toEqual(pinned);
+    expect(sentBody.messages).toEqual([{ role: 'user', content: 'hi' }]);
+    vi.doUnmock('../authed-fetch');
+  });
+
+  it('omits pinned from the body when not given', async () => {
+    vi.resetModules();
+    let sentBody: any = null;
+    vi.doMock('../authed-fetch', () => ({
+      authedFetch: vi.fn(async (_path: string, init: any) => {
+        sentBody = JSON.parse(init.body);
+        return sseResponse('data: [DONE]\n\n');
+      }),
+    }));
+    const { streamAgent } = await import('./agent');
+
+    await streamAgent([{ role: 'user', content: 'hi' }], { ...noopHandlers });
+
+    expect('pinned' in sentBody).toBe(false);
+    vi.doUnmock('../authed-fetch');
+  });
+
+  it('routes the pinned frame to onPinned', async () => {
+    vi.resetModules();
+    const onPinned = vi.fn();
+    vi.doMock('../authed-fetch', () => ({
+      authedFetch: vi.fn().mockResolvedValue(sseResponse(
+        'event: pinned\ndata: {"included":6,"injectionSuspected":true}\n\ndata: [DONE]\n\n',
+      )),
+    }));
+    const { streamAgent } = await import('./agent');
+
+    await streamAgent([{ role: 'user', content: 'hi' }], { ...noopHandlers, onPinned });
+
+    expect(onPinned).toHaveBeenCalledWith({ included: 6, injectionSuspected: true });
+    vi.doUnmock('../authed-fetch');
+  });
+});
+
 const src = (alias: string, flagged = false) =>
   ({ alias, type: 'mail', id: `id-${alias}`, title: 't', date: '2026-09-08', snippet: '', injectionSuspected: flagged }) as any;
 

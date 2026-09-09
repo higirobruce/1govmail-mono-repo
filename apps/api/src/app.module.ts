@@ -4,7 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
-import { ZimbraModule } from './zimbra/zimbra.module';
+import { ProviderModule } from './provider/provider.module';
 import { AuthModule } from './auth/auth.module';
 import { MailModule } from './mail/mail.module';
 import { ContactsModule } from './contacts/contacts.module';
@@ -30,7 +30,7 @@ import { AuditModule } from './common/audit/audit.module';
     ]),
     PrismaModule,
     AuditModule,
-    ZimbraModule,
+    ProviderModule,
     AuthModule,
     MailModule,
     ContactsModule,

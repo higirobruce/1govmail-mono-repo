@@ -4,7 +4,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { buildMailSession } from '../provider/mail-session';
 import { ProviderContact } from '../provider/provider-types';
 
@@ -28,7 +28,7 @@ export interface ContactData {
 export class ContactsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
   ) {}
 
   private async getUser(userId: string) {
@@ -94,10 +94,11 @@ export class ContactsService {
     const q = (query ?? '').trim();
     if (!q) return [];
     const user = await this.getUser(userId);
+    const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
     const [personal, gal, history] = await Promise.all([
-      this.zimbra.autoCompleteContacts(session, q),
-      this.zimbra.searchGal(session, q),
+      provider.autoCompleteContacts(session, q),
+      provider.searchGal(session, q),
       this.autocompleteFromHistory(userId, q),
     ]);
 
@@ -230,7 +231,7 @@ export class ContactsService {
   }
 
   private async syncFromZimbra(userId: string, user: any): Promise<void> {
-    const contacts = await this.zimbra.getContacts(buildMailSession(user));
+    const contacts = await this.resolver.forUser(user).getContacts(buildMailSession(user));
 
     for (const c of contacts) {
       // `String(raw.id)` in the mapper always yields a non-empty string (even
@@ -276,7 +277,7 @@ export class ContactsService {
   async createContact(userId: string, data: ContactData): Promise<any> {
     const user = await this.getUser(userId);
     const providerContact = this.dataToProviderContact(data);
-    const created = await this.zimbra.createContact(buildMailSession(user), providerContact);
+    const created = await this.resolver.forUser(user).createContact(buildMailSession(user), providerContact);
 
     return this.prisma.contact.create({
       data: {
@@ -310,7 +311,7 @@ export class ContactsService {
     if (!contact) throw new NotFoundException('Contact not found');
 
     const providerContact = this.dataToProviderContact(data);
-    await this.zimbra.modifyContact(buildMailSession(user), contact.zimbraId, providerContact);
+    await this.resolver.forUser(user).modifyContact(buildMailSession(user), contact.zimbraId, providerContact);
 
     return this.prisma.contact.update({
       where: { id: contactId },
@@ -340,7 +341,7 @@ export class ContactsService {
     });
     if (!contact) throw new NotFoundException('Contact not found');
 
-    await this.zimbra.deleteContact(buildMailSession(user), contact.zimbraId);
+    await this.resolver.forUser(user).deleteContact(buildMailSession(user), contact.zimbraId);
     await this.prisma.contact.delete({ where: { id: contactId } });
     return { success: true };
   }

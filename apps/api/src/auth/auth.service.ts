@@ -2,7 +2,7 @@ import { Injectable, UnauthorizedException, NotFoundException, BadRequestExcepti
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { ProviderAuthResult } from '../provider/provider-types';
 import { AuditService } from '../common/audit/audit.service';
 import { InstitutionRegistry } from './institution.registry';
@@ -24,7 +24,7 @@ export class AuthService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
     private readonly institutionRegistry: InstitutionRegistry,
@@ -44,16 +44,18 @@ export class AuthService {
     if (dto.zimbraHost && !dto.institution) {
       this.logger.warn(`Legacy zimbraHost login for ${inst.id} — client should send institution`);
     }
-    if (inst.provider !== 'zimbra') {
-      // Lifted when the ews/memory providers land (Phase 2/3).
-      throw new BadRequestException(`${inst.label} sign-in is not yet supported on this server.`);
-    }
+    // The resolver IS the gate: Task 3's temporary `inst.provider !== 'zimbra'
+    // throw is gone, so an institution on a backend this build does not speak
+    // yet fails here with the resolver's BadRequestException — and the moment
+    // Phase 2/3 registers that provider, login starts working with no change
+    // to this method.
+    const provider = this.resolver.forUser({ provider: inst.provider });
     const zimbraHost = inst.host;
     const resolvedInstitution: ResolvedInstitution = { provider: inst.provider, institutionId: inst.id };
 
     let zimbraResult: ProviderAuthResult;
     try {
-      zimbraResult = await this.zimbra.authenticate(zimbraHost, email, password);
+      zimbraResult = await provider.authenticate(zimbraHost, email, password);
     } catch (err) {
       await this.audit.record('LOGIN_FAILURE', {
         email,
@@ -114,9 +116,14 @@ export class AuthService {
 
     const { email, zimbraHost, preAuthToken, provider, institutionId } = payload;
 
+    // Challenge tokens minted before the provider column existed carry no
+    // `provider`; they can only have come from the Zimbra login leg, so
+    // default to it rather than 400-ing a 2FA prompt that is already open.
+    const mailProvider = this.resolver.forUser({ provider: provider ?? 'zimbra' });
+
     let zimbraResult: ProviderAuthResult;
     try {
-      zimbraResult = await this.zimbra.verifyTwoFactor(
+      zimbraResult = await mailProvider.verifyTwoFactor(
         zimbraHost,
         email,
         preAuthToken,

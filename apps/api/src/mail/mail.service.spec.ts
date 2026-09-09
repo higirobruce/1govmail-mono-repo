@@ -6,6 +6,13 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { TasksService } from '../tasks/tasks.service';
 import { mapZimbraMessage } from '../zimbra/zimbra.mappers';
 import { buildMailSession } from '../provider/mail-session';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
+
+// MailService injects the resolver now. Wrapping each existing zimbra mock in
+// the REAL resolver keeps every assertion below pointed at the same mock while
+// still exercising the provider lookup (which needs a provider-bearing user
+// row, exactly as the DB returns).
+const makeResolver = (zimbra: any) => new MailProviderResolver(zimbra as ZimbraService);
 
 function makeService() {
   const prisma = {
@@ -15,7 +22,7 @@ function makeService() {
   const zimbra = {} as ZimbraService;
   const notifications = {} as NotificationsService;
   const tasksService = { create: jest.fn() } as unknown as TasksService;
-  const service = new MailService(prisma, zimbra, notifications, tasksService);
+  const service = new MailService(prisma, makeResolver(zimbra), notifications, tasksService);
   return { service, prisma: prisma as any };
 }
 
@@ -75,12 +82,14 @@ describe('MailService sender rules', () => {
 });
 
 describe('MailService.enforceSenderRules', () => {
-  // The method now takes a MailSession — the caller (SenderRuleSweepService)
-  // owns the User→session mapping via buildMailSession.
-  const user = buildMailSession({
+  // The method takes the caller's User row (SenderRuleSweepService passes the
+  // one it already loaded): a MailSession alone cannot name a provider, and
+  // this method has no userId lookup to resolve one from. It builds the
+  // session itself via buildMailSession.
+  const user = {
     zimbraHost: 'mail.example.com', email: 'u@example.com',
     authToken: 'tok', csrfToken: 'csrf', provider: 'zimbra',
-  });
+  };
   const message = { id: 'm1', zimbraId: 'z1', fromEmail: 'spam@evil.com', folderId: 'inbox-id' };
 
   // `rules` and `junkFolder` are now caller-resolved (hoisted out of the
@@ -95,7 +104,7 @@ describe('MailService.enforceSenderRules', () => {
     const zimbra = { moveMessage: jest.fn() } as unknown as ZimbraService;
     const notifications = {} as NotificationsService;
     const tasksService = { create: jest.fn() } as unknown as TasksService;
-    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), notifications, tasksService);
     return { service: service as any, prisma: prisma as any, zimbra: zimbra as any };
   }
 
@@ -165,7 +174,7 @@ describe('MailService.enforceSenderRules', () => {
       { id: 'junk-id', zimbraId: 'z-junk' },
     );
 
-    expect(zimbra.moveMessage).toHaveBeenCalledWith(user, 'z1', 'z-junk');
+    expect(zimbra.moveMessage).toHaveBeenCalledWith(buildMailSession(user), 'z1', 'z-junk');
     expect(prisma.message.update).toHaveBeenCalledWith({ where: { id: 'm1' }, data: { folderId: 'junk-id' } });
   });
 
@@ -187,6 +196,7 @@ describe('MailService.getMessages stays a pure read (sender-rule enforcement liv
     zimbraHost: 'mail.example.com',
     authToken: 'tok',
     csrfToken: 'csrf',
+    provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   };
 
@@ -203,7 +213,7 @@ describe('MailService.getMessages stays a pure read (sender-rule enforcement liv
     } as unknown as ZimbraService;
     const notifications = {} as NotificationsService;
     const tasksService = { create: jest.fn() } as unknown as TasksService;
-    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), notifications, tasksService);
     return { service: service as any, prisma: prisma as any, zimbra: zimbra as any };
   }
 
@@ -240,7 +250,7 @@ describe('MailService.getCardsByIds', () => {
     const zimbra = {} as ZimbraService;
     const notifications = {} as NotificationsService;
     const tasksService = { create: jest.fn() } as unknown as TasksService;
-    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), notifications, tasksService);
     return { service: service as any, prisma: prisma as any };
   }
 
@@ -328,7 +338,7 @@ describe('MailService.getWindowCards', () => {
     const zimbra = {} as ZimbraService;
     const notifications = {} as NotificationsService;
     const tasksService = { create: jest.fn() } as unknown as TasksService;
-    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), notifications, tasksService);
     return { service: service as any, prisma: prisma as any };
   }
 
@@ -481,7 +491,7 @@ describe('MailService.getCommitments', () => {
     const zimbra = {} as ZimbraService;
     const notifications = {} as NotificationsService;
     const tasksService = { create: jest.fn() } as unknown as TasksService;
-    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), notifications, tasksService);
     return { service: service as any, prisma: prisma as any };
   }
 
@@ -630,7 +640,7 @@ describe('MailService.updateCommitment', () => {
     const zimbra = {} as ZimbraService;
     const notifications = {} as NotificationsService;
     const tasksService = { create: jest.fn() } as unknown as TasksService;
-    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), notifications, tasksService);
     return { service: service as any, prisma: prisma as any };
   }
 
@@ -740,7 +750,7 @@ describe('MailService.promoteCommitment', () => {
     const zimbra = {} as ZimbraService;
     const notifications = {} as NotificationsService;
     const tasksService = { create: jest.fn() } as unknown as TasksService;
-    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), notifications, tasksService);
     return { service: service as any, prisma: prisma as any, tasksService: tasksService as any };
   }
 
@@ -891,6 +901,7 @@ describe('MailService.getMessage attachment classification', () => {
     zimbraHost: 'mail.example.com',
     authToken: 'tok',
     csrfToken: null,
+    provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   };
 
@@ -913,7 +924,7 @@ describe('MailService.getMessage attachment classification', () => {
     } as unknown as ZimbraService;
     const notifications = {} as NotificationsService;
     const tasksService = {} as unknown as TasksService;
-    const service = new MailService(prisma, zimbra, notifications, tasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), notifications, tasksService);
     return { service, prisma: prisma as any, zimbra: zimbra as any };
   }
 
@@ -966,6 +977,7 @@ describe('MailService.getConversation back-fill batching', () => {
     zimbraHost: 'mail.example.com',
     authToken: 'tok',
     csrfToken: null,
+    provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   };
 
@@ -997,7 +1009,7 @@ describe('MailService.getConversation back-fill batching', () => {
         ].map((m) => mapZimbraMessage(m as any)),
       }),
     } as unknown as ZimbraService;
-    const service = new MailService(prisma, zimbra, {} as NotificationsService, {} as TasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), {} as NotificationsService, {} as TasksService);
 
     const result = await service.getConversation('u1', 'm1');
 
@@ -1036,7 +1048,7 @@ describe('MailService.getConversation back-fill batching', () => {
         messages: [mapZimbraMessage({ id: 'z1', l: '2', su: 's', d: 1, f: '', e: [] } as any)],
       }),
     } as unknown as ZimbraService;
-    const service = new MailService(prisma, zimbra, {} as NotificationsService, {} as TasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), {} as NotificationsService, {} as TasksService);
 
     await service.getConversation('u1', 'm1');
 
@@ -1051,6 +1063,7 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
     zimbraHost: 'mail.example.com',
     authToken: 'tok',
     csrfToken: null,
+    provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   };
 
@@ -1074,7 +1087,7 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
       getMessage: jest.fn(),
       downloadAttachmentBuffer: jest.fn(),
     } as unknown as ZimbraService;
-    const service = new MailService(prisma, zimbra, {} as NotificationsService, {} as TasksService);
+    const service = new MailService(prisma, makeResolver(zimbra), {} as NotificationsService, {} as TasksService);
     return { service, prisma: prisma as any, zimbra: zimbra as any };
   }
 
@@ -1176,6 +1189,7 @@ describe('MailService.getDefaultSignatureHtml', () => {
     zimbraHost: 'mail.example.com',
     authToken: 'tok',
     csrfToken: 'csrf',
+    provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   };
 
@@ -1190,7 +1204,7 @@ describe('MailService.getDefaultSignatureHtml', () => {
     } as unknown as ZimbraService;
     const service = new MailService(
       prisma,
-      zimbra,
+      makeResolver(zimbra),
       {} as NotificationsService,
       {} as TasksService,
     );
@@ -1291,6 +1305,7 @@ describe('MailService.sendMessage body formatting', () => {
     zimbraHost: 'mail.example.com',
     authToken: 'tok',
     csrfToken: 'csrf',
+    provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   };
 
@@ -1310,7 +1325,7 @@ describe('MailService.sendMessage body formatting', () => {
     } as unknown as ZimbraService;
     const service = new MailService(
       prisma,
-      zimbra,
+      makeResolver(zimbra),
       {} as NotificationsService,
       {} as TasksService,
     );
@@ -1372,6 +1387,7 @@ describe('MailService.saveDraft body formatting', () => {
     zimbraHost: 'mail.example.com',
     authToken: 'tok',
     csrfToken: 'csrf',
+    provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   };
 
@@ -1389,7 +1405,7 @@ describe('MailService.saveDraft body formatting', () => {
     } as unknown as ZimbraService;
     const service = new MailService(
       prisma,
-      zimbra,
+      makeResolver(zimbra),
       {} as NotificationsService,
       {} as TasksService,
     );

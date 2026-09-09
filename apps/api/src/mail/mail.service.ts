@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException, Logger, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { deriveLabel, formatAttachments, mdToHtml, type ExtractedCard, type TriageLabel } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { ZimbraService } from '../zimbra/zimbra.service';
-import { MailSession, buildMailSession } from '../provider/mail-session';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
+import { MailProvider } from '../provider/mail-provider.interface';
+import { MailSessionUser, buildMailSession } from '../provider/mail-session';
 import { ProviderAttachmentMeta, ProviderFolderKind } from '../provider/provider-types';
 import { NotificationsService } from '../notifications/notifications.service';
 import { TasksService } from '../tasks/tasks.service';
@@ -84,7 +85,7 @@ export class MailService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
     private readonly notifications: NotificationsService,
     private readonly tasksService: TasksService,
   ) {}
@@ -130,7 +131,7 @@ export class MailService {
 
     let providerFolders;
     try {
-      providerFolders = await this.zimbra.getFolders(buildMailSession(user));
+      providerFolders = await this.resolver.forUser(user).getFolders(buildMailSession(user));
     } catch (err: any) {
       // If Zimbra rejects the token (expired or revoked), clear it so the
       // next login is forced to fetch a fresh one, then propagate the 401.
@@ -192,7 +193,7 @@ export class MailService {
   // that it no longer runs inside the Inbox list GET.
   async enforceSenderRules(
     userId: string,
-    session: MailSession,
+    user: MailSessionUser,
     message: { id: string; zimbraId: string; fromEmail: string; folderId: string },
     rules: SenderRuleLike[],
     junkFolder: { id: string; zimbraId: string } | null,
@@ -209,7 +210,9 @@ export class MailService {
       return;
     }
 
-    await this.zimbra.moveMessage(session, message.zimbraId, junkFolder.zimbraId);
+    await this.resolver
+      .forUser(user)
+      .moveMessage(buildMailSession(user), message.zimbraId, junkFolder.zimbraId);
     await this.prisma.message.update({ where: { id: message.id }, data: { folderId: junkFolder.id } });
   }
 
@@ -221,7 +224,7 @@ export class MailService {
     });
     if (!folder) throw new NotFoundException('Folder not found');
 
-    const { messages, total, more } = await this.zimbra.getMessages(
+    const { messages, total, more } = await this.resolver.forUser(user).getMessages(
       buildMailSession(user),
       folder.zimbraId,
       limit,
@@ -341,7 +344,7 @@ export class MailService {
     }
 
     const session = buildMailSession(user);
-    const m = await this.zimbra.getMessage(session, cached?.zimbraId ?? messageId);
+    const m = await this.resolver.forUser(user).getMessage(session, cached?.zimbraId ?? messageId);
 
     const rawBodyHtml  = m.bodyHtml ?? null;
     const bodyText     = m.bodyText ?? null;
@@ -372,7 +375,7 @@ export class MailService {
     );
     const hasZimbraImages = rawBodyHtml ? zimbraHostPattern.test(rawBodyHtml) : false;
     if (rawBodyHtml && (inlineImages.length > 0 || hasZimbraImages)) {
-      const embedTask = this.embedInlineImages(rawBodyHtml, inlineImages, session, m.id);
+      const embedTask = this.embedInlineImages(rawBodyHtml, inlineImages, user, m.id);
       const raceResult = await Promise.race([
         embedTask.then((html) => ({ html, done: true as const })),
         new Promise<{ html: null; done: false }>((r) =>
@@ -503,7 +506,7 @@ export class MailService {
       });
       const existingZimbraIds = new Set(existing.map((m) => m.zimbraId));
 
-      const { messages: threadMsgs } = await this.zimbra.searchMessages(
+      const { messages: threadMsgs } = await this.resolver.forUser(user).searchMessages(
         buildMailSession(user),
         `conv:${msg.conversationId}`,
         200,
@@ -583,7 +586,7 @@ export class MailService {
   async searchMessages(userId: string, query: string, limit = 50, offset = 0) {
     const user = await this.getUser(userId);
 
-    const { messages, total, more } = await this.zimbra.searchMessages(
+    const { messages, total, more } = await this.resolver.forUser(user).searchMessages(
       buildMailSession(user),
       query,
       limit,
@@ -657,7 +660,9 @@ export class MailService {
     const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
     if (!msg) throw new NotFoundException('Message not found');
 
-    return this.zimbra.downloadAttachment(buildMailSession(user), msg.zimbraId, partId);
+    return this.resolver
+      .forUser(user)
+      .downloadAttachment(buildMailSession(user), msg.zimbraId, partId);
   }
 
   async sendMessage(
@@ -676,6 +681,7 @@ export class MailService {
     files: Express.Multer.File[] = [],
   ) {
     const user = await this.getUser(userId);
+    const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
 
     // Agent-approved sends deliver the body as markdown: convert it to HTML
@@ -766,7 +772,7 @@ export class MailService {
         try {
           const buf = Buffer.from(img.base64Data, 'base64');
           const ext = img.contentType.split('/')[1]?.replace(/\+.*$/, '') || 'bin';
-          const aid = await this.zimbra.uploadAttachment(
+          const aid = await provider.uploadAttachment(
             session,
             `inline.${ext}`,
             img.contentType,
@@ -789,7 +795,7 @@ export class MailService {
     if (files.length > 0) {
       attachmentAids = await Promise.all(
         files.map((f) =>
-          this.zimbra.uploadAttachment(session, f.originalname, f.mimetype, f.buffer),
+          provider.uploadAttachment(session, f.originalname, f.mimetype, f.buffer),
         ),
       );
     }
@@ -815,7 +821,7 @@ export class MailService {
 
     let sendResult: { id: string | null; conversationId: string | null };
     try {
-      sendResult = await this.zimbra.sendMessage(
+      sendResult = await provider.sendMessage(
         session,
         { ...payload, body: cleanBody, replyToId: zimbraReplyToId },
         attachmentAids,
@@ -890,7 +896,7 @@ export class MailService {
     const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
     if (!msg) throw new NotFoundException('Message not found');
 
-    await this.zimbra.deleteMessage(buildMailSession(user), msg.zimbraId);
+    await this.resolver.forUser(user).deleteMessage(buildMailSession(user), msg.zimbraId);
     await this.prisma.message.delete({ where: { id: messageId } });
     return { success: true };
   }
@@ -900,7 +906,7 @@ export class MailService {
     const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
     if (!msg) throw new NotFoundException('Message not found');
 
-    await this.zimbra.markRead(buildMailSession(user), msg.zimbraId, read);
+    await this.resolver.forUser(user).markRead(buildMailSession(user), msg.zimbraId, read);
     return this.prisma.message.update({
       where: { id: messageId },
       data: { isRead: read },
@@ -917,17 +923,22 @@ export class MailService {
   private async embedInlineImages(
     html: string,
     inlineImages: Array<{ cid: string; partId: string; mimeType: string }>,
-    session: MailSession,
+    // The user row, not just the session: pass 2 needs the provider (and, for
+    // Zimbra, the resolver's Zimbra-only path fetch), which is keyed off
+    // User.provider.
+    user: MailSessionUser,
     messageId: string,
   ): Promise<string> {
     let processed = html;
+    const provider = this.resolver.forUser(user);
+    const session = buildMailSession(user);
 
     // ── Pass 1: CID inline attachments ────────────────────────────────────────
     if (inlineImages.length > 0) {
       await Promise.all(
         inlineImages.map(async (img) => {
           try {
-            const { data, contentType } = await this.zimbra.downloadAttachmentBuffer(
+            const { data, contentType } = await provider.downloadAttachmentBuffer(
               session,
               messageId,
               img.partId,
@@ -951,7 +962,7 @@ export class MailService {
     }
 
     // ── Pass 2: Zimbra-hosted image URLs (e.g. signature logos in Briefcase) ──
-    processed = await this.embedZimbraHostedImages(processed, session);
+    processed = await this.embedZimbraHostedImages(processed, provider, user);
 
     // ── Pass 3: Strip any remaining cid: references that could not be resolved ─
     // Browsers cannot load cid: URLs — they render as broken-image icons.
@@ -976,8 +987,10 @@ export class MailService {
    */
   private async embedZimbraHostedImages(
     html: string,
-    session: MailSession,
+    provider: MailProvider,
+    user: MailSessionUser,
   ): Promise<string> {
+    const session = buildMailSession(user);
     if (!session.authToken) return html;
 
     const escapedHost = session.host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1008,12 +1021,17 @@ export class MailService {
 
           if (id && part) {
             // Standard inline attachment served via the Zimbra REST home endpoint
-            ({ data, contentType } = await this.zimbra.downloadAttachmentBuffer(session, id, part));
+            ({ data, contentType } = await provider.downloadAttachmentBuffer(session, id, part));
           } else {
-            // Path-based URL (Briefcase image, image-proxy, or other Zimbra resource)
+            // Path-based URL (Briefcase image, image-proxy, or other Zimbra
+            // resource). downloadZimbraPath is a Zimbra-only extra, off the
+            // MailProvider interface, so it is reached through the resolver
+            // behind an explicit provider check; any other backend leaves the
+            // original URL in place (same graceful outcome as a failed fetch).
+            if (user.provider !== 'zimbra') return;
             // downloadZimbraPath appends ?auth=qp&zauthtoken=... for query-param auth
             const relativePath = parsed.pathname + (parsed.search || '');
-            ({ data, contentType } = await this.zimbra.downloadZimbraPath(
+            ({ data, contentType } = await this.resolver.zimbra().downloadZimbraPath(
               session.host,
               session.authToken!,
               relativePath,
@@ -1069,7 +1087,9 @@ export class MailService {
     const targetFolder = await this.prisma.folder.findFirst({ where: { userId, id: targetFolderOurId } });
     if (!targetFolder) throw new NotFoundException('Target folder not found');
 
-    await this.zimbra.moveMessage(buildMailSession(user), message.zimbraId, targetFolder.zimbraId);
+    await this.resolver
+      .forUser(user)
+      .moveMessage(buildMailSession(user), message.zimbraId, targetFolder.zimbraId);
 
     await this.prisma.message.update({
       where: { id: messageId },
@@ -1087,7 +1107,7 @@ export class MailService {
     });
     if (!folder) throw new NotFoundException('Folder not found');
 
-    await this.zimbra.deleteFolder(buildMailSession(user), folder.zimbraId);
+    await this.resolver.forUser(user).deleteFolder(buildMailSession(user), folder.zimbraId);
 
     // Remove any locally-cached messages in this folder (they are re-fetched on demand)
     await this.prisma.message.deleteMany({ where: { folderId } });
@@ -1105,7 +1125,7 @@ export class MailService {
     });
     if (!folder) throw new NotFoundException('Folder not found');
 
-    await this.zimbra.emptyFolder(buildMailSession(user), folder.zimbraId);
+    await this.resolver.forUser(user).emptyFolder(buildMailSession(user), folder.zimbraId);
 
     // Clear locally-cached messages so the list refreshes on next load
     await this.prisma.message.deleteMany({ where: { folderId } });
@@ -1125,7 +1145,7 @@ export class MailService {
     });
     if (!folder) throw new NotFoundException('Folder not found');
 
-    await this.zimbra.renameFolder(buildMailSession(user), folder.zimbraId, name);
+    await this.resolver.forUser(user).renameFolder(buildMailSession(user), folder.zimbraId, name);
 
     return this.prisma.folder.update({
       where: { id: folderId },
@@ -1136,7 +1156,7 @@ export class MailService {
   async createFolder(userId: string, name: string) {
     const user = await this.getUser(userId);
 
-    const created = await this.zimbra.createFolder(buildMailSession(user), name);
+    const created = await this.resolver.forUser(user).createFolder(buildMailSession(user), name);
 
     const folder = await this.prisma.folder.upsert({
       where: { userId_zimbraId: { userId, zimbraId: created.id } },
@@ -1168,11 +1188,12 @@ export class MailService {
   async getDefaultSignatureHtml(userId: string): Promise<string> {
     try {
       const user = await this.getUser(userId);
+      const provider = this.resolver.forUser(user);
       const session = buildMailSession(user);
       const [prefs, identities, signatures] = await Promise.all([
-        this.zimbra.getPrefs(session),
-        this.zimbra.getIdentities(session),
-        this.zimbra.getSignatures(session),
+        provider.getPrefs(session),
+        provider.getIdentities(session),
+        provider.getSignatures(session),
       ]);
       if (!signatures.length) return '';
 
@@ -1195,7 +1216,10 @@ export class MailService {
       }
       if (!html) html = resolve(signatures[0]);
       if (!html) return '';
-      return inlineSignatureImages(this.zimbra, user, html);
+      // Briefcase-image inlining is a Zimbra-only extra (downloadZimbraPath is
+      // off the interface); other providers ship the signature HTML as-is.
+      if (user.provider !== 'zimbra') return html;
+      return inlineSignatureImages(this.resolver.zimbra(), user, html);
     } catch (err: any) {
       this.logger.warn(`getDefaultSignatureHtml failed: ${err?.message}`);
       return '';
@@ -1237,7 +1261,7 @@ export class MailService {
     if (payload.bodyFormat === 'markdown') {
       payload = { ...payload, body: await this.renderMarkdownBody(userId, payload.body ?? '') };
     }
-    const zimbraId = await this.zimbra.saveDraft(buildMailSession(user), {
+    const zimbraId = await this.resolver.forUser(user).saveDraft(buildMailSession(user), {
       id: payload.draftId,
       to: payload.to,
       cc: payload.cc,
@@ -1257,7 +1281,7 @@ export class MailService {
     zimbraId: string,
   ): Promise<{ success: boolean }> {
     const user = await this.getUser(userId);
-    await this.zimbra.deleteMessage(buildMailSession(user), zimbraId);
+    await this.resolver.forUser(user).deleteMessage(buildMailSession(user), zimbraId);
     // Remove the draft from the local DB so it no longer appears in conversation fetches.
     await this.prisma.message.deleteMany({ where: { userId, zimbraId } });
     return { success: true };
@@ -1299,7 +1323,9 @@ export class MailService {
         if (msg) {
           const targetFolder = await this.prisma.folder.findFirst({ where: { userId: snooze.userId, id: snooze.originalFolderId } });
           if (targetFolder) {
-            await this.zimbra.moveMessage(buildMailSession(user), msg.zimbraId, targetFolder.zimbraId);
+            await this.resolver
+              .forUser(user)
+              .moveMessage(buildMailSession(user), msg.zimbraId, targetFolder.zimbraId);
             await this.prisma.message.update({ where: { id: msg.id }, data: { folderId: snooze.originalFolderId } });
           }
         }
@@ -1387,7 +1413,7 @@ export class MailService {
       });
       if (claimed.count === 0) continue;
       try {
-        await this.zimbra.sendMessage(buildMailSession(user), {
+        await this.resolver.forUser(user).sendMessage(buildMailSession(user), {
           to: msg.to as string[],
           cc: (msg.cc as string[]) ?? [],
           bcc: (msg.bcc as string[]) ?? [],
@@ -1514,13 +1540,14 @@ export class MailService {
 
   async bulkMarkRead(userId: string, messageIds: string[], read: boolean) {
     const user = await this.getUser(userId);
+    const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
     const results: { id: string; success: boolean }[] = [];
     for (const messageId of messageIds) {
       try {
         const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
         if (!msg) { results.push({ id: messageId, success: false }); continue; }
-        await this.zimbra.markRead(session, msg.zimbraId, read);
+        await provider.markRead(session, msg.zimbraId, read);
         await this.prisma.message.update({ where: { id: messageId }, data: { isRead: read } });
         results.push({ id: messageId, success: true });
       } catch { results.push({ id: messageId, success: false }); }
@@ -1530,13 +1557,14 @@ export class MailService {
 
   async bulkDelete(userId: string, messageIds: string[]) {
     const user = await this.getUser(userId);
+    const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
     const results: { id: string; success: boolean }[] = [];
     for (const messageId of messageIds) {
       try {
         const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
         if (!msg) { results.push({ id: messageId, success: false }); continue; }
-        await this.zimbra.deleteMessage(session, msg.zimbraId);
+        await provider.deleteMessage(session, msg.zimbraId);
         await this.prisma.message.delete({ where: { id: messageId } });
         results.push({ id: messageId, success: true });
       } catch { results.push({ id: messageId, success: false }); }
@@ -1546,6 +1574,7 @@ export class MailService {
 
   async bulkMove(userId: string, messageIds: string[], targetFolderId: string) {
     const user = await this.getUser(userId);
+    const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
     const targetFolder = await this.prisma.folder.findFirst({ where: { userId, id: targetFolderId } });
     if (!targetFolder) throw new NotFoundException('Target folder not found');
@@ -1554,7 +1583,7 @@ export class MailService {
       try {
         const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
         if (!msg) { results.push({ id: messageId, success: false }); continue; }
-        await this.zimbra.moveMessage(session, msg.zimbraId, targetFolder.zimbraId);
+        await provider.moveMessage(session, msg.zimbraId, targetFolder.zimbraId);
         await this.prisma.message.update({ where: { id: messageId }, data: { folderId: targetFolderId } });
         results.push({ id: messageId, success: true });
       } catch { results.push({ id: messageId, success: false }); }

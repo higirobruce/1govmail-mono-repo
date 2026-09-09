@@ -14,7 +14,7 @@ interface AttachmentEntry {
   data: string; // base64
 }
 import { PrismaService } from '../prisma/prisma.service';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { buildMailSession } from '../provider/mail-session';
 import { CreateTaskDto, TaskStatus, AssigneeDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -26,7 +26,7 @@ import { CreateCommentDto } from './dto/create-comment.dto';
 export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
   ) {}
 
   private async getUser(userId: string) {
@@ -327,6 +327,7 @@ export class TasksService {
     // Send notification email to newly added assignees only
     if (!newAssignees.length) return updated;
 
+    const provider = this.resolver.forUser(user);
     const assignorName = user.displayName ?? user.email;
     const dueDateStr = task.dueDate
       ? new Date(task.dueDate).toLocaleDateString('en-US', {
@@ -377,7 +378,7 @@ export class TasksService {
   <p style="color:#888;font-size:12px;">Sent from 1Gov Mail.</p>
 </body></html>`;
 
-        return this.zimbra.sendMessage(
+        return provider.sendMessage(
           buildMailSession(user),
           {
             to: [email],

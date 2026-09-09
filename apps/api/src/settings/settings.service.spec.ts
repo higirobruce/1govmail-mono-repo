@@ -1,6 +1,14 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
+
+// The service injects the resolver, not a provider. These build the REAL
+// resolver over the zimbra mock, so `forUser` still has to be handed a
+// provider-bearing user row (as the DB always returns) for the mock to be
+// reached at all — and the Zimbra-only extras keep coming from `zimbra()`.
+const makeResolver = (zimbra: any) =>
+  new MailProviderResolver(zimbra as ZimbraService);
 
 function makePrisma() {
   return {
@@ -42,7 +50,7 @@ describe('SettingsService AI profile', () => {
     it('returns all-null shape when no row exists', async () => {
       const prisma = makePrisma();
       const zimbra = makeZimbra();
-      const service = new SettingsService(prisma, zimbra);
+      const service = new SettingsService(prisma, makeResolver(zimbra));
 
       const result = await service.getAiProfile('u1');
 
@@ -76,7 +84,7 @@ describe('SettingsService AI profile', () => {
         language: 'en',
       });
       const zimbra = makeZimbra();
-      const service = new SettingsService(prisma, zimbra);
+      const service = new SettingsService(prisma, makeResolver(zimbra));
 
       const result = await service.getAiProfile('u1');
 
@@ -102,7 +110,7 @@ describe('SettingsService AI profile', () => {
         language: null,
       });
       const zimbra = makeZimbra();
-      const service = new SettingsService(prisma, zimbra);
+      const service = new SettingsService(prisma, makeResolver(zimbra));
 
       const result = await service.updateAiProfile('u1', {
         instructions: 'be concise',
@@ -140,7 +148,7 @@ describe('SettingsService AI profile', () => {
     it('omits undefined fields from the upsert payload (partial update)', async () => {
       const prisma = makePrisma();
       const zimbra = makeZimbra();
-      const service = new SettingsService(prisma, zimbra);
+      const service = new SettingsService(prisma, makeResolver(zimbra));
 
       await service.updateAiProfile('u1', { department: 'IT' } as any);
 
@@ -154,7 +162,7 @@ describe('SettingsService AI profile', () => {
     it('does not throw on an explicit JSON null and treats it like undefined (field ignored)', async () => {
       const prisma = makePrisma();
       const zimbra = makeZimbra();
-      const service = new SettingsService(prisma, zimbra);
+      const service = new SettingsService(prisma, makeResolver(zimbra));
 
       await expect(
         service.updateAiProfile('u1', { jobTitle: null, department: 'IT' } as any),
@@ -176,6 +184,7 @@ describe('SettingsService AI profile', () => {
       zimbraHost: 'zimbra.example.com',
       authToken: 'tok',
       csrfToken: 'csrf',
+      provider: 'zimbra',
     };
 
     it('returns GAL title/department/institution (no displayName — consumed nowhere)', async () => {
@@ -185,7 +194,7 @@ describe('SettingsService AI profile', () => {
       zimbra.galSelfLookup.mockResolvedValue({
         title: 'Director', department: 'IT', company: 'MINALOC',
       });
-      const service = new SettingsService(prisma, zimbra);
+      const service = new SettingsService(prisma, makeResolver(zimbra));
 
       const result = await service.getAiProfileSuggestions('u1');
 
@@ -206,7 +215,7 @@ describe('SettingsService AI profile', () => {
       prisma.user.findUnique.mockResolvedValue(baseUser);
       const zimbra = makeZimbra();
       zimbra.galSelfLookup.mockRejectedValue(new Error('zimbra down'));
-      const service = new SettingsService(prisma, zimbra);
+      const service = new SettingsService(prisma, makeResolver(zimbra));
 
       const result = await service.getAiProfileSuggestions('u1');
 
@@ -217,11 +226,28 @@ describe('SettingsService AI profile', () => {
       });
     });
 
+    it('returns the same all-null shape for a non-Zimbra account instead of touching the GAL', async () => {
+      // galSelfLookup is a Zimbra-only extra off the MailProvider interface:
+      // the call site checks user.provider first and degrades gracefully, so
+      // a future EWS account never 400s on the suggestions endpoint.
+      const prisma = makePrisma();
+      prisma.user.findUnique.mockResolvedValue({ ...baseUser, provider: 'ews' });
+      const zimbra = makeZimbra();
+      const service = new SettingsService(prisma, makeResolver(zimbra));
+
+      await expect(service.getAiProfileSuggestions('u1')).resolves.toEqual({
+        jobTitle: null,
+        institution: null,
+        department: null,
+      });
+      expect(zimbra.galSelfLookup).not.toHaveBeenCalled();
+    });
+
     it('rejects with UnauthorizedException when the user has no Zimbra authToken', async () => {
       const prisma = makePrisma();
       prisma.user.findUnique.mockResolvedValue({ ...baseUser, authToken: null });
       const zimbra = makeZimbra();
-      const service = new SettingsService(prisma, zimbra);
+      const service = new SettingsService(prisma, makeResolver(zimbra));
 
       await expect(service.getAiProfileSuggestions('u1')).rejects.toBeInstanceOf(
         UnauthorizedException,
@@ -240,6 +266,7 @@ describe('SettingsService getSettings', () => {
     zimbraHost: 'zimbra.example.com',
     authToken: 'tok',
     csrfToken: 'csrf',
+    provider: 'zimbra',
   };
 
   function arrange() {
@@ -253,7 +280,7 @@ describe('SettingsService getSettings', () => {
     zimbra.getSignatures.mockResolvedValue([
       { id: 's1', name: 'Work', contentHtml: '<p>hi</p>', contentText: 'hi' },
     ]);
-    return { prisma, zimbra, service: new SettingsService(prisma, zimbra) };
+    return { prisma, zimbra, service: new SettingsService(prisma, makeResolver(zimbra)) };
   }
 
   it('exposes the provider capability flags', async () => {

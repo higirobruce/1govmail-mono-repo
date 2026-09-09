@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildMailSession } from '../provider/mail-session';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
 
 export interface CalendarEventData {
   title: string;
@@ -23,7 +23,7 @@ export interface CalendarEventData {
 export class CalendarService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
   ) {}
 
   private async getUser(userId: string) {
@@ -44,7 +44,7 @@ export class CalendarService {
    */
   async getEvents(userId: string, start: Date, end: Date): Promise<any[]> {
     const user = await this.getUser(userId);
-    const events = await this.zimbra.getCalendarEvents(
+    const events = await this.resolver.forUser(user).getCalendarEvents(
       buildMailSession(user),
       start.getTime(),
       end.getTime(),
@@ -93,7 +93,7 @@ export class CalendarService {
     });
     if (!event) throw new NotFoundException('Event not found');
 
-    const detail = await this.zimbra.getAppointment(buildMailSession(user), event.zimbraId);
+    const detail = await this.resolver.forUser(user).getAppointment(buildMailSession(user), event.zimbraId);
 
     if (!detail) return event;
 
@@ -116,7 +116,7 @@ export class CalendarService {
     const startAt = new Date(data.startAt);
     const endAt   = new Date(data.endAt);
 
-    const zimbraId = await this.zimbra.createCalendarEvent(buildMailSession(user), {
+    const zimbraId = await this.resolver.forUser(user).createCalendarEvent(buildMailSession(user), {
       title:          data.title,
       location:       data.location,
       startAt,
@@ -163,8 +163,9 @@ export class CalendarService {
     // Fetch the current appointment to get the latest sequence number.
     // ModifyAppointmentRequest requires seq to match what's on the server;
     // sending an outdated seq results in the "The specified Invite is out of date" 502 error.
+    const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
-    const detail = await this.zimbra.getAppointment(session, event.zimbraId);
+    const detail = await provider.getAppointment(session, event.zimbraId);
 
     // ModifyAppointmentRequest.id must be "{calItemId}-{invMsgId}", not just the
     // calItemId — the provider surfaces the invite half, we own the join.
@@ -172,7 +173,7 @@ export class CalendarService {
       ? `${event.zimbraId}-${detail.inviteMessageId}`
       : (event.zimbraInviteId ?? event.zimbraId);
 
-    await this.zimbra.modifyCalendarEvent(session, modifyId, {
+    await provider.modifyCalendarEvent(session, modifyId, {
       title:             data.title,
       location:          data.location,
       startAt,
@@ -215,7 +216,7 @@ export class CalendarService {
     });
     if (!event) throw new NotFoundException('Event not found');
 
-    await this.zimbra.deleteCalendarEvent(buildMailSession(user), event.zimbraId);
+    await this.resolver.forUser(user).deleteCalendarEvent(buildMailSession(user), event.zimbraId);
     await this.prisma.calendarEvent.delete({ where: { id: eventId } });
     return { success: true };
   }
@@ -236,7 +237,7 @@ export class CalendarService {
     // SendInviteReplyRequest requires the invite message ID (invId), not the
     // calendar item ID. Fall back to zimbraId for events created locally.
     const replyId = event.zimbraInviteId ?? event.zimbraId;
-    await this.zimbra.sendInviteReply(buildMailSession(user), replyId, verb);
+    await this.resolver.forUser(user).sendInviteReply(buildMailSession(user), replyId, verb);
     return { success: true };
   }
 
@@ -259,7 +260,7 @@ export class CalendarService {
     unavailable: Array<{ s: number; e: number }>;
   }> {
     const user = await this.getUser(userId);
-    const data = await this.zimbra.getFreeBusy(
+    const data = await this.resolver.forUser(user).getFreeBusy(
       buildMailSession(user),
       email,
       start.getTime(),
@@ -285,10 +286,11 @@ export class CalendarService {
     unavailable: Array<{ s: number; e: number }>;
   }>> {
     const user = await this.getUser(userId);
+    const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
     return Promise.all(
       emails.map((email) =>
-        this.zimbra
+        provider
           .getFreeBusy(session, email, start.getTime(), end.getTime())
           .then((data) => ({ email, ...data })),
       ),

@@ -4,6 +4,7 @@ import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { AuditService } from '../common/audit/audit.service';
 import { InstitutionRegistry } from './institution.registry';
 
@@ -29,7 +30,11 @@ function makeService() {
     resolve: jest.fn(async (id: string) => institutionRows.find((r) => r.id === id) ?? null),
     resolveByHost: jest.fn(async (host: string) => institutionRows.find((r) => r.host === host) ?? null),
   } as unknown as InstitutionRegistry;
-  const service = new AuthService(prisma, zimbra, jwt, audit, institutionRegistry);
+  // The REAL resolver over the zimbra mock: login/2FA resolve their provider
+  // through it, so the "ews institution is rejected" test below exercises the
+  // actual gate (the resolver's BadRequestException) rather than a stub.
+  const resolver = new MailProviderResolver(zimbra);
+  const service = new AuthService(prisma, resolver, jwt, audit, institutionRegistry);
   return {
     service,
     prisma: prisma as any,
@@ -221,10 +226,16 @@ describe('AuthService.login institution resolution', () => {
   });
 
   it('rejects ews/memory institutions until their providers exist', async () => {
-    const { service } = makeService();
-    // "not yet supported" — lifted in Phase 2/3
+    const { service, zimbra } = makeService();
+    // Task 3's temporary special case is gone: the rejection is now the
+    // MailProviderResolver refusing to resolve a provider this build does not
+    // register — still a 400, still readable, and lifted in Phase 2/3 by
+    // adding the case to the resolver.
     await expect(service.login({ institution: 'minaffet', email: 'a@minaffet.gov.rw', password: 'x' } as any))
       .rejects.toThrow(BadRequestException);
+    await expect(service.login({ institution: 'minaffet', email: 'a@minaffet.gov.rw', password: 'x' } as any))
+      .rejects.toThrow(/not supported on this server/i);
+    expect(zimbra.authenticate).not.toHaveBeenCalled();
   });
 });
 

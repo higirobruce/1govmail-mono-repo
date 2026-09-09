@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { AuthScheduler } from './auth.scheduler';
-import { ZimbraModule } from '../zimbra/zimbra.module';
+import { ProviderModule } from '../provider/provider.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { InstitutionRegistry } from './institution.registry';
@@ -13,7 +13,7 @@ import { InstitutionRegistry } from './institution.registry';
 @Module({
   imports: [
     PassportModule,
-    ZimbraModule,
+    ProviderModule,
     PrismaModule,
     JwtModule.registerAsync({
       inject: [ConfigService],

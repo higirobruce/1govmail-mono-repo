@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { buildMailSession } from '../provider/mail-session';
 import { inlineSignatureImages } from '../common/signature-images';
 import { UpdateAiProfileDto } from './dto/ai-profile.dto';
@@ -19,7 +19,7 @@ export interface SignatureData {
 export class SettingsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
   ) {}
 
   private async getUser(userId: string) {
@@ -34,11 +34,12 @@ export class SettingsService {
 
   async getSettings(userId: string) {
     const user = await this.getUser(userId);
+    const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
     const [prefs, identities, signatures] = await Promise.all([
-      this.zimbra.getPrefs(session),
-      this.zimbra.getIdentities(session),
-      this.zimbra.getSignatures(session),
+      provider.getPrefs(session),
+      provider.getIdentities(session),
+      provider.getSignatures(session),
     ]);
 
     // Convert Zimbra-relative image paths (e.g. Briefcase GIFs) to inline
@@ -67,7 +68,7 @@ export class SettingsService {
        * true so a client that predates this field (or a mid-deploy mix) keeps
        * rendering everything exactly as before.
        */
-      capabilities: this.zimbra.capabilities,
+      capabilities: provider.capabilities,
     };
   }
 
@@ -77,9 +78,13 @@ export class SettingsService {
    */
   private async processSignatureImages(
     html: string,
-    user: { zimbraHost: string; authToken: string | null },
+    user: { zimbraHost: string; authToken: string | null; provider: string },
   ): Promise<string> {
-    return inlineSignatureImages(this.zimbra, user, html);
+    // Zimbra-only enrichment (downloadZimbraPath is off the MailProvider
+    // interface): any other backend keeps the signature HTML as the provider
+    // returned it rather than failing the settings load.
+    if (user.provider !== 'zimbra') return html;
+    return inlineSignatureImages(this.resolver.zimbra(), user, html);
   }
 
   /**
@@ -130,7 +135,7 @@ export class SettingsService {
 
   async updatePrefs(userId: string, prefs: Record<string, string>) {
     const user = await this.getUser(userId);
-    await this.zimbra.modifyPrefs(buildMailSession(user), prefs);
+    await this.resolver.forUser(user).modifyPrefs(buildMailSession(user), prefs);
     return { success: true };
   }
 
@@ -142,7 +147,7 @@ export class SettingsService {
     attrs: Record<string, string>,
   ) {
     const user = await this.getUser(userId);
-    await this.zimbra.modifyIdentity(buildMailSession(user), identityId, attrs);
+    await this.resolver.forUser(user).modifyIdentity(buildMailSession(user), identityId, attrs);
     // Keep the local DB display name in sync
     if (attrs.zimbraPrefFromDisplay) {
       await this.prisma.user.update({
@@ -160,7 +165,7 @@ export class SettingsService {
     // Strip base64 data URIs / restore original Zimbra paths before saving —
     // Zimbra rejects zimbraPrefMailSignature values larger than 10 240 bytes.
     const { html: zimbraHtml, imagesStripped } = this.restoreSignatureHtmlForZimbra(data.contentHtml);
-    const id = await this.zimbra.createSignature(
+    const id = await this.resolver.forUser(user).createSignature(
       buildMailSession(user), data.name, zimbraHtml,
     );
     // Return the original (base64-embedded) HTML so the frontend can display
@@ -171,7 +176,7 @@ export class SettingsService {
   async updateSignature(userId: string, signatureId: string, data: SignatureData) {
     const user = await this.getUser(userId);
     const { html: zimbraHtml, imagesStripped } = this.restoreSignatureHtmlForZimbra(data.contentHtml);
-    await this.zimbra.modifySignature(
+    await this.resolver.forUser(user).modifySignature(
       buildMailSession(user), signatureId, data.name, zimbraHtml,
     );
     return { id: signatureId, name: data.name, contentHtml: data.contentHtml, contentText: '', imagesStripped };
@@ -179,7 +184,7 @@ export class SettingsService {
 
   async deleteSignature(userId: string, signatureId: string) {
     const user = await this.getUser(userId);
-    await this.zimbra.deleteSignature(buildMailSession(user), signatureId);
+    await this.resolver.forUser(user).deleteSignature(buildMailSession(user), signatureId);
     return { success: true };
   }
 
@@ -196,7 +201,7 @@ export class SettingsService {
       throw new BadRequestException('New password must be at least 6 characters');
 
     const user = await this.getUser(userId);
-    await this.zimbra.changePassword(
+    await this.resolver.forUser(user).changePassword(
       buildMailSession(user), oldPassword, newPassword,
     );
     return { success: true };
@@ -235,12 +240,20 @@ export class SettingsService {
    * GAL entry. Needs Zimbra (via getUser, which 401s if there's no
    * authToken), but any Zimbra-leg failure past that point degrades to
    * nulls rather than surfacing a 5xx.
+   *
+   * `galSelfLookup` is a sanctioned Zimbra-only extra (off the MailProvider
+   * interface), so it is reached through `resolver.zimbra()` behind an
+   * explicit provider check: a non-Zimbra account gets the same all-null
+   * shape the failure path returns, never an error.
    */
   async getAiProfileSuggestions(userId: string) {
     const user = await this.getUser(userId);
-    const galResult = await this.zimbra
-      .galSelfLookup(buildMailSession(user), user.email)
-      .catch(() => ({ title: null, department: null, company: null }));
+    const NO_SUGGESTIONS = { title: null, department: null, company: null };
+    const galResult = user.provider === 'zimbra'
+      ? await this.resolver.zimbra()
+          .galSelfLookup(buildMailSession(user), user.email)
+          .catch(() => NO_SUGGESTIONS)
+      : NO_SUGGESTIONS;
 
     return {
       jobTitle:    galResult.title,

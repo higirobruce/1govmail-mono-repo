@@ -17,7 +17,7 @@ import {
 } from '@nestjs/common';
 import { InviteRole, Prisma, SharePermission } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { buildMailSession } from '../provider/mail-session';
 import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
@@ -34,7 +34,7 @@ export class DocsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
   ) {}
 
   // ── Owned docs ────────────────────────────────────────────────────────────
@@ -820,7 +820,7 @@ export class DocsService {
         <p style="color:#6b7280;font-size:12px;margin-top:32px">Sent from 1Gov Mail.</p>
       </body></html>
     `;
-    await this.zimbra.sendMessage(
+    await this.resolver.forUser(inviter).sendMessage(
       buildMailSession(inviter),
       { to: [toEmail], subject, body },
     );

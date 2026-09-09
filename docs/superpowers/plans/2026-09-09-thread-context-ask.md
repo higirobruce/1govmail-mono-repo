@@ -1905,8 +1905,18 @@ describe('assertIdInThread', () => {
     }
   });
 
+  // AMENDED 2026-09-09 after Task 10's review: get_thread IS id-addressed and
+  // must be bounded. It returns a 160-char snippet per message of whatever
+  // conversation the id belongs to, so leaving it unbounded leaked other
+  // threads. Bounding it costs nothing — every pinned id belongs to the
+  // pinned thread, so get_thread on an allowed id returns exactly the thread
+  // the model is entitled to.
+  it('rejects an out-of-thread messageId for get_thread too', () => {
+    expect(() => assertIdInThread('get_thread', { messageId: 'other' }, ids)).toThrow(ToolValidationError);
+    expect(() => assertIdInThread('get_thread', { messageId: 'm1' }, ids)).not.toThrow();
+  });
+
   it('does not constrain tools that are not id-addressed', () => {
-    expect(() => assertIdInThread('get_thread', { messageId: 'other' }, ids)).not.toThrow();
     expect(() => assertIdInThread('ask_user', { question: 'x', options: [] }, ids)).not.toThrow();
   });
 
@@ -1993,7 +2003,7 @@ export const THREAD_LOCK_TOOLS: ReadonlySet<string> = new Set([
  * each tool. The thrown message is deliberately recoverable: the model can
  * pick a different id or fall back to the pinned text.
  */
-const ID_ADDRESSED: ReadonlySet<string> = new Set(['read_email', 'read_attachment']);
+const ID_ADDRESSED: ReadonlySet<string> = new Set(['read_email', 'read_attachment', 'get_thread']);
 
 export function assertIdInThread(toolName: string, args: unknown, messageIds: string[]): void {
   if (!ID_ADDRESSED.has(toolName)) return;

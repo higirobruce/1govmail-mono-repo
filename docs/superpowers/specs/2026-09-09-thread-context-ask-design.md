@@ -223,11 +223,24 @@ Withheld under the lock: `search_emails`, `search_attachments`, `search_document
 
 Two consequences to handle rather than ignore:
 
-- **`read_email` and `read_attachment` are id-addressed and would otherwise reach any message the
-  user owns**, which would make the lock cosmetic. Under a thread lock, `execute` must reject an id
-  outside `pinned.messageIds` with a `ToolValidationError`-shaped result the model can recover
-  from ("that message is not part of this thread"). Enforce it in the allowlist wrapper, not by
-  editing each tool, so the bound lives in one place.
+- **The id-addressed reads would otherwise reach any message the user owns**, which would make the
+  lock cosmetic. Under a thread lock, `execute` must reject an id outside `pinned.messageIds` with a
+  `ToolValidationError`-shaped result the model can recover from ("that message is not part of this
+  thread"). Enforce it in the allowlist wrapper, not by editing each tool, so the bound lives in one
+  place. **The bounded set is `read_email`, `read_attachment` and `get_thread`** — amended
+  2026-09-09 during implementation: `get_thread` is id-addressed too and returns a 160-char excerpt
+  per message of whatever conversation the id belongs to, so leaving it out leaked other threads.
+  Bounding it costs nothing, since every pinned id belongs to the pinned thread.
+
+- **Filtering the advertised tool list is NOT enforcement** (amended 2026-09-09 after Task 10's
+  review — the original design got this wrong). Two facts about this stack make the advertisement
+  filter insufficient on its own: the llama.cpp host behind `CHAT_MODEL` is already documented in
+  `agent.service.ts` as ignoring `tool_choice: 'required'`, so it cannot be trusted to respect a
+  narrowed list either; and prompt mandate 7 actively tells the model to call a search tool for
+  fresh ids before `read_email`, steering it at a withheld tool. So the **dispatch site** must also
+  refuse any call outside the allowlist, before the clarify and write-gated branches — the
+  write-gated branch returns early, so a guard placed only around `execute` would still let a
+  locked turn raise a `send_email` proposal.
 - **Iteration 1 forces a tool call** (`firstProbe`, `:117`, `tool_choice: 'required'`). With the
   thread already pinned, `get_thread` is the natural forced probe and is on the allowlist, so the
   probe still succeeds. Do not disable the probe for pinned turns — a locked ask that answers

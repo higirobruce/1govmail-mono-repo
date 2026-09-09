@@ -1,4 +1,4 @@
-import { mapZimbraFolder, mapZimbraMessage } from './zimbra.mappers';
+import { mapProviderContactToZimbraAttrs, mapZimbraContact, mapZimbraFolder, mapZimbraMessage } from './zimbra.mappers';
 
 // These fixtures pin the wire→app parsing that MailService used to do inline
 // (flag chars in `f`, address roles in `e[]`, the `mp[]` part walk). The REST
@@ -140,5 +140,92 @@ describe('mapZimbraFolder', () => {
 
   it('carries the folder content class so callers can map it to their own folder type', () => {
     expect(mapZimbraFolder({ id: '7', name: 'Contacts', view: 'contact' } as any).view).toBe('contact');
+  });
+});
+
+// mapZimbraContact must replicate ContactsService.parseZimbraContact's `_attrs`
+// parsing exactly: rich {email,type,primary}/{number,type} arrays (not flat
+// strings — the DB `emails`/`phones` JSON columns, and the REST payload
+// apps/web reads with `c.emails.find(e => e.primary)`, are these shapes),
+// and firstName/lastName/nickname/company/jobTitle/notes carried through.
+describe('mapZimbraContact', () => {
+  it('maps a Zimbra contact to ProviderContact', () => {
+    const c = mapZimbraContact({ id: '310', _attrs: {
+      firstName: 'Alice', lastName: 'Umutoni', fullName: 'Alice Umutoni',
+      email: 'alice@risa.gov.rw', email2: 'a.umutoni@gmail.com',
+      mobilePhone: '+250788111222', company: 'RISA',
+    }} as any);
+    expect(c).toMatchObject({
+      id: '310', displayName: 'Alice Umutoni', firstName: 'Alice', lastName: 'Umutoni',
+      emails: [
+        { email: 'alice@risa.gov.rw', type: 'work', primary: true },
+        { email: 'a.umutoni@gmail.com', type: 'personal' },
+      ],
+      phones: [{ number: '+250788111222', type: 'mobile' }],
+      company: 'RISA',
+    });
+  });
+
+  it('falls back to firstName + lastName for displayName when fullName is absent', () => {
+    const c = mapZimbraContact({ id: '1', _attrs: { firstName: 'Bob', lastName: 'K' } } as any);
+    expect(c.displayName).toBe('Bob K');
+  });
+
+  it('defaults nickname/company/jobTitle/notes to null and emails/phones to empty arrays when absent', () => {
+    const c = mapZimbraContact({ id: '2', _attrs: {} } as any);
+    expect(c).toMatchObject({
+      id: '2', displayName: null, nickname: null, company: null, jobTitle: null, notes: null,
+      emails: [], phones: [],
+    });
+  });
+
+  it('maps email3/other and workPhone/homePhone type tags', () => {
+    const c = mapZimbraContact({ id: '3', _attrs: {
+      email3: 'other@risa.gov.rw', workPhone: '111', homePhone: '222',
+    }} as any);
+    expect(c.emails).toEqual([{ email: 'other@risa.gov.rw', type: 'other' }]);
+    expect(c.phones).toEqual([{ number: '111', type: 'work' }, { number: '222', type: 'home' }]);
+  });
+
+  it('parses the a[] attribute-array format (GetContactsResponse shape)', () => {
+    const c = mapZimbraContact({
+      id: '4',
+      a: [{ n: 'firstName', _content: 'Carol' }, { n: 'email', _content: 'carol@risa.gov.rw' }],
+    } as any);
+    expect(c).toMatchObject({
+      id: '4', firstName: 'Carol', emails: [{ email: 'carol@risa.gov.rw', type: 'work', primary: true }],
+    });
+  });
+});
+
+describe('mapProviderContactToZimbraAttrs', () => {
+  it('serialises a ProviderContact back into the Zimbra `a[]` attrs format', () => {
+    const attrs = mapProviderContactToZimbraAttrs({
+      firstName: 'Alice', lastName: 'Umutoni', displayName: 'Alice Umutoni',
+      company: 'RISA', jobTitle: 'Director', nickname: 'Ali', notes: 'VIP',
+      emails: [
+        { email: 'alice@risa.gov.rw', type: 'work', primary: true },
+        { email: 'a.umutoni@gmail.com', type: 'personal' },
+      ],
+      phones: [{ number: '+250788111222', type: 'mobile' }],
+    });
+    expect(attrs).toEqual(expect.arrayContaining([
+      { n: 'firstName', _content: 'Alice' },
+      { n: 'lastName', _content: 'Umutoni' },
+      { n: 'fullName', _content: 'Alice Umutoni' },
+      { n: 'company', _content: 'RISA' },
+      { n: 'jobTitle', _content: 'Director' },
+      { n: 'nickname', _content: 'Ali' },
+      { n: 'notes', _content: 'VIP' },
+      { n: 'email', _content: 'alice@risa.gov.rw' },
+      { n: 'email2', _content: 'a.umutoni@gmail.com' },
+      { n: 'mobilePhone', _content: '+250788111222' },
+    ]));
+    expect(attrs.length).toBe(10);
+  });
+
+  it('omits attrs for fields that are absent, null, or empty string', () => {
+    const attrs = mapProviderContactToZimbraAttrs({ firstName: 'X', emails: [], phones: [] });
+    expect(attrs).toEqual([{ n: 'firstName', _content: 'X' }]);
   });
 });

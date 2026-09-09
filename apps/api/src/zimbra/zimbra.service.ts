@@ -8,12 +8,18 @@ import {
 import axios, { AxiosInstance } from 'axios';
 import { MailSession } from '../provider/mail-session';
 import {
+  ProviderContact,
   ProviderFolder,
   ProviderMessage,
   ProviderMessagePage,
 } from '../provider/provider-types';
 import { DraftPayload, SendMessagePayload } from '../provider/mail-provider.interface';
-import { mapZimbraFolder, mapZimbraMessage } from './zimbra.mappers';
+import {
+  mapProviderContactToZimbraAttrs,
+  mapZimbraContact,
+  mapZimbraFolder,
+  mapZimbraMessage,
+} from './zimbra.mappers';
 
 // The Zimbra wire shapes live in zimbra.mappers.ts (the only place that knows
 // `su`/`fr`/`e[]`/`mp[]`/flag chars); re-exported here for existing importers.
@@ -843,13 +849,11 @@ export class ZimbraService {
    * compose-form autocomplete degrades gracefully without blocking sending.
    */
   async autoCompleteContacts(
-    host: string,
-    authToken: string,
+    s: MailSession,
     query: string,
-    csrfToken?: string,
   ): Promise<Array<{ email: string; display: string }>> {
     if (!query || !query.trim()) return [];
-    const client = this.buildClient(host, authToken, csrfToken);
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -861,7 +865,7 @@ export class ZimbraService {
             t: 'account,group',
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
 
       const matches: any[] = response.data?.Body?.AutoCompleteResponse?.match ?? [];
@@ -883,11 +887,11 @@ export class ZimbraService {
   // ─── Full Contacts CRUD ───────────────────────────────────────────────────────
 
   async getContacts(
-    host: string,
-    authToken: string,
-    csrfToken?: string,
-  ): Promise<any[]> {
-    const client = this.buildClient(host, authToken, csrfToken);
+    s: MailSession,
+    limit = 500,
+    offset = 0,
+  ): Promise<ProviderContact[]> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -895,25 +899,30 @@ export class ZimbraService {
             _jsns: 'urn:zimbraMail',
             types: 'contact',
             query: 'in:/Contacts',
-            limit: 500,
-            offset: 0,
+            limit,
+            offset,
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
-      return response.data?.Body?.SearchResponse?.cn ?? [];
+      const raw: any[] = response.data?.Body?.SearchResponse?.cn ?? [];
+      return raw.map(mapZimbraContact);
     } catch (err: any) {
       this.handleZimbraError(err, 'getContacts');
     }
   }
 
+  /**
+   * `contact` is not echoed back by Zimbra beyond the new id — see the
+   * interface doc comment. The returned ProviderContact is the input plus
+   * the real id; ContactsService.createContact only reads `.id` off it.
+   */
   async createContact(
-    host: string,
-    authToken: string,
-    attrs: Array<{ n: string; _content: string }>,
-    csrfToken?: string,
-  ): Promise<string> {
-    const client = this.buildClient(host, authToken, csrfToken);
+    s: MailSession,
+    contact: Partial<ProviderContact>,
+  ): Promise<ProviderContact> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
+    const attrs = mapProviderContactToZimbraAttrs(contact);
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -922,59 +931,64 @@ export class ZimbraService {
             cn: { a: attrs },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
       const id = response.data?.Body?.CreateContactResponse?.cn?.[0]?.id;
       if (!id) throw new BadGatewayException('Zimbra did not return a contact ID');
-      return String(id);
+      return {
+        id: String(id),
+        displayName: contact.displayName ?? null,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        nickname: contact.nickname,
+        company: contact.company,
+        jobTitle: contact.jobTitle,
+        emails: contact.emails ?? [],
+        phones: contact.phones ?? [],
+        notes: contact.notes,
+      };
     } catch (err: any) {
       this.handleZimbraError(err, 'createContact');
     }
   }
 
   async modifyContact(
-    host: string,
-    authToken: string,
-    zimbraId: string,
-    attrs: Array<{ n: string; _content: string }>,
-    csrfToken?: string,
+    s: MailSession,
+    id: string,
+    contact: Partial<ProviderContact>,
   ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
+    const attrs = mapProviderContactToZimbraAttrs(contact);
     try {
       await client.post('/service/soap', {
         Body: {
           ModifyContactRequest: {
             _jsns: 'urn:zimbraMail',
             replace: 1,
-            cn: { id: zimbraId, a: attrs },
+            cn: { id, a: attrs },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
-      this.handleZimbraError(err, `modifyContact(${zimbraId})`);
+      this.handleZimbraError(err, `modifyContact(${id})`);
     }
   }
 
-  async deleteContact(
-    host: string,
-    authToken: string,
-    zimbraId: string,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async deleteContact(s: MailSession, id: string): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
           ContactActionRequest: {
             _jsns: 'urn:zimbraMail',
-            action: { id: zimbraId, op: 'trash' },
+            action: { id, op: 'trash' },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
-      this.handleZimbraError(err, `deleteContact(${zimbraId})`);
+      this.handleZimbraError(err, `deleteContact(${id})`);
     }
   }
 
@@ -1547,13 +1561,11 @@ export class ZimbraService {
    * to provide organisation-wide contact suggestions.
    */
   async searchGal(
-    host: string,
-    authToken: string,
+    s: MailSession,
     query: string,
-    csrfToken?: string,
   ): Promise<Array<{ email: string; display: string }>> {
     if (!query || !query.trim()) return [];
-    const client = this.buildClient(host, authToken, csrfToken);
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -1564,7 +1576,7 @@ export class ZimbraService {
             limit: 20,
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
 
       const contacts: any[] = response.data?.Body?.SearchGalResponse?.cn ?? [];
@@ -1595,14 +1607,12 @@ export class ZimbraService {
    * never throws, always returns an all-null shape on any Zimbra trouble.
    */
   async galSelfLookup(
-    host: string,
-    authToken: string,
+    s: MailSession,
     email: string,
-    csrfToken?: string,
   ): Promise<{ title: string | null; department: string | null; company: string | null }> {
     const none = { title: null, department: null, company: null };
     if (!email || !email.trim()) return none;
-    const client = this.buildClient(host, authToken, csrfToken);
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -1614,7 +1624,7 @@ export class ZimbraService {
             attrs: 'title,ou,company,department',
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
 
       const hit: any = response.data?.Body?.SearchGalResponse?.cn?.[0];

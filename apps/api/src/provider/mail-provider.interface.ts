@@ -65,6 +65,13 @@ export interface MailProvider {
 
   // contacts + GAL
   getContacts(s: MailSession, limit?: number, offset?: number): Promise<ProviderContact[]>;
+  /**
+   * `contact` is a Partial<ProviderContact>, NOT the created record echoed
+   * back — Zimbra's CreateContactResponse only confirms the new id, and
+   * ContactsService.createContact never reads anything else off the return
+   * value (it persists the row from its own already-built input). The
+   * returned ProviderContact is the input echoed back with the real id.
+   */
   createContact(s: MailSession, contact: Partial<ProviderContact>): Promise<ProviderContact>;
   modifyContact(s: MailSession, id: string, contact: Partial<ProviderContact>): Promise<void>;
   deleteContact(s: MailSession, id: string): Promise<void>;

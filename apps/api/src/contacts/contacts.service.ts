@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { buildMailSession } from '../provider/mail-session';
+import { ProviderContact } from '../provider/provider-types';
 
 export interface ContactData {
   firstName?: string;
@@ -37,87 +39,44 @@ export class ContactsService {
     return user;
   }
 
-  /** Parse a raw Zimbra contact node (supports both _attrs and a[] formats). */
-  private parseZimbraContact(raw: any): {
-    zimbraId: string;
-    firstName: string | null;
-    lastName: string | null;
-    fullName: string | null;
-    nickname: string | null;
-    company: string | null;
-    jobTitle: string | null;
-    emails: Array<{ email: string; type: string; primary?: boolean }>;
-    phones: Array<{ number: string; type: string }>;
-    notes: string | null;
-  } {
-    // Zimbra returns _attrs in SearchResponse and a[] in GetContactsResponse
-    let attrs: Record<string, string> = {};
-    if (raw._attrs) {
-      attrs = raw._attrs as Record<string, string>;
-    } else if (Array.isArray(raw.a)) {
-      for (const a of raw.a) {
-        if (a.n && a._content != null) attrs[a.n] = String(a._content);
-      }
-    }
+  /**
+   * Convert a flat ContactData object (the REST/form shape) into the neutral
+   * Partial<ProviderContact> the provider layer speaks. Zimbra-wire
+   * serialization (the attrs array) now lives in
+   * zimbra.mappers.ts#mapProviderContactToZimbraAttrs — this only builds the
+   * role-tagged emails/phones arrays, which are ALSO exactly the shape the
+   * `Contact.emails`/`Contact.phones` JSON columns store (and what apps/web
+   * reads off the REST response), so the same object serves both the Zimbra
+   * call and the Prisma write below.
+   */
+  private dataToProviderContact(data: ContactData): Partial<ProviderContact> {
+    const emails: ProviderContact['emails'] = [];
+    if (data.email) emails.push({ email: data.email, type: 'work', primary: true });
+    if (data.email2) emails.push({ email: data.email2, type: 'personal' });
+    if (data.email3) emails.push({ email: data.email3, type: 'other' });
 
-    const emails: Array<{ email: string; type: string; primary?: boolean }> = [];
-    if (attrs.email) emails.push({ email: attrs.email, type: 'work', primary: true });
-    if (attrs.email2) emails.push({ email: attrs.email2, type: 'personal' });
-    if (attrs.email3) emails.push({ email: attrs.email3, type: 'other' });
+    const phones: ProviderContact['phones'] = [];
+    if (data.phone) phones.push({ number: data.phone, type: 'work' });
+    if (data.mobile) phones.push({ number: data.mobile, type: 'mobile' });
+    if (data.homePhone) phones.push({ number: data.homePhone, type: 'home' });
 
-    const phones: Array<{ number: string; type: string }> = [];
-    if (attrs.workPhone) phones.push({ number: attrs.workPhone, type: 'work' });
-    if (attrs.mobilePhone) phones.push({ number: attrs.mobilePhone, type: 'mobile' });
-    if (attrs.homePhone) phones.push({ number: attrs.homePhone, type: 'home' });
-
-    const firstName = attrs.firstName ?? null;
-    const lastName = attrs.lastName ?? null;
-    const fullName =
-      attrs.fullName ??
-      attrs.fullName2 ??
-      (firstName || lastName
-        ? [firstName, lastName].filter(Boolean).join(' ')
-        : null);
-
-    return {
-      zimbraId: String(raw.id),
-      firstName,
-      lastName,
-      fullName,
-      nickname: attrs.nickname ?? null,
-      company: attrs.company ?? null,
-      jobTitle: attrs.jobTitle ?? null,
-      emails,
-      phones,
-      notes: attrs.notes ?? null,
-    };
-  }
-
-  /** Convert a flat ContactData object into the Zimbra attribute array format. */
-  private dataToAttrs(data: ContactData): Array<{ n: string; _content: string }> {
-    const attrs: Array<{ n: string; _content: string }> = [];
-    const add = (n: string, v: string | undefined | null) => {
-      if (v !== undefined && v !== null && v !== '') attrs.push({ n, _content: String(v) });
-    };
     const fullName =
       data.fullName ??
       (data.firstName || data.lastName
         ? [data.firstName, data.lastName].filter(Boolean).join(' ')
-        : undefined);
-    add('firstName', data.firstName);
-    add('lastName', data.lastName);
-    add('fullName', fullName);
-    add('nickname', data.nickname);
-    add('company', data.company);
-    add('jobTitle', data.jobTitle);
-    add('email', data.email);
-    add('email2', data.email2);
-    add('email3', data.email3);
-    add('workPhone', data.phone);
-    add('mobilePhone', data.mobile);
-    add('homePhone', data.homePhone);
-    add('notes', data.notes);
-    return attrs;
+        : null);
+
+    return {
+      displayName: fullName,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      nickname: data.nickname,
+      company: data.company,
+      jobTitle: data.jobTitle,
+      emails,
+      phones,
+      notes: data.notes,
+    };
   }
 
   // ── Autocomplete (used by compose form) ────────────────────────────────────
@@ -135,19 +94,10 @@ export class ContactsService {
     const q = (query ?? '').trim();
     if (!q) return [];
     const user = await this.getUser(userId);
+    const session = buildMailSession(user);
     const [personal, gal, history] = await Promise.all([
-      this.zimbra.autoCompleteContacts(
-        user.zimbraHost,
-        user.authToken!,
-        q,
-        user.csrfToken ?? undefined,
-      ),
-      this.zimbra.searchGal(
-        user.zimbraHost,
-        user.authToken!,
-        q,
-        user.csrfToken ?? undefined,
-      ),
+      this.zimbra.autoCompleteContacts(session, q),
+      this.zimbra.searchGal(session, q),
       this.autocompleteFromHistory(userId, q),
     ]);
 
@@ -280,42 +230,41 @@ export class ContactsService {
   }
 
   private async syncFromZimbra(userId: string, user: any): Promise<void> {
-    const rawContacts = await this.zimbra.getContacts(
-      user.zimbraHost,
-      user.authToken!,
-      user.csrfToken ?? undefined,
-    );
+    const contacts = await this.zimbra.getContacts(buildMailSession(user));
 
-    for (const raw of rawContacts) {
-      const parsed = this.parseZimbraContact(raw);
-      if (!parsed.zimbraId) continue;
+    for (const c of contacts) {
+      // `String(raw.id)` in the mapper always yields a non-empty string (even
+      // "undefined" when Zimbra omits `id`), so this guard never actually
+      // trips — kept to match the pre-Task-7 `if (!parsed.zimbraId) continue`
+      // exactly rather than silently dropping a defensive check.
+      if (!c.id) continue;
 
       await this.prisma.contact.upsert({
-        where: { userId_zimbraId: { userId, zimbraId: parsed.zimbraId } },
+        where: { userId_zimbraId: { userId, zimbraId: c.id } },
         create: {
           userId,
-          zimbraId: parsed.zimbraId,
-          firstName: parsed.firstName,
-          lastName:  parsed.lastName,
-          fullName:  parsed.fullName,
-          nickname:  parsed.nickname,
-          company:   parsed.company,
-          jobTitle:  parsed.jobTitle,
-          emails:    parsed.emails as any,
-          phones:    parsed.phones as any,
-          notes:     parsed.notes,
+          zimbraId: c.id,
+          firstName: c.firstName ?? null,
+          lastName:  c.lastName ?? null,
+          fullName:  c.displayName,
+          nickname:  c.nickname ?? null,
+          company:   c.company ?? null,
+          jobTitle:  c.jobTitle ?? null,
+          emails:    c.emails as any,
+          phones:    c.phones as any,
+          notes:     c.notes ?? null,
           syncedAt:  new Date(),
         },
         update: {
-          firstName: parsed.firstName,
-          lastName:  parsed.lastName,
-          fullName:  parsed.fullName,
-          nickname:  parsed.nickname,
-          company:   parsed.company,
-          jobTitle:  parsed.jobTitle,
-          emails:    parsed.emails as any,
-          phones:    parsed.phones as any,
-          notes:     parsed.notes,
+          firstName: c.firstName ?? null,
+          lastName:  c.lastName ?? null,
+          fullName:  c.displayName,
+          nickname:  c.nickname ?? null,
+          company:   c.company ?? null,
+          jobTitle:  c.jobTitle ?? null,
+          emails:    c.emails as any,
+          phones:    c.phones as any,
+          notes:     c.notes ?? null,
           syncedAt:  new Date(),
         },
       });
@@ -326,42 +275,21 @@ export class ContactsService {
 
   async createContact(userId: string, data: ContactData): Promise<any> {
     const user = await this.getUser(userId);
-    const attrs = this.dataToAttrs(data);
-    const zimbraId = await this.zimbra.createContact(
-      user.zimbraHost,
-      user.authToken!,
-      attrs,
-      user.csrfToken ?? undefined,
-    );
-
-    const emails: Array<{ email: string; type: string; primary?: boolean }> = [];
-    if (data.email)  emails.push({ email: data.email,  type: 'work',     primary: true });
-    if (data.email2) emails.push({ email: data.email2, type: 'personal' });
-    if (data.email3) emails.push({ email: data.email3, type: 'other' });
-
-    const phones: Array<{ number: string; type: string }> = [];
-    if (data.phone)     phones.push({ number: data.phone,     type: 'work' });
-    if (data.mobile)    phones.push({ number: data.mobile,    type: 'mobile' });
-    if (data.homePhone) phones.push({ number: data.homePhone, type: 'home' });
-
-    const fullName =
-      data.fullName ??
-      (data.firstName || data.lastName
-        ? [data.firstName, data.lastName].filter(Boolean).join(' ')
-        : null);
+    const providerContact = this.dataToProviderContact(data);
+    const created = await this.zimbra.createContact(buildMailSession(user), providerContact);
 
     return this.prisma.contact.create({
       data: {
         userId,
-        zimbraId,
+        zimbraId:  created.id,
         firstName: data.firstName ?? null,
         lastName:  data.lastName  ?? null,
-        fullName,
+        fullName:  providerContact.displayName ?? null,
         nickname:  data.nickname  ?? null,
         company:   data.company   ?? null,
         jobTitle:  data.jobTitle  ?? null,
-        emails:    emails as any,
-        phones:    phones as any,
+        emails:    providerContact.emails as any,
+        phones:    providerContact.phones as any,
         notes:     data.notes ?? null,
         syncedAt:  new Date(),
       },
@@ -381,42 +309,20 @@ export class ContactsService {
     });
     if (!contact) throw new NotFoundException('Contact not found');
 
-    const attrs = this.dataToAttrs(data);
-    await this.zimbra.modifyContact(
-      user.zimbraHost,
-      user.authToken!,
-      contact.zimbraId,
-      attrs,
-      user.csrfToken ?? undefined,
-    );
-
-    const emails: Array<{ email: string; type: string; primary?: boolean }> = [];
-    if (data.email)  emails.push({ email: data.email,  type: 'work',     primary: true });
-    if (data.email2) emails.push({ email: data.email2, type: 'personal' });
-    if (data.email3) emails.push({ email: data.email3, type: 'other' });
-
-    const phones: Array<{ number: string; type: string }> = [];
-    if (data.phone)     phones.push({ number: data.phone,     type: 'work' });
-    if (data.mobile)    phones.push({ number: data.mobile,    type: 'mobile' });
-    if (data.homePhone) phones.push({ number: data.homePhone, type: 'home' });
-
-    const fullName =
-      data.fullName ??
-      (data.firstName || data.lastName
-        ? [data.firstName, data.lastName].filter(Boolean).join(' ')
-        : null);
+    const providerContact = this.dataToProviderContact(data);
+    await this.zimbra.modifyContact(buildMailSession(user), contact.zimbraId, providerContact);
 
     return this.prisma.contact.update({
       where: { id: contactId },
       data: {
         firstName: data.firstName ?? null,
         lastName:  data.lastName  ?? null,
-        fullName,
+        fullName:  providerContact.displayName ?? null,
         nickname:  data.nickname  ?? null,
         company:   data.company   ?? null,
         jobTitle:  data.jobTitle  ?? null,
-        emails:    emails as any,
-        phones:    phones as any,
+        emails:    providerContact.emails as any,
+        phones:    providerContact.phones as any,
         notes:     data.notes ?? null,
       },
     });
@@ -434,12 +340,7 @@ export class ContactsService {
     });
     if (!contact) throw new NotFoundException('Contact not found');
 
-    await this.zimbra.deleteContact(
-      user.zimbraHost,
-      user.authToken!,
-      contact.zimbraId,
-      user.csrfToken ?? undefined,
-    );
+    await this.zimbra.deleteContact(buildMailSession(user), contact.zimbraId);
     await this.prisma.contact.delete({ where: { id: contactId } });
     return { success: true };
   }

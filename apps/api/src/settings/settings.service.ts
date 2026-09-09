@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { buildMailSession } from '../provider/mail-session';
 import { inlineSignatureImages } from '../common/signature-images';
 import { UpdateAiProfileDto } from './dto/ai-profile.dto';
 
@@ -246,7 +247,7 @@ export class SettingsService {
   async getAiProfileSuggestions(userId: string) {
     const user = await this.getUser(userId);
     const galResult = await this.zimbra
-      .galSelfLookup(user.zimbraHost, user.authToken!, user.email, user.csrfToken ?? undefined)
+      .galSelfLookup(buildMailSession(user), user.email)
       .catch(() => ({ title: null, department: null, company: null }));
 
     return {

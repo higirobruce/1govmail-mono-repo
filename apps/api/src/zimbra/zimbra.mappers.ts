@@ -1,6 +1,7 @@
 import {
   ProviderAddress,
   ProviderAttachmentMeta,
+  ProviderContact,
   ProviderFolder,
   ProviderMessage,
 } from '../provider/provider-types';
@@ -158,4 +159,91 @@ export function mapZimbraFolder(raw: ZimbraFolder): ProviderFolder {
     parentId: raw.l != null ? String(raw.l) : undefined,
     view: raw.view ?? undefined,
   };
+}
+
+// ─── Contacts + GAL ──────────────────────────────────────────────────────────
+
+/** Zimbra returns `_attrs` (SearchResponse, SearchGalResponse) or `a[]`
+ *  (GetContactsResponse/CreateContactResponse) — never both. */
+export interface ZimbraContact {
+  id: string | number;
+  _attrs?: Record<string, string>;
+  a?: Array<{ n: string; _content?: unknown }>;
+}
+
+/** Ported verbatim from ContactsService.parseZimbraContact so the DB write and
+ *  the REST payload (apps/web reads `emails`/`phones` as rich role-tagged
+ *  arrays, not flat strings — see ProviderContact) stay byte-identical. */
+export function mapZimbraContact(raw: ZimbraContact): ProviderContact {
+  let attrs: Record<string, string> = {};
+  if (raw._attrs) {
+    attrs = raw._attrs;
+  } else if (Array.isArray(raw.a)) {
+    for (const a of raw.a) {
+      if (a.n && a._content != null) attrs[a.n] = String(a._content);
+    }
+  }
+
+  const emails: ProviderContact['emails'] = [];
+  if (attrs.email) emails.push({ email: attrs.email, type: 'work', primary: true });
+  if (attrs.email2) emails.push({ email: attrs.email2, type: 'personal' });
+  if (attrs.email3) emails.push({ email: attrs.email3, type: 'other' });
+
+  const phones: ProviderContact['phones'] = [];
+  if (attrs.workPhone) phones.push({ number: attrs.workPhone, type: 'work' });
+  if (attrs.mobilePhone) phones.push({ number: attrs.mobilePhone, type: 'mobile' });
+  if (attrs.homePhone) phones.push({ number: attrs.homePhone, type: 'home' });
+
+  const firstName = attrs.firstName ?? null;
+  const lastName = attrs.lastName ?? null;
+  const displayName =
+    attrs.fullName ??
+    attrs.fullName2 ??
+    (firstName || lastName ? [firstName, lastName].filter(Boolean).join(' ') : null);
+
+  return {
+    id: String(raw.id),
+    displayName,
+    firstName,
+    lastName,
+    nickname: attrs.nickname ?? null,
+    company: attrs.company ?? null,
+    jobTitle: attrs.jobTitle ?? null,
+    emails,
+    phones,
+    notes: attrs.notes ?? null,
+  };
+}
+
+/** Reverse of mapZimbraContact — serialises a (partial) ProviderContact into
+ *  the `a[]` attrs Zimbra's Create/ModifyContactRequest expect. Ported from
+ *  ContactsService.dataToAttrs, generalised from ContactData's fixed
+ *  email/email2/email3 + phone/mobile/homePhone fields to the role-tagged
+ *  ProviderContact.emails/phones arrays ContactsService now builds instead —
+ *  same role vocabulary (work/personal/other, work/mobile/home), so the SOAP
+ *  request body is unchanged for any input ContactsService actually sends. */
+export function mapProviderContactToZimbraAttrs(
+  contact: Partial<ProviderContact>,
+): Array<{ n: string; _content: string }> {
+  const attrs: Array<{ n: string; _content: string }> = [];
+  const add = (n: string, v: string | undefined | null) => {
+    if (v !== undefined && v !== null && v !== '') attrs.push({ n, _content: String(v) });
+  };
+  const emailByType = (type: string) => contact.emails?.find((e) => e.type === type)?.email;
+  const phoneByType = (type: string) => contact.phones?.find((p) => p.type === type)?.number;
+
+  add('firstName', contact.firstName);
+  add('lastName', contact.lastName);
+  add('fullName', contact.displayName);
+  add('nickname', contact.nickname);
+  add('company', contact.company);
+  add('jobTitle', contact.jobTitle);
+  add('email', emailByType('work'));
+  add('email2', emailByType('personal'));
+  add('email3', emailByType('other'));
+  add('workPhone', phoneByType('work'));
+  add('mobilePhone', phoneByType('mobile'));
+  add('homePhone', phoneByType('home'));
+  add('notes', contact.notes);
+  return attrs;
 }

@@ -33,10 +33,24 @@ export interface ProviderMessage {
 
 export interface ProviderMessagePage { messages: ProviderMessage[]; total: number; more: boolean }
 
+/**
+ * Task 5 specced `emails`/`phones` as flat `string[]`. Reality (read off
+ * ContactsService.parseZimbraContact/dataToAttrs, Task 6-style fixture
+ * correction): the DB `Contact.emails`/`Contact.phones` JSON columns — and
+ * the REST payload apps/web reads directly via `c.emails.find(e => e.primary)`
+ * and `c.emails[0].email` (apps/web/app/(app)/contacts/page.tsx) — are typed
+ * arrays carrying a role tag and a primary flag, not bare strings. Widened to
+ * match.
+ */
+export interface ProviderContactEmail { email: string; type: string; primary?: boolean }
+export interface ProviderContactPhone { number: string; type: string }
+
 export interface ProviderContact {
   id: string; displayName: string | null;
-  firstName?: string; lastName?: string;
-  emails: string[]; phones: string[]; company?: string;
+  firstName?: string | null; lastName?: string | null;
+  nickname?: string | null; company?: string | null; jobTitle?: string | null;
+  emails: ProviderContactEmail[]; phones: ProviderContactPhone[];
+  notes?: string | null;
 }
 
 export interface ProviderEventAttendee extends ProviderAddress { ptst?: string }

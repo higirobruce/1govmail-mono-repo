@@ -187,7 +187,8 @@ describe('SettingsService AI profile', () => {
       });
       expect(zimbra.getIdentities).not.toHaveBeenCalled();
       expect(zimbra.galSelfLookup).toHaveBeenCalledWith(
-        'zimbra.example.com', 'tok', 'bruce@risa.gov.rw', 'csrf',
+        { host: 'zimbra.example.com', email: 'bruce@risa.gov.rw', authToken: 'tok', csrfToken: 'csrf' },
+        'bruce@risa.gov.rw',
       );
     });
 

@@ -36,6 +36,10 @@ function makeService(upstreamResponses: any[], tools: ToolDef[] = []) {
   const prisma = {
     user: { findUnique: jest.fn().mockResolvedValue({ email: 'u1@x.rw', displayName: 'Bruce' }) },
     agentToolLog: { create: jest.fn().mockResolvedValue({}) },
+    // Only the pinned-context path (agent.service.ts) reads message cards;
+    // default to no flagged cards so existing tests (which pass no `pinned`
+    // and never reach this branch) are unaffected.
+    messageCard: { findMany: jest.fn().mockResolvedValue([]) },
   } as any;
   const svc = new AgentService(ai, registry, prisma);
   const frames: Array<{ event: string | null; data: any }> = [];
@@ -461,5 +465,52 @@ describe('AgentService.run', () => {
     const emailOccurrences = systemMsg.split('u1@x.rw').length - 1;
     expect(emailOccurrences).toBe(1);
     expect(systemMsg).not.toContain('The user you are assisting');
+  });
+
+  describe('pinned thread context', () => {
+    it('inserts exactly one fenced pinned user message after the system prompt', async () => {
+      const { svc, ai, emit } = makeService([jsonText('First try'), jsonText('Final answer')]);
+      const pinned = { label: 'Re: RHEMIS', text: 'hello thread', messageIds: ['m1'], includedCount: 1 } as any;
+      await svc.run('u1', [{ role: 'user', content: 'summarize this' }], emit, new AbortController().signal, pinned);
+
+      const transcript = ai.upstream.mock.calls[0][0].messages;
+      expect(transcript[0].role).toBe('system');
+      expect(transcript[1].role).toBe('user');
+      expect(transcript[1].content).toMatch(/<<<THREAD:/);
+      expect(transcript.filter((m: any) => m.role === 'system')).toHaveLength(1);
+    });
+
+    it('emits a pinned frame with the included count and the flag', async () => {
+      const { svc, prisma, frames, emit } = makeService([jsonText('First try'), jsonText('Final answer')]);
+      prisma.messageCard.findMany.mockResolvedValue([
+        { messageId: 'm1', injectionSuspected: false },
+        { messageId: 'm2', injectionSuspected: true },
+      ]);
+      const pinned = { label: 'x', text: 'ordinary mail', messageIds: ['m1', 'm2'], includedCount: 2 } as any;
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
+
+      expect(frames).toContainEqual({ event: 'pinned', data: { included: 2, injectionSuspected: true } });
+      expect(prisma.messageCard.findMany).toHaveBeenCalledWith({
+        where: { messageId: { in: ['m1', 'm2'] } },
+        select: { messageId: true, injectionSuspected: true },
+      });
+    });
+
+    it('reports includedCount, not the full thread length, when the two differ', async () => {
+      const { svc, ai, frames, emit } = makeService([jsonText('First try'), jsonText('Final answer')]);
+      const pinned = { label: 'x', text: 'hi', messageIds: ['m1', 'm2', 'm3', 'm4'], includedCount: 2 } as any;
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
+
+      expect(frames).toContainEqual({ event: 'pinned', data: { included: 2, injectionSuspected: false } });
+      expect(ai.upstream.mock.calls[0][0].messages[1].content).toContain('2 message(s)');
+    });
+
+    it('adds no pinned message when pinned is null', async () => {
+      const { svc, ai, emit } = makeService([jsonText('First try'), jsonText('Final answer')]);
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, null);
+
+      const transcript = ai.upstream.mock.calls[0][0].messages;
+      expect(transcript.every((m: any) => !/<<<THREAD:/.test(m.content))).toBe(true);
+    });
   });
 });

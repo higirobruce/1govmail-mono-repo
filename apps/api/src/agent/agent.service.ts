@@ -12,6 +12,7 @@ import { consumeAgentJson, consumeAgentStream, type UpstreamToolCall } from './u
 import { summarizeArgs } from './summarize-args';
 import { ToolRegistry, ToolValidationError, type ToolContext } from './tool-registry';
 import type { AgentPinnedDto } from './dto/agent.dto';
+import { buildPinnedMessage, includedIn, pinnedIsSuspect, PINNED_FRAME } from './pinned-context';
 
 const MAX_ITERATIONS = 8;
 const MAX_CALLS_PER_ITERATION = 3;
@@ -48,9 +49,10 @@ export class AgentService {
     private readonly prisma: PrismaService,
   ) {}
 
-  // pinned is threaded through here but not yet consumed — wiring it into the
-  // prompt/tool-scope is Task 9. Kept optional/defaulted so the controller's
-  // 5-arg call compiles without every existing caller needing an update.
+  // pinned is fenced into the transcript below (Task 9). Tool-scope
+  // restriction from pinned.toolScope is not yet wired — that's Task 10.
+  // Kept optional/defaulted so the controller's 5-arg call compiles without
+  // every existing caller needing an update.
   async run(userId: string, turns: ChatTurn[], emit: EmitFn, signal: AbortSignal, pinned: AgentPinnedDto | null = null): Promise<void> {
     // The User model has no `name` field — it has `displayName String?` —
     // select that and pass it through as userName (null when unset).
@@ -80,6 +82,30 @@ export class AgentService {
       emitChart: (spec) => emit('chart', spec),
     };
 
+    // A pinned thread becomes one extra user message between the system
+    // prompt and the conversation turns (below). The injection flag looks at
+    // both sides: MessageCard rows already computed for these messages
+    // (cheap — no re-extraction) OR'd with a live detector pass over the
+    // pinned text itself, mirroring retrieval's posture (retrieval.service.ts:414).
+    let pinnedMessage: string | null = null;
+    if (pinned) {
+      const ids = pinned.messageIds ?? [];
+      const cardFlags = new Map<string, boolean>();
+      if (ids.length) {
+        const cards = await this.prisma.messageCard.findMany({
+          where: { messageId: { in: ids } },
+          select: { messageId: true, injectionSuspected: true },
+        });
+        for (const c of cards) cardFlags.set(c.messageId, c.injectionSuspected);
+      }
+      const flagged = pinnedIsSuspect(pinned.text, cardFlags, ids);
+      pinnedMessage = buildPinnedMessage(pinned, flagged);
+      // `includedIn`, never ids.length — the frame's `included` is what the
+      // chip renders as "N of M messages", and deriving it from the full
+      // thread would make that branch dead code.
+      emit(PINNED_FRAME, { included: includedIn(pinned), injectionSuspected: flagged });
+    }
+
     const transcript: AgentMessage[] = [
       {
         role: 'system',
@@ -93,6 +119,10 @@ export class AgentService {
           profile: user?.aiProfile ? { ...user.aiProfile } : null,
         }),
       },
+      // The pin is a USER message, never a system one — the server owns
+      // exactly one system message and buildAgentPrompt's security posture
+      // depends on that being the only place instructions live.
+      ...(pinnedMessage ? [{ role: 'user', content: pinnedMessage } as AgentMessage] : []),
       ...turns.slice(-12).map((t) => ({ role: t.role, content: t.content.slice(0, 4000) }) as AgentMessage),
     ];
     let transcriptChars = transcript.reduce((sum, m) => sum + m.content.length, 0);

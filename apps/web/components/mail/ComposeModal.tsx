@@ -115,14 +115,15 @@ interface ComposeModalProps {
 
 // ── Toolbar button ────────────────────────────────────────────────────────────
 
-function ToolbarBtn({ title, onClick, active, children }: {
-  title: string; onClick: () => void; active?: boolean; children: React.ReactNode;
+function ToolbarBtn({ title, onClick, active, className, children }: {
+  title: string; onClick: () => void; active?: boolean; className?: string; children: React.ReactNode;
 }) {
   return (
     <button type="button" title={title} onMouseDown={(e) => { e.preventDefault(); onClick(); }}
       className={cn(
         'p-1.5 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors',
         active && 'bg-muted/60 text-foreground',
+        className,
       )}>
       {children}
     </button>
@@ -1044,11 +1045,12 @@ export default function ComposeModal({
         // In-flow reply card under the message being answered.
         ? 'relative w-full rounded-xl shadow-sm max-h-[75vh]'
         : cn(
-            'fixed z-50 rounded-2xl shadow-2xl',
-            // Mobile: full-bleed with small insets so nothing runs off-screen.
-            // ≥sm: anchored bottom-right at the fixed 680px compose width.
-            'inset-x-2 bottom-2 w-auto sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[680px]',
-            minimised ? 'h-auto' : 'max-h-[calc(100vh-2rem)]',
+            'fixed z-50 shadow-2xl',
+            // Mobile: full-screen sheet — the thread behind is pure noise at
+            // phone widths. ≥sm: anchored bottom-right at the 680px compose width.
+            minimised
+              ? 'h-auto rounded-2xl inset-x-2 bottom-2 w-auto sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[680px]'
+              : 'inset-0 w-auto rounded-none sm:rounded-2xl sm:inset-auto sm:bottom-4 sm:right-4 sm:w-[680px] sm:max-h-[calc(100vh-2rem)]',
           ),
     )}>
       {/* ── Header ── */}
@@ -1065,7 +1067,7 @@ export default function ComposeModal({
           </span>
           {!inline && (
             <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setMinimised((m) => !m); }}
-              className="h-6 w-6 p-0 text-ink-3 hover:text-foreground" title={minimised ? 'Restore' : 'Minimise'}>
+              className="hidden sm:inline-flex h-6 w-6 p-0 text-ink-3 hover:text-foreground" title={minimised ? 'Restore' : 'Minimise'}>
               {minimised ? <ChevronDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
             </Button>
           )}
@@ -1081,7 +1083,8 @@ export default function ComposeModal({
         <div className="flex flex-col flex-1 min-h-0">
           {/* ── Address + subject fields ── */}
           <div className="px-5 py-3 space-y-2.5 shrink-0 border-b border-border">
-            <div className="flex items-center gap-2 h-9">
+            {/* Display-only, single identity — dead weight on a phone screen */}
+            <div className="hidden sm:flex items-center gap-2 h-9">
               <Label className="text-ui font-medium text-ink-3 uppercase tracking-[0.06em] shrink-0 w-14 text-right">From</Label>
               <span className="text-body text-ink-2 px-1">
                 {user?.displayName ? `${user.displayName} <${user.email}>` : user?.email}
@@ -1154,7 +1157,7 @@ export default function ComposeModal({
                     if (e.target.value) editor?.chain().focus().setFontFamily(e.target.value).run();
                     else editor?.chain().focus().unsetFontFamily().run();
                   }}
-                  className="h-6 text-micro font-normal bg-muted/30 border border-border rounded px-1 text-foreground focus:outline-none focus:border-primary/50 mr-0.5"
+                  className="hidden sm:block h-6 text-micro font-normal bg-muted/30 border border-border rounded px-1 text-foreground focus:outline-none focus:border-primary/50 mr-0.5"
                   title="Font family"
                 >
                   {FONT_FAMILIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1167,7 +1170,7 @@ export default function ComposeModal({
                     const val = e.target.value;
                     if (val) editor?.chain().focus().setMark('textStyle', { fontSize: `${val}px` }).run();
                   }}
-                  className="h-6 text-micro font-normal bg-muted/30 border border-border rounded px-1 text-foreground focus:outline-none focus:border-primary/50 w-14 mr-0.5"
+                  className="hidden sm:block h-6 text-micro font-normal bg-muted/30 border border-border rounded px-1 text-foreground focus:outline-none focus:border-primary/50 w-14 mr-0.5"
                   title="Font size"
                 >
                   {FONT_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1178,7 +1181,7 @@ export default function ComposeModal({
                   type="button"
                   title="Text colour"
                   onMouseDown={(e) => { e.preventDefault(); colorInputRef.current?.click(); }}
-                  className="relative p-1.5 rounded hover:bg-muted/60 transition-colors"
+                  className="hidden sm:block relative p-1.5 rounded hover:bg-muted/60 transition-colors"
                 >
                   <span className="text-micro font-bold leading-none" style={{ color: currentColor ?? 'currentColor' }}>A</span>
                   <span className="block h-[3px] w-4 rounded-sm mt-0.5" style={{ backgroundColor: currentColor ?? 'var(--foreground)' }} />
@@ -1191,7 +1194,7 @@ export default function ComposeModal({
                   onChange={(e) => editor?.chain().focus().setColor(e.target.value).run()}
                 />
 
-                <div className="w-px h-4 bg-border-faint mx-1 shrink-0" />
+                <div className="hidden sm:block w-px h-4 bg-border-faint mx-1 shrink-0" />
 
                 {/* Formatting */}
                 <ToolbarBtn title="Bold (⌘B)" onClick={() => editor?.chain().focus().toggleBold().run()} active={editor?.isActive('bold')}>
@@ -1203,7 +1206,7 @@ export default function ComposeModal({
                 <ToolbarBtn title="Underline (⌘U)" onClick={() => editor?.chain().focus().toggleUnderline().run()} active={editor?.isActive('underline')}>
                   <UnderlineIcon className="w-3.5 h-3.5" />
                 </ToolbarBtn>
-                <ToolbarBtn title="Strikethrough" onClick={() => editor?.chain().focus().toggleStrike().run()} active={editor?.isActive('strike')}>
+                <ToolbarBtn title="Strikethrough" className="hidden sm:block" onClick={() => editor?.chain().focus().toggleStrike().run()} active={editor?.isActive('strike')}>
                   <Strikethrough className="w-3.5 h-3.5" />
                 </ToolbarBtn>
 
@@ -1375,8 +1378,11 @@ export default function ComposeModal({
                   <aside
                     aria-hidden={!rewriteOpen}
                     className={cn(
-                      'absolute top-2 right-2 w-[340px] max-h-[60vh] z-30',
                       'rounded-xl border border-border bg-card shadow-xl',
+                      // Phone: bottom sheet pinned to the viewport so the draft stays
+                      // visible above it. ≥sm: floating panel beside the editor.
+                      'fixed inset-x-0 bottom-0 max-h-[45vh] z-30 rounded-b-none',
+                      'sm:absolute sm:top-2 sm:right-2 sm:bottom-auto sm:inset-x-auto sm:w-[340px] sm:max-h-[60vh] sm:rounded-b-xl',
                       'flex flex-col overflow-hidden',
                       'transition-all duration-200 ease-out',
                       rewriteOpen
@@ -1577,7 +1583,7 @@ export default function ComposeModal({
             <div className="flex-1">
               {error && <p className="text-ui text-destructive">{error}</p>}
               {!error && (
-                <p className="text-ui text-ink-4">
+                <p className="hidden sm:block text-ui text-ink-4">
                   {typeof navigator !== 'undefined' && navigator?.platform?.includes('Mac') ? '⌘' : 'Ctrl'}+Enter to send · 5s undo window
                 </p>
               )}

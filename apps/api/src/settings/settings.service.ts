@@ -34,26 +34,22 @@ export class SettingsService {
 
   async getSettings(userId: string) {
     const user = await this.getUser(userId);
+    const session = buildMailSession(user);
     const [prefs, identities, signatures] = await Promise.all([
-      this.zimbra.getPrefs(
-        user.zimbraHost, user.authToken!, user.csrfToken ?? undefined,
-      ),
-      this.zimbra.getIdentities(
-        user.zimbraHost, user.authToken!, user.csrfToken ?? undefined,
-      ),
-      this.zimbra.getSignatures(
-        user.zimbraHost, user.authToken!, user.csrfToken ?? undefined,
-      ),
+      this.zimbra.getPrefs(session),
+      this.zimbra.getIdentities(session),
+      this.zimbra.getSignatures(session),
     ]);
 
     // Convert Zimbra-relative image paths (e.g. Briefcase GIFs) to inline
     // base64 data URIs so they display correctly in the client without auth.
+    // The cast Tasks 1-8 needed here is gone: getSignatures is typed
+    // ProviderSignature[] now, not unknown[].
     const processedSignatures = await Promise.all(
-      (signatures as Array<{ id: string; name: string; contentHtml: string; contentText: string }>)
-        .map(async (sig) => ({
-          ...sig,
-          contentHtml: await this.processSignatureImages(sig.contentHtml, user),
-        })),
+      signatures.map(async (sig) => ({
+        ...sig,
+        contentHtml: await this.processSignatureImages(sig.contentHtml, user),
+      })),
     );
 
     return {
@@ -63,6 +59,15 @@ export class SettingsService {
       prefs,
       identities,
       signatures: processedSignatures,
+      /**
+       * Which of the provider-backed settings sections this backend can
+       * actually serve. The one sanctioned addition to the Phase 1 REST
+       * surface: the client gates its Signatures / Identity / preferences /
+       * password sections on these flags, defaulting every absent flag to
+       * true so a client that predates this field (or a mid-deploy mix) keeps
+       * rendering everything exactly as before.
+       */
+      capabilities: this.zimbra.capabilities,
     };
   }
 
@@ -125,9 +130,7 @@ export class SettingsService {
 
   async updatePrefs(userId: string, prefs: Record<string, string>) {
     const user = await this.getUser(userId);
-    await this.zimbra.modifyPrefs(
-      user.zimbraHost, user.authToken!, prefs, user.csrfToken ?? undefined,
-    );
+    await this.zimbra.modifyPrefs(buildMailSession(user), prefs);
     return { success: true };
   }
 
@@ -139,9 +142,7 @@ export class SettingsService {
     attrs: Record<string, string>,
   ) {
     const user = await this.getUser(userId);
-    await this.zimbra.modifyIdentity(
-      user.zimbraHost, user.authToken!, identityId, attrs, user.csrfToken ?? undefined,
-    );
+    await this.zimbra.modifyIdentity(buildMailSession(user), identityId, attrs);
     // Keep the local DB display name in sync
     if (attrs.zimbraPrefFromDisplay) {
       await this.prisma.user.update({
@@ -160,8 +161,7 @@ export class SettingsService {
     // Zimbra rejects zimbraPrefMailSignature values larger than 10 240 bytes.
     const { html: zimbraHtml, imagesStripped } = this.restoreSignatureHtmlForZimbra(data.contentHtml);
     const id = await this.zimbra.createSignature(
-      user.zimbraHost, user.authToken!, data.name, zimbraHtml,
-      user.csrfToken ?? undefined,
+      buildMailSession(user), data.name, zimbraHtml,
     );
     // Return the original (base64-embedded) HTML so the frontend can display
     // images immediately without waiting for a fresh getSettings fetch.
@@ -172,17 +172,14 @@ export class SettingsService {
     const user = await this.getUser(userId);
     const { html: zimbraHtml, imagesStripped } = this.restoreSignatureHtmlForZimbra(data.contentHtml);
     await this.zimbra.modifySignature(
-      user.zimbraHost, user.authToken!, signatureId, data.name, zimbraHtml,
-      user.csrfToken ?? undefined,
+      buildMailSession(user), signatureId, data.name, zimbraHtml,
     );
     return { id: signatureId, name: data.name, contentHtml: data.contentHtml, contentText: '', imagesStripped };
   }
 
   async deleteSignature(userId: string, signatureId: string) {
     const user = await this.getUser(userId);
-    await this.zimbra.deleteSignature(
-      user.zimbraHost, user.authToken!, signatureId, user.csrfToken ?? undefined,
-    );
+    await this.zimbra.deleteSignature(buildMailSession(user), signatureId);
     return { success: true };
   }
 
@@ -200,12 +197,7 @@ export class SettingsService {
 
     const user = await this.getUser(userId);
     await this.zimbra.changePassword(
-      user.zimbraHost,
-      user.authToken!,
-      user.email,
-      oldPassword,
-      newPassword,
-      user.csrfToken ?? undefined,
+      buildMailSession(user), oldPassword, newPassword,
     );
     return { success: true };
   }

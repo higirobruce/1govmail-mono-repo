@@ -1,12 +1,21 @@
+/**
+ * What a folder holds. Task 9 adjustment (Task 6 controller ruling): Task 5
+ * carried Zimbra's own `view` string ('message' | 'contact' | 'appointment' |
+ * 'task' | 'document') straight through the neutral DTO, which put provider
+ * vocabulary in front of MailService. Renamed and re-spelled as a closed
+ * neutral union; the Zimbra literals now stop inside zimbra/ (see
+ * ZIMBRA_VIEW_TO_KIND in zimbra.mappers.ts). `undefined` means "the provider
+ * did not say", which MailService treats as mail — the same result the old
+ * `view: undefined` produced.
+ */
+export type ProviderFolderKind = 'mail' | 'contacts' | 'calendar' | 'tasks' | 'documents';
+
 export interface ProviderFolder {
   id: string; name: string; path: string;
   type?: string;                 // inbox|sent|drafts|trash|junk|custom
-  /**
-   * Content class of the folder — 'message' | 'contact' | 'appointment' |
-   * 'task' | 'document'. MailService maps this to its own FolderType enum when
-   * upserting, so the field has to survive the neutral DTO.
-   */
-  view?: string;
+  /** Content class of the folder. MailService maps this to its own FolderType
+   *  enum when upserting, so the field has to survive the neutral DTO. */
+  kind?: ProviderFolderKind;
   unreadCount: number; totalCount: number;
   parentId?: string;
 }
@@ -121,9 +130,73 @@ export interface ProviderFreeBusy {
   unavailable: Array<{ s: number; e: number }>;
 }
 
+/**
+ * Result of a pre-session `authenticate` / `verifyTwoFactor` leg.
+ *
+ * Task 9 adjustments — Task 5 declared only
+ * `{ authToken?, csrfToken?, displayName?, twoFactorRequired }`, but
+ * AuthService.createSession (the single consumer) also reads two fields that
+ * were missing, and both are load-bearing:
+ *
+ *  - `lifetime` — session lifetime in ms. It sets `User.tokenExpiry`, which
+ *    JwtStrategy checks on every request. Dropping it would mean inventing an
+ *    expiry, so it is required, not optional.
+ *  - `redirectHost` — the backend the mailbox actually lives on, when the
+ *    login endpoint is not it (Zimbra clusters answer AuthRequest with a
+ *    `refer` host; EWS Autodiscover is the same idea). createSession persists
+ *    it as the effective host; ignoring it makes every later call fail with
+ *    an auth error against a freshly-issued, valid token. Named neutrally so
+ *    the Zimbra element name stays inside zimbra/.
+ *
+ * `authToken` is also tightened from optional to required: both legs throw
+ * rather than resolve without one, so no implementation can omit it.
+ * With those three, the shape is exactly what ZimbraService already returned,
+ * so the old exported `ZimbraAuthResult` became an identical parallel type and
+ * was deleted rather than kept as a no-op mapping target.
+ */
 export interface ProviderAuthResult {
-  authToken?: string; csrfToken?: string; displayName?: string;
+  authToken: string;
+  /** Session lifetime in milliseconds. */
+  lifetime: number;
+  csrfToken?: string;
+  displayName?: string;
+  /** Host to address all subsequent calls to, when it differs from the login host. */
+  redirectHost?: string;
   twoFactorRequired: boolean;
+}
+
+/**
+ * One sending identity. Task 9 adjustment: Task 5 typed `getIdentities` as
+ * `unknown[]`; this is the shape the settings flow has always returned and the
+ * REST layer sends verbatim (GET /settings → `identities`), which apps/web
+ * reads as `data.identities[0].attrs[...]`.
+ *
+ * `attrs` stays an open `Record<string, string>` of provider-native keys on
+ * purpose: PATCH /settings/identity/:id takes an arbitrary attribute bag from
+ * the client (`zimbraPrefFromDisplay`, `zimbraPrefReplyToAddress`,
+ * `zimbraPrefDefaultSignatureId`, …) and MailService reads
+ * `attrs.zimbraPrefDefaultSignatureId` off it. Enumerating those keys here
+ * would be a REST contract change, which Phase 1 forbids; the EWS provider
+ * will have to speak the same key names.
+ */
+export interface ProviderIdentity {
+  id: string;
+  name: string;
+  attrs: Record<string, string>;
+}
+
+/**
+ * One stored signature. Task 9 adjustment: as with ProviderIdentity, Task 5
+ * had `unknown[]` — tightened to the real shape. Both `contentHtml` and
+ * `contentText` are always present (empty string when the provider has no
+ * body of that type): MailService.getDefaultSignatureHtml falls back from one
+ * to the other, and the REST payload has always carried both keys.
+ */
+export interface ProviderSignature {
+  id: string;
+  name: string;
+  contentHtml: string;
+  contentText: string;
 }
 
 export interface MailProviderCapabilities {

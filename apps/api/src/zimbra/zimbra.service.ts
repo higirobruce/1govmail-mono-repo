@@ -8,17 +8,21 @@ import {
 import axios, { AxiosInstance } from 'axios';
 import { MailSession } from '../provider/mail-session';
 import {
+  ProviderAuthResult,
   ProviderContact,
   ProviderEvent,
   ProviderEventDetail,
   ProviderFolder,
   ProviderFreeBusy,
+  ProviderIdentity,
   ProviderMessage,
   ProviderMessagePage,
+  ProviderSignature,
 } from '../provider/provider-types';
 import {
   CalendarEventPayload,
   DraftPayload,
+  MailProvider,
   ModifyCalendarEventPayload,
   SendMessagePayload,
 } from '../provider/mail-provider.interface';
@@ -36,34 +40,9 @@ import {
 
 // The Zimbra wire shapes live in zimbra.mappers.ts (the only place that knows
 // `su`/`fr`/`e[]`/`mp[]`/flag chars, and the calendar's `inst[]`/`inv[].comp[]`
-// nesting); re-exported here for existing importers.
-export type {
-  ZimbraAppointmentDetail,
-  ZimbraEmailAddress,
-  ZimbraFolder,
-  ZimbraMessage,
-  ZimbraMessagePart,
-} from './zimbra.mappers';
-
-export interface ZimbraAuthResult {
-  authToken: string;
-  lifetime: number;
-  csrfToken?: string;
-  displayName?: string;
-  /**
-   * Zimbra clusters: AuthResponse may include a `refer` hostname telling the
-   * client to send ALL subsequent requests to a different backend server.
-   * If ignored, every post-auth SOAP call will hit the wrong node and return
-   * service.AUTH_EXPIRED even for a freshly-issued, valid token.
-   */
-  refer?: string;
-  /**
-   * When true the returned authToken is a *pre-auth* token only — not a real
-   * session token.  The caller must complete Two-Factor Authentication before
-   * any mailbox SOAP call can succeed.
-   */
-  twoFactorRequired?: boolean;
-}
+// nesting). Tasks 6-8 left a re-export block here for "existing importers";
+// there are none — every importer already reaches into zimbra.mappers — so it
+// is gone (Task 9, Task 6 controller ruling).
 
 // Zimbra fault codes that indicate the session is no longer valid
 const AUTH_FAULT_CODES = new Set([
@@ -73,7 +52,23 @@ const AUTH_FAULT_CODES = new Set([
 ]);
 
 @Injectable()
-export class ZimbraService {
+export class ZimbraService implements MailProvider {
+  readonly name = 'zimbra' as const;
+
+  /**
+   * Zimbra backs the whole settings surface natively, so every flag is true.
+   * The flags exist for the providers that do not: they are what lets
+   * GET /settings tell the client which sections to render, instead of the
+   * client discovering the gap by watching a save fail.
+   */
+  readonly capabilities = {
+    signatures: true,
+    identities: true,
+    serverPrefs: true,
+    changePassword: true,
+    twoFactor: true,
+  } as const;
+
   private readonly logger = new Logger(ZimbraService.name);
 
   /**
@@ -197,11 +192,16 @@ export class ZimbraService {
 
   // ─── Auth ────────────────────────────────────────────────────────────────────
 
+  /**
+   * `authenticate` and `verifyTwoFactor` keep `(host, email, …)` rather than
+   * taking a MailSession: they run *before* a session exists — issuing the
+   * token a session is made of is the whole point of them.
+   */
   async authenticate(
     host: string,
     email: string,
     password: string,
-  ): Promise<ZimbraAuthResult> {
+  ): Promise<ProviderAuthResult> {
     const client = this.buildClient(host);
     try {
       const response = await client.post('/service/soap', {
@@ -233,6 +233,7 @@ export class ZimbraService {
 
       // Zimbra cluster: `refer` tells us which backend server owns this mailbox.
       // All subsequent SOAP calls MUST go to that server or they get AUTH_EXPIRED.
+      // Surfaced as the neutral `redirectHost` — the element name stops here.
       const refer: string | undefined = authResponse.refer?._content ?? undefined;
 
       // Zimbra may return twoFactorAuthRequired as boolean true, number 1, or
@@ -252,8 +253,8 @@ export class ZimbraService {
         authToken,
         lifetime,
         csrfToken,
-        refer,
-        twoFactorRequired: twoFactorRequired || undefined,
+        redirectHost: refer,
+        twoFactorRequired,
         displayName: authResponse.prefs?.pref?.find(
           (p: any) => p.name === 'zimbraPrefFromDisplay',
         )?._content,
@@ -275,7 +276,7 @@ export class ZimbraService {
     email: string,
     preAuthToken: string,
     twoFactorCode: string,
-  ): Promise<ZimbraAuthResult> {
+  ): Promise<ProviderAuthResult> {
     const client = this.buildClient(host);
     try {
       const response = await client.post('/service/soap', {
@@ -311,7 +312,11 @@ export class ZimbraService {
         authToken,
         lifetime,
         csrfToken,
-        refer,
+        redirectHost: refer,
+        // The challenge is what just succeeded, so it is never outstanding
+        // again on this response. Previously the key was simply absent; the
+        // one consumer branches on truthiness, so `false` reads identically.
+        twoFactorRequired: false,
         displayName: authResponse.prefs?.pref?.find(
           (p: any) => p.name === 'zimbraPrefFromDisplay',
         )?._content,
@@ -1215,16 +1220,12 @@ export class ZimbraService {
   // ─── Account Preferences & Settings ─────────────────────────────────────────
 
   /** Fetch all user preferences as a flat key → value map. */
-  async getPrefs(
-    host: string,
-    authToken: string,
-    csrfToken?: string,
-  ): Promise<Record<string, string>> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async getPrefs(s: MailSession): Promise<Record<string, string>> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const res = await client.post('/service/soap', {
         Body: { GetPrefsRequest: { _jsns: 'urn:zimbraAccount' } },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
       const prefs: any[] = res.data?.Body?.GetPrefsResponse?.pref ?? [];
       const out: Record<string, string> = {};
@@ -1236,18 +1237,13 @@ export class ZimbraService {
   }
 
   /** Set one or more user preferences. */
-  async modifyPrefs(
-    host: string,
-    authToken: string,
-    prefs: Record<string, string>,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async modifyPrefs(s: MailSession, prefs: Record<string, string>): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     const pref = Object.entries(prefs).map(([name, _content]) => ({ name, _content }));
     try {
       await client.post('/service/soap', {
         Body: { ModifyPrefsRequest: { _jsns: 'urn:zimbraAccount', pref } },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
       this.handleZimbraError(err, 'modifyPrefs');
@@ -1255,16 +1251,12 @@ export class ZimbraService {
   }
 
   /** Return all user identities (primary + aliases). */
-  async getIdentities(
-    host: string,
-    authToken: string,
-    csrfToken?: string,
-  ): Promise<Array<{ id: string; name: string; attrs: Record<string, string> }>> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async getIdentities(s: MailSession): Promise<ProviderIdentity[]> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const res = await client.post('/service/soap', {
         Body: { GetIdentitiesRequest: { _jsns: 'urn:zimbraAccount' } },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
       const identities: any[] = res.data?.Body?.GetIdentitiesResponse?.identity ?? [];
       return identities.map((ident: any) => {
@@ -1280,13 +1272,11 @@ export class ZimbraService {
 
   /** Update an identity's attributes (display name, reply-to, default signature, etc.). */
   async modifyIdentity(
-    host: string,
-    authToken: string,
+    s: MailSession,
     identityId: string,
     attrs: Record<string, string>,
-    csrfToken?: string,
   ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     const a = Object.entries(attrs)
       .filter(([, v]) => v !== '')          // Zimbra rejects empty-string _content for ID attrs
       .map(([name, _content]) => ({ name, _content }));
@@ -1298,7 +1288,7 @@ export class ZimbraService {
             identity: { id: identityId, a },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
       this.handleZimbraError(err, 'modifyIdentity');
@@ -1306,23 +1296,19 @@ export class ZimbraService {
   }
 
   /** Return all email signatures. */
-  async getSignatures(
-    host: string,
-    authToken: string,
-    csrfToken?: string,
-  ): Promise<Array<{ id: string; name: string; contentHtml: string; contentText: string }>> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async getSignatures(s: MailSession): Promise<ProviderSignature[]> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const res = await client.post('/service/soap', {
         Body: { GetSignaturesRequest: { _jsns: 'urn:zimbraAccount' } },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
       const sigs: any[] = res.data?.Body?.GetSignaturesResponse?.signature ?? [];
-      return sigs.map((s: any) => {
-        const contents: any[] = Array.isArray(s.content) ? s.content : [];
+      return sigs.map((raw: any) => {
+        const contents: any[] = Array.isArray(raw.content) ? raw.content : [];
         return {
-          id:          String(s.id ?? ''),
-          name:        s.name ?? '',
+          id:          String(raw.id ?? ''),
+          name:        raw.name ?? '',
           contentHtml: contents.find((c: any) => c.type === 'text/html')?._content  ?? '',
           contentText: contents.find((c: any) => c.type === 'text/plain')?._content ?? '',
         };
@@ -1334,13 +1320,11 @@ export class ZimbraService {
 
   /** Create a new HTML signature. Returns the new signature's Zimbra ID. */
   async createSignature(
-    host: string,
-    authToken: string,
+    s: MailSession,
     name: string,
     contentHtml: string,
-    csrfToken?: string,
   ): Promise<string> {
-    const client = this.buildClient(host, authToken, csrfToken);
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const res = await client.post('/service/soap', {
         Body: {
@@ -1352,7 +1336,7 @@ export class ZimbraService {
             },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
       const id = res.data?.Body?.CreateSignatureResponse?.signature?.[0]?.id;
       if (!id) throw new BadGatewayException('Zimbra did not return a signature ID');
@@ -1364,14 +1348,12 @@ export class ZimbraService {
 
   /** Update an existing signature's name and HTML content. */
   async modifySignature(
-    host: string,
-    authToken: string,
+    s: MailSession,
     signatureId: string,
     name: string,
     contentHtml: string,
-    csrfToken?: string,
   ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
@@ -1384,7 +1366,7 @@ export class ZimbraService {
             },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
       this.handleZimbraError(err, 'modifySignature');
@@ -1392,13 +1374,8 @@ export class ZimbraService {
   }
 
   /** Delete a signature by Zimbra ID. */
-  async deleteSignature(
-    host: string,
-    authToken: string,
-    signatureId: string,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async deleteSignature(s: MailSession, signatureId: string): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
@@ -1407,34 +1384,33 @@ export class ZimbraService {
             signature: { id: signatureId },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
       this.handleZimbraError(err, 'deleteSignature');
     }
   }
 
-  /** Change the user's Zimbra account password. */
+  /** Change the user's Zimbra account password. The account is the session's
+   *  own — SettingsService always passed `user.email` here, so the separate
+   *  `accountEmail` argument is now read off the session. */
   async changePassword(
-    host: string,
-    authToken: string,
-    accountEmail: string,
+    s: MailSession,
     oldPassword: string,
     newPassword: string,
-    csrfToken?: string,
   ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
           ChangePasswordRequest: {
             _jsns: 'urn:zimbraAccount',
-            account:     { by: 'name', _content: accountEmail },
+            account:     { by: 'name', _content: s.email },
             oldPassword,
             password:    newPassword,
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
       this.handleZimbraError(err, 'changePassword');

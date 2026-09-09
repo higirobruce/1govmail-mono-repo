@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { ProviderAuthResult } from '../provider/provider-types';
 import { AuditService } from '../common/audit/audit.service';
 import { InstitutionRegistry } from './institution.registry';
 import { LoginDto } from './dto/login.dto';
@@ -50,7 +51,7 @@ export class AuthService {
     const zimbraHost = inst.host;
     const resolvedInstitution: ResolvedInstitution = { provider: inst.provider, institutionId: inst.id };
 
-    let zimbraResult: Awaited<ReturnType<ZimbraService['authenticate']>>;
+    let zimbraResult: ProviderAuthResult;
     try {
       zimbraResult = await this.zimbra.authenticate(zimbraHost, email, password);
     } catch (err) {
@@ -113,7 +114,7 @@ export class AuthService {
 
     const { email, zimbraHost, preAuthToken, provider, institutionId } = payload;
 
-    let zimbraResult: Awaited<ReturnType<ZimbraService['verifyTwoFactor']>>;
+    let zimbraResult: ProviderAuthResult;
     try {
       zimbraResult = await this.zimbra.verifyTwoFactor(
         zimbraHost,
@@ -145,11 +146,11 @@ export class AuthService {
   private async createSession(
     email: string,
     originalHost: string,
-    zimbraResult: import('../zimbra/zimbra.service').ZimbraAuthResult,
+    zimbraResult: ProviderAuthResult,
     ctx: AuthContext,
     institution?: ResolvedInstitution,
   ) {
-    const effectiveHost = zimbraResult.refer ?? originalHost;
+    const effectiveHost = zimbraResult.redirectHost ?? originalHost;
     // Guard against a misconfigured/omitted Zimbra `lifetime`: if it were
     // falsy, NaN, or unreasonably small, tokenExpiry would land at or before
     // "now" — the very next request would fail JwtStrategy's expiresAt check,

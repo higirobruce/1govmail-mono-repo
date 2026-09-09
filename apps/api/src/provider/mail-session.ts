@@ -11,11 +11,13 @@ export interface MailSession {
 }
 
 /** The ONLY place User columns map to a provider session.
- *  `provider` is accepted but not yet read — it becomes the branch key in
- *  Phase 3, and staying optional lets call sites that hold a narrowed user
- *  projection (e.g. DocsService.sendInviteEmail) build a session too. */
+ *  `provider` is required but not yet read — it becomes the branch key in
+ *  Phase 3. Requiring it now (Task 9, Task 6 controller ruling) is what forces
+ *  every narrowed `select` that feeds a session to carry the column, so the
+ *  Phase 3 switch cannot be reached with the field silently absent. Call sites
+ *  holding a projection widen the projection (see DocsService.addInvite). */
 export function buildMailSession(
-  user: Pick<User, 'zimbraHost' | 'email' | 'authToken' | 'csrfToken'> & Partial<Pick<User, 'provider'>>,
+  user: Pick<User, 'zimbraHost' | 'email' | 'authToken' | 'csrfToken' | 'provider'>,
 ): MailSession {
   return {
     host: user.zimbraHost,

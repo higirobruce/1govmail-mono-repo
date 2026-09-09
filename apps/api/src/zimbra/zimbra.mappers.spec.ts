@@ -136,7 +136,7 @@ describe('mapZimbraFolder', () => {
     const f = mapZimbraFolder({ id: 17, name: 'Reports', absFolderPath: '/Reports', l: 2 } as any);
     expect(f).toEqual({
       id: '17', name: 'Reports', path: '/Reports',
-      unreadCount: 0, totalCount: 0, parentId: '2', view: undefined,
+      unreadCount: 0, totalCount: 0, parentId: '2', kind: undefined,
     });
   });
 
@@ -147,8 +147,22 @@ describe('mapZimbraFolder', () => {
     expect(nameless.path).toBe('/');
   });
 
-  it('carries the folder content class so callers can map it to their own folder type', () => {
-    expect(mapZimbraFolder({ id: '7', name: 'Contacts', view: 'contact' } as any).view).toBe('contact');
+  it('translates the Zimbra content class into the neutral folder kind', () => {
+    const kindOf = (view?: string) =>
+      mapZimbraFolder({ id: '7', name: 'F', view } as any).kind;
+
+    expect(kindOf('message')).toBe('mail');
+    expect(kindOf('contact')).toBe('contacts');
+    expect(kindOf('appointment')).toBe('calendar');
+    expect(kindOf('task')).toBe('tasks');
+    expect(kindOf('document')).toBe('documents');
+  });
+
+  it('leaves the kind unset for an absent or unrecognised content class', () => {
+    // MailService reads an unset kind as mail, which is what its old
+    // `default:` arm did for these — so the derived folder type is unchanged.
+    expect(mapZimbraFolder({ id: '7', name: 'F' } as any).kind).toBeUndefined();
+    expect(mapZimbraFolder({ id: '7', name: 'F', view: 'wiki' } as any).kind).toBeUndefined();
   });
 });
 

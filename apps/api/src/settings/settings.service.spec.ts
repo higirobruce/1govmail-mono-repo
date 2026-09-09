@@ -1,5 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { SettingsService } from './settings.service';
+import { ZimbraService } from '../zimbra/zimbra.service';
 
 function makePrisma() {
   return {
@@ -15,6 +16,10 @@ function makePrisma() {
 
 function makeZimbra() {
   return {
+    // The real declaration, not a hand-written literal — this is what makes the
+    // capabilities assertion below a test of the plumbing (provider declares →
+    // GET /settings forwards) rather than of a fixture.
+    capabilities: new ZimbraService().capabilities,
     getPrefs: jest.fn(),
     getIdentities: jest.fn(),
     getSignatures: jest.fn(),
@@ -25,8 +30,12 @@ function makeZimbra() {
     deleteSignature: jest.fn(),
     changePassword: jest.fn(),
     galSelfLookup: jest.fn(),
+    downloadZimbraPath: jest.fn(),
   } as any;
 }
+
+const zimbraCallsOnly = (zimbra: any) =>
+  Object.values(zimbra).filter((v: any) => typeof v?.mock === 'object');
 
 describe('SettingsService AI profile', () => {
   describe('getAiProfile', () => {
@@ -54,7 +63,7 @@ describe('SettingsService AI profile', () => {
           language: true,
         },
       });
-      expect(Object.values(zimbra).every((fn: any) => !fn.mock.calls.length)).toBe(true);
+      expect(zimbraCallsOnly(zimbra).every((fn: any) => !fn.mock.calls.length)).toBe(true);
     });
 
     it('returns the row shape when one exists', async () => {
@@ -78,7 +87,7 @@ describe('SettingsService AI profile', () => {
         department: 'IT',
         language: 'en',
       });
-      expect(Object.values(zimbra).every((fn: any) => !fn.mock.calls.length)).toBe(true);
+      expect(zimbraCallsOnly(zimbra).every((fn: any) => !fn.mock.calls.length)).toBe(true);
     });
   });
 
@@ -125,7 +134,7 @@ describe('SettingsService AI profile', () => {
         department: null,
         language: null,
       });
-      expect(Object.values(zimbra).every((fn: any) => !fn.mock.calls.length)).toBe(true);
+      expect(zimbraCallsOnly(zimbra).every((fn: any) => !fn.mock.calls.length)).toBe(true);
     });
 
     it('omits undefined fields from the upsert payload (partial update)', async () => {
@@ -220,5 +229,76 @@ describe('SettingsService AI profile', () => {
       expect(zimbra.getIdentities).not.toHaveBeenCalled();
       expect(zimbra.galSelfLookup).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('SettingsService getSettings', () => {
+  const baseUser = {
+    id: 'u1',
+    email: 'bruce@risa.gov.rw',
+    displayName: 'Bruce H.',
+    zimbraHost: 'zimbra.example.com',
+    authToken: 'tok',
+    csrfToken: 'csrf',
+  };
+
+  function arrange() {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue(baseUser);
+    const zimbra = makeZimbra();
+    zimbra.getPrefs.mockResolvedValue({ zimbraPrefDefaultSignatureId: 's1' });
+    zimbra.getIdentities.mockResolvedValue([
+      { id: 'i1', name: 'DEFAULT', attrs: { zimbraPrefFromDisplay: 'Bruce H.' } },
+    ]);
+    zimbra.getSignatures.mockResolvedValue([
+      { id: 's1', name: 'Work', contentHtml: '<p>hi</p>', contentText: 'hi' },
+    ]);
+    return { prisma, zimbra, service: new SettingsService(prisma, zimbra) };
+  }
+
+  it('exposes the provider capability flags', async () => {
+    const { service } = arrange();
+
+    const result = await service.getSettings('u1');
+
+    expect(result.capabilities).toEqual({
+      signatures: true,
+      identities: true,
+      serverPrefs: true,
+      changePassword: true,
+      twoFactor: true,
+    });
+  });
+
+  it('leaves the rest of the payload byte-identical to the pre-provider response', async () => {
+    const { service } = arrange();
+
+    const { capabilities, ...rest } = await service.getSettings('u1');
+
+    expect(capabilities).toBeDefined();
+    expect(rest).toEqual({
+      email: 'bruce@risa.gov.rw',
+      zimbraHost: 'zimbra.example.com',
+      displayName: 'Bruce H.',
+      prefs: { zimbraPrefDefaultSignatureId: 's1' },
+      identities: [{ id: 'i1', name: 'DEFAULT', attrs: { zimbraPrefFromDisplay: 'Bruce H.' } }],
+      signatures: [{ id: 's1', name: 'Work', contentHtml: '<p>hi</p>', contentText: 'hi' }],
+    });
+  });
+
+  it('reads prefs/identities/signatures off one MailSession built from the user row', async () => {
+    const { zimbra, service } = arrange();
+
+    await service.getSettings('u1');
+
+    const session = {
+      host: 'zimbra.example.com',
+      email: 'bruce@risa.gov.rw',
+      authToken: 'tok',
+      csrfToken: 'csrf',
+    };
+    expect(zimbra.getPrefs).toHaveBeenCalledWith(session);
+    expect(zimbra.getIdentities).toHaveBeenCalledWith(session);
+    expect(zimbra.getSignatures).toHaveBeenCalledWith(session);
   });
 });

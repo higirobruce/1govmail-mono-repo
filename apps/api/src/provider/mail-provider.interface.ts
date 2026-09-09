@@ -2,7 +2,7 @@ import { MailSession } from './mail-session';
 import {
   ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderContact,
   ProviderEvent, ProviderEventDetail, ProviderFreeBusy, ProviderAuthResult,
-  MailProviderCapabilities, ProviderAddress,
+  MailProviderCapabilities, ProviderAddress, ProviderIdentity, ProviderSignature,
 } from './provider-types';
 
 export interface SendMessagePayload {
@@ -38,7 +38,17 @@ export interface MailProvider {
 
   // auth
   authenticate(host: string, email: string, password: string): Promise<ProviderAuthResult>;
-  verifyTwoFactor(host: string, email: string, code: string, tempToken: string): Promise<ProviderAuthResult>;
+  /**
+   * Second leg of a two-factor login. Task 9 adjustment: Task 5 declared the
+   * trailing pair as `(code, tempToken)`, but the implementation and its only
+   * caller pass the challenge token first — `preAuthToken` is what the first
+   * leg handed back, `twoFactorCode` is what the user typed. Argument order
+   * corrected (and the names spelled out) rather than swapped at the call
+   * site, which would have silently sent the code as the token.
+   */
+  verifyTwoFactor(
+    host: string, email: string, preAuthToken: string, twoFactorCode: string,
+  ): Promise<ProviderAuthResult>;
 
   // folders
   getFolders(s: MailSession): Promise<ProviderFolder[]>;
@@ -123,11 +133,18 @@ export interface MailProvider {
   // settings-surface (capability-gated; EWS throws CapabilityNotSupportedError)
   getPrefs(s: MailSession): Promise<Record<string, string>>;
   modifyPrefs(s: MailSession, prefs: Record<string, string>): Promise<void>;
-  getIdentities(s: MailSession): Promise<unknown[]>;
-  modifyIdentity(s: MailSession, id: string, attrs: Record<string, unknown>): Promise<void>;
-  getSignatures(s: MailSession): Promise<unknown[]>;
+  getIdentities(s: MailSession): Promise<ProviderIdentity[]>;
+  /**
+   * Task 9 adjustment: `attrs` was `Record<string, unknown>`; the values are
+   * always strings (PATCH /settings/identity/:id body, provider attribute
+   * values) and the Zimbra implementation filters empty strings out of them,
+   * which `unknown` cannot express.
+   */
+  modifyIdentity(s: MailSession, id: string, attrs: Record<string, string>): Promise<void>;
+  getSignatures(s: MailSession): Promise<ProviderSignature[]>;
   createSignature(s: MailSession, name: string, contentHtml: string): Promise<string>;
   modifySignature(s: MailSession, id: string, name: string, contentHtml: string): Promise<void>;
   deleteSignature(s: MailSession, id: string): Promise<void>;
+  /** The account to change is `s.email` — it is never a different one. */
   changePassword(s: MailSession, oldPassword: string, newPassword: string): Promise<void>;
 }

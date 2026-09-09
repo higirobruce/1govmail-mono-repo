@@ -79,7 +79,7 @@ describe('MailService.enforceSenderRules', () => {
   // owns the User→session mapping via buildMailSession.
   const user = buildMailSession({
     zimbraHost: 'mail.example.com', email: 'u@example.com',
-    authToken: 'tok', csrfToken: 'csrf',
+    authToken: 'tok', csrfToken: 'csrf', provider: 'zimbra',
   });
   const message = { id: 'm1', zimbraId: 'z1', fromEmail: 'spam@evil.com', folderId: 'inbox-id' };
 

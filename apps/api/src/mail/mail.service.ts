@@ -3,7 +3,7 @@ import { deriveLabel, formatAttachments, mdToHtml, type ExtractedCard, type Tria
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { MailSession, buildMailSession } from '../provider/mail-session';
-import { ProviderAttachmentMeta } from '../provider/provider-types';
+import { ProviderAttachmentMeta, ProviderFolderKind } from '../provider/provider-types';
 import { NotificationsService } from '../notifications/notifications.service';
 import { TasksService } from '../tasks/tasks.service';
 import { matchSenderRule, type SenderRuleLike } from './sender-rule-matcher';
@@ -109,13 +109,19 @@ export class MailService {
     return user;
   }
 
-  private folderViewToType(view?: string): 'MAIL' | 'CONTACTS' | 'CALENDAR' | 'TASKS' | 'BRIEFCASE' {
-    switch (view) {
-      case 'contact':     return 'CONTACTS';
-      case 'appointment': return 'CALENDAR';
-      case 'task':        return 'TASKS';
-      case 'document':    return 'BRIEFCASE';
-      default:            return 'MAIL';
+  /** Neutral folder content class → this app's FolderType enum. The provider's
+   *  own content-class vocabulary never reaches here (see
+   *  ZIMBRA_VIEW_TO_KIND); an absent kind means "the provider did not say",
+   *  which is mail. */
+  private folderKindToType(
+    kind?: ProviderFolderKind,
+  ): 'MAIL' | 'CONTACTS' | 'CALENDAR' | 'TASKS' | 'BRIEFCASE' {
+    switch (kind) {
+      case 'contacts':  return 'CONTACTS';
+      case 'calendar':  return 'CALENDAR';
+      case 'tasks':     return 'TASKS';
+      case 'documents': return 'BRIEFCASE';
+      default:          return 'MAIL';
     }
   }
 
@@ -142,7 +148,7 @@ export class MailService {
     const saved: any[] = [];
     for (const f of providerFolders) {
       try {
-        const folderType = this.folderViewToType(f.view);
+        const folderType = this.folderKindToType(f.kind);
         const folder = await this.prisma.folder.upsert({
           where: { userId_zimbraId: { userId, zimbraId: f.id } },
           update: {
@@ -1162,10 +1168,11 @@ export class MailService {
   async getDefaultSignatureHtml(userId: string): Promise<string> {
     try {
       const user = await this.getUser(userId);
+      const session = buildMailSession(user);
       const [prefs, identities, signatures] = await Promise.all([
-        this.zimbra.getPrefs(user.zimbraHost, user.authToken!, user.csrfToken ?? undefined),
-        this.zimbra.getIdentities(user.zimbraHost, user.authToken!, user.csrfToken ?? undefined),
-        this.zimbra.getSignatures(user.zimbraHost, user.authToken!, user.csrfToken ?? undefined),
+        this.zimbra.getPrefs(session),
+        this.zimbra.getIdentities(session),
+        this.zimbra.getSignatures(session),
       ]);
       if (!signatures.length) return '';
 

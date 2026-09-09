@@ -345,7 +345,14 @@ export class DocsService {
     const doc = await this.verifyOwnership(userId, docId);
     const inviter = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true, displayName: true, zimbraHost: true, authToken: true, csrfToken: true },
+      // `provider` is here only because buildMailSession requires it (Task 9):
+      // sendInviteEmail builds a session off this projection, and the column
+      // is the Phase 3 branch key, so a session must never be built from a
+      // row that omitted it.
+      select: {
+        email: true, displayName: true, zimbraHost: true,
+        authToken: true, csrfToken: true, provider: true,
+      },
     });
     if (!inviter) throw new NotFoundException('User not found');
 
@@ -787,7 +794,10 @@ export class DocsService {
   }
 
   private async sendInviteEmail(
-    inviter: { displayName: string | null; email: string; zimbraHost: string; authToken: string | null; csrfToken: string | null },
+    inviter: {
+      displayName: string | null; email: string; zimbraHost: string;
+      authToken: string | null; csrfToken: string | null; provider: string;
+    },
     toEmail: string,
     docTitle: string,
     role: InviteRole,

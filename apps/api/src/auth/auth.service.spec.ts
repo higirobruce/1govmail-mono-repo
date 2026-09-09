@@ -49,7 +49,7 @@ describe('AuthService.login', () => {
       csrfToken: 'csrf',
       lifetime: 3_600_000,
       displayName: 'Test User',
-      refer: undefined,
+      redirectHost: undefined,
     });
     prisma.user.upsert.mockResolvedValue({
       id: 'u1', email: 'u1@example.com', displayName: 'Test User', zimbraHost: 'mail.example.com',
@@ -79,7 +79,7 @@ describe('AuthService.login', () => {
       csrfToken: 'csrf',
       lifetime: 3_600_000,
       displayName: 'Test User',
-      refer: undefined,
+      redirectHost: undefined,
     });
     prisma.user.upsert.mockResolvedValue({
       id: 'u1', email: 'u1@example.com', displayName: 'Test User', zimbraHost: 'mail.example.com',
@@ -122,7 +122,7 @@ describe('AuthService.login lifetime guard', () => {
       csrfToken: 'csrf',
       lifetime,
       displayName: 'Test User',
-      refer: undefined,
+      redirectHost: undefined,
     });
     prisma.user.upsert.mockResolvedValue({
       id: 'u1', email: 'u1@example.com', displayName: 'Test User', zimbraHost: 'mail.example.com',
@@ -149,7 +149,7 @@ describe('AuthService.login lifetime guard', () => {
       csrfToken: 'csrf',
       lifetime,
       displayName: 'Test User',
-      refer: undefined,
+      redirectHost: undefined,
     });
     prisma.user.upsert.mockResolvedValue({
       id: 'u1', email: 'u1@example.com', displayName: 'Test User', zimbraHost: 'mail.example.com',
@@ -173,7 +173,7 @@ describe('AuthService.login institution resolution', () => {
       csrfToken: 'csrf',
       lifetime: 3_600_000,
       displayName: 'Test User',
-      refer: undefined,
+      redirectHost: undefined,
     });
     prisma.user.upsert.mockResolvedValue({
       id: 'u1', email: 'u@risa.gov.rw', displayName: 'Test User', zimbraHost: 'mail.risa.gov.rw:8443',
@@ -203,7 +203,7 @@ describe('AuthService.login institution resolution', () => {
       csrfToken: 'csrf',
       lifetime: 3_600_000,
       displayName: 'Test User',
-      refer: undefined,
+      redirectHost: undefined,
     });
     prisma.user.upsert.mockResolvedValue({
       id: 'u1', email: 'u@risa.gov.rw', displayName: 'Test User', zimbraHost: 'mail.risa.gov.rw:8443',
@@ -245,7 +245,7 @@ describe('AuthService.loginTwoFactor', () => {
       csrfToken: 'csrf',
       lifetime: 3_600_000,
       displayName: 'Test User',
-      refer: undefined,
+      redirectHost: undefined,
     });
     prisma.user.upsert.mockResolvedValue({
       id: 'u1', email: 'u@risa.gov.rw', displayName: 'Test User', zimbraHost: 'mail.risa.gov.rw:8443',
@@ -279,7 +279,7 @@ describe('AuthService.loginTwoFactor', () => {
       csrfToken: 'csrf',
       lifetime: 3_600_000,
       displayName: 'Test User',
-      refer: undefined,
+      redirectHost: undefined,
     });
     prisma.user.upsert.mockResolvedValue({
       id: 'u1', email: 'u1@example.com', displayName: 'Test User', zimbraHost: 'mail.example.com',

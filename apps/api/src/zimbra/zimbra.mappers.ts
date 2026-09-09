@@ -6,6 +6,7 @@ import {
   ProviderEventAttendee,
   ProviderEventDetail,
   ProviderFolder,
+  ProviderFolderKind,
   ProviderFreeBusy,
   ProviderMessage,
 } from '../provider/provider-types';
@@ -154,6 +155,24 @@ export function mapZimbraMessage(raw: ZimbraMessage): ProviderMessage {
 
 // ─── Folders ─────────────────────────────────────────────────────────────────
 
+/**
+ * Zimbra's `view` attribute → the neutral ProviderFolderKind. This table is
+ * the ONLY place the Zimbra content-class literals appear; MailService
+ * switches on the neutral value.
+ *
+ * An unlisted or absent `view` maps to `undefined`, which MailService treats
+ * as mail — the same FolderType.MAIL its old `default:` arm produced for
+ * 'message', for an absent view, and for any view Zimbra might add later. The
+ * derived folder `type` in the REST response is therefore unchanged.
+ */
+const ZIMBRA_VIEW_TO_KIND: Record<string, ProviderFolderKind> = {
+  message:     'mail',
+  contact:     'contacts',
+  appointment: 'calendar',
+  task:        'tasks',
+  document:    'documents',
+};
+
 export function mapZimbraFolder(raw: ZimbraFolder): ProviderFolder {
   return {
     id: String(raw.id),              // Zimbra may return numeric IDs
@@ -162,7 +181,7 @@ export function mapZimbraFolder(raw: ZimbraFolder): ProviderFolder {
     unreadCount: typeof raw.u === 'number' ? raw.u : 0,
     totalCount: typeof raw.n === 'number' ? raw.n : 0,
     parentId: raw.l != null ? String(raw.l) : undefined,
-    view: raw.view ?? undefined,
+    kind: raw.view ? ZIMBRA_VIEW_TO_KIND[raw.view] : undefined,
   };
 }
 

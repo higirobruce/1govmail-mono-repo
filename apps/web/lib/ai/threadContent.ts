@@ -33,10 +33,10 @@ const DEFAULT_MAX_MESSAGES = 10;
 const PER_MESSAGE_MAX_CHARS = 2000;
 /**
  * Total character budget for the joined text handed to the model. Per-message
- * caps alone allow up to MAX_MESSAGES * PER_MESSAGE_MAX_CHARS (~20k) — enough
+ * caps alone allow up to DEFAULT_MAX_MESSAGES * PER_MESSAGE_MAX_CHARS (~20k) — enough
  * to risk context overflow / silent front-truncation on small local models —
  * so the joined result is additionally capped here by dropping the oldest
- * blocks first, same "newest survives" bias as the MAX_MESSAGES cap above.
+ * blocks first, same "newest survives" bias as the DEFAULT_MAX_MESSAGES cap above.
  */
 const DEFAULT_TOTAL_CHAR_BUDGET = 12000;
 /**

@@ -177,7 +177,7 @@ describe('gatherThreadContent budget options', () => {
     expect(fetched.sort()).toEqual(['m6', 'm7', 'm8']);
   });
 
-  it('PINNED_THREAD_CHAR_BUDGET is 6000 and smaller than the default', async () => {
+  it('PINNED_THREAD_CHAR_BUDGET is 6000 and default path unchanged', async () => {
     const messages = Array.from({ length: 3 }, (_, i) => meta(i + 1));
     const deps = makeDeps({ getConversation: async () => ({ conversationId: 'c1', messages }) });
     expect(PINNED_THREAD_CHAR_BUDGET).toBe(6000);

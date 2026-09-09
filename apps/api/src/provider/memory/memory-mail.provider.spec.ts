@@ -1,6 +1,7 @@
 import { MemoryMailProvider } from './memory-mail.provider';
 import { MemoryStore } from './memory-store';
 import { UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { MailProvider } from '../mail-provider.interface';
 
 const NOW = 1757500000000;
 function setup() {
@@ -501,5 +502,121 @@ describe('MemoryMailProvider — contacts, GAL, calendar, free/busy', () => {
     const s = sessionFor('demo@memory.local');
     const fb = await provider.getFreeBusy(s, 'unseeded@memory.local', NOW - 7 * 864e5, NOW + 7 * 864e5);
     expect(fb).toEqual({ busy: [], tentative: [], unavailable: [] });
+  });
+});
+
+describe('MemoryMailProvider — settings surface (prefs, identities, signatures, password)', () => {
+  it('implements MailProvider structurally', async () => {
+    const { provider } = setup();
+    const _p: MailProvider = provider;
+    expect(_p.name).toBe('memory');
+  });
+
+  it('getPrefs returns the seeded prefs; modifyPrefs merges into them', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+
+    const prefs = await provider.getPrefs(s);
+    expect(prefs.zimbraPrefComposeFormat).toBe('html');
+
+    await provider.modifyPrefs(s, { zimbraPrefComposeFormat: 'text', zimbraPrefNewPref: 'v' });
+    const after = await provider.getPrefs(s);
+    expect(after.zimbraPrefComposeFormat).toBe('text');
+    expect(after.zimbraPrefNewPref).toBe('v');
+    // merge, not replace — untouched keys survive
+    expect(after.zimbraPrefGroupMailBy).toBe('conversation');
+  });
+
+  it('getIdentities returns the seeded identities; modifyIdentity merges attrs; unknown id rejects with NotFoundException', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+
+    const identities = await provider.getIdentities(s);
+    expect(identities.length).toBeGreaterThan(0);
+    const target = identities[0];
+
+    await provider.modifyIdentity(s, target.id, { zimbraPrefFromDisplay: 'New Display' });
+    const mbox = store.get('demo@memory.local')!;
+    const updated = mbox.identities.find((i) => i.id === target.id)!;
+    expect(updated.attrs.zimbraPrefFromDisplay).toBe('New Display');
+    // merge — other attrs survive
+    expect(updated.attrs.zimbraPrefFromAddress).toBe('demo@memory.local');
+
+    await expect(
+      provider.modifyIdentity(s, 'ident-does-not-exist', { zimbraPrefFromDisplay: 'x' }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('getSignatures returns the seeded signatures; createSignature adds one that appears in getSignatures', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+
+    const beforeCount = (await provider.getSignatures(s)).length;
+    expect(beforeCount).toBeGreaterThan(0);
+
+    const id = await provider.createSignature(s, 'Work', '<p>Work sig</p>');
+    expect(typeof id).toBe('string');
+
+    const after = await provider.getSignatures(s);
+    expect(after.length).toBe(beforeCount + 1);
+    expect(after.some((sig) => sig.id === id && sig.name === 'Work')).toBe(true);
+    expect(store.get('demo@memory.local')!.signatures.some((sig) => sig.id === id)).toBe(true);
+  });
+
+  it('modifySignature mutates an existing signature; unknown id rejects with NotFoundException', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const target = mbox.signatures[0];
+
+    await provider.modifySignature(s, target.id, 'Renamed', '<p>Renamed body</p>');
+    const updated = mbox.signatures.find((sig) => sig.id === target.id)!;
+    expect(updated.name).toBe('Renamed');
+    expect(updated.contentHtml).toBe('<p>Renamed body</p>');
+
+    await expect(
+      provider.modifySignature(s, 'sig-does-not-exist', 'x', '<p>x</p>'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('deleteSignature removes a signature; unknown id rejects with NotFoundException', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const target = mbox.signatures[0];
+
+    await provider.deleteSignature(s, target.id);
+    expect(mbox.signatures.some((sig) => sig.id === target.id)).toBe(false);
+
+    await expect(provider.deleteSignature(s, 'sig-does-not-exist')).rejects.toThrow(NotFoundException);
+  });
+
+  it('changePassword updates the stored mailbox password, and a subsequent authenticate with the new password still succeeds', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'oldpw');
+    const s = sessionFor('demo@memory.local');
+
+    await provider.changePassword(s, 'oldpw', 'newpw');
+    expect(store.get('demo@memory.local')!.password).toBe('newpw');
+
+    const res = await provider.authenticate('memory.local', 'demo@memory.local', 'newpw');
+    expect(res.authToken).toBeTruthy();
+    expect(store.get('demo@memory.local')!.password).toBe('newpw');
+  });
+
+  it('none of the settings-surface methods throw CapabilityNotSupportedError', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    await expect(provider.getPrefs(s)).resolves.toBeDefined();
+    await expect(provider.modifyPrefs(s, {})).resolves.toBeUndefined();
+    await expect(provider.getIdentities(s)).resolves.toBeDefined();
+    await expect(provider.getSignatures(s)).resolves.toBeDefined();
+    await expect(provider.changePassword(s, 'x', 'y')).resolves.toBeUndefined();
   });
 });

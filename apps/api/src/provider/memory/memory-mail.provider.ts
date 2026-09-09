@@ -4,11 +4,11 @@ import { MailSession } from '../mail-session';
 import {
   ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderAddress, ProviderAttachmentMeta,
   ProviderAuthResult, MailProviderCapabilities, ProviderContact, ProviderEvent, ProviderEventDetail,
-  ProviderFreeBusy,
+  ProviderFreeBusy, ProviderIdentity, ProviderSignature,
 } from '../provider-types';
 import { MemoryStore, MemoryMailbox } from './memory-store';
 import {
-  SendMessagePayload, DraftPayload, CalendarEventPayload, ModifyCalendarEventPayload,
+  MailProvider, SendMessagePayload, DraftPayload, CalendarEventPayload, ModifyCalendarEventPayload,
 } from '../mail-provider.interface';
 
 let folderCounter = 0;
@@ -47,15 +47,21 @@ function nextEventId(): string {
   return `event-custom-${eventCounter}`;
 }
 
+let signatureCounter = 0;
+function nextSignatureId(): string {
+  signatureCounter += 1;
+  return `sig-custom-${signatureCounter}`;
+}
+
 /**
  * In-memory `MailProvider` implementation backing the demo/dev "memory"
- * account type. Task 2 implements auth + folders + message reads; Tasks 3-5
- * add the remaining MailProvider methods to this same class. Not yet declared
- * `implements MailProvider` — see Task 1 ruling: with methods still missing
- * that would fail to compile. Method signatures below match the interface
- * exactly so Task 5's `implements` clause typechecks with no further changes.
+ * account type. Task 2 implements auth + folders + message reads; Tasks 3-4
+ * added messages/contacts/calendar; Task 5 adds the settings surface
+ * (prefs/identities/signatures/password) and declares `implements
+ * MailProvider` — every method now exists with a signature matching the
+ * interface exactly, so this compiles with no further changes.
  */
-export class MemoryMailProvider {
+export class MemoryMailProvider implements MailProvider {
   readonly name = 'memory' as const;
   readonly capabilities: MailProviderCapabilities = {
     signatures: true,
@@ -510,6 +516,66 @@ export class MemoryMailProvider {
       .map((e) => ({ s: e.startAt.getTime(), e: e.endAt.getTime() }))
       .sort((a, b) => a.s - b.s);
     return { busy, tentative: [], unavailable: [] };
+  }
+
+  // ---- settings surface (prefs, identities, signatures, password) ---------------
+
+  async getPrefs(s: MailSession): Promise<Record<string, string>> {
+    return this.mb(s).prefs;
+  }
+
+  async modifyPrefs(s: MailSession, prefs: Record<string, string>): Promise<void> {
+    const mailbox = this.mb(s);
+    Object.assign(mailbox.prefs, prefs);
+  }
+
+  async getIdentities(s: MailSession): Promise<ProviderIdentity[]> {
+    return this.mb(s).identities;
+  }
+
+  async modifyIdentity(s: MailSession, id: string, attrs: Record<string, string>): Promise<void> {
+    const mailbox = this.mb(s);
+    const existing = mailbox.identities.find((i) => i.id === id);
+    if (!existing) throw new NotFoundException('Identity not found');
+    Object.assign(existing.attrs, attrs);
+  }
+
+  async getSignatures(s: MailSession): Promise<ProviderSignature[]> {
+    return this.mb(s).signatures;
+  }
+
+  async createSignature(s: MailSession, name: string, contentHtml: string): Promise<string> {
+    const mailbox = this.mb(s);
+    const id = nextSignatureId();
+    const signature: ProviderSignature = {
+      id,
+      name,
+      contentHtml,
+      contentText: this.toSnippet(contentHtml),
+    };
+    mailbox.signatures.push(signature);
+    return id;
+  }
+
+  async modifySignature(s: MailSession, id: string, name: string, contentHtml: string): Promise<void> {
+    const mailbox = this.mb(s);
+    const existing = mailbox.signatures.find((sig) => sig.id === id);
+    if (!existing) throw new NotFoundException('Signature not found');
+    existing.name = name;
+    existing.contentHtml = contentHtml;
+    existing.contentText = this.toSnippet(contentHtml);
+  }
+
+  async deleteSignature(s: MailSession, id: string): Promise<void> {
+    const mailbox = this.mb(s);
+    const idx = mailbox.signatures.findIndex((sig) => sig.id === id);
+    if (idx === -1) throw new NotFoundException('Signature not found');
+    mailbox.signatures.splice(idx, 1);
+  }
+
+  async changePassword(s: MailSession, _oldPassword: string, newPassword: string): Promise<void> {
+    const mailbox = this.mb(s);
+    mailbox.password = newPassword;
   }
 
   // ---- private helpers ----------------------------------------------------------

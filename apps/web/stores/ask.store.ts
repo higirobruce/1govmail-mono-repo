@@ -2,7 +2,27 @@
 
 import { create } from 'zustand';
 
-export interface AskScope { docId: string; docTitle: string }
+export interface AskDocScope { kind: 'doc'; docId: string; docTitle: string }
+
+/**
+ * "Ask about this thread" — the thread is pinned as guaranteed context while
+ * the rest of the mailbox stays reachable, unless `locked`. Unlike a doc
+ * scope this rides the AGENT path, not retrieval: see threadPin.ts.
+ */
+export interface AskThreadScope {
+  kind: 'thread';
+  /** Thread identity. Null for a message that is not part of a conversation — seedMessageId is then the identity. */
+  conversationId: string | null;
+  /** The message the ask started from; gatherThreadContent resolves the thread through it. */
+  seedMessageId: string;
+  subject: string | null;
+  /** True thread length. May exceed what actually gets pinned once budgeted. */
+  messageCount: number;
+  /** "this thread only" — narrows the agent's tools server-side. */
+  locked: boolean;
+}
+
+export type AskScope = AskDocScope | AskThreadScope;
 
 /**
  * A "open this source here" signal for the page the user is already on.
@@ -45,6 +65,8 @@ interface AskState {
   close: () => void;
   /** Clears scope only — keeps the panel open. */
   clearScope: () => void;
+  /** Flips "this thread only". No-op unless the current scope is a thread scope. */
+  toggleScopeLock: () => void;
   /** Registers (or clears, with null) the mail page's in-page handlers. */
   setHandlers: (handlers: AskHandlers | null) => void;
   /** Publishes a same-route open request; replaces any unconsumed one. */
@@ -69,6 +91,9 @@ export const useAskStore = create<AskState>((set) => ({
   collapse: () => set({ collapsed: true }),
   close: () => set({ open: false, collapsed: false, scope: null, prefill: null }),
   clearScope: () => set({ scope: null }),
+  toggleScopeLock: () => set((s) => (
+    s.scope?.kind === 'thread' ? { scope: { ...s.scope, locked: !s.scope.locked } } : {}
+  )),
   setHandlers: (handlers) => set({ handlers }),
   setOpenTarget: (target) => set({ openTarget: target }),
   clearOpenTarget: () => set({ openTarget: null }),

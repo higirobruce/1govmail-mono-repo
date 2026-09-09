@@ -971,7 +971,7 @@ export function DocsEditor({
                     <button
                       type="button"
                       title="Ask this document"
-                      onClick={() => openAsk({ scope: { docId, docTitle: title } })}
+                      onClick={() => openAsk({ scope: { kind: 'doc', docId, docTitle: title } })}
                       className="p-1.5 rounded-md transition-colors text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                     >
                       <MessageCircleQuestion className="w-4 h-4" />

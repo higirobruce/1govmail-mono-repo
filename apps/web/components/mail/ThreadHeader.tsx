@@ -108,7 +108,9 @@ export default function ThreadHeader({
           <div className="flex-1" />
           <span
             className={cn(
-              'text-micro px-2 py-0.5 rounded-full shrink-0 font-medium whitespace-nowrap',
+              // Truncatable (not shrink-0): if the row still gets tight, the status
+              // text gives way instead of pushing the action buttons off-screen.
+              'text-micro px-2 py-0.5 rounded-full font-medium min-w-0 truncate',
               status.className,
             )}
           >
@@ -146,9 +148,11 @@ export default function ThreadHeader({
                   : 'bg-primary/10 text-primary hover:bg-primary/20',
               )}
               aria-label="Summarize"
+              title="Summarize"
             >
               <ScrollText className={cn('w-3.5 h-3.5', summarizing && 'animate-pulse')} />
-              Summarize
+              {/* Icon-only below sm — the labeled pills don't fit a phone-width toolbar */}
+              <span className="hidden sm:inline">Summarize</span>
             </button>
           )}
           {onDraftDoc && (
@@ -162,9 +166,10 @@ export default function ThreadHeader({
                   : 'bg-primary/10 text-primary hover:bg-primary/20',
               )}
               aria-label="Draft doc"
+              title="Draft doc"
             >
               <FileText className={cn('w-3.5 h-3.5', drafting && 'animate-pulse')} />
-              Draft doc
+              <span className="hidden sm:inline">Draft doc</span>
             </button>
           )}
           {onQuickReply && (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square,
@@ -9,7 +9,9 @@ import {
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
 import { renderInline, splitBlocks } from './answerFormat';
 import { streamAsk, type AskSource, type AskSourceType, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
-import { streamAgent, mergeSources, type AgentStep, type AgentProposal, type AgentChartSpec, type AgentClarify } from '@/lib/ai/agent';
+import { streamAgent, mergeSources, type AgentStep, type AgentProposal, type AgentChartSpec, type AgentClarify, type PinnedAck } from '@/lib/ai/agent';
+import { usesRetrievalPath, historyLimitFor, buildPinned, type PinnedPayload } from '@/lib/ai/threadPin';
+import { gatherThreadContent, PINNED_THREAD_CHAR_BUDGET } from '@/lib/ai/threadContent';
 import { sourceHref } from '@/lib/ai/sourceNav';
 import { scrubOutput } from '@/lib/ai/prompt';
 import { useCharStream } from '@/lib/ai/useCharStream';
@@ -20,7 +22,10 @@ import AgentSteps from '@/components/ai/AgentSteps';
 import AgentChart from '@/components/ai/AgentChart';
 import ProposalCard from '@/components/ai/ProposalCard';
 import ClarifyCard from '@/components/ai/ClarifyCard';
-import { useAskStore, type LinkedCommitment } from '@/stores/ask.store';
+import ThreadScopeChip from './ThreadScopeChip';
+import { useAskStore, type LinkedCommitment, type AskDocScope, type AskThreadScope } from '@/stores/ask.store';
+import { api } from '@/lib/api';
+import { fetchBodyCached } from '@/lib/mailBodyCache';
 import { useResizable } from '@/hooks/useResizable';
 import { ResizeHandle } from '@/components/layout/ResizeHandle';
 
@@ -38,11 +43,9 @@ interface AnswerTurn {
 interface QuestionTurn { role: 'user'; content: string }
 type Turn = QuestionTurn | AnswerTurn;
 
-const MAX_SENT_TURNS = 12; // mirror of the API's ArrayMaxSize — last 6 exchanges
-// Agent turns get a shorter history: long transcripts are what push qwen3 into
-// answering from context without calling tools (observed live 2026-09-06 —
-// fabricated docs/ids/addresses). 6 turns = 3 exchanges is plenty for follow-ups.
-const MAX_AGENT_TURNS = 6;
+// The turn budgets and the routing rule live in lib/ai/threadPin.ts — one
+// definition, directly unit-tested (a thread scope must inherit the agent's
+// shorter history, not the doc-scoped retrieval one).
 
 const EXAMPLE_QUESTIONS = [
   'What did finance say about the budget?',
@@ -53,6 +56,12 @@ const EXAMPLE_QUESTIONS = [
 const SCOPED_EXAMPLE_QUESTIONS = [
   'Summarize the key decisions',
   'What action items are in here?',
+];
+
+const THREAD_EXAMPLE_QUESTIONS = [
+  'Summarize where this stands',
+  'What am I on the hook for?',
+  'Draft a reply',
 ];
 
 const SOURCE_TYPE_ICON: Record<AskSourceType, typeof Mail> = {
@@ -302,6 +311,7 @@ export default function AskPanel() {
   const collapseStore = useAskStore((s) => s.collapse);
   const closeStore = useAskStore((s) => s.close);
   const clearScope = useAskStore((s) => s.clearScope);
+  const toggleScopeLock = useAskStore((s) => s.toggleScopeLock);
   const setOpenTarget = useAskStore((s) => s.setOpenTarget);
 
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -327,9 +337,48 @@ export default function AskPanel() {
   const liveClarifyRef = useRef<AgentClarify | null>(null);
   const [liveSteps, setLiveSteps] = useState<AgentStep[]>([]);
   const [liveProposals, setLiveProposals] = useState<AgentProposal[]>([]);
+  // Pinned thread text is gathered ONCE per thread, on the first send — never
+  // on open, because opening the panel from a list row would otherwise cost up
+  // to ten body fetches for a panel the user may immediately close.
+  const pinCacheRef = useRef<{ seedMessageId: string; text: string; messageIds: string[] } | null>(null);
+  // How much of the pin actually reached the model, per the server's ack.
+  const [pinnedAck, setPinnedAck] = useState<PinnedAck | null>(null);
 
   useEffect(() => { if (open && prefill) setInput(prefill); }, [open, prefill]);
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // A different thread (or no thread at all) invalidates both the gathered
+  // text and the server's ack about it.
+  useEffect(() => {
+    if (scope?.kind !== 'thread') { pinCacheRef.current = null; setPinnedAck(null); return; }
+    if (pinCacheRef.current && pinCacheRef.current.seedMessageId !== scope.seedMessageId) {
+      pinCacheRef.current = null;
+      setPinnedAck(null);
+    }
+  }, [scope]);
+
+  const ensurePinned = useCallback(async (s: AskThreadScope) => {
+    if (pinCacheRef.current?.seedMessageId === s.seedMessageId) return pinCacheRef.current;
+    // The conversation is fetched by the gatherer itself; capturing it as it
+    // passes through keeps this to ONE conversation request while still
+    // yielding the thread's message ids for the pinned payload.
+    let messageIds: string[] = [];
+    const { text } = await gatherThreadContent(
+      s.seedMessageId,
+      {
+        getConversation: async (id) => {
+          const conv = await api.mail.getConversation(id);
+          messageIds = conv.messages.map((m: { id: string }) => m.id);
+          return conv;
+        },
+        getBody: (id: string) => fetchBodyCached(id, api.mail.getMessage),
+      },
+      { totalCharBudget: PINNED_THREAD_CHAR_BUDGET },
+    );
+    const entry = { seedMessageId: s.seedMessageId, text, messageIds };
+    pinCacheRef.current = entry;
+    return entry;
+  }, []);
 
   // Escape closes — consistent with CommitmentsPanel/BriefingPanel.
   useEffect(() => {
@@ -370,7 +419,7 @@ export default function AskPanel() {
         : t.content
       ).slice(0, 4000),
     })), { role: 'user', content: q }]
-      .slice(-(scope ? MAX_SENT_TURNS : MAX_AGENT_TURNS)) as AskTurn[];
+      .slice(-historyLimitFor(scope)) as AskTurn[];
     setTurns((prev) => [...prev, { role: 'user', content: q }]);
     setStreaming(true);
     setPendingSources([]);
@@ -396,11 +445,26 @@ export default function AskPanel() {
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      // Routing: "Ask this document" keeps the scoped retrieval path — /ai/agent
-      // has no doc-scoped mode in v1. Every unscoped turn goes to the agent.
-      const raw = scope
+      // Routing by scope VARIANT: "Ask this document" keeps the scoped
+      // retrieval path — /ai/agent has no doc-scoped mode in v1 — while a
+      // pinned thread rides the agent so its tools stay live. Unscoped goes
+      // to the agent as before.
+      let pinned: PinnedPayload | null = null;
+      if (scope?.kind === 'thread') {
+        try {
+          const entry = await ensurePinned(scope);
+          pinned = buildPinned(scope, { text: entry.text, messageIds: entry.messageIds });
+        } catch {
+          // A thread we could not read is not a reason to lose the question —
+          // send it unpinned; the agent still has get_thread.
+          pinned = null;
+          setError('Could not load this thread — answering without it pinned.');
+        }
+      }
+      const raw = usesRetrievalPath(scope)
         ? await streamAsk(history, {
-            scope: { docId: scope.docId },
+            // Safe cast: usesRetrievalPath is true only for a doc scope.
+            scope: { docId: (scope as AskDocScope).docId },
             signal: ac.signal,
             onSources: (sources, degraded) => {
               pendingSourcesRef.current = sources;
@@ -411,6 +475,8 @@ export default function AskPanel() {
             onChunk: (delta) => stream.push(delta),
           })
         : await streamAgent(history, {
+            pinned,
+            onPinned: setPinnedAck,
             signal: ac.signal,
             onChunk: (delta) => {
               segRef.current += delta;
@@ -457,7 +523,7 @@ export default function AskPanel() {
       // Agent turns: the answer is the FINAL segment only — earlier segments
       // were folded into the step timeline above. Scoped turns have no steps,
       // so segRef never resets and this is a no-op there (raw === segment).
-      const clean = scrubOutput(scope ? raw : (segRef.current.trim() || raw));
+      const clean = scrubOutput(usesRetrievalPath(scope) ? raw : (segRef.current.trim() || raw));
       stream.replace(clean);
       setTurns((prev) => [...prev, {
         role: 'assistant',
@@ -512,7 +578,11 @@ export default function AskPanel() {
 
   if (!open) return null;
 
-  const exampleQuestions = scope ? SCOPED_EXAMPLE_QUESTIONS : EXAMPLE_QUESTIONS;
+  const exampleQuestions = scope?.kind === 'thread'
+    ? THREAD_EXAMPLE_QUESTIONS
+    : scope
+      ? SCOPED_EXAMPLE_QUESTIONS
+      : EXAMPLE_QUESTIONS;
   const openCommitments = handlers?.linkedCommitments ?? [];
 
   return (
@@ -571,8 +641,8 @@ export default function AskPanel() {
         </button>
       </div>
 
-      {/* Scope chip */}
-      {scope && (
+      {/* Scope chip — one per variant, same row shell for both. */}
+      {scope?.kind === 'doc' && (
         <div className="flex items-center gap-1.5 px-4 pt-2.5 shrink-0">
           <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-border/40 bg-muted/50 px-2 py-0.5 text-[0.6875rem] text-foreground">
             <span className="truncate">This document: {scope.docTitle}</span>
@@ -588,15 +658,30 @@ export default function AskPanel() {
           </span>
         </div>
       )}
+      {scope?.kind === 'thread' && (
+        <div className="flex items-center gap-1.5 px-4 pt-2.5 shrink-0">
+          <ThreadScopeChip
+            subject={scope.subject}
+            messageCount={scope.messageCount}
+            included={pinnedAck?.included ?? null}
+            locked={scope.locked}
+            injectionSuspected={pinnedAck?.injectionSuspected ?? false}
+            onToggleLock={toggleScopeLock}
+            onClear={clearScope}
+          />
+        </div>
+      )}
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[0.75rem]">
         {turns.length === 0 && !streaming && (
           <div className="space-y-3 py-2">
             <p className="text-[0.75rem] leading-relaxed text-muted-foreground/70">
-              {scope
+              {scope?.kind === 'doc'
                 ? 'Ask a question about this document and get an answer grounded in its content.'
-                : 'Ask a question about your mail, documents and calendar and get an answer grounded in your own content, with clickable citations back to each source.'}
+                : scope
+                  ? 'This thread is pinned as context. Ask about it — or anything else; the rest of your mail, documents and calendar stay searchable unless you turn on “Only”.'
+                  : 'Ask a question about your mail, documents and calendar and get an answer grounded in your own content, with clickable citations back to each source.'}
             </p>
             <div className="flex flex-wrap gap-1.5">
               {exampleQuestions.map((q) => (
@@ -659,7 +744,7 @@ export default function AskPanel() {
                 <Loader2 className="ml-1 inline h-3 w-3 animate-spin align-middle text-muted-foreground/60" />
               </p>
             ) : (
-              <AIWorkingIndicator step={scope ? 'Searching this document' : liveSteps.length ? 'Working with your mail, docs and calendar' : 'Thinking'} />
+              <AIWorkingIndicator step={scope?.kind === 'doc' ? 'Searching this document' : liveSteps.length ? 'Working with your mail, docs and calendar' : 'Thinking'} />
             )}
             <DegradedNotice degraded={pendingDegraded} />
             <SourcesRail
@@ -688,7 +773,11 @@ export default function AskPanel() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={streaming}
-            placeholder={scope ? 'Ask about this document…' : 'Ask about your mail, docs or calendar…'}
+            placeholder={
+              scope?.kind === 'doc' ? 'Ask about this document…'
+                : scope ? 'Ask about this thread…'
+                  : 'Ask about your mail, docs or calendar…'
+            }
             rows={2}
             className={cn(
               'flex-1 resize-none rounded-md border border-border/40 bg-background px-2.5 py-1.5 text-[0.75rem]',

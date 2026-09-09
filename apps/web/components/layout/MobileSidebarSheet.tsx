@@ -35,6 +35,7 @@ export function MobileSidebarSheet({
           {...sidebarProps}
           onClose={() => onOpenChange(false)}
           className="flex! w-full"
+          forceExpanded
         />
       </SheetContent>
     </Sheet>

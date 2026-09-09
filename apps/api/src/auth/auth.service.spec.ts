@@ -228,6 +228,87 @@ describe('AuthService.login institution resolution', () => {
   });
 });
 
+describe('AuthService.loginTwoFactor', () => {
+  it('stamps provider + institutionId from the challenge token onto the upsert', async () => {
+    const { service, prisma, zimbra, jwt } = makeService();
+    jwt.verify.mockReturnValue({
+      sub: 'zimbra:two-factor',
+      email: 'u@risa.gov.rw',
+      zimbraHost: 'mail.risa.gov.rw:8443',
+      preAuthToken: 'pre-auth-tok',
+      provider: 'zimbra',
+      institutionId: 'risa',
+    });
+    zimbra.verifyTwoFactor.mockResolvedValue({
+      twoFactorRequired: false,
+      authToken: 'zimbra-tok',
+      csrfToken: 'csrf',
+      lifetime: 3_600_000,
+      displayName: 'Test User',
+      refer: undefined,
+    });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u1', email: 'u@risa.gov.rw', displayName: 'Test User', zimbraHost: 'mail.risa.gov.rw:8443',
+    });
+
+    const res = await service.loginTwoFactor('challenge-tok', '123456', { ip: '10.0.0.1', userAgent: 'Vitest/1.0' });
+
+    expect(zimbra.verifyTwoFactor).toHaveBeenCalledWith(
+      'mail.risa.gov.rw:8443', 'u@risa.gov.rw', 'pre-auth-tok', '123456',
+    );
+    expect(prisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ provider: 'zimbra', institutionId: 'risa' }),
+      update: expect.objectContaining({ provider: 'zimbra', institutionId: 'risa' }),
+    }));
+    expect(res).toHaveProperty('accessToken');
+  });
+
+  it('still issues a signed JWT and persists a Session row (pre-existing behavior unchanged)', async () => {
+    const { service, prisma, zimbra, jwt } = makeService();
+    jwt.verify.mockReturnValue({
+      sub: 'zimbra:two-factor',
+      email: 'u1@example.com',
+      zimbraHost: 'mail.example.com',
+      preAuthToken: 'pre-auth-tok',
+      provider: 'zimbra',
+      institutionId: 'legacy',
+    });
+    zimbra.verifyTwoFactor.mockResolvedValue({
+      twoFactorRequired: false,
+      authToken: 'zimbra-tok',
+      csrfToken: 'csrf',
+      lifetime: 3_600_000,
+      displayName: 'Test User',
+      refer: undefined,
+    });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u1', email: 'u1@example.com', displayName: 'Test User', zimbraHost: 'mail.example.com',
+    });
+
+    const res = await service.loginTwoFactor('challenge-tok', '123456', { ip: '10.0.0.1', userAgent: 'Vitest/1.0' });
+
+    expect(jwt.sign).toHaveBeenCalledWith({ sub: 'u1', email: 'u1@example.com' });
+    expect(prisma.session.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'u1',
+        token: 'signed.jwt.token',
+        expiresAt: expect.any(Date),
+        userAgent: 'Vitest/1.0',
+        ipAddress: '10.0.0.1',
+      },
+    });
+    expect(res).toEqual({
+      accessToken: 'signed.jwt.token',
+      user: {
+        id: 'u1',
+        email: 'u1@example.com',
+        displayName: 'Test User',
+        zimbraHost: 'mail.example.com',
+      },
+    });
+  });
+});
+
 describe('AuthService sessions', () => {
   it('lists sessions ordered by lastSeenAt, flagging the current one', async () => {
     const { service, prisma } = makeService();

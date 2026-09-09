@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailSession } from '../mail-session';
 import {
   ProviderFolder, ProviderMessage, ProviderMessagePage,
@@ -124,7 +124,7 @@ export class MemoryMailProvider {
   async getMessage(s: MailSession, messageId: string): Promise<ProviderMessage> {
     const mailbox = this.mb(s);
     const message = mailbox.messages.find((m) => m.id === messageId);
-    if (!message) throw new UnauthorizedException('Message not found.');
+    if (!message) throw new NotFoundException('Message not found');
     return message;
   }
 

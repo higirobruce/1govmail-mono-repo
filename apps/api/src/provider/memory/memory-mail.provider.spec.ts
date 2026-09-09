@@ -1,6 +1,6 @@
 import { MemoryMailProvider } from './memory-mail.provider';
 import { MemoryStore } from './memory-store';
-import { UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException, NotFoundException } from '@nestjs/common';
 
 const NOW = 1757500000000;
 function setup() {
@@ -66,6 +66,14 @@ describe('MemoryMailProvider — auth + reads', () => {
     const mbAfterSecond = store.get('demo@memory.local')!;
     expect(mbAfterSecond).toBe(mbAfterFirst);
     expect(mbAfterSecond.password).toBe('pw2');
+  });
+
+  it('getMessage on an unknown id rejects with NotFoundException (not Unauthorized)', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    await expect(
+      provider.getMessage(sessionFor('demo@memory.local'), 'msg-does-not-exist'),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('createFolder/renameFolder/emptyFolder/deleteFolder mutate the mailbox', async () => {

@@ -3,10 +3,13 @@ import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailSession } from '../mail-session';
 import {
   ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderAddress, ProviderAttachmentMeta,
-  ProviderAuthResult, MailProviderCapabilities,
+  ProviderAuthResult, MailProviderCapabilities, ProviderContact, ProviderEvent, ProviderEventDetail,
+  ProviderFreeBusy,
 } from '../provider-types';
 import { MemoryStore, MemoryMailbox } from './memory-store';
-import { SendMessagePayload, DraftPayload } from '../mail-provider.interface';
+import {
+  SendMessagePayload, DraftPayload, CalendarEventPayload, ModifyCalendarEventPayload,
+} from '../mail-provider.interface';
 
 let folderCounter = 0;
 function nextFolderId(): string {
@@ -30,6 +33,18 @@ let attachmentCounter = 0;
 function nextAttachmentId(): string {
   attachmentCounter += 1;
   return `att-${attachmentCounter}`;
+}
+
+let contactCounter = 0;
+function nextContactId(): string {
+  contactCounter += 1;
+  return `contact-custom-${contactCounter}`;
+}
+
+let eventCounter = 0;
+function nextEventId(): string {
+  eventCounter += 1;
+  return `event-custom-${eventCounter}`;
 }
 
 /**
@@ -352,6 +367,151 @@ export class MemoryMailProvider {
     return { data: stored.data, contentType: stored.contentType };
   }
 
+  // ---- contacts + GAL -----------------------------------------------------------
+
+  async getContacts(s: MailSession, limit = 25, offset = 0): Promise<ProviderContact[]> {
+    const mailbox = this.mb(s);
+    return mailbox.contacts.slice(offset, offset + limit);
+  }
+
+  async createContact(s: MailSession, contact: Partial<ProviderContact>): Promise<ProviderContact> {
+    const mailbox = this.mb(s);
+    const created: ProviderContact = {
+      id: nextContactId(),
+      displayName: contact.displayName ?? null,
+      firstName: contact.firstName ?? null,
+      lastName: contact.lastName ?? null,
+      nickname: contact.nickname ?? null,
+      company: contact.company ?? null,
+      jobTitle: contact.jobTitle ?? null,
+      emails: contact.emails ?? [],
+      phones: contact.phones ?? [],
+      notes: contact.notes ?? null,
+    };
+    mailbox.contacts.push(created);
+    return created;
+  }
+
+  async modifyContact(s: MailSession, id: string, contact: Partial<ProviderContact>): Promise<void> {
+    const mailbox = this.mb(s);
+    const existing = mailbox.contacts.find((c) => c.id === id);
+    if (!existing) throw new NotFoundException('Contact not found');
+    const { id: _ignored, ...rest } = contact;
+    Object.assign(existing, rest);
+  }
+
+  async deleteContact(s: MailSession, id: string): Promise<void> {
+    const mailbox = this.mb(s);
+    const idx = mailbox.contacts.findIndex((c) => c.id === id);
+    if (idx === -1) throw new NotFoundException('Contact not found');
+    mailbox.contacts.splice(idx, 1);
+  }
+
+  /**
+   * Never throws — callers use these for live-typing suggestions, so a bad
+   * session or an empty result both just mean "nothing to suggest", not an
+   * error. There is no separate GAL store for memory mailboxes; searchGal
+   * matches over the same seeded contacts as autoCompleteContacts.
+   */
+  async autoCompleteContacts(s: MailSession, query: string): Promise<Array<{ email: string; display: string }>> {
+    try {
+      return this.matchContacts(this.mb(s), query);
+    } catch {
+      return [];
+    }
+  }
+
+  async searchGal(s: MailSession, query: string): Promise<Array<{ email: string; display: string }>> {
+    try {
+      return this.matchContacts(this.mb(s), query);
+    } catch {
+      return [];
+    }
+  }
+
+  // ---- calendar -------------------------------------------------------------------
+
+  async getCalendarEvents(s: MailSession, startMs: number, endMs: number): Promise<ProviderEvent[]> {
+    const mailbox = this.mb(s);
+    return mailbox.events.filter((e) => {
+      const t = e.startAt.getTime();
+      return t >= startMs && t <= endMs;
+    });
+  }
+
+  async getAppointment(s: MailSession, id: string): Promise<ProviderEventDetail | null> {
+    const mailbox = this.mb(s);
+    const event = mailbox.events.find((e) => e.id === id);
+    if (!event) return null;
+    return {
+      id: event.id,
+      attendees: event.attendees,
+      organizer: event.organizer,
+      inviteMessageId: event.inviteId,
+    };
+  }
+
+  async createCalendarEvent(s: MailSession, payload: CalendarEventPayload): Promise<string> {
+    const mailbox = this.mb(s);
+    const id = nextEventId();
+    const event: ProviderEvent = {
+      id,
+      title: payload.title,
+      location: payload.location ?? null,
+      startAt: payload.startAt,
+      endAt: payload.endAt,
+      allDay: payload.allDay,
+      description: payload.description ?? null,
+      organizer: { email: payload.organizerEmail, name: payload.organizerName },
+      attendees: (payload.attendees ?? []).map((email) => ({ email })),
+      inviteId: null,
+      isRecurring: false,
+    };
+    mailbox.events.push(event);
+    return id;
+  }
+
+  async modifyCalendarEvent(s: MailSession, id: string, payload: ModifyCalendarEventPayload): Promise<void> {
+    const mailbox = this.mb(s);
+    const existing = mailbox.events.find((e) => e.id === id);
+    if (!existing) throw new NotFoundException('Event not found');
+    existing.title = payload.title;
+    existing.location = payload.location ?? null;
+    existing.startAt = payload.startAt;
+    existing.endAt = payload.endAt;
+    existing.allDay = payload.allDay;
+    existing.description = payload.description ?? null;
+    existing.organizer = { email: payload.organizerEmail, name: payload.organizerName };
+    existing.attendees = (payload.attendees ?? []).map((email) => ({ email }));
+  }
+
+  async deleteCalendarEvent(s: MailSession, id: string): Promise<void> {
+    const mailbox = this.mb(s);
+    const idx = mailbox.events.findIndex((e) => e.id === id);
+    if (idx === -1) throw new NotFoundException('Event not found');
+    mailbox.events.splice(idx, 1);
+  }
+
+  /**
+   * No-op: memory mailboxes have no distinct "invite" inbox flow to update —
+   * an accept/decline/tentative reply from the current user doesn't change
+   * any seeded/created event's own attendee list for itself.
+   */
+  async sendInviteReply(s: MailSession, _inviteId: string, _verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE'): Promise<void> {
+    this.mb(s);
+  }
+
+  async getFreeBusy(s: MailSession, email: string, startMs: number, endMs: number): Promise<ProviderFreeBusy> {
+    this.mb(s);
+    const mailbox = email === s.email ? this.store.get(s.email) : this.store.get(email);
+    if (!mailbox) return { busy: [], tentative: [], unavailable: [] };
+    const busy = mailbox.events
+      .filter((e) => e.startAt.getTime() < endMs && e.endAt.getTime() > startMs)
+      .map((e) => ({ s: e.startAt.getTime(), e: e.endAt.getTime() }))
+      .sort((a, b) => a.s - b.s);
+    return { busy, tentative: [], unavailable: [] };
+  }
+
   // ---- private helpers ----------------------------------------------------------
 
   private recomputeFolderCounts(mailbox: MemoryMailbox, folderId: string): void {
@@ -360,6 +520,20 @@ export class MemoryMailProvider {
     const inFolder = mailbox.messages.filter((m) => m.folderId === folderId);
     folder.totalCount = inFolder.length;
     folder.unreadCount = inFolder.filter((m) => !m.isRead).length;
+  }
+
+  private matchContacts(mailbox: MemoryMailbox, query: string): Array<{ email: string; display: string }> {
+    const needle = query.toLowerCase();
+    const hits: Array<{ email: string; display: string }> = [];
+    for (const c of mailbox.contacts) {
+      const display = c.displayName ?? '';
+      const primaryEmail = c.emails.find((e) => e.primary)?.email ?? c.emails[0]?.email;
+      if (!primaryEmail) continue;
+      if (display.toLowerCase().includes(needle) || primaryEmail.toLowerCase().includes(needle)) {
+        hits.push({ email: primaryEmail, display });
+      }
+    }
+    return hits;
   }
 
   private toSnippet(html: string): string {

@@ -299,3 +299,207 @@ describe('MemoryMailProvider — mutations, send, drafts, attachments', () => {
     expect(contentType).toBe('text/plain');
   });
 });
+
+describe('MemoryMailProvider — contacts, GAL, calendar, free/busy', () => {
+  it('getContacts paginates the seeded contacts', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const page1 = await provider.getContacts(s, 5, 0);
+    expect(page1.length).toBe(5);
+    const page2 = await provider.getContacts(s, 5, 5);
+    expect(page2.length).toBe(5);
+    expect(page1.map((c) => c.id)).not.toEqual(page2.map((c) => c.id));
+  });
+
+  it('createContact returns a full ProviderContact with a new id, and it appears in getContacts', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const before = (await provider.getContacts(s, 100, 0)).length;
+
+    const created = await provider.createContact(s, {
+      displayName: 'New Person',
+      emails: [{ email: 'new.person@example.gov.rw', type: 'work', primary: true }],
+      phones: [],
+    });
+    expect(created.id).toBeTruthy();
+    expect(created.displayName).toBe('New Person');
+
+    const after = await provider.getContacts(s, 100, 0);
+    expect(after.length).toBe(before + 1);
+    expect(after.some((c) => c.id === created.id)).toBe(true);
+    expect(store.get('demo@memory.local')!.contacts.some((c) => c.id === created.id)).toBe(true);
+  });
+
+  it('modifyContact mutates an existing contact; unknown id rejects with NotFoundException', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const target = mbox.contacts[0];
+
+    await provider.modifyContact(s, target.id, { jobTitle: 'Updated Title' });
+    expect(mbox.contacts.find((c) => c.id === target.id)!.jobTitle).toBe('Updated Title');
+
+    await expect(
+      provider.modifyContact(s, 'contact-does-not-exist', { jobTitle: 'x' }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('deleteContact removes a contact; unknown id rejects with NotFoundException', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const target = mbox.contacts[0];
+
+    await provider.deleteContact(s, target.id);
+    expect(mbox.contacts.some((c) => c.id === target.id)).toBe(false);
+
+    await expect(provider.deleteContact(s, 'contact-does-not-exist')).rejects.toThrow(NotFoundException);
+  });
+
+  it('autoCompleteContacts substring-matches name/email and never throws (empty array on no match or bad session)', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const target = mbox.contacts[0];
+
+    const byName = await provider.autoCompleteContacts(s, target.displayName!.slice(0, 4));
+    expect(byName.some((r) => r.email === target.emails[0].email)).toBe(true);
+    expect(byName[0]).toEqual(expect.objectContaining({ email: expect.any(String), display: expect.any(String) }));
+
+    const byEmail = await provider.autoCompleteContacts(s, target.emails[0].email.slice(0, 6));
+    expect(byEmail.some((r) => r.email === target.emails[0].email)).toBe(true);
+
+    expect(await provider.autoCompleteContacts(s, 'zzz-no-such-thing')).toEqual([]);
+    expect(await provider.autoCompleteContacts(sessionFor('nobody@memory.local'), 'a')).toEqual([]);
+  });
+
+  it('searchGal substring-matches name/email and never throws (empty array on no match or bad session)', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const target = mbox.contacts[1];
+
+    const hits = await provider.searchGal(s, target.displayName!.slice(0, 4));
+    expect(hits.some((r) => r.email === target.emails[0].email)).toBe(true);
+
+    expect(await provider.searchGal(s, 'zzz-no-such-thing')).toEqual([]);
+    expect(await provider.searchGal(sessionFor('nobody@memory.local'), 'a')).toEqual([]);
+  });
+
+  it('getCalendarEvents returns events whose startAt is within [startMs, endMs]', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const all = await provider.getCalendarEvents(s, NOW - 7 * 864e5, NOW + 7 * 864e5);
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.every((e) => e.startAt.getTime() >= NOW - 7 * 864e5 && e.startAt.getTime() <= NOW + 7 * 864e5)).toBe(true);
+
+    const narrow = await provider.getCalendarEvents(s, NOW + 100 * 864e5, NOW + 200 * 864e5);
+    expect(narrow.length).toBe(0);
+  });
+
+  it('createCalendarEvent returns an id and the event appears in range', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const startAt = new Date(NOW + 50 * 864e5);
+    const endAt = new Date(startAt.getTime() + 30 * 60 * 1000);
+
+    const id = await provider.createCalendarEvent(s, {
+      title: 'Planning Session',
+      startAt,
+      endAt,
+      allDay: false,
+      organizerEmail: 'demo@memory.local',
+      attendees: ['peer@memory.local'],
+    });
+    expect(typeof id).toBe('string');
+
+    const inRange = await provider.getCalendarEvents(s, NOW + 49 * 864e5, NOW + 51 * 864e5);
+    expect(inRange.some((e) => e.id === id && e.title === 'Planning Session')).toBe(true);
+    const mbox = store.get('demo@memory.local')!;
+    expect(mbox.events.find((e) => e.id === id)!.attendees).toEqual([{ email: 'peer@memory.local' }]);
+  });
+
+  it('modifyCalendarEvent mutates an existing event; unknown id rejects with NotFoundException', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const target = mbox.events[0];
+
+    await provider.modifyCalendarEvent(s, target.id, {
+      title: 'Renamed Meeting',
+      startAt: target.startAt,
+      endAt: target.endAt,
+      allDay: false,
+      organizerEmail: 'demo@memory.local',
+    });
+    expect(mbox.events.find((e) => e.id === target.id)!.title).toBe('Renamed Meeting');
+
+    await expect(
+      provider.modifyCalendarEvent(s, 'event-does-not-exist', {
+        title: 'x', startAt: new Date(), endAt: new Date(), allDay: false, organizerEmail: 'demo@memory.local',
+      }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('deleteCalendarEvent removes an event; unknown id rejects with NotFoundException', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const target = mbox.events[0];
+
+    await provider.deleteCalendarEvent(s, target.id);
+    expect(mbox.events.some((e) => e.id === target.id)).toBe(false);
+
+    await expect(provider.deleteCalendarEvent(s, 'event-does-not-exist')).rejects.toThrow(NotFoundException);
+  });
+
+  it('getAppointment returns a ProviderEventDetail for a known id, and null for an unknown id', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const target = mbox.events[0];
+
+    const detail = await provider.getAppointment(s, target.id);
+    expect(detail).not.toBeNull();
+    expect(detail!.id).toBe(target.id);
+    expect(detail!.inviteMessageId).toBe(target.inviteId);
+
+    const missing = await provider.getAppointment(s, 'event-does-not-exist');
+    expect(missing).toBeNull();
+  });
+
+  it('sendInviteReply resolves as a no-op', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    await expect(provider.sendInviteReply(s, 'inv-1', 'ACCEPT')).resolves.toBeUndefined();
+  });
+
+  it('getFreeBusy derives busy blocks from events in the window', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = { host: 'memory.local', email: 'demo@memory.local', authToken: 't' };
+    const fb = await provider.getFreeBusy(s, 'demo@memory.local', NOW - 7*864e5, NOW + 7*864e5);
+    expect(fb.busy.length).toBeGreaterThan(0);
+    expect(fb.busy.every((b) => b.e > b.s)).toBe(true);
+  });
+
+  it('getFreeBusy returns empty arrays for a target with no seeded mailbox', async () => {
+    const { provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const fb = await provider.getFreeBusy(s, 'unseeded@memory.local', NOW - 7 * 864e5, NOW + 7 * 864e5);
+    expect(fb).toEqual({ busy: [], tentative: [], unavailable: [] });
+  });
+});

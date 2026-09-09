@@ -65,3 +65,29 @@ describe('openAiTools grammar compatibility', () => {
     expect(params.properties.to.maxItems).toBe(20);
   });
 });
+
+describe('openAiTools filtering', () => {
+  const mk = (name: string): ToolDef => ({
+    ...echoTool, name, description: `${name} tool.`,
+  });
+
+  it('advertises every registered tool when given no allowlist', () => {
+    const r = new ToolRegistry();
+    r.registerAll([mk('get_thread'), mk('read_email'), mk('search_emails')]);
+    expect(r.openAiTools().map((t) => t.function.name).sort())
+      .toEqual(['get_thread', 'read_email', 'search_emails']);
+  });
+
+  it('advertises only the allowlisted tools', () => {
+    const r = new ToolRegistry();
+    r.registerAll([mk('get_thread'), mk('read_email'), mk('search_emails')]);
+    const names = r.openAiTools(new Set(['get_thread', 'read_email'])).map((t) => t.function.name).sort();
+    expect(names).toEqual(['get_thread', 'read_email']);
+  });
+
+  it('ignores allowlisted names the registry does not have', () => {
+    const r = new ToolRegistry();
+    r.registerAll([mk('get_thread')]);
+    expect(r.openAiTools(new Set(['nope']))).toHaveLength(0);
+  });
+});

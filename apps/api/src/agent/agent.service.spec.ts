@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AgentService } from './agent.service';
 import { ToolRegistry, type ToolDef } from './tool-registry';
+import { THREAD_LOCK_TOOLS } from './thread-lock';
 
 function sseResponse(frames: any[]): any {
   const encoder = new TextEncoder();
@@ -529,6 +530,62 @@ describe('AgentService.run', () => {
       await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
 
       expect(frames).toContainEqual({ event: 'pinned', data: { included: 1, injectionSuspected: true } });
+    });
+  });
+
+  describe('thread lock (pinned.toolScope === "thread")', () => {
+    it('a locked pin asks the registry for only the thread allowlist', async () => {
+      const { svc, emit } = makeService([jsonText('First try'), jsonText('Final answer')]);
+      const registry = (svc as unknown as { registry: ToolRegistry }).registry;
+      const openAiToolsSpy = jest.spyOn(registry, 'openAiTools');
+      const pinned = { label: 'x', text: 'hi', messageIds: ['m1'], includedCount: 1, toolScope: 'thread' } as any;
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
+      expect(openAiToolsSpy).toHaveBeenCalledWith(THREAD_LOCK_TOOLS);
+    });
+
+    it('an unlocked pin asks the registry for everything', async () => {
+      const { svc, emit } = makeService([jsonText('First try'), jsonText('Final answer')]);
+      const registry = (svc as unknown as { registry: ToolRegistry }).registry;
+      const openAiToolsSpy = jest.spyOn(registry, 'openAiTools');
+      const pinned = { label: 'x', text: 'hi', messageIds: ['m1'], includedCount: 1 } as any;
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
+      expect(openAiToolsSpy).toHaveBeenCalledWith(undefined);
+    });
+
+    it('rejects a read_email outside the locked thread', async () => {
+      const readEmailTool: ToolDef = {
+        name: 'read_email', description: 'read an email', mode: 'read', resultBudget: 100,
+        schema: z.object({ messageId: z.string() }),
+        execute: jest.fn().mockResolvedValue({ summary: 'should not reach', content: 'X', refs: [] }),
+      };
+      const { svc, frames, emit } = makeService(
+        [jsonToolCall('read_email', '{"messageId":"other"}'), sseResponse([text('Recovered')])],
+        [readEmailTool],
+      );
+      const pinned = { label: 'x', text: 'hi', messageIds: ['m1'], includedCount: 1, toolScope: 'thread' } as any;
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
+
+      expect(readEmailTool.execute).not.toHaveBeenCalled();
+      const emittedToolResults = frames.filter((f) => f.event === 'tool_result').map((f) => f.data);
+      expect(emittedToolResults[0].summary).toMatch(/not part of this thread/i);
+    });
+
+    it('allows a read_email inside the locked thread', async () => {
+      const readEmailTool: ToolDef = {
+        name: 'read_email', description: 'read an email', mode: 'read', resultBudget: 100,
+        schema: z.object({ messageId: z.string() }),
+        execute: jest.fn().mockResolvedValue({ summary: 'read ok', content: 'X', refs: [] }),
+      };
+      const { svc, frames, emit } = makeService(
+        [jsonToolCall('read_email', '{"messageId":"m1"}'), sseResponse([text('Recovered')])],
+        [readEmailTool],
+      );
+      const pinned = { label: 'x', text: 'hi', messageIds: ['m1'], includedCount: 1, toolScope: 'thread' } as any;
+      await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal, pinned);
+
+      expect(readEmailTool.execute).toHaveBeenCalled();
+      const emittedToolResults = frames.filter((f) => f.event === 'tool_result').map((f) => f.data);
+      expect(emittedToolResults[0]).toMatchObject({ ok: true, summary: 'read ok' });
     });
   });
 });

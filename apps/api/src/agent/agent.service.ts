@@ -13,6 +13,7 @@ import { summarizeArgs } from './summarize-args';
 import { ToolRegistry, ToolValidationError, type ToolContext } from './tool-registry';
 import type { AgentPinnedDto } from './dto/agent.dto';
 import { buildPinnedMessage, includedIn, pinnedIsSuspect, PINNED_FRAME } from './pinned-context';
+import { THREAD_LOCK_TOOLS, assertIdInThread } from './thread-lock';
 
 const MAX_ITERATIONS = 8;
 const MAX_CALLS_PER_ITERATION = 3;
@@ -49,8 +50,11 @@ export class AgentService {
     private readonly prisma: PrismaService,
   ) {}
 
-  // pinned is fenced into the transcript below (Task 9). Tool-scope
-  // restriction from pinned.toolScope is not yet wired — that's Task 10.
+  // pinned is fenced into the transcript below (Task 9). When
+  // pinned.toolScope is 'thread', threadLock (derived below, alongside the
+  // rest of the pinned handling) restricts both what is advertised to the
+  // model and which ids read_email/read_attachment may address — see
+  // thread-lock.ts for why both halves are required.
   // Kept optional/defaulted so the controller's 5-arg call compiles without
   // every existing caller needing an update.
   async run(userId: string, turns: ChatTurn[], emit: EmitFn, signal: AbortSignal, pinned: AgentPinnedDto | null = null): Promise<void> {
@@ -111,6 +115,16 @@ export class AgentService {
       emit(PINNED_FRAME, { included: includedIn(pinned), injectionSuspected: flagged });
     }
 
+    // "This thread only": restricts BOTH what is advertised (the tools
+    // filter below) AND which ids read_email/read_attachment may address
+    // (assertIdInThread at the dispatch site) — see thread-lock.ts. ids
+    // defaults to [] rather than pinned.messageIds directly so a locked pin
+    // with no ids locks out every id-addressed read instead of silently
+    // becoming unbounded.
+    const threadLock = pinned?.toolScope === 'thread'
+      ? { ids: pinned.messageIds ?? [] }
+      : null;
+
     const transcript: AgentMessage[] = [
       {
         role: 'system',
@@ -162,7 +176,15 @@ export class AgentService {
         max_tokens: 1024,
         ...(finalIteration
           ? {}
-          : { tools: this.registry.openAiTools(), tool_choice: firstProbe ? ('required' as const) : ('auto' as const) }),
+          : {
+              // get_thread is on THREAD_LOCK_TOOLS, so a locked turn can
+              // still satisfy tool_choice:'required' on iteration 1 — the
+              // probe is never special-cased for a pinned turn (an answer
+              // built purely from the pin, with no tool call THIS turn,
+              // would trip mandate 6).
+              tools: this.registry.openAiTools(threadLock ? THREAD_LOCK_TOOLS : undefined),
+              tool_choice: firstProbe ? ('required' as const) : ('auto' as const),
+            }),
       } as UpstreamChatBody;
 
       const upstream = await this.ai.upstream(body, signal);
@@ -223,7 +245,7 @@ export class AgentService {
 
       for (const [i, call] of calls.entries()) {
         const callId = callIds[i];
-        const { content, endTurn } = await this.dispatch(call, callId, ctx, turnId, emit);
+        const { content, endTurn } = await this.dispatch(call, callId, ctx, turnId, emit, threadLock);
         pushMessage({ role: 'tool', tool_call_id: callId, content });
         // A clarifying question ends the turn: the user's pick arrives as the
         // next user message. Returning here also caps ask_user at one per
@@ -302,12 +324,16 @@ export class AgentService {
         .map((o: string) => (o.length > 60 ? `${o.slice(0, 59)}…` : o))
         .slice(0, 4);
       if (question.length < 5 || options.length < 2) return;
+      // threadLock is passed as null here rather than threaded through this
+      // method's signature: this call always dispatches ask_user, which is
+      // never id-addressed, so assertIdInThread is a no-op regardless.
       await this.dispatch(
         { id: call.id, name: 'ask_user', arguments: JSON.stringify({ question, options }) },
         call.id || 'clarify_conv',
         ctx,
         turnId,
         emit,
+        null,
       );
     } catch {
       // best-effort — the prose question already reached the user
@@ -320,8 +346,9 @@ export class AgentService {
     ctx: ToolContext,
     turnId: string,
     emit: EmitFn,
+    threadLock: { ids: string[] } | null,
   ): Promise<{ content: string; endTurn: boolean }> {
-    const content = await this.dispatchContent(call, callId, ctx, turnId, emit);
+    const content = await this.dispatchContent(call, callId, ctx, turnId, emit, threadLock);
     return typeof content === 'string' ? { content, endTurn: false } : content;
   }
 
@@ -331,6 +358,7 @@ export class AgentService {
     ctx: ToolContext,
     turnId: string,
     emit: EmitFn,
+    threadLock: { ids: string[] } | null,
   ): Promise<string | { content: string; endTurn: boolean }> {
     const def = this.registry.get(call.name);
     if (!def) {
@@ -413,6 +441,14 @@ export class AgentService {
     }
 
     try {
+      // The id bound: read_email/read_attachment are addressed by id, so the
+      // allowlist filter above (openAiTools(THREAD_LOCK_TOOLS)) is not
+      // enough on its own — a locked turn could still reuse an id from
+      // earlier in the conversation to read outside the pinned thread.
+      // Thrown as ToolValidationError, caught below like any other execute
+      // failure, so the model gets a recoverable tool_result rather than a
+      // dead turn.
+      if (threadLock) assertIdInThread(call.name, args, threadLock.ids);
       const res = await def.execute(args as any, ctx);
       const clipped =
         res.content.length > def.resultBudget

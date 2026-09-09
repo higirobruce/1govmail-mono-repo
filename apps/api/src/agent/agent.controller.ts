@@ -56,6 +56,7 @@ export class AgentController {
         body.messages.map((m) => ({ role: m.role, content: m.content })),
         emit,
         ac.signal,
+        body.pinned ?? null,
       );
     } catch (err: any) {
       if (!ac.signal.aborted) {

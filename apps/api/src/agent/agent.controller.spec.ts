@@ -46,7 +46,7 @@ describe('AgentController', () => {
     expect(res.writes.some((w: string) => w.startsWith('event: tool_start\n'))).toBe(true);
     expect(res.writes.some((w: string) => w.includes('"hi"'))).toBe(true);
     expect(res.writes[res.writes.length - 1]).toBe('data: [DONE]\n\n');
-    expect(run).toHaveBeenCalledWith('u1', [{ role: 'user', content: 'go' }], expect.any(Function), expect.anything());
+    expect(run).toHaveBeenCalledWith('u1', [{ role: 'user', content: 'go' }], expect.any(Function), expect.anything(), null);
   });
 
   it('turns a service error into an error delta, still [DONE]', async () => {

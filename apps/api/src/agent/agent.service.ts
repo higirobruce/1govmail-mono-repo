@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { consumeAgentJson, consumeAgentStream, type UpstreamToolCall } from './upstream-stream';
 import { summarizeArgs } from './summarize-args';
 import { ToolRegistry, ToolValidationError, type ToolContext } from './tool-registry';
+import type { AgentPinnedDto } from './dto/agent.dto';
 
 const MAX_ITERATIONS = 8;
 const MAX_CALLS_PER_ITERATION = 3;
@@ -47,7 +48,10 @@ export class AgentService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async run(userId: string, turns: ChatTurn[], emit: EmitFn, signal: AbortSignal): Promise<void> {
+  // pinned is threaded through here but not yet consumed — wiring it into the
+  // prompt/tool-scope is Task 9. Kept optional/defaulted so the controller's
+  // 5-arg call compiles without every existing caller needing an update.
+  async run(userId: string, turns: ChatTurn[], emit: EmitFn, signal: AbortSignal, pinned: AgentPinnedDto | null = null): Promise<void> {
     // The User model has no `name` field — it has `displayName String?` —
     // select that and pass it through as userName (null when unset).
     const user = await this.prisma.user.findUnique({

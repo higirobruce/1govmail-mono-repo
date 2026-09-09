@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
+import { uuid } from '@/lib/uuid';
 import {
   Dialog,
   DialogContent,
@@ -57,7 +58,7 @@ export function SaveAsTemplateDialog({ open, onOpenChange, docId, docTitle, docE
     })();
 
     const entry = {
-      id: crypto.randomUUID(),
+      id: uuid(),
       name: name.trim() || 'Untitled',
       emoji: emoji.slice(0, 2) || '📄',
       description: description.trim(),

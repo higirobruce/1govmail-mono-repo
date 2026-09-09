@@ -1,7 +1,7 @@
 # Spec: Exchange (on-prem, EWS) support for 1Gov Mail
 
 **Status:** ready for implementation
-**Revised:** 2026-09-09 — folded in the MINAFFET environment reply and a live NTLM spike (§0); auth strategy changed from Basic-first to NTLM-only; §2 corrected (PostgreSQL, not SQLite); §9 values filled in.
+**Revised:** 2026-09-09 — folded in the MINAFFET environment reply and a live NTLM spike (§0); auth strategy changed from Basic-first to NTLM-only; §2 corrected (PostgreSQL, not SQLite); §9 values filled in. Second revision same day: login is **institution-driven** — users pick an institution, a DB `Institution` table maps it to provider/host/NTLM domain (§6.1); no mail-server-type selector, no client-supplied host.
 **Working branch:** `ft-hyperscale` (Bruce's standing SDD preference; the `claude/exchange-mailserver-support-8hhh52` branch named by the original draft was never created).
 **Prerequisite reading:** `ARCHITECTURE.md` (whole file), `apps/api/src/zimbra/zimbra.service.ts`
 
@@ -16,7 +16,7 @@ Everything in this section was confirmed against the live MINAFFET server, not t
 - **TLS:** publicly issued GeoTrust cert (`CN=webmail.minaffet.gov.rw`, expires 2027-02-14). No CA bundle needed for this deployment.
 - **Auth:** `BasicAuthentication: False` on both server and EWS vdir; the endpoint offers only `WWW-Authenticate: Negotiate, NTLM`. **NTLM is mandatory.**
 - **NTLM spike (passed):** plain `httpntlm` from Node completed the handshake and `GetFolder(inbox)` returned `ResponseClass="Success" / NoError` — Windows Extended Protection, if enabled, does not block this client.
-- **Username format (empirical):** `MINAFFET\<user>` authenticates; bare UPN (`user@minaffet.gov.rw`) is rejected. Hence `EWS_DEFAULT_DOMAIN=MINAFFET` (§9).
+- **Username format (empirical):** `MINAFFET\<user>` authenticates; bare UPN (`user@minaffet.gov.rw`) is rejected. Hence `ewsDomain = "MINAFFET"` on the institution row (§6.1).
 - **Test accounts:** three mailboxes provided (`test-risa1@`, `test-risa2@`, `testminaf3@minaffet.gov.rw`); OWA at `https://webmail.minaffet.gov.rw/owa/`. The two new accounts start **empty** — seed them by mailing between the three before functional testing. **Credentials live in a local untracked env file only — never in this repo, this spec, or any commit.**
 - **Latency:** single calls from the dev Mac run ~2–4s — reinforces the keep-alive requirement in §5.1/§5.2 and gentle retry tuning.
 - **Still unknown:** the tenant's EWS throttling policy; whether the 1Gov Mail VMs (no internet, no DNS) get a firewall path + `/etc/hosts` entry to reach the endpoint. Neither blocks implementation.
@@ -154,10 +154,35 @@ Implement each interface method with the listed EWS operation. All item IDs retu
 
 ---
 
-## 6. Auth flow changes (`apps/api/src/auth/`)
+## 6. Auth flow changes (`apps/api/src/auth/`) — institution-driven (revised 2026-09-09)
 
-- `POST /auth/login` body gains optional `provider?: 'zimbra' | 'ews' | 'memory'` (default `'zimbra'` — existing clients keep working). Validate in `login.dto.ts`.
-- `AuthService.login` branches: resolve the provider, call its `authenticate`, then upsert the `User` with `provider`, host, and the provider's session material (Zimbra: token/csrf as today; EWS: encrypted credentials per §5.2). JWT issuance, `Session` row, and 2FA handling for Zimbra are unchanged. For `ews`, never return `requiresTwoFactor`.
+Users never choose a mail-server type or host. They pick their **institution**; the institution row carries the provider and host. This also closes the current hole where the client submits an arbitrary `zimbraHost` for the backend to send credentials to.
+
+**Phasing:** ship the registry, the endpoint, and the institution-driven login (with the §8 form change) as part of **Phase 1** — it is provider-agnostic, folds into Phase 1's schema migration, and removes the client-supplied host immediately. Phase 3 only *adds* the `ews` rows' behavior.
+
+### 6.1 Institution registry (DB)
+
+- New Prisma model:
+  ```prisma
+  model Institution {
+    id        String  @id            // slug, e.g. "risa", "minaffet"
+    label     String                 // shown in the login dropdown
+    provider  String                 // 'zimbra' | 'ews'
+    host      String                 // mail server host (port allowed, e.g. mail.risa.gov.rw:8443)
+    ewsDomain String?                // NTLM domain for ews providers (e.g. "MINAFFET")
+    enabled   Boolean @default(true)
+    position  Int     @default(0)    // dropdown order
+  }
+  ```
+- Migration seeds the current registry (hand-authored INSERTs in the migration, per the repo's drifted-dev-DB workflow): `risa` → zimbra / `mail.risa.gov.rw:8443`, `minict` → zimbra / `mail.minict.gov.rw`, `minaffet` → **ews** / `webmail.minaffet.gov.rw` / ewsDomain `MINAFFET`. (Today's frontend list wrongly points MINAFFET at a Zimbra host — the seed corrects that.)
+- `GET /auth/institutions` — public, unauthenticated — returns enabled rows ordered by `position` as `[{ id, label }]` only (provider/host stay server-side). When `MAIL_PROVIDER_MEMORY=true`, append a synthetic `{ id: 'memory', label: 'Demo (local)' }` entry.
+- Registry reads go through one injectable `InstitutionRegistry` service — the lookup used by both the endpoint and `AuthService`.
+
+### 6.2 Login
+
+- `POST /auth/login` body: `{ institution: string, email, password }`. `institution` replaces the client-supplied host; validate in `login.dto.ts`. Unknown or disabled institution → 400. (Keep accepting the legacy `zimbraHost` field during the transition — resolve it against the registry by host match, and log a deprecation warning; remove once the web app ships the new form.)
+- `AuthService.login`: resolve the institution row → provider + host (+ `ewsDomain`), call that provider's `authenticate`, then upsert the `User` with `provider`, host, `institutionId`, and the provider's session material (Zimbra: token/csrf as today; EWS: encrypted credentials per §5.2). Add `institutionId String?` to `User` in the same migration. JWT issuance, `Session` row, and 2FA handling for Zimbra are unchanged. For `ews`, never return `requiresTwoFactor`.
+- EWS username derivation uses the institution's `ewsDomain` (`MINAFFET\<localpart>`), not a global env (§9 revised accordingly).
 - The shared session helper (§3.1) is the only code that reads these columns back.
 
 ---
@@ -175,9 +200,9 @@ For `ews` users, the Settings page depends on capabilities the provider lacks. D
 
 ## 8. Frontend changes (`apps/web`) — minimal
 
-- Login page: add a mail-server type selector (Zimbra / Exchange) mapped to `provider` in the login payload; keep Zimbra the default. The existing host field serves both (label it "Mail server address"; pre-fill from `EWS_DEFAULT_HOST` when Exchange is selected).
+- Login page: the user selects their **institution only** — no mail-server-type or host field. Replace the hardcoded `INSTITUTIONS` array in `app/(auth)/login/page.tsx` with a fetch of `GET /auth/institutions`; submit `{ institution, email, password }`. The user never sees "Zimbra" or "Exchange".
 - Settings page: honor the `capabilities` object per §7.
-- No other UI changes. `lib/api.ts`: thread `provider` through `api.auth.login`.
+- No other UI changes. `lib/api.ts`: thread `institution` through `api.auth.login`.
 
 ---
 
@@ -185,11 +210,11 @@ For `ews` users, the Settings page depends on capabilities the provider lacks. D
 
 | Env var | Meaning | Value / status |
 |---|---|---|
-| `EWS_DEFAULT_HOST` | Pre-fill for the login form's server field | `webmail.minaffet.gov.rw` |
-| `EWS_DEFAULT_DOMAIN` | `DOMAIN` prepended to the local part for `DOMAIN\user` NTLM auth | `MINAFFET` (verified — UPN login fails without it) |
 | `MAIL_CA_BUNDLE` | Path to internal CA PEM, if a tenant's cert is internally issued | not needed for MINAFFET (public GeoTrust cert); keep the seam |
 | `MAIL_CRED_KEY` | Required 32+ byte secret for credential encryption (§5.2) | generate per deployment |
-| `MAIL_PROVIDER_MEMORY` | Enable the fake provider (dev only) | dev |
+| `MAIL_PROVIDER_MEMORY` | Enable the fake provider (dev only; also surfaces the Demo entry in `GET /auth/institutions`) | dev |
+
+Host and NTLM domain are **not** env vars: they live per-institution in the `Institution` table (§6.1) — MINAFFET's row carries `webmail.minaffet.gov.rw` + ewsDomain `MINAFFET` (both verified, §0). The earlier draft's `EWS_DEFAULT_HOST` / `EWS_DEFAULT_DOMAIN` envs are superseded by that table.
 
 Remaining unknowns (leave clean seams, don't block): tenant EWS throttling policy (→ retry tuning), VM network path to the endpoint (`/etc/hosts` + firewall — the VMs have no DNS/internet; needed only when the pilot moves off the dev Mac).
 

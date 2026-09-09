@@ -145,6 +145,22 @@ describe('AskPanel routing', () => {
   });
 
   /**
+   * M3: a conversation that yields no text at all (zero messages) used to be
+   * sent as `{ text: '' }` — truthy as an object, so the panel pinned it, and
+   * the server's `@IsNotEmpty()` on `pinned.text` 400'd the whole ask. An
+   * unpinnable thread must degrade to an unpinned ask, exactly like a gather
+   * that throws.
+   */
+  it('sends unpinned when the gather yields no text', async () => {
+    gatherThreadContent.mockResolvedValueOnce({ text: '', messageCount: 0, includedIds: [] });
+    useAskStore.setState({ scope: { ...THREAD } });
+    render(<AskPanel />);
+    await ask('where does this stand?');
+    await waitFor(() => expect(streamAgent).toHaveBeenCalled());
+    expect(streamAgent.mock.calls[0][1].pinned).toBeNull();
+  });
+
+  /**
    * The other cases mock the gatherer, so `messageIds` is [] in all of them.
    * This one runs the REAL gatherThreadContent through ensurePinned's deps,
    * because that array is the lock's bound on id-addressed reads server-side:
@@ -238,6 +254,98 @@ describe('AskPanel scope chip', () => {
     await ask('one');
     await waitFor(() => expect(screen.getByText('4 of 6 messages')).toBeTruthy());
     expect(screen.getByLabelText(/suspicious content/i)).toBeTruthy();
+  });
+
+  /**
+   * M4: the pinned frame's `included` is `includedIn(pinned)`, which returns
+   * NULL when the client sent an includedCount with no messageIds to clamp it
+   * against — the server declines to state a count it cannot substantiate
+   * rather than inventing one. The panel must render that as the plain count
+   * ("6 messages"), never as an "N of M" branch built from a null.
+   */
+  it('renders a plain count when the server acks with no substantiated count', async () => {
+    streamAgent.mockImplementationOnce(async (_turns: any, opts: any) => {
+      opts.onPinned({ included: null, injectionSuspected: false });
+      return 'agent answer';
+    });
+    useAskStore.setState({ scope: { ...THREAD } });
+    render(<AskPanel />);
+    await ask('one');
+    await waitFor(() => expect(streamAgent).toHaveBeenCalled());
+    expect(screen.getByText('6 messages')).toBeTruthy();
+    expect(screen.queryByText(/of 6 messages/)).toBeNull();
+    expect(screen.queryByText(/null/)).toBeNull();
+  });
+
+  /**
+   * Review fix I2: two of the three entry points (the row context menu and the
+   * `q` shortcut) can only guess the thread length from a single list row, so
+   * they hard-code `messageCount: 1` — but `ensurePinned` pins the WHOLE
+   * conversation. The chip must stop trusting that placeholder as soon as the
+   * gather reports the real count, or a 25-message thread opened with `q`
+   * reads "1 message" forever and the "N of M messages" branch is dead code
+   * on those paths.
+   */
+  it('replaces the entry point’s placeholder count with the gathered one', async () => {
+    gatherThreadContent.mockResolvedValueOnce({
+      text: 'THREAD TEXT', messageCount: 25, includedIds: ['m1', 'm2', 'm3'],
+    });
+    useAskStore.setState({ scope: { ...THREAD, messageCount: 1 } });
+    render(<AskPanel />);
+    // Before the first send there is nothing gathered — the placeholder stands.
+    expect(screen.getByText('1 message')).toBeTruthy();
+    await ask('where does this stand?');
+    await waitFor(() => expect(screen.getByText('25 messages')).toBeTruthy());
+    expect(screen.queryByText('1 message')).toBeNull();
+  });
+
+  it('reads "N of M messages" against the gathered count, not the placeholder', async () => {
+    gatherThreadContent.mockResolvedValueOnce({
+      text: 'THREAD TEXT', messageCount: 25, includedIds: ['m1', 'm2', 'm3'],
+    });
+    streamAgent.mockImplementationOnce(async (_turns: any, opts: any) => {
+      opts.onPinned({ included: 3, injectionSuspected: false });
+      return 'agent answer';
+    });
+    useAskStore.setState({ scope: { ...THREAD, messageCount: 1 } });
+    render(<AskPanel />);
+    await ask('where does this stand?');
+    await waitFor(() => expect(screen.getByText('3 of 25 messages')).toBeTruthy());
+  });
+
+  it('drops the gathered count when the scope moves to another thread', async () => {
+    gatherThreadContent.mockResolvedValueOnce({
+      text: 'THREAD TEXT', messageCount: 25, includedIds: ['m1'],
+    });
+    useAskStore.setState({ scope: { ...THREAD, messageCount: 1 } });
+    render(<AskPanel />);
+    await ask('one');
+    await waitFor(() => expect(screen.getByText('25 messages')).toBeTruthy());
+    await act(async () => {
+      useAskStore.setState({ scope: { ...THREAD, seedMessageId: 'm42', messageCount: 1 } });
+    });
+    expect(screen.getByText('1 message')).toBeTruthy();
+  });
+
+  // M6: a brand-new conversation has sent nothing, so it must not still show
+  // the previous conversation's "3 of 25 messages" acknowledgement. The pin
+  // cache itself is deliberately kept — re-gathering ten bodies to produce
+  // identical text is waste — so the gathered count survives.
+  it('clears the pinned ack on a new conversation but keeps the gathered count', async () => {
+    streamAgent.mockImplementationOnce(async (_turns: any, opts: any) => {
+      opts.onPinned({ included: 4, injectionSuspected: true });
+      return 'agent answer';
+    });
+    useAskStore.setState({ scope: { ...THREAD } });
+    render(<AskPanel />);
+    await ask('one');
+    await waitFor(() => expect(screen.getByText('4 of 6 messages')).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /new conversation/i }));
+    });
+    expect(screen.getByText('6 messages')).toBeTruthy();
+    expect(screen.queryByText('4 of 6 messages')).toBeNull();
+    expect(screen.queryByLabelText(/suspicious content/i)).toBeNull();
   });
 
   it('offers thread starters instead of the document ones', () => {

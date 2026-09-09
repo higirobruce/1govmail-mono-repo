@@ -34,6 +34,20 @@ describe('ThreadScopeChip', () => {
     expect(screen.getByText('6 messages')).toBeTruthy();
   });
 
+  // Review fix I2: the entry points used to hard-code messageCount: 1, so the
+  // singular branch was the one users actually saw on two of three paths while
+  // being the only branch with no test. Now that the count comes from the
+  // gather, a genuine one-message thread is a real default path.
+  it('says "1 message", singular', () => {
+    render(<ThreadScopeChip {...base} messageCount={1} />);
+    expect(screen.getByText('1 message')).toBeTruthy();
+  });
+
+  it('keeps the singular noun in the "of" form', () => {
+    render(<ThreadScopeChip {...base} messageCount={1} included={0} />);
+    expect(screen.getByText('0 of 1 message')).toBeTruthy();
+  });
+
   it('the lock toggle reports its pressed state and calls back', () => {
     const onToggleLock = vi.fn();
     const { rerender } = render(<ThreadScopeChip {...base} onToggleLock={onToggleLock} />);

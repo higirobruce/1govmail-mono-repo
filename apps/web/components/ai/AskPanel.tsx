@@ -340,7 +340,21 @@ export default function AskPanel() {
   // Pinned thread text is gathered ONCE per thread, on the first send — never
   // on open, because opening the panel from a list row would otherwise cost up
   // to ten body fetches for a panel the user may immediately close.
-  const pinCacheRef = useRef<{ seedMessageId: string; text: string; messageIds: string[]; includedCount: number } | null>(null);
+  const pinCacheRef = useRef<{
+    seedMessageId: string;
+    text: string;
+    messageIds: string[];
+    includedCount: number;
+    /** The thread's TRUE length, per the gather. The entry points can only
+     *  guess this — the row context menu and the `q` shortcut see one list row
+     *  and pass 1 — while ensurePinned pins the whole conversation, so this is
+     *  the only honest source for the chip's count. */
+    messageCount: number;
+  } | null>(null);
+  // Ref-mirrored into state (same pattern as the pending sources above): the
+  // cache is what a second turn reuses, this is what re-renders the chip when
+  // the real count lands.
+  const [pinnedCount, setPinnedCount] = useState<number | null>(null);
   // How much of the pin actually reached the model, per the server's ack.
   const [pinnedAck, setPinnedAck] = useState<PinnedAck | null>(null);
 
@@ -350,10 +364,11 @@ export default function AskPanel() {
   // A different thread (or no thread at all) invalidates both the gathered
   // text and the server's ack about it.
   useEffect(() => {
-    if (scope?.kind !== 'thread') { pinCacheRef.current = null; setPinnedAck(null); return; }
+    if (scope?.kind !== 'thread') { pinCacheRef.current = null; setPinnedAck(null); setPinnedCount(null); return; }
     if (pinCacheRef.current && pinCacheRef.current.seedMessageId !== scope.seedMessageId) {
       pinCacheRef.current = null;
       setPinnedAck(null);
+      setPinnedCount(null);
     }
   }, [scope]);
 
@@ -363,7 +378,7 @@ export default function AskPanel() {
     // passes through keeps this to ONE conversation request while still
     // yielding the thread's message ids for the pinned payload.
     let messageIds: string[] = [];
-    const { text, includedIds } = await gatherThreadContent(
+    const { text, includedIds, messageCount } = await gatherThreadContent(
       s.seedMessageId,
       {
         getConversation: async (id) => {
@@ -375,8 +390,9 @@ export default function AskPanel() {
       },
       { totalCharBudget: PINNED_THREAD_CHAR_BUDGET },
     );
-    const entry = { seedMessageId: s.seedMessageId, text, messageIds, includedCount: includedIds.length };
+    const entry = { seedMessageId: s.seedMessageId, text, messageIds, includedCount: includedIds.length, messageCount };
     pinCacheRef.current = entry;
+    setPinnedCount(messageCount);
     return entry;
   }, []);
 
@@ -453,7 +469,13 @@ export default function AskPanel() {
       if (scope?.kind === 'thread') {
         try {
           const entry = await ensurePinned(scope);
-          pinned = buildPinned(scope, { text: entry.text, messageIds: entry.messageIds, includedCount: entry.includedCount });
+          // An empty gather (a conversation that yielded no text at all) must
+          // NOT be pinned: `{ text: '' }` is a truthy object, so it would ship
+          // and then fail the server's @IsNotEmpty() on pinned.text, 400-ing
+          // the whole ask. Degrade to unpinned, same as a gather that throws.
+          pinned = entry.text
+            ? buildPinned(scope, { text: entry.text, messageIds: entry.messageIds, includedCount: entry.includedCount })
+            : null;
         } catch {
           // A thread we could not read is not a reason to lose the question —
           // send it unpinned; the agent still has get_thread.
@@ -567,6 +589,11 @@ export default function AskPanel() {
     setLiveSteps([]);
     setLiveProposals([]);
     stream.reset();
+    // The ack belongs to a request this conversation has not made — keeping it
+    // would open a brand-new chat already claiming "4 of 6 messages". The pin
+    // CACHE stays: re-gathering ten bodies to produce identical text is waste,
+    // and the gathered messageCount is a property of the thread, not the chat.
+    setPinnedAck(null);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -662,7 +689,11 @@ export default function AskPanel() {
         <div className="flex items-center gap-1.5 px-4 pt-2.5 shrink-0">
           <ThreadScopeChip
             subject={scope.subject}
-            messageCount={scope.messageCount}
+            /* The scope's own messageCount is only the entry point's guess —
+               the thread header knows the real length, the row menu and the
+               `q` shortcut do not. Once a gather has established it, that
+               number wins. */
+            messageCount={pinnedCount ?? scope.messageCount}
             included={pinnedAck?.included ?? null}
             locked={scope.locked}
             injectionSuspected={pinnedAck?.injectionSuspected ?? false}

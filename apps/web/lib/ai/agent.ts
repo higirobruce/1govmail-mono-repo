@@ -47,8 +47,13 @@ export interface AgentChartSpec {
 
 /** Server acknowledgement that a pinned thread took. `included` is how many
  *  of the pinned messages actually reached the model after budgeting — NOT
- *  the thread's true length, which the client already knows locally. */
-export interface PinnedAck { included: number; injectionSuspected: boolean }
+ *  the thread's true length, which the client already knows locally.
+ *
+ *  Nullable because the server declines to state a count it cannot
+ *  substantiate: `includedIn` (pinned-context.ts) returns null when a client
+ *  sends includedCount with no messageIds to clamp it against, and the frame
+ *  carries that null through rather than inventing a number. */
+export interface PinnedAck { included: number | null; injectionSuspected: boolean }
 
 /** Accumulates rail sources across tool_result frames. Server aliases are
  * turn-stable (aliasFor), so a repeated alias is the SAME item — drop it,

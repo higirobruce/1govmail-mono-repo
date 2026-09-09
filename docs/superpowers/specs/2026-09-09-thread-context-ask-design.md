@@ -123,7 +123,14 @@ the whole call throws, the send proceeds unpinned with a one-line notice in the 
 failing the question.
 
 `messageCount` for the chip comes from the same call's return (`{ text, messageCount }`), so the
-chip's count is only known after the first gather. Until then the chip shows the subject alone.
+chip's true count is only known after the first gather. (Amended 2026-09-09 after the whole-branch
+review — finding I2.) Before that the chip shows the entry point's own `messageCount` as a
+**placeholder**, rather than the subject alone: the thread-header entry point has the real length
+in hand (`threadMessages.length`), while the row context menu and the `q` shortcut can only see one
+list row and pass 1. The gathered count therefore has to win once it exists — it is cached on
+`AskPanel`'s pin cache and mirrored into `pinnedCount`, and the chip renders
+`pinnedCount ?? scope.messageCount`. Without that, a 25-message thread opened with `q` reads
+"1 message" forever and §5.1's "N of M messages" branch is dead code on two of the three paths.
 
 ## 3. Server: pinned context and the tool allowlist
 

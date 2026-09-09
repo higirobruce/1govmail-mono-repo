@@ -964,14 +964,19 @@ export default function MailPage() {
       // Defensive: the menu row itself is gated on aiEnabled, but the branch
       // stays inert even if it somehow renders (or fires) while AI is off.
       if (!aiEnabled) return;
-      // Unlike mute, a message with no conversationId is fine here — pin the
-      // single message; it is still the thing the user asked about.
+      // Unlike mute, a message with no conversationId is fine here — the
+      // gather resolves the thread through the seed id, and for a standalone
+      // message that thread is just the message itself.
       openAsk({
         scope: {
           kind: 'thread',
           conversationId: (msg.conversationId as string | undefined) ?? null,
           seedMessageId: messageId,
           subject: msg.subject ?? null,
+          // Placeholder only. A list row carries no thread length, and this
+          // path pins the WHOLE conversation (ensurePinned → getConversation),
+          // so the chip replaces this with the gather's real messageCount on
+          // the first send — see AskPanel's pinnedCount.
           messageCount: 1,
           locked: false,
         },
@@ -1189,6 +1194,9 @@ export default function MailPage() {
           conversationId: (activeMessage.conversationId as string | undefined) ?? null,
           seedMessageId: activeMessage.id,
           subject: activeMessage.subject ?? null,
+          // Placeholder — the open message alone does not know its thread's
+          // length, and this pins the whole conversation. The chip takes the
+          // gather's real count on the first send (AskPanel's pinnedCount).
           messageCount: 1,
           locked: false,
         },

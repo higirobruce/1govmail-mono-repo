@@ -4,10 +4,20 @@ import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { LoginDto } from './dto/login.dto';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { InstitutionRegistry } from './institution.registry';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly institutionRegistry: InstitutionRegistry,
+  ) {}
+
+  // Public: no guard — powers the institution picker on the login screen.
+  @Get('institutions')
+  async institutions() {
+    return this.institutionRegistry.list();
+  }
 
   // 5 login attempts per minute per IP — brute-force gate.
   @Throttle({ default: { limit: 5, ttl: 60_000 } })

@@ -8,6 +8,7 @@ import { AuthScheduler } from './auth.scheduler';
 import { ZimbraModule } from '../zimbra/zimbra.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { InstitutionRegistry } from './institution.registry';
 
 @Module({
   imports: [
@@ -24,8 +25,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       }),
     }),
   ],
-  providers: [AuthService, JwtStrategy, AuthScheduler],
+  providers: [AuthService, JwtStrategy, AuthScheduler, InstitutionRegistry],
   controllers: [AuthController],
-  exports: [AuthService],
+  exports: [AuthService, InstitutionRegistry],
 })
 export class AuthModule {}

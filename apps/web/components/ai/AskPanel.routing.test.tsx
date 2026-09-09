@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { useAskStore } from '@/stores/ask.store';
+import { api } from '@/lib/api';
 
 // The panel is mounted for real — these mocks stand in for the network only,
 // so what the tests assert is AskPanel's own routing, not a stubbed panel.
@@ -139,6 +140,40 @@ describe('AskPanel routing', () => {
     await waitFor(() => expect(streamAgent).toHaveBeenCalled());
     expect(streamAgent.mock.calls[0][1].pinned).toBeFalsy();
     expect(screen.getByText(/answering without it pinned/i)).toBeTruthy();
+  });
+
+  /**
+   * The other cases mock the gatherer, so `messageIds` is [] in all of them.
+   * This one runs the REAL gatherThreadContent through ensurePinned's deps,
+   * because that array is the lock's bound on id-addressed reads server-side:
+   * if the ids stopped being captured, "this thread only" would silently
+   * widen to the whole mailbox and nothing else here would fail.
+   */
+  it('pins the conversation’s message ids, gathering for real', async () => {
+    const real = await vi.importActual<typeof import('@/lib/ai/threadContent')>('@/lib/ai/threadContent');
+    gatherThreadContent.mockImplementationOnce(real.gatherThreadContent as any);
+    const messages = [
+      { id: 'p1', fromEmail: 'a@gov.rw', fromName: 'A', receivedAt: '2026-09-01T08:00:00Z', snippet: 'first' },
+      { id: 'p2', fromEmail: 'b@gov.rw', fromName: 'B', receivedAt: '2026-09-02T08:00:00Z', snippet: 'second' },
+    ];
+    const getConversation = vi.spyOn(api.mail, 'getConversation')
+      .mockResolvedValue({ conversationId: 'c1', messages } as any);
+    const getMessage = vi.spyOn(api.mail, 'getMessage')
+      .mockImplementation(async (id: string) => ({ id, bodyText: `body of ${id}` }) as any);
+
+    useAskStore.setState({ scope: { ...THREAD, seedMessageId: 'p2' } });
+    render(<AskPanel />);
+    await ask('who owns this?');
+    await waitFor(() => expect(streamAgent).toHaveBeenCalled());
+
+    expect(getConversation).toHaveBeenCalledWith('p2');
+    const pinned = streamAgent.mock.calls[0][1].pinned;
+    expect(pinned.messageIds).toEqual(['p1', 'p2']);
+    expect(pinned.text).toContain('body of p1');
+    expect(pinned.text).toContain('body of p2');
+
+    getConversation.mockRestore();
+    getMessage.mockRestore();
   });
 
   it('slices history to 6 turns on a thread scope', async () => {

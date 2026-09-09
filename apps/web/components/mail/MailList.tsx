@@ -281,7 +281,7 @@ function ContextMenu({
 
 // ── Mail row ──────────────────────────────────────────────────────────────────
 
-function MailRow({
+export function MailRow({
   message,
   active,
   onClick,
@@ -320,12 +320,16 @@ function MailRow({
           }));
           e.dataTransfer.effectAllowed = 'copy';
         }}
+        data-read={message.isRead || undefined}
         className={cn(
           'group relative rounded-2xl transition-all',
           active
             ? 'bg-muted ring-1 ring-border-strong'
             : selected
             ? 'bg-primary/5 ring-1 ring-primary/20'
+            : message.isRead
+            // Read rows sit on a soft tinted band so read/unread scan as blocks.
+            ? 'bg-muted/30 hover:bg-muted/50'
             : 'hover:bg-muted/40',
         )}
       >
@@ -362,8 +366,9 @@ function MailRow({
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-2 mb-0.5">
                 <span className={cn(
-                  'text-body font-semibold truncate',
-                  message.isRead ? 'text-foreground' : 'text-primary',
+                  'text-body truncate',
+                  // Weight is the primary read/unread cue; color is secondary.
+                  message.isRead ? 'font-normal text-foreground' : 'font-semibold text-primary',
                 )}>
                   {message.fromName ?? message.fromEmail}
                 </span>
@@ -378,7 +383,7 @@ function MailRow({
 
               <p className={cn(
                 'text-ui truncate mb-0.5 text-foreground',
-                message.isRead ? 'font-medium' : 'font-semibold',
+                message.isRead ? 'font-normal' : 'font-semibold',
               )}>
                 {message.subject ?? '(no subject)'}
               </p>

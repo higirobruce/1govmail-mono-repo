@@ -46,7 +46,7 @@ describe('buildPinned', () => {
   });
 
   it('omits toolScope when unlocked and sets it to "thread" when locked', () => {
-    expect(buildPinned(thread, gathered).toolScope).toBeUndefined();
+    expect('toolScope' in buildPinned(thread, gathered)).toBe(false);
     expect(buildPinned({ ...thread, locked: true }, gathered).toolScope).toBe('thread');
   });
 

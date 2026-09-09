@@ -1,15 +1,35 @@
+import { Readable } from 'stream';
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailSession } from '../mail-session';
 import {
-  ProviderFolder, ProviderMessage, ProviderMessagePage,
+  ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderAddress, ProviderAttachmentMeta,
   ProviderAuthResult, MailProviderCapabilities,
 } from '../provider-types';
 import { MemoryStore, MemoryMailbox } from './memory-store';
+import { SendMessagePayload, DraftPayload } from '../mail-provider.interface';
 
 let folderCounter = 0;
 function nextFolderId(): string {
   folderCounter += 1;
   return `folder-custom-${folderCounter}`;
+}
+
+let messageCounter = 0;
+function nextMessageId(): string {
+  messageCounter += 1;
+  return `msg-memory-${messageCounter}`;
+}
+
+let conversationCounter = 0;
+function nextConversationId(): string {
+  conversationCounter += 1;
+  return `conv-memory-${conversationCounter}`;
+}
+
+let attachmentCounter = 0;
+function nextAttachmentId(): string {
+  attachmentCounter += 1;
+  return `att-${attachmentCounter}`;
 }
 
 /**
@@ -145,5 +165,227 @@ export class MemoryMailProvider {
     const total = matches.length;
     const messages = matches.slice(offset, offset + limit);
     return { messages, total, more: offset + limit < total };
+  }
+
+  async markRead(s: MailSession, messageId: string, read: boolean): Promise<void> {
+    const mailbox = this.mb(s);
+    const message = mailbox.messages.find((m) => m.id === messageId);
+    if (!message) throw new NotFoundException('Message not found');
+    message.isRead = read;
+    this.recomputeFolderCounts(mailbox, message.folderId);
+  }
+
+  async moveMessage(s: MailSession, messageId: string, folderId: string): Promise<void> {
+    const mailbox = this.mb(s);
+    const message = mailbox.messages.find((m) => m.id === messageId);
+    if (!message) throw new NotFoundException('Message not found');
+    const oldFolderId = message.folderId;
+    message.folderId = folderId;
+    this.recomputeFolderCounts(mailbox, oldFolderId);
+    this.recomputeFolderCounts(mailbox, folderId);
+  }
+
+  async deleteMessage(s: MailSession, messageId: string): Promise<void> {
+    const mailbox = this.mb(s);
+    const message = mailbox.messages.find((m) => m.id === messageId);
+    if (!message) throw new NotFoundException('Message not found');
+    const trash = mailbox.folders.find((f) => f.type === 'trash');
+    if (!trash) throw new NotFoundException('Trash folder not found');
+    const oldFolderId = message.folderId;
+    message.folderId = trash.id;
+    this.recomputeFolderCounts(mailbox, oldFolderId);
+    this.recomputeFolderCounts(mailbox, trash.id);
+  }
+
+  // ---- send / drafts ----------------------------------------------------------
+
+  async sendMessage(
+    s: MailSession,
+    payload: SendMessagePayload,
+    attachmentAids?: string[],
+    _inlineImageAids?: Array<{ aid: string; cid: string; ct: string }>,
+    _forwardedAttachments?: Array<{ mid: string; part: string }>,
+  ): Promise<{ id: string; conversationId: string | null }> {
+    const mailbox = this.mb(s);
+    const sentFolder = mailbox.folders.find((f) => f.type === 'sent');
+    if (!sentFolder) throw new NotFoundException('Sent folder not found');
+
+    const self: ProviderAddress = { email: s.email, name: mailbox.displayName };
+    const conversationId = payload.replyToId
+      ? mailbox.messages.find((m) => m.id === payload.replyToId)?.conversationId ?? nextConversationId()
+      : nextConversationId();
+    const attachmentsMeta = this.resolveAttachments(mailbox, attachmentAids);
+
+    const id = nextMessageId();
+    const message: ProviderMessage = {
+      id,
+      conversationId,
+      folderId: sentFolder.id,
+      subject: payload.subject,
+      snippet: this.toSnippet(payload.body),
+      from: self,
+      to: payload.to.map((email) => ({ email })),
+      cc: (payload.cc ?? []).map((email) => ({ email })),
+      bcc: (payload.bcc ?? []).map((email) => ({ email })),
+      receivedAt: new Date(),
+      size: Buffer.byteLength(payload.body, 'utf-8'),
+      isRead: true,
+      isFlagged: false,
+      hasAttachments: attachmentsMeta.length > 0,
+      isDraft: false,
+      tags: [],
+      bodyHtml: payload.body,
+      bodyText: payload.body,
+      attachments: attachmentsMeta,
+    };
+    mailbox.messages.push(message);
+    this.recomputeFolderCounts(mailbox, sentFolder.id);
+
+    // Deliver to any recipient that is itself a seeded memory mailbox.
+    const recipients = new Set([...payload.to, ...(payload.cc ?? []), ...(payload.bcc ?? [])]);
+    for (const recipientEmail of recipients) {
+      if (recipientEmail === s.email) continue;
+      if (!this.store.has(recipientEmail)) continue;
+      const recipientMailbox = this.store.get(recipientEmail)!;
+      const recipientInbox = recipientMailbox.folders.find((f) => f.type === 'inbox');
+      if (!recipientInbox) continue;
+      recipientMailbox.messages.push({
+        ...message,
+        id: nextMessageId(),
+        folderId: recipientInbox.id,
+        isRead: false,
+      });
+      this.recomputeFolderCounts(recipientMailbox, recipientInbox.id);
+    }
+
+    return { id, conversationId };
+  }
+
+  async saveDraft(s: MailSession, payload: DraftPayload): Promise<string> {
+    const mailbox = this.mb(s);
+    const draftsFolder = mailbox.folders.find((f) => f.type === 'drafts');
+    if (!draftsFolder) throw new NotFoundException('Drafts folder not found');
+
+    if (payload.id) {
+      const existing = mailbox.messages.find((m) => m.id === payload.id);
+      if (!existing) throw new NotFoundException('Draft not found');
+      if (payload.to) existing.to = payload.to.map((email) => ({ email }));
+      if (payload.cc) existing.cc = payload.cc.map((email) => ({ email }));
+      if (payload.bcc) existing.bcc = payload.bcc.map((email) => ({ email }));
+      if (payload.subject !== undefined) existing.subject = payload.subject;
+      if (payload.body !== undefined) {
+        existing.bodyHtml = payload.body;
+        existing.bodyText = payload.body;
+        existing.snippet = this.toSnippet(payload.body);
+      }
+      existing.folderId = draftsFolder.id;
+      existing.isDraft = true;
+      this.recomputeFolderCounts(mailbox, draftsFolder.id);
+      return existing.id;
+    }
+
+    const self: ProviderAddress = { email: s.email, name: mailbox.displayName };
+    const body = payload.body ?? '';
+    const id = nextMessageId();
+    const message: ProviderMessage = {
+      id,
+      conversationId: null,
+      folderId: draftsFolder.id,
+      subject: payload.subject ?? null,
+      snippet: this.toSnippet(body),
+      from: self,
+      to: (payload.to ?? []).map((email) => ({ email })),
+      cc: (payload.cc ?? []).map((email) => ({ email })),
+      bcc: (payload.bcc ?? []).map((email) => ({ email })),
+      receivedAt: new Date(),
+      size: Buffer.byteLength(body, 'utf-8'),
+      isRead: true,
+      isFlagged: false,
+      hasAttachments: false,
+      isDraft: true,
+      tags: [],
+      bodyHtml: body,
+      bodyText: body,
+      attachments: [],
+    };
+    mailbox.messages.push(message);
+    this.recomputeFolderCounts(mailbox, draftsFolder.id);
+    return id;
+  }
+
+  // ---- attachments --------------------------------------------------------------
+
+  async uploadAttachment(s: MailSession, filename: string, contentType: string, data: Buffer): Promise<string> {
+    const mailbox = this.mb(s);
+    const aid = nextAttachmentId();
+    mailbox.attachments.set(aid, { filename, contentType, data });
+    return aid;
+  }
+
+  async downloadAttachment(
+    s: MailSession, messageId: string, part: string,
+  ): Promise<{ stream: NodeJS.ReadableStream; contentType: string; filename: string }> {
+    const mailbox = this.mb(s);
+    const stored = this.findAttachmentBytes(mailbox, messageId, part);
+    return { stream: Readable.from(stored.data), contentType: stored.contentType, filename: stored.filename };
+  }
+
+  async downloadAttachmentBuffer(
+    s: MailSession, messageId: string, part: string,
+  ): Promise<{ data: Buffer; contentType: string }> {
+    const mailbox = this.mb(s);
+    const stored = this.findAttachmentBytes(mailbox, messageId, part);
+    return { data: stored.data, contentType: stored.contentType };
+  }
+
+  // ---- private helpers ----------------------------------------------------------
+
+  private recomputeFolderCounts(mailbox: MemoryMailbox, folderId: string): void {
+    const folder = mailbox.folders.find((f) => f.id === folderId);
+    if (!folder) return;
+    const inFolder = mailbox.messages.filter((m) => m.folderId === folderId);
+    folder.totalCount = inFolder.length;
+    folder.unreadCount = inFolder.filter((m) => !m.isRead).length;
+  }
+
+  private toSnippet(html: string): string {
+    return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  }
+
+  private resolveAttachments(mailbox: MemoryMailbox, aids?: string[]): ProviderAttachmentMeta[] {
+    if (!aids || aids.length === 0) return [];
+    const metas: ProviderAttachmentMeta[] = [];
+    for (const aid of aids) {
+      const stored = mailbox.attachments.get(aid);
+      if (!stored) continue;
+      metas.push({
+        part: aid,
+        filename: stored.filename,
+        contentType: stored.contentType,
+        size: stored.data.length,
+        isInline: false,
+      });
+    }
+    return metas;
+  }
+
+  /**
+   * Attachment bytes are keyed two ways in `mailbox.attachments`: seeded data
+   * (Task 1) is keyed by messageId (one attachment per seeded message), while
+   * attachments uploaded via `uploadAttachment` and threaded through
+   * `sendMessage`/`saveDraft` are keyed by their own `aid` (== the message's
+   * attachment `part`). Try the part-keyed lookup first, then fall back to the
+   * messageId-keyed seed convention.
+   */
+  private findAttachmentBytes(
+    mailbox: MemoryMailbox, messageId: string, part: string,
+  ): { filename: string; contentType: string; data: Buffer } {
+    const message = mailbox.messages.find((m) => m.id === messageId);
+    if (!message) throw new NotFoundException('Message not found');
+    const meta = message.attachments?.find((a) => a.part === part);
+    if (!meta) throw new NotFoundException('Attachment not found');
+    const stored = mailbox.attachments.get(part) ?? mailbox.attachments.get(messageId);
+    if (!stored) throw new NotFoundException('Attachment not found');
+    return stored;
   }
 }

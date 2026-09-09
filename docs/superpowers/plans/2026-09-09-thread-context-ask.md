@@ -1710,7 +1710,9 @@ describe('assertIdInThread', () => {
 
   it('allows an in-thread messageId', () => {
     expect(() => assertIdInThread('read_email', { messageId: 'm1' }, ids)).not.toThrow();
-    expect(() => assertIdInThread('read_attachment', { messageId: 'm2', partId: '2' }, ids)).not.toThrow();
+    // read_attachment's schema is { messageId, part } — verified at
+    // apps/api/src/agent/tools/attachment.tools.ts:15. NOT `partId`.
+    expect(() => assertIdInThread('read_attachment', { messageId: 'm2', part: '2' }, ids)).not.toThrow();
   });
 
   it('rejects an out-of-thread messageId with a recoverable message', () => {
@@ -1735,22 +1737,33 @@ describe('assertIdInThread', () => {
 });
 ```
 
-Append to `apps/api/src/agent/tool-registry.spec.ts`:
+Append to `apps/api/src/agent/tool-registry.spec.ts`. That spec builds a **synthetic** registry from a local `echoTool` fixture (`:4-11`) — it never instantiates the real 21-tool registry, so do not assert a count of 21 here. Register three fixtures and assert the filter:
 
 ```ts
-it('openAiTools() advertises all 21 tools', () => {
-  // …build the registry the way this spec already does…
-  expect(registry.openAiTools()).toHaveLength(21);
-});
+describe('openAiTools filtering', () => {
+  const mk = (name: string): ToolDef => ({
+    ...echoTool, name, description: `${name} tool.`,
+  });
 
-it('openAiTools(only) advertises just the named tools', () => {
-  const only = new Set(['get_thread', 'read_email']);
-  const names = registry.openAiTools(only).map((t) => t.function.name).sort();
-  expect(names).toEqual(['get_thread', 'read_email']);
-});
+  it('advertises every registered tool when given no allowlist', () => {
+    const r = new ToolRegistry();
+    r.registerAll([mk('get_thread'), mk('read_email'), mk('search_emails')]);
+    expect(r.openAiTools().map((t) => t.function.name).sort())
+      .toEqual(['get_thread', 'read_email', 'search_emails']);
+  });
 
-it('openAiTools(only) ignores names the registry does not have', () => {
-  expect(registry.openAiTools(new Set(['nope']))).toHaveLength(0);
+  it('advertises only the allowlisted tools', () => {
+    const r = new ToolRegistry();
+    r.registerAll([mk('get_thread'), mk('read_email'), mk('search_emails')]);
+    const names = r.openAiTools(new Set(['get_thread', 'read_email'])).map((t) => t.function.name).sort();
+    expect(names).toEqual(['get_thread', 'read_email']);
+  });
+
+  it('ignores allowlisted names the registry does not have', () => {
+    const r = new ToolRegistry();
+    r.registerAll([mk('get_thread')]);
+    expect(r.openAiTools(new Set(['nope']))).toHaveLength(0);
+  });
 });
 ```
 
@@ -1843,16 +1856,17 @@ Grep for `parseArgs(` in `agent.service.ts` to find the exact call site; the exi
 
 Append to `apps/api/src/agent/agent.service.spec.ts`:
 
+`agent.service.spec.ts` supplies a **mocked** `ToolRegistry`, so assert what the service asks the registry for, not a literal tool count:
+
 ```ts
-it('a locked pin advertises only the thread allowlist', async () => {
-  // …arrange with pinned.toolScope = 'thread'…
-  const names = capturedUpstreamBody.tools.map((t: any) => t.function.name).sort();
-  expect(names).toEqual(['ask_user', 'draft_email', 'get_thread', 'read_attachment', 'read_email']);
+it('a locked pin asks the registry for only the thread allowlist', async () => {
+  // …arrange with pinned.toolScope = 'thread' and a spy on registry.openAiTools…
+  expect(openAiToolsSpy).toHaveBeenCalledWith(THREAD_LOCK_TOOLS);
 });
 
-it('an unlocked pin advertises the full registry', async () => {
+it('an unlocked pin asks the registry for everything', async () => {
   // …arrange with pinned but no toolScope…
-  expect(capturedUpstreamBody.tools).toHaveLength(21);
+  expect(openAiToolsSpy).toHaveBeenCalledWith(undefined);
 });
 
 it('rejects a read_email outside the locked thread', async () => {

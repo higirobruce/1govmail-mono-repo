@@ -59,9 +59,12 @@ of an empty box the user has to describe their own inbox into.
 
 ## DEPLOY — read before shipping
 
-**This deploy is NOT code-only.** Both VMs were last at `690af54`, so
-`20260908125930_add_user_ai_profiles` from the AI-personalization stream is **still pending on both
-boxes** and must be applied with this work. Expect exactly that one migration.
+**Corrected 2026-09-09 at deploy time:** an earlier draft of this note claimed both VMs were still
+at `690af54` with `20260908125930_add_user_ai_profiles` pending. That came from a stale memory note.
+The deployment records show **both boxes already ran api `1f18a8a`, which applied that migration**
+(`.154` on 2026-09-08 ~15:46 as the 16th; `.155` on 2026-09-08 ~16:1x). So this stream adds **no
+migration of its own and expects none pending** — but always let `npx prisma migrate deploy` tell
+you rather than trusting any recorded rev, since parallel sessions deploy to these boxes too.
 
 `.155` uses PG on 5433 and needs the SNI probe (`curl --resolve test1.risa.gov.rw:443:<ip>`); its
 SSH/scp can time out on the first attempt and succeed on an immediate retry.

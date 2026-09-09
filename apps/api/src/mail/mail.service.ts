@@ -2,7 +2,6 @@ import { BadRequestException, Injectable, NotFoundException, Logger, Unauthorize
 import { deriveLabel, formatAttachments, mdToHtml, type ExtractedCard, type TriageLabel } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
-import { MailProvider } from '../provider/mail-provider.interface';
 import { MailSessionUser, buildMailSession } from '../provider/mail-session';
 import { ProviderAttachmentMeta, ProviderFolderKind } from '../provider/provider-types';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -962,7 +961,7 @@ export class MailService {
     }
 
     // ── Pass 2: Zimbra-hosted image URLs (e.g. signature logos in Briefcase) ──
-    processed = await this.embedZimbraHostedImages(processed, provider, user);
+    processed = await this.embedZimbraHostedImages(processed, user);
 
     // ── Pass 3: Strip any remaining cid: references that could not be resolved ─
     // Browsers cannot load cid: URLs — they render as broken-image icons.
@@ -987,9 +986,13 @@ export class MailService {
    */
   private async embedZimbraHostedImages(
     html: string,
-    provider: MailProvider,
+    // The user row is the single source of provider truth here: the provider
+    // is resolved from it below rather than passed in, so a caller cannot hand
+    // over a provider that disagrees with `user.provider` (which the
+    // Zimbra-only path branch checks).
     user: MailSessionUser,
   ): Promise<string> {
+    const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
     if (!session.authToken) return html;
 

@@ -1181,6 +1181,71 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
     expect(result.embedPending).toBeUndefined();
     expect(result.bodyHtml).toContain('data:image/gif;base64');
   });
+
+  // Pass 2 of the embed (embedZimbraHostedImages) is the one method with both
+  // an interface call and a Zimbra-only extra in it. It resolves BOTH from the
+  // user row it is handed — no provider argument — so the branch that checks
+  // `user.provider` can never disagree with the provider doing the fetching.
+  describe('Zimbra-hosted image URLs (pass 2)', () => {
+    const hostedMsg = (html: string) =>
+      mapZimbraMessage({
+        id: 'z1', l: '2', su: 'hi', d: Date.now(), f: '', e: [],
+        mp: [{ part: '1', ct: 'text/html', body: true, content: html }],
+      } as any);
+
+    it('embeds an id/part URL through the resolved provider', async () => {
+      const { service, prisma, zimbra } = makeService();
+      prisma.message.findFirst.mockResolvedValue(cachedRow);
+      zimbra.getMessage.mockResolvedValue(
+        hostedMsg('<p><img src="https://mail.example.com/service/home/~/?id=z9&part=3"></p>'),
+      );
+      zimbra.downloadAttachmentBuffer.mockResolvedValue({ data: Buffer.from('gif'), contentType: 'image/gif' });
+
+      const result = await service.getMessage('u1', 'm1');
+
+      expect(zimbra.downloadAttachmentBuffer).toHaveBeenCalledWith(
+        { host: 'mail.example.com', email: 'u@example.com', authToken: 'tok', csrfToken: undefined },
+        'z9',
+        '3',
+      );
+      expect(result.bodyHtml).toContain(`data:image/gif;base64,${Buffer.from('gif').toString('base64')}`);
+    });
+
+    it('embeds a path-based URL through the Zimbra-only extra', async () => {
+      const { service, prisma, zimbra } = makeService();
+      zimbra.downloadZimbraPath = jest.fn().mockResolvedValue({
+        data: Buffer.from('png'), contentType: 'image/png',
+      });
+      prisma.message.findFirst.mockResolvedValue(cachedRow);
+      zimbra.getMessage.mockResolvedValue(
+        hostedMsg('<p><img src="https://mail.example.com/home/bruce/Briefcase/logo.png"></p>'),
+      );
+
+      const result = await service.getMessage('u1', 'm1');
+
+      expect(zimbra.downloadZimbraPath).toHaveBeenCalledWith(
+        'mail.example.com', 'tok', '/home/bruce/Briefcase/logo.png',
+      );
+      expect(zimbra.downloadAttachmentBuffer).not.toHaveBeenCalled();
+      expect(result.bodyHtml).toContain(`data:image/png;base64,${Buffer.from('png').toString('base64')}`);
+    });
+
+    it('leaves a non-image response at its original URL', async () => {
+      const { service, prisma, zimbra } = makeService();
+      zimbra.downloadZimbraPath = jest.fn().mockResolvedValue({
+        data: Buffer.from('%PDF'), contentType: 'application/pdf',
+      });
+      prisma.message.findFirst.mockResolvedValue(cachedRow);
+      zimbra.getMessage.mockResolvedValue(
+        hostedMsg('<p><img src="https://mail.example.com/home/bruce/Briefcase/report.pdf"></p>'),
+      );
+
+      const result = await service.getMessage('u1', 'm1');
+
+      expect(result.bodyHtml).toContain('src="https://mail.example.com/home/bruce/Briefcase/report.pdf"');
+      expect(result.bodyHtml).not.toContain('base64');
+    });
+  });
 });
 
 describe('MailService.getDefaultSignatureHtml', () => {

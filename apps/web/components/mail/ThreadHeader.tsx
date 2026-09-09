@@ -1,10 +1,21 @@
 'use client';
 
 import { formatDistanceToNow, parseISO } from 'date-fns';
-import { X, Reply, ReplyAll, Forward, ScrollText, FileText, MessageSquareReply, MessagesSquare } from 'lucide-react';
+import {
+  X, Reply, ReplyAll, Forward, ScrollText, FileText,
+  MessageSquareReply, MessagesSquare, MoreVertical,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { MailAvatar } from './MailAvatar';
 
 export interface ThreadParticipant {
@@ -18,8 +29,6 @@ interface Props {
   messageCount: number;
   unreadCount: number;
   lastReceivedAt: string;
-  lastSenderEmail: string;
-  currentUserEmail: string;
   onClose: () => void;
   onReply: () => void;
   onReplyAll: () => void;
@@ -32,27 +41,20 @@ interface Props {
   onAskThread?: () => void;
 }
 
-function deriveStatus(
-  lastSenderEmail: string,
-  currentUserEmail: string,
-  unreadCount: number,
-): { label: string; className: string } {
-  if (unreadCount > 0) {
-    return {
-      label: `${unreadCount} unread`,
-      className: 'bg-primary/10 text-primary border border-primary/20',
-    };
-  }
-  if (lastSenderEmail.toLowerCase() === currentUserEmail.toLowerCase()) {
-    return {
-      label: 'You replied',
-      className: 'bg-muted text-ink-3 border border-border',
-    };
-  }
-  return {
-    label: 'Awaiting reply',
-    className: 'bg-warning/10 text-warning-strong border border-warning/20',
-  };
+/**
+ * One descriptor per action, rendered two ways: as the desktop toolbar row and
+ * as the phone overflow menu. Keeping a single list is the point — the two
+ * surfaces cannot drift as actions are added, which is exactly what happened
+ * while each was hand-written inline.
+ */
+interface ThreadAction {
+  key: string;
+  icon: LucideIcon;
+  label: string;
+  onClick: () => void;
+  /** Renders the label, not just an icon, in the desktop row. */
+  prominent?: boolean;
+  busy?: boolean;
 }
 
 export default function ThreadHeader({
@@ -61,8 +63,6 @@ export default function ThreadHeader({
   messageCount,
   unreadCount,
   lastReceivedAt,
-  lastSenderEmail,
-  currentUserEmail,
   onClose,
   onReply,
   onReplyAll,
@@ -74,8 +74,6 @@ export default function ThreadHeader({
   onQuickReply,
   onAskThread,
 }: Props) {
-  const status = deriveStatus(lastSenderEmail, currentUserEmail, unreadCount);
-
   const lastActivity = (() => {
     try {
       return formatDistanceToNow(parseISO(lastReceivedAt), { addSuffix: true });
@@ -87,11 +85,76 @@ export default function ThreadHeader({
   const visibleParticipants = participants.slice(0, 5);
   const extraParticipantCount = participants.length - visibleParticipants.length;
 
+  const mailActions: ThreadAction[] = [
+    { key: 'reply', icon: Reply, label: 'Reply', onClick: onReply },
+    { key: 'reply-all', icon: ReplyAll, label: 'Reply all', onClick: onReplyAll },
+    { key: 'forward', icon: Forward, label: 'Forward', onClick: onForward },
+  ];
+
+  const aiActions: ThreadAction[] = [
+    onSummarize && {
+      key: 'summarize', icon: ScrollText, label: 'Summarize',
+      onClick: onSummarize, prominent: true, busy: summarizing,
+    },
+    onDraftDoc && {
+      key: 'draft-doc', icon: FileText, label: 'Draft doc',
+      onClick: onDraftDoc, prominent: true, busy: drafting,
+    },
+    onAskThread && {
+      key: 'ask-thread', icon: MessagesSquare, label: 'Ask about this thread',
+      onClick: onAskThread, prominent: true,
+    },
+    onQuickReply && {
+      key: 'quick-reply', icon: MessageSquareReply, label: 'Quick reply (AI)',
+      onClick: onQuickReply,
+    },
+  ].filter(Boolean) as ThreadAction[];
+
+  /** The Ask pill's accessible name is a sentence; its visible label is one word. */
+  const shortLabel = (a: ThreadAction) =>
+    a.key === 'ask-thread' ? 'Ask' : a.key === 'quick-reply' ? 'Quick reply' : a.label;
+
+  const iconButton = (a: ThreadAction) => (
+    <Tooltip key={a.key}>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={a.onClick}
+          disabled={a.busy}
+          className="text-ink-3 hover:bg-muted hover:text-foreground"
+          aria-label={a.label}
+        >
+          <a.icon className="w-4 h-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">{a.label}</TooltipContent>
+    </Tooltip>
+  );
+
+  const pill = (a: ThreadAction) => (
+    <button
+      key={a.key}
+      onClick={a.onClick}
+      disabled={a.busy}
+      className={cn(
+        'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-ui font-medium transition-colors',
+        a.busy ? 'bg-primary/15 text-primary' : 'bg-primary/10 text-primary hover:bg-primary/20',
+      )}
+      aria-label={a.label}
+      title={a.label}
+    >
+      <a.icon className={cn('w-3.5 h-3.5', a.busy && 'animate-pulse')} />
+      <span>{shortLabel(a)}</span>
+    </button>
+  );
+
   return (
     <div className="border-b border-border-faint bg-background shrink-0">
       <div className="px-6 pt-4 pb-4">
-        {/* Toolbar row — close on the left, status + quick actions on the right;
-            the title gets its own uncrowded line below (Image-3 pattern) */}
+        {/* Toolbar row — close on the left, actions on the right. Below sm the
+            whole action row collapses into one overflow menu: seven targets do
+            not fit a phone-width toolbar, and icon-only pills were unreadable. */}
         <div className="flex items-center gap-2 mb-3">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -107,104 +170,52 @@ export default function ThreadHeader({
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-xs">Close</TooltipContent>
           </Tooltip>
+
           <div className="flex-1" />
-          <span
-            className={cn(
-              // Truncatable (not shrink-0): if the row still gets tight, the status
-              // text gives way instead of pushing the action buttons off-screen.
-              'text-micro px-2 py-0.5 rounded-full font-medium min-w-0 truncate',
-              status.className,
+
+          {/* Desktop: everything visible, mail actions divided from AI actions */}
+          <div className="hidden sm:flex items-center gap-1 shrink-0">
+            {mailActions.map(iconButton)}
+            {aiActions.length > 0 && (
+              <span
+                data-testid="thread-action-divider"
+                aria-hidden="true"
+                className="w-px h-4 bg-border mx-1"
+              />
             )}
-          >
-            {status.label}
-          </span>
-        <div className="flex items-center gap-0 shrink-0">
-          {[
-            { icon: Reply,    label: 'Reply',     onClick: onReply },
-            { icon: ReplyAll, label: 'Reply All', onClick: onReplyAll },
-            { icon: Forward,  label: 'Forward',   onClick: onForward },
-          ].map(({ icon: Icon, label, onClick }) => (
-            <Tooltip key={label}>
-              <TooltipTrigger asChild>
+            {aiActions.map((a) => (a.prominent ? pill(a) : iconButton(a)))}
+          </div>
+
+          {/* Phone: one trigger, labeled options */}
+          <div className="sm:hidden shrink-0">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  onClick={onClick}
                   className="text-ink-3 hover:bg-muted hover:text-foreground"
-                  aria-label={label}
+                  aria-label="More actions"
                 >
-                  <Icon className="w-4 h-4" />
+                  <MoreVertical className="w-4 h-4" />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs">{label}</TooltipContent>
-            </Tooltip>
-          ))}
-          {onSummarize && (
-            <button
-              onClick={onSummarize}
-              disabled={summarizing}
-              className={cn(
-                'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-ui font-medium transition-colors',
-                summarizing
-                  ? 'bg-primary/15 text-primary'
-                  : 'bg-primary/10 text-primary hover:bg-primary/20',
-              )}
-              aria-label="Summarize"
-              title="Summarize"
-            >
-              <ScrollText className={cn('w-3.5 h-3.5', summarizing && 'animate-pulse')} />
-              {/* Icon-only below sm — the labeled pills don't fit a phone-width toolbar */}
-              <span className="hidden sm:inline">Summarize</span>
-            </button>
-          )}
-          {onDraftDoc && (
-            <button
-              onClick={onDraftDoc}
-              disabled={drafting}
-              className={cn(
-                'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-ui font-medium transition-colors',
-                drafting
-                  ? 'bg-primary/15 text-primary'
-                  : 'bg-primary/10 text-primary hover:bg-primary/20',
-              )}
-              aria-label="Draft doc"
-              title="Draft doc"
-            >
-              <FileText className={cn('w-3.5 h-3.5', drafting && 'animate-pulse')} />
-              <span className="hidden sm:inline">Draft doc</span>
-            </button>
-          )}
-          {onAskThread && (
-            <button
-              onClick={onAskThread}
-              className={cn(
-                'inline-flex items-center gap-1.5 shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-ui font-medium transition-colors',
-                'bg-primary/10 text-primary hover:bg-primary/20',
-              )}
-              aria-label="Ask about this thread"
-              title="Ask about this thread"
-            >
-              <MessagesSquare className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Ask</span>
-            </button>
-          )}
-          {onQuickReply && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onQuickReply}
-                  className="text-ink-3 hover:bg-muted hover:text-foreground"
-                  aria-label="Quick reply (AI)"
-                >
-                  <MessageSquareReply className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs">Quick reply (AI)</TooltipContent>
-            </Tooltip>
-          )}
-        </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {mailActions.map((a) => (
+                  <DropdownMenuItem key={a.key} onSelect={a.onClick}>
+                    <a.icon className="w-4 h-4" />
+                    {a.label}
+                  </DropdownMenuItem>
+                ))}
+                {aiActions.length > 0 && <DropdownMenuSeparator />}
+                {aiActions.map((a) => (
+                  <DropdownMenuItem key={a.key} onSelect={a.onClick} disabled={a.busy}>
+                    <a.icon className="w-4 h-4" />
+                    {a.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
         {/* Title — alone on its line */}

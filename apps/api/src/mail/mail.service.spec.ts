@@ -4,6 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { TasksService } from '../tasks/tasks.service';
+import { mapZimbraMessage } from '../zimbra/zimbra.mappers';
+import { buildMailSession } from '../provider/mail-session';
 
 function makeService() {
   const prisma = {
@@ -73,7 +75,12 @@ describe('MailService sender rules', () => {
 });
 
 describe('MailService.enforceSenderRules', () => {
-  const user = { zimbraHost: 'mail.example.com', authToken: 'tok', csrfToken: 'csrf' };
+  // The method now takes a MailSession — the caller (SenderRuleSweepService)
+  // owns the User→session mapping via buildMailSession.
+  const user = buildMailSession({
+    zimbraHost: 'mail.example.com', email: 'u@example.com',
+    authToken: 'tok', csrfToken: 'csrf',
+  });
   const message = { id: 'm1', zimbraId: 'z1', fromEmail: 'spam@evil.com', folderId: 'inbox-id' };
 
   // `rules` and `junkFolder` are now caller-resolved (hoisted out of the
@@ -158,7 +165,7 @@ describe('MailService.enforceSenderRules', () => {
       { id: 'junk-id', zimbraId: 'z-junk' },
     );
 
-    expect(zimbra.moveMessage).toHaveBeenCalledWith('mail.example.com', 'tok', 'z1', 'z-junk', 'csrf');
+    expect(zimbra.moveMessage).toHaveBeenCalledWith(user, 'z1', 'z-junk');
     expect(prisma.message.update).toHaveBeenCalledWith({ where: { id: 'm1' }, data: { folderId: 'junk-id' } });
   });
 
@@ -205,7 +212,10 @@ describe('MailService.getMessages stays a pure read (sender-rule enforcement liv
     prisma.user.findUnique.mockResolvedValue(activeUser);
     prisma.folder.findFirst.mockResolvedValueOnce({ id: 'inbox-id', zimbraId: 'zfolder', userId: 'u1', path: '/Inbox' });
     zimbra.getMessages.mockResolvedValue({
-      messages: [{ id: 'z1', e: [{ t: 'f', a: 'spam@evil.com', d: 'Spam' }], f: '', su: 'Subj', fr: 'snippet', d: Date.now() }],
+      messages: [mapZimbraMessage({
+        id: 'z1', l: 'zfolder', e: [{ t: 'f', a: 'spam@evil.com', d: 'Spam' }],
+        f: '', su: 'Subj', fr: 'snippet', d: Date.now(),
+      } as any)],
       total: 1,
       more: false,
     });
@@ -912,14 +922,14 @@ describe('MailService.getMessage attachment classification', () => {
   it('excludes CID-referenced inline images from the attachment list but keeps real attachments', async () => {
     const { service, prisma, zimbra } = makeService();
     prisma.message.findFirst.mockResolvedValue(cachedRow);
-    zimbra.getMessage.mockResolvedValue({
+    zimbra.getMessage.mockResolvedValue(mapZimbraMessage({
       id: 'z1', l: '2', su: 'hi', d: Date.now(), f: '', e: [],
       mp: [
         { part: '1', ct: 'text/html', body: true, content: '<p>hi <img src="cid:sig@x"></p>' },
         { part: '2', ct: 'image/gif', filename: 'inline.gif', ci: '<sig@x>', s: 1234 },
         { part: '3', ct: 'application/pdf', filename: 'report.pdf', s: 99 },
       ],
-    });
+    } as any));
 
     const result = await service.getMessage('u1', 'm1');
 
@@ -934,13 +944,13 @@ describe('MailService.getMessage attachment classification', () => {
   it('reports hasAttachments=false when the only file parts are inline signature images', async () => {
     const { service, prisma, zimbra } = makeService();
     prisma.message.findFirst.mockResolvedValue(cachedRow);
-    zimbra.getMessage.mockResolvedValue({
+    zimbra.getMessage.mockResolvedValue(mapZimbraMessage({
       id: 'z1', l: '2', su: 'hi', d: Date.now(), f: '', e: [],
       mp: [
         { part: '1', ct: 'text/html', body: true, content: '<p>hi <img src="cid:sig@x"></p>' },
         { part: '2', ct: 'image/gif', filename: 'inline.gif', ci: '<sig@x>', s: 1234 },
       ],
-    });
+    } as any));
 
     const result = await service.getMessage('u1', 'm1');
 
@@ -984,7 +994,7 @@ describe('MailService.getConversation back-fill batching', () => {
           { id: 'z2', l: '2', su: 's', d: 2, f: 'u', e: [{ t: 'f', a: 'a@x', d: 'A' }] },
           { id: 'z3', l: '2', su: 's', d: 3, f: '', e: [] },
           { id: 'z4', l: '999', su: 's', d: 4, f: '', e: [] }, // folder not synced — skipped
-        ],
+        ].map((m) => mapZimbraMessage(m as any)),
       }),
     } as unknown as ZimbraService;
     const service = new MailService(prisma, zimbra, {} as NotificationsService, {} as TasksService);
@@ -1023,7 +1033,7 @@ describe('MailService.getConversation back-fill batching', () => {
     } as unknown as PrismaService;
     const zimbra = {
       searchMessages: jest.fn().mockResolvedValue({
-        messages: [{ id: 'z1', l: '2', su: 's', d: 1, f: '', e: [] }],
+        messages: [mapZimbraMessage({ id: 'z1', l: '2', su: 's', d: 1, f: '', e: [] } as any)],
       }),
     } as unknown as ZimbraService;
     const service = new MailService(prisma, zimbra, {} as NotificationsService, {} as TasksService);
@@ -1068,13 +1078,13 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
     return { service, prisma: prisma as any, zimbra: zimbra as any };
   }
 
-  const zimbraMsg = {
+  const zimbraMsg = mapZimbraMessage({
     id: 'z1', l: '2', su: 'hi', d: Date.now(), f: '', e: [],
     mp: [
       { part: '1', ct: 'text/html', body: true, content: '<p>hi <img src="cid:sig@x"></p>' },
       { part: '2', ct: 'image/gif', filename: 'inline.gif', ci: '<sig@x>', s: 1234 },
     ],
-  };
+  } as any);
   const cachedRow = { id: 'm1', zimbraId: 'z1', bodyHtml: null, bodyText: null, attachments: null, inlineImages: null };
 
   afterEach(() => {
@@ -1291,7 +1301,7 @@ describe('MailService.sendMessage body formatting', () => {
       folder: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
     const zimbra = {
-      sendMessage: jest.fn().mockResolvedValue({ zimbraId: null, conversationId: null }),
+      sendMessage: jest.fn().mockResolvedValue({ id: null, conversationId: null }),
       getPrefs: jest.fn().mockResolvedValue({}),
       getIdentities: jest.fn().mockResolvedValue([]),
       getSignatures: jest.fn().mockResolvedValue([
@@ -1318,12 +1328,10 @@ describe('MailService.sendMessage body formatting', () => {
     });
 
     expect(zimbra.sendMessage).toHaveBeenCalledWith(
-      'mail.example.com',
-      'tok',
+      { host: 'mail.example.com', email: 'bruce@risa.gov.rw', authToken: 'tok', csrfToken: 'csrf' },
       expect.objectContaining({
         body: '<p>Hello</p><ul><li>a</li><li>b</li></ul><p><br></p><div data-sig="1"><p>Bruce — RISA</p></div>',
       }),
-      'csrf',
       [],
       [],
       [],
@@ -1341,7 +1349,7 @@ describe('MailService.sendMessage body formatting', () => {
       bodyFormat: 'markdown',
     });
 
-    expect(zimbra.sendMessage.mock.calls[0][2].body).toBe('<p>Hello</p>');
+    expect(zimbra.sendMessage.mock.calls[0][1].body).toBe('<p>Hello</p>');
   });
 
   it('leaves HTML bodies untouched when bodyFormat is not set', async () => {
@@ -1353,7 +1361,7 @@ describe('MailService.sendMessage body formatting', () => {
       body: '<p>already html</p>',
     });
 
-    expect(zimbra.sendMessage.mock.calls[0][2].body).toBe('<p>already html</p>');
+    expect(zimbra.sendMessage.mock.calls[0][1].body).toBe('<p>already html</p>');
     expect(zimbra.getSignatures).not.toHaveBeenCalled();
   });
 });
@@ -1398,7 +1406,7 @@ describe('MailService.saveDraft body formatting', () => {
       bodyFormat: 'markdown',
     });
 
-    expect(zimbra.saveDraft.mock.calls[0][2].body).toBe(
+    expect(zimbra.saveDraft.mock.calls[0][1].body).toBe(
       '<p>Hello</p><ul><li>a</li><li>b</li></ul><p><br></p><div data-sig="1"><p>Bruce — RISA</p></div>',
     );
   });
@@ -1408,7 +1416,7 @@ describe('MailService.saveDraft body formatting', () => {
 
     await service.saveDraft('u1', { to: ['a@b.rw'], subject: 'S', body: '<p>html</p>' });
 
-    expect(zimbra.saveDraft.mock.calls[0][2].body).toBe('<p>html</p>');
+    expect(zimbra.saveDraft.mock.calls[0][1].body).toBe('<p>html</p>');
     expect(zimbra.getSignatures).not.toHaveBeenCalled();
   });
 });

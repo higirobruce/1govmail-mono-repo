@@ -6,6 +6,23 @@ import {
   Logger,
 } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
+import { MailSession } from '../provider/mail-session';
+import {
+  ProviderFolder,
+  ProviderMessage,
+  ProviderMessagePage,
+} from '../provider/provider-types';
+import { DraftPayload, SendMessagePayload } from '../provider/mail-provider.interface';
+import { mapZimbraFolder, mapZimbraMessage } from './zimbra.mappers';
+
+// The Zimbra wire shapes live in zimbra.mappers.ts (the only place that knows
+// `su`/`fr`/`e[]`/`mp[]`/flag chars); re-exported here for existing importers.
+export type {
+  ZimbraEmailAddress,
+  ZimbraFolder,
+  ZimbraMessage,
+  ZimbraMessagePart,
+} from './zimbra.mappers';
 
 export interface ZimbraAuthResult {
   authToken: string;
@@ -25,46 +42,6 @@ export interface ZimbraAuthResult {
    * any mailbox SOAP call can succeed.
    */
   twoFactorRequired?: boolean;
-}
-
-export interface ZimbraFolder {
-  id: string;
-  name: string;
-  absFolderPath: string;
-  u?: number;  // unread count
-  n?: number;  // total count
-  color?: number;
-  l?: string;  // parent id
-  view?: string; // folder type: 'message' | 'contact' | 'appointment' | 'task' | 'document' | …
-}
-
-export interface ZimbraMessage {
-  id: string;
-  cid?: string; // conversation id
-  l: string;   // folder id
-  f?: string;  // flags: u=unread, f=flagged, a=has-attachment, r=replied, w=forwarded
-  s: number;   // size
-  d: number;   // date (ms)
-  su?: string; // subject
-  fr?: string; // fragment/snippet
-  e?: ZimbraEmailAddress[];
-  mp?: ZimbraMessagePart[];
-}
-
-export interface ZimbraEmailAddress {
-  a: string;  // address
-  d?: string; // display name
-  t: string;  // type: f=from, t=to, c=cc, b=bcc, r=reply-to
-}
-
-export interface ZimbraMessagePart {
-  part: string;
-  ct: string;   // content type
-  body?: boolean;
-  content?: string;
-  mp?: ZimbraMessagePart[];
-  filename?: string;
-  s?: number;   // size
 }
 
 // Zimbra fault codes that indicate the session is no longer valid
@@ -325,8 +302,8 @@ export class ZimbraService {
 
   // ─── Folders ─────────────────────────────────────────────────────────────────
 
-  async getFolders(host: string, authToken: string, csrfToken?: string): Promise<ZimbraFolder[]> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async getFolders(s: MailSession): Promise<ProviderFolder[]> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       // No folder filter → Zimbra returns the entire folder hierarchy from root.
       // Passing folder:{l:'1'} is fragile on some Zimbra versions / virtual accounts.
@@ -336,10 +313,10 @@ export class ZimbraService {
             _jsns: 'urn:zimbraMail',
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
 
-      const folders: ZimbraFolder[] = [];
+      const folders: ProviderFolder[] = [];
       const root = response.data?.Body?.GetFolderResponse?.folder?.[0];
       if (root) this.flattenFolders(root, folders);
       return folders;
@@ -348,20 +325,11 @@ export class ZimbraService {
     }
   }
 
-  private flattenFolders(node: any, acc: ZimbraFolder[]): void {
+  private flattenFolders(node: any, acc: ProviderFolder[]): void {
     // Guard: skip folders that lack an id (system virtual nodes in some setups)
     if (node.id == null) return;
 
-    acc.push({
-      id: String(node.id),              // Zimbra may return numeric IDs
-      name: node.name ?? 'Unnamed',
-      absFolderPath: node.absFolderPath ?? (node.name ? `/${node.name}` : '/'),
-      u: typeof node.u === 'number' ? node.u : 0,
-      n: typeof node.n === 'number' ? node.n : 0,
-      color: node.color,
-      l: node.l != null ? String(node.l) : undefined,
-      view: node.view ?? undefined,
-    });
+    acc.push(mapZimbraFolder(node));
 
     // Recurse into sub-folders AND linked/mounted folders
     for (const child of [
@@ -376,14 +344,12 @@ export class ZimbraService {
   // ─── Messages ────────────────────────────────────────────────────────────────
 
   async getMessages(
-    host: string,
-    authToken: string,
-    zimbraFolderId: string,
+    s: MailSession,
+    folderId: string,
     limit = 50,
     offset = 0,
-    csrfToken?: string,
-  ): Promise<{ messages: ZimbraMessage[]; total: number; more: boolean }> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  ): Promise<ProviderMessagePage> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       // `inid:` searches by Zimbra folder ID (numeric).
       // `in:FolderName` is unreliable for non-ASCII names and doesn't accept IDs.
@@ -392,7 +358,7 @@ export class ZimbraService {
           SearchRequest: {
             _jsns: 'urn:zimbraMail',
             types: 'message',
-            query: `inid:${zimbraFolderId}`,
+            query: `inid:${folderId}`,
             sortBy: 'dateDesc',
             limit,
             offset,
@@ -400,27 +366,22 @@ export class ZimbraService {
             needExp: 1,
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
 
       const result = response.data?.Body?.SearchResponse;
-      const messages: ZimbraMessage[] = result?.m ?? [];
-      const total: number = result?.total ?? messages.length;
+      const raw: any[] = result?.m ?? [];
+      const total: number = result?.total ?? raw.length;
       // `more` is Zimbra's authoritative flag; fall back to arithmetic estimate
-      const more: boolean = result?.more === 1 || result?.more === true || messages.length + offset < total;
-      return { messages, total, more };
+      const more: boolean = result?.more === 1 || result?.more === true || raw.length + offset < total;
+      return { messages: raw.map(mapZimbraMessage), total, more };
     } catch (err: any) {
-      this.handleZimbraError(err, `getMessages(folder=${zimbraFolderId})`);
+      this.handleZimbraError(err, `getMessages(folder=${folderId})`);
     }
   }
 
-  async getMessage(
-    host: string,
-    authToken: string,
-    messageId: string,
-    csrfToken?: string,
-  ): Promise<ZimbraMessage> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async getMessage(s: MailSession, messageId: string): Promise<ProviderMessage> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
@@ -434,12 +395,12 @@ export class ZimbraService {
             m: { id: messageId, html: 1, needExp: 1 },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
 
       const msg = response.data?.Body?.GetMsgResponse?.m?.[0];
       if (!msg) throw new BadGatewayException('Message not found in Zimbra');
-      return msg;
+      return mapZimbraMessage(msg);
     } catch (err: any) {
       this.handleZimbraError(err, `getMessage(${messageId})`);
     }
@@ -448,14 +409,12 @@ export class ZimbraService {
   // ─── Search ──────────────────────────────────────────────────────────────────
 
   async searchMessages(
-    host: string,
-    authToken: string,
+    s: MailSession,
     query: string,
     limit = 50,
     offset = 0,
-    csrfToken?: string,
-  ): Promise<{ messages: ZimbraMessage[]; total: number; more: boolean }> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  ): Promise<ProviderMessagePage> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       // NOTE: do NOT include `fetch` — fetching message bodies for every result
       // is extremely expensive and causes timeouts on large mailboxes.
@@ -471,17 +430,17 @@ export class ZimbraService {
             offset,
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
 
       const body = response.data?.Body?.SearchResponse;
-      const messages: ZimbraMessage[] = body?.m ?? [];
+      const raw: any[] = body?.m ?? [];
       // Zimbra returns a `more` boolean (reliable) and an optional `total` estimate.
       // Prefer `more` for hasMore; fall back to a full-page heuristic when Zimbra
       // omits the field (some versions only include `more` when it is true).
-      const total: number = body?.total ?? messages.length;
-      const more: boolean = !!body?.more || messages.length >= limit;
-      return { messages, total, more };
+      const total: number = body?.total ?? raw.length;
+      const more: boolean = !!body?.more || raw.length >= limit;
+      return { messages: raw.map(mapZimbraMessage), total, more };
     } catch (err: any) {
       this.handleZimbraError(err, `searchMessages("${query}")`);
       return { messages: [], total: 0, more: false }; // unreachable but satisfies TS
@@ -495,25 +454,24 @@ export class ZimbraService {
    * Returns the attachment ID (`aid`) that can be referenced in SendMsgRequest.
    */
   async uploadAttachment(
-    host: string,
-    authToken: string,
-    buffer: Buffer,
+    s: MailSession,
     filename: string,
-    mimeType: string,
+    contentType: string,
+    data: Buffer,
   ): Promise<string> {
-    const baseURL = host.startsWith('http') ? host : `https://${host}`;
+    const baseURL = s.host.startsWith('http') ? s.host : `https://${s.host}`;
     let rawResponse = '';
     try {
       const res = await axios.post(
         `${baseURL}/service/upload?fmt=raw`,
-        buffer,
+        data,
         {
           // Force string response — Zimbra returns non-standard JS:
           // 200,'null',[{"aid":"...","filename":"...","ct":"..."}]
           responseType: 'text',
           headers: {
-            Cookie: `ZM_AUTH_TOKEN=${authToken}`,
-            'Content-Type': mimeType,
+            Cookie: `ZM_AUTH_TOKEN=${s.authToken}`,
+            'Content-Type': contentType,
             'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
           },
           timeout: 30000,
@@ -570,24 +528,13 @@ export class ZimbraService {
   }
 
   async sendMessage(
-    host: string,
-    authToken: string,
-    payload: {
-      to: string[];
-      cc?: string[];
-      bcc?: string[];
-      subject: string;
-      body: string;
-      replyToId?: string;
-      /** 'r' = reply, 'w' = forward — marks the original message accordingly */
-      replyType?: 'r' | 'w';
-    },
-    csrfToken?: string,
+    s: MailSession,
+    payload: SendMessagePayload,
     attachmentAids: string[] = [],
     inlineImageAids: Array<{ aid: string; cid: string; ct: string }> = [],
     forwardedAttachments: Array<{ mid: string; part: string }> = [],
-  ): Promise<{ zimbraId: string; conversationId: string | null }> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  ): Promise<{ id: string; conversationId: string | null }> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     const toAddrs  = payload.to.map((a) => ({ t: 't', a }));
     const ccAddrs  = (payload.cc  ?? []).map((a) => ({ t: 'c', a }));
     const bccAddrs = (payload.bcc ?? []).map((a) => ({ t: 'b', a }));
@@ -642,7 +589,7 @@ export class ZimbraService {
           },
         },
       },
-      Header: this.soapHeader(csrfToken),
+      Header: this.soapHeader(s.csrfToken),
     };
 
     this.logger.log(
@@ -653,7 +600,7 @@ export class ZimbraService {
       const res = await client.post('/service/soap', requestBody);
       const sent = res.data?.Body?.SendMsgResponse?.m?.[0];
       return {
-        zimbraId:       sent?.id  != null ? String(sent.id)  : '',
+        id:             sent?.id  != null ? String(sent.id)  : '',
         conversationId: sent?.cid != null ? String(sent.cid) : null,
       };
     } catch (err: any) {
@@ -661,80 +608,59 @@ export class ZimbraService {
     }
   }
 
-  async deleteFolder(
-    host: string,
-    authToken: string,
-    zimbraFolderId: string,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async deleteFolder(s: MailSession, folderId: string): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
           FolderActionRequest: {
             _jsns: 'urn:zimbraMail',
-            action: { id: zimbraFolderId, op: 'delete' },
+            action: { id: folderId, op: 'delete' },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
-      this.handleZimbraError(err, `deleteFolder(${zimbraFolderId})`);
+      this.handleZimbraError(err, `deleteFolder(${folderId})`);
     }
   }
 
-  async emptyFolder(
-    host: string,
-    authToken: string,
-    zimbraFolderId: string,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async emptyFolder(s: MailSession, folderId: string): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
           FolderActionRequest: {
             _jsns: 'urn:zimbraMail',
-            action: { id: zimbraFolderId, op: 'empty', recursive: 1 },
+            action: { id: folderId, op: 'empty', recursive: 1 },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
-      this.handleZimbraError(err, `emptyFolder(${zimbraFolderId})`);
+      this.handleZimbraError(err, `emptyFolder(${folderId})`);
     }
   }
 
-  async renameFolder(
-    host: string,
-    authToken: string,
-    zimbraFolderId: string,
-    newName: string,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async renameFolder(s: MailSession, folderId: string, name: string): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
           FolderActionRequest: {
             _jsns: 'urn:zimbraMail',
-            action: { id: zimbraFolderId, op: 'rename', name: newName },
+            action: { id: folderId, op: 'rename', name },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
-      this.handleZimbraError(err, `renameFolder(${zimbraFolderId})`);
+      this.handleZimbraError(err, `renameFolder(${folderId})`);
     }
   }
 
-  async deleteMessage(
-    host: string,
-    authToken: string,
-    messageId: string,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async deleteMessage(s: MailSession, messageId: string): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
@@ -743,21 +669,15 @@ export class ZimbraService {
             action: { id: messageId, op: 'trash' },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
       this.handleZimbraError(err, `deleteMessage(${messageId})`);
     }
   }
 
-  async markRead(
-    host: string,
-    authToken: string,
-    messageId: string,
-    read: boolean,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async markRead(s: MailSession, messageId: string, read: boolean): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
@@ -766,59 +686,45 @@ export class ZimbraService {
             action: { id: messageId, op: read ? 'read' : '!read' },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
       this.handleZimbraError(err, `markRead(${messageId}, ${read})`);
     }
   }
 
-  async moveMessage(
-    host: string,
-    authToken: string,
-    zimbraMessageId: string,
-    targetZimbraFolderId: string,
-    csrfToken?: string,
-  ): Promise<void> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async moveMessage(s: MailSession, messageId: string, folderId: string): Promise<void> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       await client.post('/service/soap', {
         Body: {
           MsgActionRequest: {
             _jsns: 'urn:zimbraMail',
-            action: { id: zimbraMessageId, op: 'move', l: targetZimbraFolderId },
+            action: { id: messageId, op: 'move', l: folderId },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
     } catch (err: any) {
-      this.handleZimbraError(err, `moveMessage(${zimbraMessageId} → ${targetZimbraFolderId})`);
+      this.handleZimbraError(err, `moveMessage(${messageId} → ${folderId})`);
     }
   }
 
-  async createFolder(
-    host: string,
-    authToken: string,
-    name: string,
-    csrfToken?: string,
-  ): Promise<{ id: string; name: string; absFolderPath: string }> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async createFolder(s: MailSession, name: string, parentId?: string): Promise<ProviderFolder> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
     try {
       const response = await client.post('/service/soap', {
         Body: {
           CreateFolderRequest: {
             _jsns: 'urn:zimbraMail',
-            folder: { name, l: '1', view: 'message' },
+            // '1' is Zimbra's root folder — the default when no parent is given.
+            folder: { name, l: parentId ?? '1', view: 'message' },
           },
         },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
       const f = response.data?.Body?.CreateFolderResponse?.folder?.[0];
-      return {
-        id: String(f.id),
-        name: f.name,
-        absFolderPath: f.absFolderPath ?? `/${f.name}`,
-      };
+      return mapZimbraFolder(f);
     } catch (err: any) {
       this.handleZimbraError(err, `createFolder("${name}")`);
     }
@@ -831,16 +737,14 @@ export class ZimbraService {
    * (e.g. embedding inline images as base64 data URIs in the HTML body).
    */
   async downloadAttachmentBuffer(
-    host: string,
-    authToken: string,
-    email: string,
-    zimbraMessageId: string,
-    partId: string,
+    s: MailSession,
+    messageId: string,
+    part: string,
   ): Promise<{ data: Buffer; contentType: string }> {
-    const url = `https://${host}/service/home/${encodeURIComponent(email)}`;
+    const url = `https://${s.host}/service/home/${encodeURIComponent(s.email)}`;
     try {
       const response = await axios.get(url, {
-        params: { id: zimbraMessageId, part: partId, disp: 'a', auth: 'qp', zauthtoken: authToken },
+        params: { id: messageId, part, disp: 'a', auth: 'qp', zauthtoken: s.authToken },
         responseType: 'arraybuffer',
         httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
         timeout: 15_000,
@@ -848,7 +752,7 @@ export class ZimbraService {
       const contentType: string = response.headers['content-type'] ?? 'application/octet-stream';
       return { data: Buffer.from(response.data as ArrayBuffer), contentType };
     } catch (err: any) {
-      this.logger.error(`downloadAttachmentBuffer failed for msg=${zimbraMessageId} part=${partId}: ${err?.message}`);
+      this.logger.error(`downloadAttachmentBuffer failed for msg=${messageId} part=${part}: ${err?.message}`);
       throw new BadGatewayException('Failed to download attachment from Zimbra');
     }
   }
@@ -896,21 +800,19 @@ export class ZimbraService {
    * derived from the response headers (Zimbra sets them automatically).
    */
   async downloadAttachment(
-    host: string,
-    authToken: string,
-    email: string,
-    zimbraMessageId: string,
-    partId: string,
+    s: MailSession,
+    messageId: string,
+    part: string,
   ): Promise<{ stream: NodeJS.ReadableStream; contentType: string; filename: string }> {
-    const url = `https://${host}/service/home/${encodeURIComponent(email)}`;
+    const url = `https://${s.host}/service/home/${encodeURIComponent(s.email)}`;
     try {
       const response = await axios.get(url, {
         params: {
-          id:         zimbraMessageId,
-          part:       partId,
+          id:         messageId,
+          part,
           disp:       'a',
           auth:       'qp',
-          zauthtoken: authToken,
+          zauthtoken: s.authToken,
         },
         responseType: 'stream',
         // Accept self-signed certs common on on-premise Zimbra installs
@@ -924,11 +826,11 @@ export class ZimbraService {
       // Zimbra sets Content-Disposition: attachment; filename="..."
       const rawDisposition: string = response.headers['content-disposition'] ?? '';
       const filenameMatch = rawDisposition.match(/filename[^;=\n]*=(['"]?)([^'";\n]+)\1/i);
-      const filename = filenameMatch?.[2] ?? `attachment_${partId}`;
+      const filename = filenameMatch?.[2] ?? `attachment_${part}`;
 
       return { stream: response.data, contentType, filename };
     } catch (err: any) {
-      this.logger.error(`downloadAttachment failed for msg=${zimbraMessageId} part=${partId}: ${err?.message}`);
+      this.logger.error(`downloadAttachment failed for msg=${messageId} part=${part}: ${err?.message}`);
       throw new BadGatewayException('Failed to download attachment from Zimbra');
     }
   }
@@ -1083,20 +985,8 @@ export class ZimbraService {
    * Pass `payload.id` to update an existing draft; omit it to create a new one.
    * Returns the Zimbra message ID of the saved draft.
    */
-  async saveDraft(
-    host: string,
-    authToken: string,
-    payload: {
-      id?: string;
-      to?: string[];
-      cc?: string[];
-      bcc?: string[];
-      subject?: string;
-      body?: string;
-    },
-    csrfToken?: string,
-  ): Promise<string> {
-    const client = this.buildClient(host, authToken, csrfToken);
+  async saveDraft(s: MailSession, payload: DraftPayload): Promise<string> {
+    const client = this.buildClient(s.host, s.authToken, s.csrfToken);
 
     const buildAddr = (addrs: string[], type: string) =>
       addrs.filter(Boolean).map((a) => ({ t: type, a }));
@@ -1117,7 +1007,7 @@ export class ZimbraService {
     try {
       const response = await client.post('/service/soap', {
         Body: { SaveDraftRequest: { _jsns: 'urn:zimbraMail', m } },
-        Header: this.soapHeader(csrfToken),
+        Header: this.soapHeader(s.csrfToken),
       });
       const id = response.data?.Body?.SaveDraftResponse?.m?.[0]?.id;
       if (!id) throw new BadGatewayException('Zimbra did not return a draft ID');

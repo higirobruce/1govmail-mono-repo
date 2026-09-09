@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from './mail.service';
 import { matchSenderRule, SenderRuleLike } from './sender-rule-matcher';
+import { buildMailSession } from '../provider/mail-session';
 
 // Spam-folder paths mirrored from MailService — different Zimbra deployments
 // report the spam folder under either path.
@@ -90,7 +91,7 @@ export class SenderRuleSweepService {
       try {
         await this.mailService.enforceSenderRules(
           userId,
-          { zimbraHost: user.zimbraHost, authToken: user.authToken, csrfToken: user.csrfToken },
+          buildMailSession(user),
           message,
           rules,
           junkFolder,

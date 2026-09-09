@@ -8,6 +8,7 @@ import { MailService } from './mail.service';
 describe('SenderRuleSweepService', () => {
   const validUser = (id: string) => ({
     id,
+    email: `${id}@example.com`,
     zimbraHost: 'mail.example.com',
     authToken: 'tok',
     csrfToken: null,
@@ -83,7 +84,8 @@ describe('SenderRuleSweepService', () => {
     expect(mailService.enforceSenderRules).toHaveBeenCalledTimes(1);
     expect(mailService.enforceSenderRules).toHaveBeenCalledWith(
       'u1',
-      { zimbraHost: 'mail.example.com', authToken: 'tok', csrfToken: null },
+      // The sweep owns the User→MailSession mapping now.
+      { host: 'mail.example.com', email: 'u1@example.com', authToken: 'tok', csrfToken: undefined },
       { id: 'm1', zimbraId: 'z1', fromEmail: 'spam@evil.com', folderId: 'f-inbox' },
       rules,
       junk,

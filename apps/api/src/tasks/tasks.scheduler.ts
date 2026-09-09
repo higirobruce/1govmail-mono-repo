@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { buildMailSession } from '../provider/mail-session';
 
 @Injectable()
 export class TasksScheduler {
@@ -69,10 +70,8 @@ export class TasksScheduler {
 </body></html>`;
 
         await this.zimbra.sendMessage(
-          user.zimbraHost,
-          user.authToken,
+          buildMailSession(user),
           { to: [user.email], subject: `Reminder: ${task.title}`, body },
-          user.csrfToken ?? undefined,
         );
 
         await this.prisma.task.update({

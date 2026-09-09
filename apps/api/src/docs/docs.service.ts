@@ -18,6 +18,7 @@ import {
 import { InviteRole, Prisma, SharePermission } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { buildMailSession } from '../provider/mail-session';
 import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
 import { ShareDocDto } from './dto/share-doc.dto';
@@ -810,10 +811,8 @@ export class DocsService {
       </body></html>
     `;
     await this.zimbra.sendMessage(
-      inviter.zimbraHost,
-      inviter.authToken,
+      buildMailSession(inviter),
       { to: [toEmail], subject, body },
-      inviter.csrfToken ?? undefined,
     );
   }
 

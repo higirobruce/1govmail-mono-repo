@@ -52,8 +52,16 @@ export interface MailProvider {
   // this for generalization to buffers when EWS lands — keep the method
   // signatures matching current call sites for zero behavior change now)
   uploadAttachment(s: MailSession, filename: string, contentType: string, data: Buffer): Promise<string>;
-  downloadAttachment(s: MailSession, messageId: string, part: string): Promise<{ data: Buffer; contentType: string; filename: string }>;
-  downloadAttachmentBuffer(s: MailSession, messageId: string, part: string): Promise<Buffer>;
+  /**
+   * Streams — the download endpoint is proxied straight to the HTTP response
+   * and to the attachment-text extractor, neither of which wants the whole
+   * file buffered first. `filename` comes off the upstream
+   * Content-Disposition.
+   */
+  downloadAttachment(s: MailSession, messageId: string, part: string): Promise<{ stream: NodeJS.ReadableStream; contentType: string; filename: string }>;
+  /** Buffered variant for server-side processing (base64-embedding inline images).
+   *  Returns the content type alongside the bytes — the data URI needs it. */
+  downloadAttachmentBuffer(s: MailSession, messageId: string, part: string): Promise<{ data: Buffer; contentType: string }>;
 
   // contacts + GAL
   getContacts(s: MailSession, limit?: number, offset?: number): Promise<ProviderContact[]>;

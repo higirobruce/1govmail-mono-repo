@@ -15,6 +15,7 @@ interface AttachmentEntry {
 }
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
+import { buildMailSession } from '../provider/mail-session';
 import { CreateTaskDto, TaskStatus, AssigneeDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateSubtaskDto } from './dto/create-subtask.dto';
@@ -377,14 +378,12 @@ export class TasksService {
 </body></html>`;
 
         return this.zimbra.sendMessage(
-          user.zimbraHost,
-          user.authToken!,
+          buildMailSession(user),
           {
             to: [email],
             subject: `Task assigned to you: ${task.title}`,
             body,
           },
-          user.csrfToken ?? undefined,
         );
       }),
     );

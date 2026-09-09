@@ -1,6 +1,12 @@
 export interface ProviderFolder {
   id: string; name: string; path: string;
   type?: string;                 // inbox|sent|drafts|trash|junk|custom
+  /**
+   * Content class of the folder — 'message' | 'contact' | 'appointment' |
+   * 'task' | 'document'. MailService maps this to its own FolderType enum when
+   * upserting, so the field has to survive the neutral DTO.
+   */
+  view?: string;
   unreadCount: number; totalCount: number;
   parentId?: string;
 }
@@ -18,6 +24,8 @@ export interface ProviderMessage {
   from: ProviderAddress; to: ProviderAddress[]; cc: ProviderAddress[]; bcc: ProviderAddress[];
   receivedAt: Date; size: number;
   isRead: boolean; isFlagged: boolean; hasAttachments: boolean;
+  /** Zimbra flag char 'd'. Persisted on Message.isDraft by every sync path. */
+  isDraft: boolean;
   tags: string[];
   bodyHtml?: string | null; bodyText?: string | null;
   attachments?: ProviderAttachmentMeta[];

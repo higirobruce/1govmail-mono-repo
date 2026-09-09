@@ -6,6 +6,8 @@ import { ZimbraService } from './zimbra.service';
 // user's unread mail as read in Zimbra before they ever see it. Read-marking
 // is exclusively the explicit markRead (MsgActionRequest) path.
 describe('ZimbraService.getMessage', () => {
+  const session = { host: 'mail.example.com', email: 'u@example.com', authToken: 'tok' };
+
   function makeService() {
     const service = new ZimbraService();
     const post = jest.fn().mockResolvedValue({
@@ -18,7 +20,7 @@ describe('ZimbraService.getMessage', () => {
   it('does not mark the message as read (no read flag in GetMsgRequest)', async () => {
     const { service, post } = makeService();
 
-    await service.getMessage('mail.example.com', 'tok', 'z1');
+    await service.getMessage(session, 'z1');
 
     const soapBody = post.mock.calls[0][1];
     const m = soapBody.Body.GetMsgRequest.m;
@@ -29,7 +31,7 @@ describe('ZimbraService.getMessage', () => {
   it('still requests the html body and expanded parts', async () => {
     const { service, post } = makeService();
 
-    await service.getMessage('mail.example.com', 'tok', 'z1');
+    await service.getMessage(session, 'z1');
 
     const m = post.mock.calls[0][1].Body.GetMsgRequest.m;
     expect(m.html).toBe(1);

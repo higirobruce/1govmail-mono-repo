@@ -961,6 +961,9 @@ export default function MailPage() {
     }
 
     if (type === 'askThread') {
+      // Defensive: the menu row itself is gated on aiEnabled, but the branch
+      // stays inert even if it somehow renders (or fires) while AI is off.
+      if (!aiEnabled) return;
       // Unlike mute, a message with no conversationId is fine here — pin the
       // single message; it is still the thing the user asked about.
       openAsk({
@@ -1082,7 +1085,7 @@ export default function MailPage() {
         },
       });
     }
-  }, [messages, searchResults, activeMessage, activeMessageId, openMessage, openCompose, folders, activeFolderId, updateFolderCounts, updateMessageInCache, removeMessageFromCache, invalidateMessages, offline, openAsk]); // eslint-disable-line
+  }, [messages, searchResults, activeMessage, activeMessageId, openMessage, openCompose, folders, activeFolderId, updateFolderCounts, updateMessageInCache, removeMessageFromCache, invalidateMessages, offline, openAsk, aiEnabled]); // eslint-disable-line
 
   // Debounce search input → fire query after 400 ms of silence
   const handleSearchInput = useCallback((value: string) => {
@@ -1179,7 +1182,7 @@ export default function MailPage() {
     },
     d: () => { if (activeMessageId) deleteMessage(); },
     q: () => {
-      if (!activeMessage) return;
+      if (!activeMessage || !aiEnabled) return;
       openAsk({
         scope: {
           kind: 'thread',
@@ -1469,6 +1472,7 @@ export default function MailPage() {
             folders={folders}
             mutedConversationIds={mutedConversationIds}
             filterTagNames={selectedLabelNames}
+            aiEnabled={aiEnabled}
           />
         ) : (
           <>
@@ -1524,6 +1528,7 @@ export default function MailPage() {
               folders={folders}
               mutedConversationIds={mutedConversationIds}
               cardsById={cardsById}
+              aiEnabled={aiEnabled}
               emptyState={showInboxZeroEmptyState ? (
                 <InboxZero celebrate={pendingInboxZero} onCelebrated={handleInboxZeroCelebrated} />
               ) : undefined}

@@ -73,6 +73,8 @@ interface MailListProps {
   filterTagNames?: Set<string>;
   /** Persisted triage cards keyed by message id — drives the row label badge. */
   cardsById?: Record<string, TriageCard>;
+  /** Gates the "Ask about this thread" context-menu row — omitted entirely when AI is off. */
+  aiEnabled?: boolean;
 }
 
 type Tab = 'all' | 'unread' | 'starred';
@@ -160,12 +162,14 @@ function ContextMenu({
   onClose,
   folders = [],
   mutedConversationIds = [],
+  aiEnabled = false,
 }: {
   state: CtxMenuState;
   onAction: (action: ContextAction) => void;
   onClose: () => void;
   folders?: FolderItem[];
   mutedConversationIds?: string[];
+  aiEnabled?: boolean;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [showFolders, setShowFolders] = useState(false);
@@ -242,7 +246,7 @@ function ContextMenu({
       {item(BellOff,    isMuted ? 'Unmute conversation' : 'Mute conversation', 'mute')}
       {item(ListTodo,     'Create Task',    'createTask')}
       {item(CalendarPlus, 'Create Event',   'createEvent')}
-      {item(MessagesSquare, 'Ask about this thread', 'askThread')}
+      {aiEnabled && item(MessagesSquare, 'Ask about this thread', 'askThread')}
       {labelFolders.length > 0 && (
         <>
           <div className="my-1 h-px bg-border-faint" />
@@ -459,6 +463,7 @@ export default function MailList({
   emptyState,
   filterTagNames,
   cardsById,
+  aiEnabled = false,
 }: MailListProps) {
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
@@ -692,6 +697,7 @@ export default function MailList({
           onClose={() => setCtxMenu(null)}
           folders={folders}
           mutedConversationIds={mutedConversationIds}
+          aiEnabled={aiEnabled}
         />
       )}
 

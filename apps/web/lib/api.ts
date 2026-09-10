@@ -283,6 +283,14 @@ export const api = {
       if (USE_MOCK) return delay({ messages: MOCK_MESSAGES.filter(m => JSON.stringify(m).toLowerCase().includes(query.toLowerCase())), total: 0, offset: 0, limit: 50, hasMore: false });
       return request<any>(`/mail/search?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`);
     },
+    /** Structured (field-by-field) search — POST /mail/search/advanced. Same response shape as `search`. */
+    searchAdvanced: (filter: MailSearchFilter, limit = 50, offset = 0) => {
+      if (USE_MOCK) return delay({ messages: [], total: 0, offset: 0, limit, hasMore: false });
+      return request<any>('/mail/search/advanced', {
+        method: 'POST',
+        body: JSON.stringify({ ...filter, limit, offset }),
+      });
+    },
     /** Semantic (vector) mail search — phase 4. Same response shape as `search`. */
     semanticSearch: (query: string, limit = 5, opts?: { signal?: AbortSignal }) => {
       if (USE_MOCK) return delay({ messages: [], total: 0, offset: 0, limit, hasMore: false });
@@ -1000,12 +1008,33 @@ export interface SettingsResponse {
   email: string;
   zimbraHost: string;
   displayName: string | null;
+  /** Optional: a server from before this field simply omits it. Used to gate
+   *  provider-specific UI (e.g. hiding the Flagged filter for EWS accounts,
+   *  whose backend intentionally ignores it). */
+  provider?: string;
   prefs: Record<string, string>;
   identities: Array<{ id: string; name: string; attrs: Record<string, string> }>;
   signatures: Array<{ id: string; name: string; contentHtml: string; contentText: string }>;
   /** Optional: a server from before this field simply omits it, and a partial
    *  object is legal — every absent flag defaults to supported. */
   capabilities?: Partial<SettingsCapabilities>;
+}
+
+/** Provider-agnostic structured mail search filter — mirrors
+ *  apps/api/src/provider/mail-search-filter.ts. Every field optional; present
+ *  fields combine with AND. Booleans: true/false select that state, undefined
+ *  means "either". Empty/absent fields should be omitted before posting. */
+export interface MailSearchFilter {
+  keyword?: string;
+  from?: string;
+  to?: string;
+  subject?: string;
+  dateFrom?: string;   // 'YYYY-MM-DD', inclusive
+  dateTo?: string;     // 'YYYY-MM-DD', inclusive
+  hasAttachment?: boolean;
+  folderId?: string;
+  unread?: boolean;
+  flagged?: boolean;
 }
 
 export interface Doc {

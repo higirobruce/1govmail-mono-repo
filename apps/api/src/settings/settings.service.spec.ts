@@ -30,6 +30,7 @@ function makeZimbra() {
     // capabilities assertion below a test of the plumbing (provider declares →
     // GET /settings forwards) rather than of a fixture.
     capabilities: new ZimbraService().capabilities,
+    name: 'zimbra' as const,
     getPrefs: jest.fn(),
     getIdentities: jest.fn(),
     getSignatures: jest.fn(),
@@ -299,7 +300,15 @@ describe('SettingsService getSettings', () => {
     });
   });
 
-  it('leaves the rest of the payload byte-identical to the pre-provider response', async () => {
+  it('reports the resolved provider name for provider-gated frontend UI (e.g. hiding Flagged for EWS)', async () => {
+    const { service } = arrange();
+
+    const result = await service.getSettings('u1');
+
+    expect(result.provider).toBe('zimbra');
+  });
+
+  it('leaves the rest of the payload byte-identical to the pre-capabilities response, plus `provider`', async () => {
     const { service } = arrange();
 
     const { capabilities, ...rest } = await service.getSettings('u1');
@@ -309,6 +318,7 @@ describe('SettingsService getSettings', () => {
       email: 'bruce@risa.gov.rw',
       zimbraHost: 'zimbra.example.com',
       displayName: 'Bruce H.',
+      provider: 'zimbra',
       prefs: { zimbraPrefDefaultSignatureId: 's1' },
       identities: [{ id: 'i1', name: 'DEFAULT', attrs: { zimbraPrefFromDisplay: 'Bruce H.' } }],
       signatures: [{ id: 's1', name: 'Work', contentHtml: '<p>hi</p>', contentText: 'hi' }],

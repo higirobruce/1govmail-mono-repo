@@ -7,7 +7,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useAIStore } from '@/stores/ai.store';
 import { useAskStore } from '@/stores/ask.store';
 import { usePeopleStore } from '@/stores/people.store';
-import { api, type Commitment } from '@/lib/api';
+import { api, type Commitment, type MailSearchFilter } from '@/lib/api';
 import { parseTaskInput } from '@/lib/ai/taskParse';
 import { AIClient } from '@/lib/ai/client';
 import { getCachedBody, setCachedBody, fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
@@ -18,6 +18,7 @@ import { AIRail } from '@/components/layout/AIRail';
 import MailList, { type ContextAction, type BulkAction } from '@/components/mail/MailList';
 import { InboxZero } from '@/components/mail/InboxZero';
 import SnoozeModal from '@/components/mail/SnoozeModal';
+import AdvancedSearchPanel from '@/components/mail/AdvancedSearchPanel';
 import MailDetail from '@/components/mail/MailDetail';
 import ThreadView from '@/components/mail/ThreadView';
 import ComposeModal, { type ComposeMode } from '@/components/mail/ComposeModal';
@@ -31,7 +32,8 @@ import { useResizable, clampWidth } from '@/hooks/useResizable';
 import { ResizeHandle } from '@/components/layout/ResizeHandle';
 import { useUIStore } from '@/stores/ui.store';
 import { Input } from '@/components/ui/input';
-import { Search, RefreshCw, Newspaper, ClipboardCheck, MessageCircleQuestion, X as XIcon, Menu, ChevronLeft } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Search, RefreshCw, Newspaper, ClipboardCheck, MessageCircleQuestion, X as XIcon, Menu, ChevronLeft, SlidersHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOffline } from '@/lib/offline/provider';
 import { toast } from 'sonner';
@@ -42,6 +44,28 @@ const TRIAGE_CHIPS: { id: TriageLabel; label: string }[] = [
   { id: 'deadline', label: 'Deadline' },
   // fyi intentionally has no chip — not actionable enough to filter on.
 ];
+
+/** Human-readable label for one field of the active structured-search filter,
+ *  shown as a removable chip beside the search box. */
+function formatAdvancedFilterChip(
+  key: keyof MailSearchFilter,
+  value: unknown,
+  folders: Array<{ id: string; name: string }>,
+): string {
+  switch (key) {
+    case 'keyword': return `"${value}"`;
+    case 'from': return `From: ${value}`;
+    case 'to': return `To: ${value}`;
+    case 'subject': return `Subject: ${value}`;
+    case 'dateFrom': return `From ${value}`;
+    case 'dateTo': return `To ${value}`;
+    case 'hasAttachment': return 'Has attachment';
+    case 'folderId': return `Folder: ${folders.find((f) => f.id === value)?.name ?? value}`;
+    case 'unread': return value ? 'Unread' : 'Read';
+    case 'flagged': return value ? 'Flagged' : 'Unflagged';
+    default: return String(value);
+  }
+}
 
 export default function MailPage() {
   const router = useRouter();
@@ -318,8 +342,22 @@ export default function MailPage() {
   const [loadingSearch, setLoadingSearch]     = useState(false);
   const [loadingMoreSearch, setLoadingMoreSearch] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isSearchMode = searchQuery.trim().length > 0;
+  // Structured (filter-builder) search shares the same results/pagination
+  // state as the plain-text search above — only the request shape differs.
+  const [advancedFilter, setAdvancedFilter]     = useState<MailSearchFilter | null>(null);
+  const [advancedSearchOpen, setAdvancedSearchOpen] = useState(false);
+  const isSearchMode = searchQuery.trim().length > 0 || advancedFilter !== null;
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Settings fetch (shares the ['settings'] cache with ComposeModal) — used
+  // here only to detect EWS accounts so the Advanced-search panel can hide
+  // the Flagged filter the backend intentionally ignores for that provider.
+  const { data: settingsData } = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api.settings.get(),
+    staleTime: 5 * 60_000,
+  });
+  const hideFlaggedFilter = settingsData?.provider === 'ews';
 
   // ── Keyboard shortcuts modal ────────────────────────────────────────────────
   const [shortcutsModalOpen, setShortcutsModalOpen] = useState(false);
@@ -1142,10 +1180,70 @@ export default function MailPage() {
     }
   }, [searchQuery]); // eslint-disable-line
 
+  // Structured search — mirrors runSearch above but posts a MailSearchFilter
+  // to /mail/search/advanced instead of a plain query string. Feeds the SAME
+  // searchResults/searchTotal/searchHasMore state so results render in the
+  // existing list.
+  const runAdvancedSearch = useCallback(async (filter: MailSearchFilter, reset = true) => {
+    if (reset) {
+      searchOffsetRef.current = 0;
+      setSearchResults([]);
+      setLoadingSearch(true);
+    } else {
+      setLoadingMoreSearch(true);
+    }
+    const currentOffset = searchOffsetRef.current;
+    try {
+      const data = await api.mail.searchAdvanced(filter, 50, currentOffset);
+      setSearchResults((prev) => {
+        if (reset) return data.messages;
+        const seen = new Set(prev.map((m: any) => m.id));
+        return [...prev, ...data.messages.filter((m: any) => !seen.has(m.id))];
+      });
+      setSearchTotal(data.total);
+      setSearchHasMore(data.hasMore);
+      searchOffsetRef.current = currentOffset + data.messages.length;
+    } catch (err: any) {
+      toast.error('Search failed', { description: err?.message });
+    } finally {
+      setLoadingSearch(false);
+      setLoadingMoreSearch(false);
+    }
+  }, []);
+
+  const handleAdvancedSearch = useCallback((filter: MailSearchFilter) => {
+    // Plain-text and structured search are mutually exclusive search modes.
+    setSearchInput('');
+    setSearchQuery('');
+    setActiveMessageId(undefined);
+    setActiveMessage(null);
+    setAdvancedFilter(filter);
+    setAdvancedSearchOpen(false);
+    runAdvancedSearch(filter, true);
+  }, [runAdvancedSearch]);
+
+  /** Remove one field from the active structured filter and re-run (used by the filter chips). */
+  const removeAdvancedFilterField = useCallback((key: keyof MailSearchFilter) => {
+    setAdvancedFilter((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete next[key];
+      const hasAnyField = Object.keys(next).length > 0;
+      if (hasAnyField) {
+        runAdvancedSearch(next, true);
+        return next;
+      }
+      // Last field removed — exit search mode entirely.
+      setSearchResults([]);
+      return null;
+    });
+  }, [runAdvancedSearch]);
+
   const clearSearch = useCallback(() => {
     setSearchInput('');
     setSearchQuery('');
     setSearchResults([]);
+    setAdvancedFilter(null);
   }, []);
 
   // ── Keyboard navigation helpers ─────────────────────────────────────────────
@@ -1402,24 +1500,71 @@ export default function MailPage() {
           </div>
 
           {/* Search bar */}
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/35" />
-            <Input
-              ref={searchInputRef}
-              value={searchInput}
-              onChange={(e) => handleSearchInput(e.target.value)}
-              placeholder="Search messages…"
-              className="pl-8 h-7 text-[0.75rem] bg-muted/40 border-border/40 focus-visible:border-primary/40 rounded-lg"
-            />
-            {searchInput && (
-              <button
-                onClick={clearSearch}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-muted-foreground"
-              >
-                <XIcon className="w-3 h-3" />
-              </button>
-            )}
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/35" />
+              <Input
+                ref={searchInputRef}
+                value={searchInput}
+                onChange={(e) => handleSearchInput(e.target.value)}
+                placeholder="Search messages…"
+                className="pl-8 h-7 text-[0.75rem] bg-muted/40 border-border/40 focus-visible:border-primary/40 rounded-lg"
+              />
+              {searchInput && (
+                <button
+                  onClick={clearSearch}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-muted-foreground"
+                >
+                  <XIcon className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <Popover open={advancedSearchOpen} onOpenChange={setAdvancedSearchOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  title="Advanced search"
+                  aria-label="Advanced search"
+                  className={cn(
+                    'h-7 w-7 shrink-0 flex items-center justify-center rounded-lg transition-colors',
+                    advancedFilter
+                      ? 'bg-primary/15 text-primary'
+                      : 'text-muted-foreground/45 hover:text-foreground hover:bg-muted',
+                  )}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-[340px] p-3">
+                <AdvancedSearchPanel
+                  folders={folders}
+                  onSearch={handleAdvancedSearch}
+                  onClear={clearSearch}
+                  hideFlagged={hideFlaggedFilter}
+                />
+              </PopoverContent>
+            </Popover>
           </div>
+
+          {/* Active structured-filter chips */}
+          {advancedFilter && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              {Object.entries(advancedFilter).map(([key, value]) => (
+                <span
+                  key={key}
+                  className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-primary/10 text-primary text-[0.6875rem] font-medium"
+                >
+                  {formatAdvancedFilterChip(key as keyof MailSearchFilter, value, folders)}
+                  <button
+                    onClick={() => removeAdvancedFilterField(key as keyof MailSearchFilter)}
+                    className="p-0.5 rounded-full hover:bg-primary/20"
+                    aria-label={`Remove ${key} filter`}
+                  >
+                    <XIcon className="w-2.5 h-2.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* AI actions — labeled pills so the features are discoverable, not
               hidden behind 14px ghost icons. Scrolls horizontally if cramped. */}
@@ -1473,7 +1618,11 @@ export default function MailPage() {
             loadingMore={loadingMoreSearch}
             onSelect={openMessage}
             onPrefetch={prefetchMessage}
-            onLoadMore={() => { if (!loadingMoreSearch && searchHasMore) runSearch(searchQuery, false); }}
+            onLoadMore={() => {
+              if (loadingMoreSearch || !searchHasMore) return;
+              if (advancedFilter) runAdvancedSearch(advancedFilter, false);
+              else runSearch(searchQuery, false);
+            }}
             hasMore={searchHasMore}
             onContextAction={handleContextAction}
             onBulkAction={handleBulkAction}

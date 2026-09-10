@@ -76,6 +76,7 @@ export class SettingsService {
       email:       user.email,
       zimbraHost:  user.zimbraHost,
       displayName: user.displayName,
+      provider:    provider.name,
       prefs,
       identities,
       signatures: processedSignatures,

@@ -1,11 +1,11 @@
 import ms from 'ms';
 import { Readable } from 'stream';
-import { Logger, UnauthorizedException } from '@nestjs/common';
+import { Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailSession } from '../provider/mail-session';
 import {
   ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderContact,
-  ProviderEvent, ProviderEventDetail, ProviderFreeBusy, ProviderAuthResult,
-  MailProviderCapabilities, ProviderIdentity, ProviderSignature,
+  ProviderEvent, ProviderEventDetail, ProviderEventAttendee, ProviderFreeBusy,
+  ProviderAuthResult, MailProviderCapabilities, ProviderIdentity, ProviderSignature,
   ProviderAddress, ProviderAttachmentMeta, ProviderFolderKind,
 } from '../provider/provider-types';
 import {
@@ -20,7 +20,11 @@ import {
   getItemChangeKeyEnvelope, markReadEnvelope, moveItemEnvelope, deleteItemEnvelope,
   createMessageEnvelope, createReplyForwardEnvelope, createAttachmentEnvelope,
   sendItemEnvelope, updateDraftEnvelope, getAttachmentEnvelope,
-  EwsFileAttachment, EwsMessageFields,
+  findContactsEnvelope, createContactEnvelope, updateContactEnvelope, resolveNamesEnvelope,
+  findCalendarEnvelope, getAppointmentEnvelope, createCalendarEventEnvelope,
+  updateCalendarEventEnvelope, deleteCalendarEventEnvelope, inviteReplyEnvelope,
+  getUserAvailabilityEnvelope,
+  EwsFileAttachment, EwsMessageFields, EwsContactFields, EwsCalendarFields,
 } from './ews-envelopes';
 import {
   parseEws, responseClassOf, toArray, toBool, textOf,
@@ -66,6 +70,23 @@ function ewsSessionLifetimeMs(): number {
 const MAX_BACKOFF_MS = 30_000;
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)));
+
+/** EWS contact email slot key → the index of its role tag in
+ *  `EwsService.CONTACT_EMAIL_ROLES` (1→work/primary, 2→personal, 3→other),
+ *  mirroring the Zimbra contact mapping so a contact round-trips unchanged. */
+const CONTACT_EMAIL_ROLES_INDEX: Record<string, number> = {
+  EmailAddress1: 0,
+  EmailAddress2: 1,
+  EmailAddress3: 2,
+};
+
+/** EWS PhoneNumbers Entry key → the app's phone `type` (the read side of the
+ *  write mapping in ews-envelopes' contactPhoneKey). */
+const PHONE_KEY_TO_TYPE: Record<string, string> = {
+  BusinessPhone: 'work',
+  MobilePhone: 'mobile',
+  HomePhone: 'home',
+};
 
 /**
  * EWS (Exchange Web Services) mail provider.
@@ -614,7 +635,9 @@ export class EwsService {
    *  that MUST run immediately before any UpdateItem (spec §5.3). */
   private async freshChangeKey(session: MailSession, itemId: string): Promise<string> {
     const doc = parseEws(await this.callWithRetry(session, getItemChangeKeyEnvelope(itemId)));
-    return this.itemIdOf(doc, 'GetItemResponse', 'GetItemResponseMessage').changeKey;
+    // `anyItemIdOf` (not `itemIdOf`) so the fresh key is read whether the item
+    // came back as a Message, a Contact, or a CalendarItem.
+    return this.anyItemIdOf(doc, 'GetItemResponse', 'GetItemResponseMessage').changeKey;
   }
 
   /** MoveItem to `deleteditems` — soft delete, matching Zimbra's trash
@@ -677,22 +700,333 @@ export class EwsService {
     return { data: a.data, contentType: a.contentType };
   }
 
-  // contacts + GAL
-  getContacts(_s: MailSession, _limit?: number, _offset?: number): Promise<ProviderContact[]> { return this.notImplemented('getContacts'); }
-  createContact(_s: MailSession, _contact: Partial<ProviderContact>): Promise<ProviderContact> { return this.notImplemented('createContact'); }
-  modifyContact(_s: MailSession, _id: string, _contact: Partial<ProviderContact>): Promise<void> { return this.notImplemented('modifyContact'); }
-  deleteContact(_s: MailSession, _id: string): Promise<void> { return this.notImplemented('deleteContact'); }
-  autoCompleteContacts(_s: MailSession, _query: string): Promise<Array<{ email: string; display: string }>> { return this.notImplemented('autoCompleteContacts'); }
-  searchGal(_s: MailSession, _query: string): Promise<Array<{ email: string; display: string }>> { return this.notImplemented('searchGal'); }
+  // ── contacts + GAL (Task 6) ───────────────────────────────────────────────
 
-  // calendar
-  getCalendarEvents(_s: MailSession, _startMs: number, _endMs: number): Promise<ProviderEvent[]> { return this.notImplemented('getCalendarEvents'); }
-  getAppointment(_s: MailSession, _id: string): Promise<ProviderEventDetail | null> { return this.notImplemented('getAppointment'); }
-  createCalendarEvent(_s: MailSession, _payload: CalendarEventPayload): Promise<string> { return this.notImplemented('createCalendarEvent'); }
-  modifyCalendarEvent(_s: MailSession, _id: string, _payload: ModifyCalendarEventPayload): Promise<void> { return this.notImplemented('modifyCalendarEvent'); }
-  deleteCalendarEvent(_s: MailSession, _id: string): Promise<void> { return this.notImplemented('deleteCalendarEvent'); }
-  sendInviteReply(_s: MailSession, _inviteId: string, _verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE'): Promise<void> { return this.notImplemented('sendInviteReply'); }
-  getFreeBusy(_s: MailSession, _email: string, _startMs: number, _endMs: number): Promise<ProviderFreeBusy> { return this.notImplemented('getFreeBusy'); }
+  /** `Envelope.Body.<responseTag>.<messageTag>.Items.<first item>` → its
+   *  `{ id, changeKey }`. Unlike `itemIdOf` (message-only), this looks past the
+   *  child element name so a Contact / CalendarItem create is read the same way
+   *  a Message create is. */
+  private anyItemIdOf(doc: any, responseTag: string, messageTag: string): { id: string; changeKey: string } {
+    const rm = this.responseMessageNode(doc, responseTag, messageTag);
+    const items = rm?.Items ?? {};
+    const node = items.Message ?? items.Contact ?? items.CalendarItem ?? items.Item;
+    const idNode = (toArray(node)[0] ?? {})?.ItemId ?? {};
+    return { id: idNode['@_Id'] ?? '', changeKey: idNode['@_ChangeKey'] ?? '' };
+  }
+
+  /** EWS keys the three contact email slots EmailAddress1..3; the read path tags
+   *  them work(primary)/personal/other to match the Zimbra contact mapping. */
+  private static readonly CONTACT_EMAIL_ROLES: Array<{ type: string; primary?: boolean }> = [
+    { type: 'work', primary: true },
+    { type: 'personal' },
+    { type: 'other' },
+  ];
+
+  /** One EWS `<t:Entry Key="…">value</t:Entry>` node → `{ key, value }`. */
+  private entryKV(entry: any): { key: string; value: string } {
+    return { key: entry?.['@_Key'] ?? '', value: textOf(entry) ?? '' };
+  }
+
+  /** A single FindItem/GetItem `<t:Contact>` → ProviderContact. Emails carry the
+   *  role tag + primary flag the DB column and apps/web expect; a leading
+   *  `SMTP:` routing prefix (GAL entries) is stripped. */
+  private mapContact(item: any): ProviderContact {
+    const emails: ProviderContact['emails'] = [];
+    for (const raw of toArray(item?.EmailAddresses?.Entry)) {
+      const { key, value } = this.entryKV(raw);
+      if (!value) continue;
+      const idx = CONTACT_EMAIL_ROLES_INDEX[key];
+      const role = idx === undefined ? { type: 'other' } : EwsService.CONTACT_EMAIL_ROLES[idx];
+      emails.push({ email: value.replace(/^SMTP:/i, ''), ...role });
+    }
+
+    const phones: ProviderContact['phones'] = [];
+    for (const raw of toArray(item?.PhoneNumbers?.Entry)) {
+      const { key, value } = this.entryKV(raw);
+      if (!value) continue;
+      phones.push({ number: value, type: PHONE_KEY_TO_TYPE[key] ?? 'work' });
+    }
+
+    const firstName = textOf(item?.GivenName) ?? null;
+    const lastName = textOf(item?.Surname) ?? null;
+    const displayName =
+      textOf(item?.DisplayName) ??
+      (firstName || lastName ? [firstName, lastName].filter(Boolean).join(' ') : null);
+
+    return {
+      id: item?.ItemId?.['@_Id'] ?? '',
+      displayName,
+      firstName,
+      lastName,
+      nickname: textOf(item?.Nickname) ?? null,
+      company: textOf(item?.CompanyName) ?? null,
+      jobTitle: textOf(item?.JobTitle) ?? null,
+      emails,
+      phones,
+      notes: textOf(item?.Body) ?? null,
+    };
+  }
+
+  /** Narrow a Partial<ProviderContact> to the wire-field shape the create/update
+   *  envelopes take (drops `id`). */
+  private contactFieldsOf(c: Partial<ProviderContact>): EwsContactFields {
+    return {
+      displayName: c.displayName ?? undefined,
+      firstName: c.firstName ?? undefined,
+      lastName: c.lastName ?? undefined,
+      nickname: c.nickname ?? undefined,
+      company: c.company ?? undefined,
+      jobTitle: c.jobTitle ?? undefined,
+      notes: c.notes ?? undefined,
+      emails: c.emails,
+      phones: c.phones,
+    };
+  }
+
+  /** FindItem over the `contacts` folder, paged (spec §5.3). */
+  async getContacts(session: MailSession, limit?: number, offset?: number): Promise<ProviderContact[]> {
+    const off = this.normOffset(offset);
+    const max = this.normLimit(limit);
+    const xml = await this.callWithRetry(session, findContactsEnvelope(off, max));
+    const doc = parseEws(xml);
+    const rm = this.responseMessageNode(doc, 'FindItemResponse', 'FindItemResponseMessage');
+    return toArray(rm?.RootFolder?.Items?.Contact).map((c) => this.mapContact(c));
+  }
+
+  /**
+   * CreateItem (Contact) in the `contacts` folder (spec §5.3). Per the interface
+   * contract the return value is the input echoed back with the server id — the
+   * one caller (ContactsService) persists its own already-built row and reads
+   * only the id off this.
+   */
+  async createContact(session: MailSession, contact: Partial<ProviderContact>): Promise<ProviderContact> {
+    const doc = parseEws(await this.callWithRetry(session, createContactEnvelope(this.contactFieldsOf(contact))));
+    const { id } = this.anyItemIdOf(doc, 'CreateItemResponse', 'CreateItemResponseMessage');
+    return {
+      id,
+      displayName: contact.displayName ?? null,
+      firstName: contact.firstName ?? null,
+      lastName: contact.lastName ?? null,
+      nickname: contact.nickname ?? null,
+      company: contact.company ?? null,
+      jobTitle: contact.jobTitle ?? null,
+      emails: contact.emails ?? [],
+      phones: contact.phones ?? [],
+      notes: contact.notes ?? null,
+    };
+  }
+
+  /** UpdateItem (Contact) after a fresh-ChangeKey GetItem (spec §5.3). */
+  async modifyContact(session: MailSession, id: string, contact: Partial<ProviderContact>): Promise<void> {
+    const fresh = await this.freshChangeKey(session, id);
+    await this.callWithRetry(session, updateContactEnvelope(id, fresh, this.contactFieldsOf(contact)));
+  }
+
+  /** MoveItem to `deleteditems` — soft delete, matching the message contract
+   *  (spec §5.3). */
+  async deleteContact(session: MailSession, id: string): Promise<void> {
+    await this.callWithRetry(session, deleteItemEnvelope(id));
+  }
+
+  /** ResolveNames → `{email,display}` (spec §5.3). Serves BOTH autocomplete and
+   *  GAL search; both NEVER throw — any failure degrades to `[]` so the compose
+   *  form keeps working (matches Zimbra + MemoryMailProvider). */
+  private async resolveNames(session: MailSession, query: string): Promise<Array<{ email: string; display: string }>> {
+    if (!query || !query.trim()) return [];
+    try {
+      const xml = await this.callWithRetry(session, resolveNamesEnvelope(query.trim()));
+      const doc = parseEws(xml);
+      const rm = this.responseMessageNode(doc, 'ResolveNamesResponse', 'ResolveNamesResponseMessage');
+      const out: Array<{ email: string; display: string }> = [];
+      for (const res of toArray(rm?.ResolutionSet?.Resolution)) {
+        const mb = res?.Mailbox;
+        const email = (textOf(mb?.EmailAddress) ?? '').replace(/^SMTP:/i, '');
+        if (!email) continue;
+        const display = textOf(mb?.Name) ?? textOf(res?.Contact?.DisplayName) ?? email;
+        out.push({ email, display });
+      }
+      return out;
+    } catch (err: any) {
+      this.logger.warn(`resolveNames: ${err?.message ?? 'unknown'}`);
+      return [];
+    }
+  }
+
+  autoCompleteContacts(session: MailSession, query: string): Promise<Array<{ email: string; display: string }>> {
+    return this.resolveNames(session, query);
+  }
+
+  searchGal(session: MailSession, query: string): Promise<Array<{ email: string; display: string }>> {
+    return this.resolveNames(session, query);
+  }
+
+  // ── calendar (Task 6) ─────────────────────────────────────────────────────
+
+  /** EWS Attendee `ResponseType` → the app's two-letter `ptst`. */
+  private ptstOf(responseType: string | undefined): string {
+    switch ((responseType ?? '').trim()) {
+      case 'Accept': return 'AC';
+      case 'Decline': return 'DE';
+      case 'Tentative': return 'TE';
+      default: return 'NE';
+    }
+  }
+
+  /** A `<t:Mailbox>` (calendar organizer/attendee) → ProviderAddress. */
+  private mapCalMailbox(mb: any): ProviderAddress {
+    const email = textOf(mb?.EmailAddress) ?? '';
+    const name = textOf(mb?.Name);
+    return name ? { email, name } : { email };
+  }
+
+  /** A FindItem CalendarView `<t:CalendarItem>` → ProviderEvent. Attendees are
+   *  not requested for the list view (they land on getAppointment), so the list
+   *  hit carries an empty attendee array. */
+  private mapCalendarEvent(item: any): ProviderEvent {
+    const location = textOf(item?.Location);
+    const organizerMb = item?.Organizer?.Mailbox;
+    return {
+      id: item?.ItemId?.['@_Id'] ?? '',
+      title: textOf(item?.Subject) ?? '',
+      location: location === undefined ? null : location,
+      startAt: new Date(textOf(item?.Start) ?? 0),
+      endAt: new Date(textOf(item?.End) ?? 0),
+      allDay: toBool(item?.IsAllDayEvent),
+      description: null,
+      organizer: organizerMb ? this.mapCalMailbox(organizerMb) : undefined,
+      attendees: [],
+      inviteId: null,
+      isRecurring: toBool(item?.IsRecurring),
+    };
+  }
+
+  /** FindItem CalendarView over `calendar` for `[startMs, endMs)` (spec §5.3).
+   *  CalendarView expands recurrences server-side. */
+  async getCalendarEvents(session: MailSession, startMs: number, endMs: number): Promise<ProviderEvent[]> {
+    const startIso = new Date(startMs).toISOString();
+    const endIso = new Date(endMs).toISOString();
+    const xml = await this.callWithRetry(session, findCalendarEnvelope(startIso, endIso));
+    const doc = parseEws(xml);
+    const rm = this.responseMessageNode(doc, 'FindItemResponse', 'FindItemResponseMessage');
+    return toArray(rm?.RootFolder?.Items?.CalendarItem).map((it) => this.mapCalendarEvent(it));
+  }
+
+  /** One RequiredAttendees/OptionalAttendees container → attendee list with ptst. */
+  private mapAttendeeContainer(container: any): ProviderEventAttendee[] {
+    return toArray(container?.Attendee).map((a) => ({
+      ...this.mapCalMailbox(a?.Mailbox),
+      ptst: this.ptstOf(textOf(a?.ResponseType)),
+    }));
+  }
+
+  /**
+   * GetItem for one appointment (spec §5.3). Returns the enriched attendee list
+   * (with participation status) + organizer. Resolves to `null` — not a
+   * NotFoundException — when the appointment is gone: the interface is
+   * `ProviderEventDetail | null`, and the caller falls back to its cached copy.
+   */
+  async getAppointment(session: MailSession, id: string): Promise<ProviderEventDetail | null> {
+    let xml: string;
+    try {
+      xml = await this.callWithRetry(session, getAppointmentEnvelope(id));
+    } catch (err) {
+      if (err instanceof NotFoundException) return null;
+      throw err;
+    }
+    const doc = parseEws(xml);
+    const rm = this.responseMessageNode(doc, 'GetItemResponse', 'GetItemResponseMessage');
+    const item = toArray(rm?.Items?.CalendarItem)[0];
+    if (!item) return null;
+
+    const hasRequired = item?.RequiredAttendees !== undefined;
+    const hasOptional = item?.OptionalAttendees !== undefined;
+    const attendees = hasRequired || hasOptional
+      ? [
+          ...this.mapAttendeeContainer(item?.RequiredAttendees),
+          ...this.mapAttendeeContainer(item?.OptionalAttendees),
+        ]
+      : null;
+
+    const organizerMb = item?.Organizer?.Mailbox;
+    return {
+      id: item?.ItemId?.['@_Id'] ?? id,
+      attendees,
+      organizer: organizerMb ? this.mapCalMailbox(organizerMb) : undefined,
+      // EWS addresses an appointment update by its own ItemId + a fresh
+      // ChangeKey — there is no separate invite-message id to join on.
+      inviteMessageId: null,
+    };
+  }
+
+  /** Narrow a calendar payload to the create/update envelope field shape. */
+  private calendarFieldsOf(payload: CalendarEventPayload): EwsCalendarFields {
+    return {
+      title: payload.title,
+      location: payload.location ?? undefined,
+      description: payload.description ?? undefined,
+      startAt: payload.startAt,
+      endAt: payload.endAt,
+      allDay: payload.allDay,
+      attendees: payload.attendees,
+    };
+  }
+
+  /** CreateItem (CalendarItem) mailing invitations (spec §5.3). Returns the new
+   *  appointment's ItemId. */
+  async createCalendarEvent(session: MailSession, payload: CalendarEventPayload): Promise<string> {
+    const doc = parseEws(await this.callWithRetry(session, createCalendarEventEnvelope(this.calendarFieldsOf(payload))));
+    return this.anyItemIdOf(doc, 'CreateItemResponse', 'CreateItemResponseMessage').id;
+  }
+
+  /** UpdateItem (CalendarItem) after a fresh-ChangeKey GetItem, re-sending
+   *  invitations (spec §5.3). */
+  async modifyCalendarEvent(session: MailSession, id: string, payload: ModifyCalendarEventPayload): Promise<void> {
+    const fresh = await this.freshChangeKey(session, id);
+    await this.callWithRetry(session, updateCalendarEventEnvelope(id, fresh, this.calendarFieldsOf(payload)));
+  }
+
+  /** DeleteItem MoveToDeletedItems, cancelling for attendees (spec §5.3). */
+  async deleteCalendarEvent(session: MailSession, id: string): Promise<void> {
+    await this.callWithRetry(session, deleteCalendarEventEnvelope(id));
+  }
+
+  /** CreateItem AcceptItem/DeclineItem/TentativelyAcceptItem against the invite
+   *  message id (spec §5.3). */
+  async sendInviteReply(session: MailSession, inviteId: string, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE'): Promise<void> {
+    await this.callWithRetry(session, inviteReplyEnvelope(inviteId, verb));
+  }
+
+  /**
+   * GetUserAvailability FreeBusy for one mailbox (spec §5.3). Folds the returned
+   * CalendarEvent slots into the {busy,tentative,unavailable} triple by BusyType
+   * (Busy→busy, Tentative→tentative, OOF→unavailable; Free and the rest are
+   * dropped). The response nests its ResponseMessage inside FreeBusyResponse, so
+   * the view is located by a targeted walk rather than the generic navigator.
+   */
+  async getFreeBusy(session: MailSession, email: string, startMs: number, endMs: number): Promise<ProviderFreeBusy> {
+    const startIso = new Date(startMs).toISOString();
+    const endIso = new Date(endMs).toISOString();
+    const xml = await this.callWithRetry(session, getUserAvailabilityEnvelope(email, startIso, endIso));
+    const doc = parseEws(xml);
+
+    const view = this.deepFindNode(doc, (n) => n?.CalendarEventArray !== undefined);
+    const busy: ProviderFreeBusy['busy'] = [];
+    const tentative: ProviderFreeBusy['tentative'] = [];
+    const unavailable: ProviderFreeBusy['unavailable'] = [];
+    for (const ev of toArray(view?.CalendarEventArray?.CalendarEvent)) {
+      const s = Date.parse(textOf(ev?.StartTime) ?? '');
+      const e = Date.parse(textOf(ev?.EndTime) ?? '');
+      if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
+      const slot = { s, e };
+      switch ((textOf(ev?.BusyType) ?? '').trim()) {
+        case 'Busy': busy.push(slot); break;
+        case 'Tentative': tentative.push(slot); break;
+        case 'OOF': unavailable.push(slot); break;
+        default: break; // Free / WorkingElsewhere / NoData → not a conflict
+      }
+    }
+    return { busy, tentative, unavailable };
+  }
 
   // settings-surface (capability-gated)
   getPrefs(_s: MailSession): Promise<Record<string, string>> { return this.notImplemented('getPrefs'); }

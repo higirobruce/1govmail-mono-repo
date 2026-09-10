@@ -13,11 +13,24 @@ import { XMLParser } from 'fast-xml-parser';
  *   bookkeeping.
  * - `attributeNamePrefix: '@_'` — fast-xml-parser default; kept explicit so
  *   the extractors below don't depend on the library's default changing.
+ * - `numberParseOptions.skipLike` — fast-xml-parser's default tag-value number
+ *   coercion silently drops a leading `+` (`+250788...` → `250788...`, since
+ *   `Number('+x')` and `String(that)` don't round-trip the sign) and a leading
+ *   `0` before more digits (`0788...` → `788...`). Both shapes only ever occur
+ *   on phone-ish text (E.164 numbers, national numbers with a trunk zero) —
+ *   genuine EWS counts/sizes never do — so we skip coercion for exactly those
+ *   two shapes and leave every other numeric tag (UnreadCount, TotalCount,
+ *   Size, ...) coerced as before.
  */
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
   removeNSPrefix: true,
+  numberParseOptions: {
+    hex: true,
+    leadingZeros: true,
+    skipLike: /^\+\d+$|^0\d+$/,
+  },
 });
 
 /** Parses an EWS SOAP response into a plain object tree. */

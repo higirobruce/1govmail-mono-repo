@@ -244,13 +244,21 @@ describe('EwsService', () => {
 
   describe('unimplemented provider methods', () => {
     beforeEach(withKey);
-    it('throw a not-implemented error until Tasks 6-7 fill them', () => {
+    it('throw a not-implemented error until Task 7 fills them', () => {
       const svc = new EwsService(new FakeTransport([SUCCESS]) as any);
       const s = {} as MailSession;
-      // Contacts + calendar land with Tasks 6-7; send/drafts/mutations are now
-      // real (Task 5) so they are no longer part of this stub sweep.
-      expect(() => svc.getContacts(s)).toThrow(/not implemented/);
-      expect(() => svc.getCalendarEvents(s, 0, 1)).toThrow(/not implemented/);
+      // Contacts, GAL, calendar, and free/busy are now real (Task 6); send/
+      // drafts/mutations are real (Task 5). Only the settings surface
+      // (Task 7) is still stubbed.
+      expect(() => svc.getPrefs(s)).toThrow(/not implemented/);
+      expect(() => svc.modifyPrefs(s, {})).toThrow(/not implemented/);
+      expect(() => svc.getIdentities(s)).toThrow(/not implemented/);
+      expect(() => svc.modifyIdentity(s, 'id', {})).toThrow(/not implemented/);
+      expect(() => svc.getSignatures(s)).toThrow(/not implemented/);
+      expect(() => svc.createSignature(s, 'name', '<p>html</p>')).toThrow(/not implemented/);
+      expect(() => svc.modifySignature(s, 'id', 'name', '<p>html</p>')).toThrow(/not implemented/);
+      expect(() => svc.deleteSignature(s, 'id')).toThrow(/not implemented/);
+      expect(() => svc.changePassword(s, 'old', 'new')).toThrow(/not implemented/);
     });
   });
 });

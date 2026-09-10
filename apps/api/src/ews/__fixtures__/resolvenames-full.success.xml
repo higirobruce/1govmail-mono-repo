@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <m:ResolveNamesResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:ResolveNamesResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:ResolutionSet TotalItemsInView="2" IncludesLastItemInRange="true">
+            <t:Resolution>
+              <t:Mailbox>
+                <t:Name>Alice Umutoni</t:Name>
+                <t:EmailAddress>alice.umutoni@minaffet.gov.rw</t:EmailAddress>
+                <t:RoutingType>SMTP</t:RoutingType>
+                <t:MailboxType>Mailbox</t:MailboxType>
+              </t:Mailbox>
+              <t:Contact>
+                <t:DisplayName>Alice Umutoni</t:DisplayName>
+                <t:GivenName>Alice</t:GivenName>
+                <t:Surname>Umutoni</t:Surname>
+                <t:CompanyName>MINAFFET</t:CompanyName>
+              </t:Contact>
+            </t:Resolution>
+            <t:Resolution>
+              <t:Mailbox>
+                <t:Name>Alice Kabera</t:Name>
+                <t:EmailAddress>alice.kabera@minaffet.gov.rw</t:EmailAddress>
+                <t:RoutingType>SMTP</t:RoutingType>
+                <t:MailboxType>Mailbox</t:MailboxType>
+              </t:Mailbox>
+            </t:Resolution>
+          </m:ResolutionSet>
+        </m:ResolveNamesResponseMessage>
+      </m:ResponseMessages>
+    </m:ResolveNamesResponse>
+  </s:Body>
+</s:Envelope>

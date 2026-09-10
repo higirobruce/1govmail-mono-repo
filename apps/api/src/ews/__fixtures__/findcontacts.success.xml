@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Header>
+    <h:ServerVersionInfo MajorVersion="15" MinorVersion="2" MajorBuildNumber="2562" MinorBuildNumber="37"
+      xmlns:h="http://schemas.microsoft.com/exchange/services/2006/types" />
+  </s:Header>
+  <s:Body>
+    <m:FindItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:FindItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="2" TotalItemsInView="2" IncludesLastItemInRange="true">
+            <t:Items>
+              <t:Contact>
+                <t:ItemId Id="CONTACT-1==" ChangeKey="CCK1"/>
+                <t:DisplayName>Alice Umutoni</t:DisplayName>
+                <t:GivenName>Alice</t:GivenName>
+                <t:Surname>Umutoni</t:Surname>
+                <t:CompanyName>MINAFFET</t:CompanyName>
+                <t:JobTitle>Director</t:JobTitle>
+                <t:EmailAddresses>
+                  <t:Entry Key="EmailAddress1">alice.umutoni@minaffet.gov.rw</t:Entry>
+                  <t:Entry Key="EmailAddress2">alice.personal@example.com</t:Entry>
+                </t:EmailAddresses>
+                <t:PhoneNumbers>
+                  <t:Entry Key="BusinessPhone">+250788000001</t:Entry>
+                  <t:Entry Key="MobilePhone">+250788000002</t:Entry>
+                </t:PhoneNumbers>
+              </t:Contact>
+              <t:Contact>
+                <t:ItemId Id="CONTACT-2==" ChangeKey="CCK2"/>
+                <t:DisplayName>Bob Mugisha</t:DisplayName>
+                <t:GivenName>Bob</t:GivenName>
+                <t:Surname>Mugisha</t:Surname>
+                <t:EmailAddresses>
+                  <t:Entry Key="EmailAddress1">bob.mugisha@minaffet.gov.rw</t:Entry>
+                </t:EmailAddresses>
+              </t:Contact>
+            </t:Items>
+          </m:RootFolder>
+        </m:FindItemResponseMessage>
+      </m:ResponseMessages>
+    </m:FindItemResponse>
+  </s:Body>
+</s:Envelope>

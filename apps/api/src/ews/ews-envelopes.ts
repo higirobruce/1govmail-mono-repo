@@ -514,3 +514,427 @@ export function getAttachmentEnvelope(attachmentId: string): string {
     '</m:GetAttachment>';
   return soapEnvelope(body);
 }
+
+// ── contacts + GAL (Task 6) ─────────────────────────────────────────────────
+
+/** The subset of ProviderContact fields that cross the wire on a create/update.
+ *  `emails`/`phones` carry the same role vocabulary the read path emits, so a
+ *  round-trip preserves them (see mapContact ↔ the EmailAddress1..3 / *Phone
+ *  key mapping below). */
+export interface EwsContactFields {
+  displayName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  nickname?: string | null;
+  company?: string | null;
+  jobTitle?: string | null;
+  notes?: string | null;
+  emails?: Array<{ email: string; type?: string; primary?: boolean }>;
+  phones?: Array<{ number: string; type?: string }>;
+}
+
+/** EWS keys the three contact email slots `EmailAddress1..3`. The read path
+ *  maps 1→work/primary, 2→personal, 3→other; on write we assign by position
+ *  (primary first) so the same round-trip holds. */
+const CONTACT_EMAIL_KEYS = ['EmailAddress1', 'EmailAddress2', 'EmailAddress3'];
+
+/** ProviderContact phone `type` → the EWS PhoneNumbers Entry key. Unknown types
+ *  fall back to the business slot (the read path's `work`). */
+function contactPhoneKey(type?: string): string {
+  switch (type) {
+    case 'mobile': return 'MobilePhone';
+    case 'home': return 'HomePhone';
+    default: return 'BusinessPhone';
+  }
+}
+
+/** Primary email first, then declaration order, capped at the three EWS slots. */
+function orderedContactEmails(emails?: EwsContactFields['emails']): Array<{ email: string }> {
+  const list = (emails ?? []).filter((e) => e && e.email);
+  const primaryFirst = [...list].sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0));
+  return primaryFirst.slice(0, CONTACT_EMAIL_KEYS.length);
+}
+
+/** `<t:EmailAddresses>` block for a create, or '' when there are none. */
+function contactEmailsXml(emails?: EwsContactFields['emails']): string {
+  const ordered = orderedContactEmails(emails);
+  if (ordered.length === 0) return '';
+  const entries = ordered
+    .map((e, i) => `<t:Entry Key="${CONTACT_EMAIL_KEYS[i]}">${xmlEscape(e.email)}</t:Entry>`)
+    .join('');
+  return `<t:EmailAddresses>${entries}</t:EmailAddresses>`;
+}
+
+/** `<t:PhoneNumbers>` block for a create, or '' when there are none. */
+function contactPhonesXml(phones?: EwsContactFields['phones']): string {
+  const list = (phones ?? []).filter((p) => p && p.number);
+  if (list.length === 0) return '';
+  const entries = list
+    .map((p) => `<t:Entry Key="${contactPhoneKey(p.type)}">${xmlEscape(p.number)}</t:Entry>`)
+    .join('');
+  return `<t:PhoneNumbers>${entries}</t:PhoneNumbers>`;
+}
+
+/** The `<t:Contact>` child sequence, in EWS schema order (inherited ItemType
+ *  `Body` first, then the ContactItemType-specific fields). Only present fields
+ *  are emitted. */
+function contactFieldsXml(c: EwsContactFields): string {
+  let xml = '';
+  if (c.notes != null) xml += `<t:Body BodyType="Text">${xmlEscape(c.notes)}</t:Body>`;
+  if (c.displayName != null) xml += `<t:DisplayName>${xmlEscape(c.displayName)}</t:DisplayName>`;
+  if (c.firstName != null) xml += `<t:GivenName>${xmlEscape(c.firstName)}</t:GivenName>`;
+  if (c.nickname != null) xml += `<t:Nickname>${xmlEscape(c.nickname)}</t:Nickname>`;
+  if (c.company != null) xml += `<t:CompanyName>${xmlEscape(c.company)}</t:CompanyName>`;
+  xml += contactEmailsXml(c.emails);
+  xml += contactPhonesXml(c.phones);
+  if (c.jobTitle != null) xml += `<t:JobTitle>${xmlEscape(c.jobTitle)}</t:JobTitle>`;
+  if (c.lastName != null) xml += `<t:Surname>${xmlEscape(c.lastName)}</t:Surname>`;
+  return xml;
+}
+
+/**
+ * FindItem over the well-known `contacts` folder, paged (spec §5.3,
+ * `getContacts`). Default shape carries the contact properties the mapper
+ * reads (GivenName/Surname/DisplayName/EmailAddresses/PhoneNumbers/CompanyName).
+ */
+export function findContactsEnvelope(offset: number, max: number): string {
+  const off = Math.max(0, Math.trunc(offset));
+  const cap = Math.max(1, Math.trunc(max));
+  const body =
+    '<m:FindItem Traversal="Shallow">' +
+    '<m:ItemShape>' +
+    '<t:BaseShape>Default</t:BaseShape>' +
+    '</m:ItemShape>' +
+    `<m:IndexedPageItemView MaxEntriesReturned="${cap}" Offset="${off}" BasePoint="Beginning"/>` +
+    '<m:ParentFolderIds>' +
+    '<t:DistinguishedFolderId Id="contacts"/>' +
+    '</m:ParentFolderIds>' +
+    '</m:FindItem>';
+  return soapEnvelope(body);
+}
+
+/** CreateItem building one `<t:Contact>` in the `contacts` folder (spec §5.3,
+ *  `createContact`). */
+export function createContactEnvelope(fields: EwsContactFields): string {
+  const body =
+    '<m:CreateItem>' +
+    '<m:SavedItemFolderId>' +
+    '<t:DistinguishedFolderId Id="contacts"/>' +
+    '</m:SavedItemFolderId>' +
+    '<m:Items>' +
+    '<t:Contact>' +
+    contactFieldsXml(fields) +
+    '</t:Contact>' +
+    '</m:Items>' +
+    '</m:CreateItem>';
+  return soapEnvelope(body);
+}
+
+/** One SetItemField for a scalar `contacts:`/`item:` field. */
+function setContactField(fieldUri: string, inner: string): string {
+  return (
+    '<t:SetItemField>' +
+    `<t:FieldURI FieldURI="${fieldUri}"/>` +
+    `<t:Contact>${inner}</t:Contact>` +
+    '</t:SetItemField>'
+  );
+}
+
+/** One SetItemField for an indexed contact field (email/phone slot). */
+function setIndexedContactField(fieldUri: string, index: string, inner: string): string {
+  return (
+    '<t:SetItemField>' +
+    `<t:IndexedFieldURI FieldURI="${fieldUri}" FieldIndex="${index}"/>` +
+    `<t:Contact>${inner}</t:Contact>` +
+    '</t:SetItemField>'
+  );
+}
+
+/**
+ * UpdateItem overwriting the present fields of a contact (spec §5.3,
+ * `modifyContact`). `changeKey` is freshly read immediately before this call.
+ * Only the fields carried on `fields` are set.
+ */
+export function updateContactEnvelope(itemId: string, changeKey: string, fields: EwsContactFields): string {
+  let updates = '';
+  if (fields.notes != null) {
+    updates += setContactField('item:Body', `<t:Body BodyType="Text">${xmlEscape(fields.notes)}</t:Body>`);
+  }
+  if (fields.displayName != null) {
+    updates += setContactField('contacts:DisplayName', `<t:DisplayName>${xmlEscape(fields.displayName)}</t:DisplayName>`);
+  }
+  if (fields.firstName != null) {
+    updates += setContactField('contacts:GivenName', `<t:GivenName>${xmlEscape(fields.firstName)}</t:GivenName>`);
+  }
+  if (fields.lastName != null) {
+    updates += setContactField('contacts:Surname', `<t:Surname>${xmlEscape(fields.lastName)}</t:Surname>`);
+  }
+  if (fields.nickname != null) {
+    updates += setContactField('contacts:Nickname', `<t:Nickname>${xmlEscape(fields.nickname)}</t:Nickname>`);
+  }
+  if (fields.company != null) {
+    updates += setContactField('contacts:CompanyName', `<t:CompanyName>${xmlEscape(fields.company)}</t:CompanyName>`);
+  }
+  if (fields.jobTitle != null) {
+    updates += setContactField('contacts:JobTitle', `<t:JobTitle>${xmlEscape(fields.jobTitle)}</t:JobTitle>`);
+  }
+  orderedContactEmails(fields.emails).forEach((e, i) => {
+    const key = CONTACT_EMAIL_KEYS[i];
+    updates += setIndexedContactField(
+      'contacts:EmailAddress', key,
+      `<t:EmailAddresses><t:Entry Key="${key}">${xmlEscape(e.email)}</t:Entry></t:EmailAddresses>`,
+    );
+  });
+  for (const p of (fields.phones ?? []).filter((x) => x && x.number)) {
+    const key = contactPhoneKey(p.type);
+    updates += setIndexedContactField(
+      'contacts:PhoneNumber', key,
+      `<t:PhoneNumbers><t:Entry Key="${key}">${xmlEscape(p.number)}</t:Entry></t:PhoneNumbers>`,
+    );
+  }
+
+  const body =
+    '<m:UpdateItem ConflictResolution="AlwaysOverwrite">' +
+    '<m:ItemChanges>' +
+    '<t:ItemChange>' +
+    `<t:ItemId Id="${xmlEscape(itemId)}" ChangeKey="${xmlEscape(changeKey)}"/>` +
+    `<t:Updates>${updates}</t:Updates>` +
+    '</t:ItemChange>' +
+    '</m:ItemChanges>' +
+    '</m:UpdateItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * ResolveNames (spec §5.3) — the single EWS op behind BOTH `autoCompleteContacts`
+ * and `searchGal`. `ReturnFullContactData="true"` so a resolved entry carries a
+ * contact record, `SearchScope="ActiveDirectoryContacts"` to reach the GAL plus
+ * the user's contacts. The query is the unresolved entry.
+ */
+export function resolveNamesEnvelope(query: string): string {
+  const body =
+    '<m:ResolveNames ReturnFullContactData="true" SearchScope="ActiveDirectoryContacts">' +
+    `<m:UnresolvedEntry>${xmlEscape(query)}</m:UnresolvedEntry>` +
+    '</m:ResolveNames>';
+  return soapEnvelope(body);
+}
+
+// ── calendar (Task 6) ───────────────────────────────────────────────────────
+
+/**
+ * An EWS calendar dateTime, always UTC. An all-day boundary is the date at
+ * UTC midnight (no time-of-day carried by the event); a timed value keeps
+ * minute granularity with seconds zeroed.
+ */
+export function formatEwsCalDateTime(d: Date, allDay: boolean): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  if (allDay) return `${date}T00:00:00Z`;
+  return `${date}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00Z`;
+}
+
+/** The fields a calendar create/update carries. */
+export interface EwsCalendarFields {
+  title: string;
+  location?: string | null;
+  description?: string | null;
+  startAt: Date;
+  endAt: Date;
+  allDay: boolean;
+  attendees?: string[];
+}
+
+/** `<t:RequiredAttendees>` block, or '' when there are none. */
+function requiredAttendeesXml(attendees?: string[]): string {
+  const list = (attendees ?? []).filter(Boolean);
+  if (list.length === 0) return '';
+  const entries = list.map((a) => `<t:Attendee>${mailboxXml(a)}</t:Attendee>`).join('');
+  return `<t:RequiredAttendees>${entries}</t:RequiredAttendees>`;
+}
+
+/** The `<t:CalendarItem>` child sequence, in schema order (inherited Subject/
+ *  Body first, then Start/End/IsAllDayEvent/Location/RequiredAttendees). */
+function calendarFieldsXml(f: EwsCalendarFields): string {
+  let xml = `<t:Subject>${xmlEscape(f.title)}</t:Subject>`;
+  if (f.description != null) xml += `<t:Body BodyType="HTML">${xmlEscape(f.description)}</t:Body>`;
+  xml += `<t:Start>${formatEwsCalDateTime(f.startAt, f.allDay)}</t:Start>`;
+  xml += `<t:End>${formatEwsCalDateTime(f.endAt, f.allDay)}</t:End>`;
+  if (f.allDay) xml += '<t:IsAllDayEvent>true</t:IsAllDayEvent>';
+  if (f.location != null) xml += `<t:Location>${xmlEscape(f.location)}</t:Location>`;
+  xml += requiredAttendeesXml(f.attendees);
+  return xml;
+}
+
+/**
+ * FindItem with a `CalendarView` over the well-known `calendar` folder (spec
+ * §5.3, `getCalendarEvents`). CalendarView expands recurrences server-side, so
+ * the window `[startIso, endIso)` yields concrete occurrences.
+ */
+export function findCalendarEnvelope(startIso: string, endIso: string): string {
+  const body =
+    '<m:FindItem Traversal="Shallow">' +
+    '<m:ItemShape>' +
+    '<t:BaseShape>Default</t:BaseShape>' +
+    '</m:ItemShape>' +
+    `<m:CalendarView StartDate="${xmlEscape(startIso)}" EndDate="${xmlEscape(endIso)}"/>` +
+    '<m:ParentFolderIds>' +
+    '<t:DistinguishedFolderId Id="calendar"/>' +
+    '</m:ParentFolderIds>' +
+    '</m:FindItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * GetItem for one appointment (spec §5.3, `getAppointment`). Default shape plus
+ * the attendee lists (each `Attendee` carries a `ResponseType` → the app's
+ * `ptst`) and the organizer.
+ */
+export function getAppointmentEnvelope(itemId: string): string {
+  const body =
+    '<m:GetItem>' +
+    '<m:ItemShape>' +
+    '<t:BaseShape>Default</t:BaseShape>' +
+    '<t:AdditionalProperties>' +
+    '<t:FieldURI FieldURI="calendar:RequiredAttendees"/>' +
+    '<t:FieldURI FieldURI="calendar:OptionalAttendees"/>' +
+    '<t:FieldURI FieldURI="calendar:Organizer"/>' +
+    '</t:AdditionalProperties>' +
+    '</m:ItemShape>' +
+    '<m:ItemIds>' +
+    `<t:ItemId Id="${xmlEscape(itemId)}"/>` +
+    '</m:ItemIds>' +
+    '</m:GetItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * CreateItem building a `<t:CalendarItem>` and mailing invitations (spec §5.3,
+ * `createCalendarEvent`). `SendMeetingInvitations="SendToAllAndSaveCopy"` sends
+ * the invite to every attendee and saves the organizer's copy. The authenticated
+ * mailbox is the organizer — EWS does not accept a foreign Organizer on create.
+ */
+export function createCalendarEventEnvelope(fields: EwsCalendarFields): string {
+  const body =
+    '<m:CreateItem SendMeetingInvitations="SendToAllAndSaveCopy">' +
+    '<m:SavedItemFolderId>' +
+    '<t:DistinguishedFolderId Id="calendar"/>' +
+    '</m:SavedItemFolderId>' +
+    '<m:Items>' +
+    '<t:CalendarItem>' +
+    calendarFieldsXml(fields) +
+    '</t:CalendarItem>' +
+    '</m:Items>' +
+    '</m:CreateItem>';
+  return soapEnvelope(body);
+}
+
+/** One SetItemField wrapping a CalendarItem field. */
+function setCalendarField(fieldUri: string, inner: string): string {
+  return (
+    '<t:SetItemField>' +
+    `<t:FieldURI FieldURI="${fieldUri}"/>` +
+    `<t:CalendarItem>${inner}</t:CalendarItem>` +
+    '</t:SetItemField>'
+  );
+}
+
+/**
+ * UpdateItem overwriting an appointment and re-sending invitations (spec §5.3,
+ * `modifyCalendarEvent`). `SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy"`;
+ * `changeKey` is freshly read immediately before this call. An appointment
+ * update resends the whole component, so title/start/end are always set.
+ */
+export function updateCalendarEventEnvelope(itemId: string, changeKey: string, fields: EwsCalendarFields): string {
+  let updates = '';
+  updates += setCalendarField('item:Subject', `<t:Subject>${xmlEscape(fields.title)}</t:Subject>`);
+  if (fields.description != null) {
+    updates += setCalendarField('item:Body', `<t:Body BodyType="HTML">${xmlEscape(fields.description)}</t:Body>`);
+  }
+  updates += setCalendarField('calendar:Start', `<t:Start>${formatEwsCalDateTime(fields.startAt, fields.allDay)}</t:Start>`);
+  updates += setCalendarField('calendar:End', `<t:End>${formatEwsCalDateTime(fields.endAt, fields.allDay)}</t:End>`);
+  updates += setCalendarField('calendar:IsAllDayEvent', `<t:IsAllDayEvent>${fields.allDay ? 'true' : 'false'}</t:IsAllDayEvent>`);
+  if (fields.location != null) {
+    updates += setCalendarField('calendar:Location', `<t:Location>${xmlEscape(fields.location)}</t:Location>`);
+  }
+  if ((fields.attendees ?? []).filter(Boolean).length > 0) {
+    updates += setCalendarField('calendar:RequiredAttendees', requiredAttendeesXml(fields.attendees));
+  }
+
+  const body =
+    '<m:UpdateItem ConflictResolution="AlwaysOverwrite" SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy">' +
+    '<m:ItemChanges>' +
+    '<t:ItemChange>' +
+    `<t:ItemId Id="${xmlEscape(itemId)}" ChangeKey="${xmlEscape(changeKey)}"/>` +
+    `<t:Updates>${updates}</t:Updates>` +
+    '</t:ItemChange>' +
+    '</m:ItemChanges>' +
+    '</m:UpdateItem>';
+  return soapEnvelope(body);
+}
+
+/** DeleteItem moving an appointment to Deleted Items and cancelling it for the
+ *  attendees (spec §5.3, `deleteCalendarEvent`). */
+export function deleteCalendarEventEnvelope(itemId: string): string {
+  const body =
+    '<m:DeleteItem DeleteType="MoveToDeletedItems" SendMeetingCancellations="SendToAllAndSaveCopy">' +
+    '<m:ItemIds>' +
+    `<t:ItemId Id="${xmlEscape(itemId)}"/>` +
+    '</m:ItemIds>' +
+    '</m:DeleteItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * CreateItem building an `AcceptItem`/`DeclineItem`/`TentativelyAcceptItem`
+ * response object against the invite's ItemId (spec §5.3, `sendInviteReply`).
+ * `MessageDisposition="SendAndSaveCopy"` fires the RSVP mail.
+ */
+export function inviteReplyEnvelope(inviteId: string, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE'): string {
+  const tag =
+    verb === 'DECLINE' ? 'DeclineItem'
+      : verb === 'TENTATIVE' ? 'TentativelyAcceptItem'
+        : 'AcceptItem';
+  const body =
+    '<m:CreateItem MessageDisposition="SendAndSaveCopy">' +
+    '<m:Items>' +
+    `<t:${tag}>` +
+    `<t:ReferenceItemId Id="${xmlEscape(inviteId)}"/>` +
+    `</t:${tag}>` +
+    '</m:Items>' +
+    '</m:CreateItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * GetUserAvailabilityRequest for one mailbox over `[startIso, endIso)` (spec
+ * §5.3, `getFreeBusy`). `RequestedView="FreeBusy"` returns the per-slot
+ * CalendarEventArray the mapper folds into the {busy,tentative,unavailable}
+ * triple. A zero-bias UTC TimeZone is declared so the window is interpreted as
+ * the UTC instants the caller passed.
+ */
+export function getUserAvailabilityEnvelope(email: string, startIso: string, endIso: string): string {
+  const body =
+    '<m:GetUserAvailabilityRequest>' +
+    '<t:TimeZone>' +
+    '<t:Bias>0</t:Bias>' +
+    '<t:StandardTime><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>1</t:DayOrder><t:Month>1</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:StandardTime>' +
+    '<t:DaylightTime><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>1</t:DayOrder><t:Month>1</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:DaylightTime>' +
+    '</t:TimeZone>' +
+    '<m:MailboxDataArray>' +
+    '<t:MailboxData>' +
+    `<t:Email><t:Address>${xmlEscape(email)}</t:Address></t:Email>` +
+    '<t:AttendeeType>Required</t:AttendeeType>' +
+    '<t:ExcludeConflicts>false</t:ExcludeConflicts>' +
+    '</t:MailboxData>' +
+    '</m:MailboxDataArray>' +
+    '<t:FreeBusyViewOptions>' +
+    '<t:TimeWindow>' +
+    `<t:StartTime>${xmlEscape(startIso)}</t:StartTime>` +
+    `<t:EndTime>${xmlEscape(endIso)}</t:EndTime>` +
+    '</t:TimeWindow>' +
+    '<t:MergedFreeBusyIntervalInMinutes>30</t:MergedFreeBusyIntervalInMinutes>' +
+    '<t:RequestedView>FreeBusy</t:RequestedView>' +
+    '</t:FreeBusyViewOptions>' +
+    '</m:GetUserAvailabilityRequest>';
+  return soapEnvelope(body);
+}

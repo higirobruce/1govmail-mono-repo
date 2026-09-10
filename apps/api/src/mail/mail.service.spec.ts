@@ -1527,3 +1527,78 @@ describe('MailService.saveDraft body formatting', () => {
     expect(zimbra.getSignatures).not.toHaveBeenCalled();
   });
 });
+
+describe('MailService.searchStructured', () => {
+  const user = {
+    id: 'u1',
+    email: 'u@example.com',
+    zimbraHost: 'mail.example.com',
+    authToken: 'tok',
+    csrfToken: null,
+    provider: 'zimbra',
+    tokenExpiry: new Date(Date.now() + 60_000),
+  };
+
+  function makeService() {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      folder: { findFirst: jest.fn() },
+      message: { upsert: jest.fn() },
+    } as unknown as PrismaService;
+    const zimbra = {
+      searchStructured: jest.fn(),
+    } as unknown as ZimbraService;
+    const service = new MailService(prisma, makeResolver(zimbra), {} as NotificationsService, {} as TasksService);
+    return { service, prisma: prisma as any, zimbra: zimbra as any };
+  }
+
+  it('rejects an all-empty filter with 400, before touching the user or any provider', async () => {
+    const { service, prisma, zimbra } = makeService();
+
+    await expect(service.searchStructured('u1', {}, 50, 0)).rejects.toThrow(BadRequestException);
+    await expect(service.searchStructured('u1', {}, 50, 0)).rejects.toThrow(/at least one filter/i);
+
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(zimbra.searchStructured).not.toHaveBeenCalled();
+  });
+
+  it('rejects a folderId the user does not own with 404, without calling the provider', async () => {
+    const { service, prisma, zimbra } = makeService();
+    prisma.folder.findFirst.mockResolvedValue(null);
+
+    await expect(service.searchStructured('u1', { folderId: 'not-mine' }, 50, 0)).rejects.toThrow(NotFoundException);
+
+    expect(prisma.folder.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1', zimbraId: 'not-mine' } });
+    expect(zimbra.searchStructured).not.toHaveBeenCalled();
+  });
+
+  it('calls provider.searchStructured and returns the shared result shape', async () => {
+    const { service, prisma, zimbra } = makeService();
+    prisma.folder.findFirst
+      // folderId ownership check
+      .mockResolvedValueOnce({ id: 'inbox-id', zimbraId: '2', userId: 'u1', path: '/Inbox' })
+      // persistSearchResults' per-message folder lookup
+      .mockResolvedValueOnce({ id: 'inbox-id', zimbraId: '2', userId: 'u1', path: '/Inbox' });
+    const providerMessage = {
+      id: 'z1', conversationId: 'c1', folderId: '2',
+      subject: 'Budget', snippet: 'Q3 numbers',
+      from: { email: 'a@b.rw', name: 'A' }, to: [{ email: 'u@example.com' }], cc: [], bcc: [],
+      receivedAt: new Date('2026-09-01'), size: 100,
+      isRead: true, isFlagged: false, hasAttachments: false, isDraft: false, tags: [],
+    };
+    zimbra.searchStructured.mockResolvedValue({ messages: [providerMessage], total: 1, more: false });
+    prisma.message.upsert.mockResolvedValue({ id: 'm1', zimbraId: 'z1', subject: 'Budget' });
+
+    const filter = { subject: 'Budget', folderId: '2' };
+    const result = await service.searchStructured('u1', filter, 25, 5);
+
+    expect(zimbra.searchStructured).toHaveBeenCalledWith(expect.anything(), filter, 25, 5);
+    expect(result).toEqual({
+      messages: [{ id: 'm1', zimbraId: 'z1', subject: 'Budget' }],
+      total: 1,
+      offset: 5,
+      limit: 25,
+      hasMore: false,
+    });
+  });
+});

@@ -57,3 +57,38 @@ describe('MailController.downloadAttachment disposition', () => {
     );
   });
 });
+
+describe('MailController.searchAdvanced', () => {
+  function makeController() {
+    const mailService = {
+      searchStructured: jest.fn().mockResolvedValue({ messages: [], total: 0, offset: 0, limit: 50, hasMore: false }),
+    } as unknown as MailService;
+    const controller = new MailController(mailService);
+    const req = { user: { sub: 'u1' } } as any;
+    return { controller, req, mailService: mailService as any };
+  }
+
+  it('splits limit/offset out of the body and forwards the rest as the filter', async () => {
+    const { controller, req, mailService } = makeController();
+
+    await controller.searchAdvanced(req, { subject: 'Budget', limit: 10, offset: 20 });
+
+    expect(mailService.searchStructured).toHaveBeenCalledWith('u1', { subject: 'Budget' }, 10, 20);
+  });
+
+  it('defaults limit to 50 and offset to 0 when omitted', async () => {
+    const { controller, req, mailService } = makeController();
+
+    await controller.searchAdvanced(req, { unread: true });
+
+    expect(mailService.searchStructured).toHaveBeenCalledWith('u1', { unread: true }, 50, 0);
+  });
+
+  it('tolerates a missing body', async () => {
+    const { controller, req, mailService } = makeController();
+
+    await controller.searchAdvanced(req, undefined as any);
+
+    expect(mailService.searchStructured).toHaveBeenCalledWith('u1', {}, 50, 0);
+  });
+});

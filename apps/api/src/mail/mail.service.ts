@@ -9,6 +9,8 @@ import { TasksService } from '../tasks/tasks.service';
 import { matchSenderRule, type SenderRuleLike } from './sender-rule-matcher';
 import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
 import { inlineSignatureImages } from '../common/signature-images';
+import { MailSearchFilter, isEmptyFilter } from '../provider/mail-search-filter';
+import { ProviderMessagePage } from '../provider/provider-types';
 
 const CARD_WINDOWS = ['today', '24h', 'week'] as const;
 type CardWindow = (typeof CARD_WINDOWS)[number];
@@ -603,14 +605,51 @@ export class MailService {
   async searchMessages(userId: string, query: string, limit = 50, offset = 0) {
     const user = await this.getUser(userId);
 
-    const { messages, total, more } = await this.resolver.forUser(user).searchMessages(
+    const page = await this.resolver.forUser(user).searchMessages(
       buildMailSession(user),
       query,
       limit,
       offset,
     );
 
-    // Map provider results → shape the client already knows, upsert to DB where possible
+    return this.persistSearchResults(userId, page, limit, offset);
+  }
+
+  async searchStructured(userId: string, filter: MailSearchFilter, limit = 50, offset = 0) {
+    if (isEmptyFilter(filter)) throw new BadRequestException('At least one filter is required.');
+
+    const user = await this.getUser(userId);
+
+    if (filter.folderId) {
+      const owned = await this.prisma.folder.findFirst({
+        where: { userId, zimbraId: filter.folderId },
+      });
+      if (!owned) throw new NotFoundException('Folder not found');
+    }
+
+    const page = await this.resolver.forUser(user).searchStructured(
+      buildMailSession(user),
+      filter,
+      limit,
+      offset,
+    );
+
+    return this.persistSearchResults(userId, page, limit, offset);
+  }
+
+  // Shared by searchMessages and searchStructured: maps provider results →
+  // the shape the client already knows, upserting to DB where the message's
+  // folder is already synced, else returning a lightweight ephemeral row.
+  // Never touches conversationId on the update path — search must not
+  // disturb threading established elsewhere (e.g. getConversation back-fill).
+  private async persistSearchResults(
+    userId: string,
+    page: ProviderMessagePage,
+    limit: number,
+    offset: number,
+  ) {
+    const { messages, total, more } = page;
+
     const saved: any[] = [];
     for (const m of messages) {
       try {

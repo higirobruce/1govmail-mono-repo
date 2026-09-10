@@ -253,6 +253,20 @@ describe('getUserAvailabilityEnvelope', () => {
     expect(window).not.toContain('Z<');
     expect(window).not.toMatch(/\.\d{3}/);
   });
+
+  it('declares a fixed-offset UTC zone with NO DST transition (Month=0/DayOrder=0)', () => {
+    // Regression: Month=1/DayOrder=1 on BOTH Standard+Daylight declared two
+    // conflicting January transitions, which Exchange rejects with
+    // "The specified time zone isn't valid." (HRESULT -2146233088). A
+    // fixed-offset zone must express "no transition" as Month=0/DayOrder=0.
+    const xml = getUserAvailabilityEnvelope('alice@x.rw', '2026-09-15T00:00:00', '2026-09-16T00:00:00');
+    const tz = xml.slice(xml.indexOf('<t:TimeZone>'), xml.indexOf('</t:TimeZone>'));
+    expect(tz).toContain('<t:StandardTime><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>0</t:DayOrder><t:Month>0</t:Month>');
+    expect(tz).toContain('<t:DaylightTime><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>0</t:DayOrder><t:Month>0</t:Month>');
+    // must NOT reintroduce the invalid non-zero transition month/order
+    expect(tz).not.toContain('<t:Month>1</t:Month>');
+    expect(tz).not.toContain('<t:DayOrder>1</t:DayOrder>');
+  });
 });
 
 describe('createAttachmentEnvelope', () => {

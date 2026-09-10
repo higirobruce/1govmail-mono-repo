@@ -913,12 +913,12 @@ export function inviteReplyEnvelope(inviteId: string, verb: 'ACCEPT' | 'DECLINE'
 
 /**
  * Format an epoch-ms instant as an UNQUALIFIED local datetime
- * `YYYY-MM-DDTHH:MM:SS` in UTC wall-clock — no trailing `Z`, no milliseconds,
- * no offset. `GetUserAvailability`'s `TimeWindow` is finicky: an ISO string
- * with `Z`/milliseconds (`toISOString()`) trips a generic .NET fault
- * (`0x80131500`). The declared zero-bias UTC `TimeZone` supplies the context,
- * so the window boundaries must be the bare wall-clock the server reads against
- * that zone.
+ * `YYYY-MM-DDTHH:MM:SS` — no trailing `Z`, no milliseconds, no offset.
+ * `GetUserAvailability`'s `TimeWindow` boundaries are read against the request's
+ * declared `TimeZone`; the fixed-offset zero-bias UTC `TimeZone` in
+ * `getUserAvailabilityEnvelope` makes this bare UTC wall-clock resolve to the
+ * exact instants the caller passed. (The generic `0x80131500` fault seen in live
+ * testing came from an invalid TimeZone declaration, not this datetime format.)
  */
 export function toUnqualifiedUtc(ms: number): string {
   const d = new Date(ms);
@@ -941,10 +941,16 @@ export function toUnqualifiedUtc(ms: number): string {
 export function getUserAvailabilityEnvelope(email: string, startTime: string, endTime: string): string {
   const body =
     '<m:GetUserAvailabilityRequest>' +
+    // Fixed-offset UTC zone. StandardTime/DaylightTime MUST express "no DST
+    // transition" via Month=0/DayOrder=0 — declaring two real transitions (e.g.
+    // both on the Jan first-Sunday) makes Exchange's Availability service reject
+    // the request with faultstring "The specified time zone isn't valid."
+    // (HRESULT -2146233088 / 0x80131500). With no transition and every Bias=0,
+    // the window boundaries are read as the UTC instants the caller passed.
     '<t:TimeZone>' +
     '<t:Bias>0</t:Bias>' +
-    '<t:StandardTime><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>1</t:DayOrder><t:Month>1</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:StandardTime>' +
-    '<t:DaylightTime><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>1</t:DayOrder><t:Month>1</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:DaylightTime>' +
+    '<t:StandardTime><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>0</t:DayOrder><t:Month>0</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:StandardTime>' +
+    '<t:DaylightTime><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>0</t:DayOrder><t:Month>0</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:DaylightTime>' +
     '</t:TimeZone>' +
     '<m:MailboxDataArray>' +
     '<t:MailboxData>' +

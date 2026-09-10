@@ -15,6 +15,7 @@ const fixture = (name: string) =>
 const SUCCESS = fixture('getfolder-inbox.success.xml');
 const FAULT = fixture('soapfault.xml');
 const BUSY = fixture('error-servertoobusy.xml');
+const BUSY_FAULT = fixture('error-servertoobusy-fault.xml');
 const RESOLVE = fixture('resolvenames.success.xml');
 
 /** A fake transport substitutable for EwsTransport. Each element of `script`
@@ -31,6 +32,10 @@ class FakeTransport {
     const step = this.script[idx];
     if (step === 'HTTP401') handleEwsError(401);
     if (step === 'FAULT') handleEwsError(500, FAULT);
+    // Real Exchange throttle: ErrorServerBusy arrives as an HTTP-500 SOAP
+    // fault, so the transport throws through handleEwsError BEFORE the caller
+    // ever sees a 2xx body — exactly as EwsTransport.call does for a non-2xx.
+    if (step === 'BUSY_FAULT') handleEwsError(500, BUSY_FAULT);
     return step;
   }
 }
@@ -190,6 +195,33 @@ describe('EwsService', () => {
       expect(t.calls[0].body).toContain('GetFolder');
       expect(t.calls[1].body).toContain('GetFolder');
       expect(res.twoFactorRequired).toBe(false);
+    });
+
+    it('retries once when ErrorServerBusy arrives as an HTTP-500 SOAP fault, then succeeds', async () => {
+      // The common real shape: the throttle is a soap:Fault with HTTP 500, so
+      // the transport throws before callWithRetry can inspect a 2xx body. The
+      // back-off must still engage and the call must be retried exactly once.
+      const t = new FakeTransport(['BUSY_FAULT', SUCCESS, RESOLVE]);
+      const svc = new EwsService(t as any);
+      const res = await svc.authenticate('mail.gov.rw', 'test-risa1@minaffet.gov.rw', 'fake-pw-123', {
+        ntlmDomain: 'MINAFFET',
+      });
+      // proof the retry engaged: two GetFolder attempts (fault, then success)
+      expect(t.calls[0].body).toContain('GetFolder');
+      expect(t.calls[1].body).toContain('GetFolder');
+      expect(res.twoFactorRequired).toBe(false);
+    });
+
+    it('gives up after a single retry when the HTTP-500 fault throttle persists', async () => {
+      const t = new FakeTransport(['BUSY_FAULT', 'BUSY_FAULT']);
+      const svc = new EwsService(t as any);
+      await expect(
+        svc.authenticate('mail.gov.rw', 'test-risa1@minaffet.gov.rw', 'fake-pw-123', {
+          ntlmDomain: 'MINAFFET',
+        }),
+      ).rejects.toBeInstanceOf(BadGatewayException);
+      // exactly two GetFolder attempts, not three
+      expect(t.calls.filter((c) => c.body.includes('GetFolder')).length).toBe(2);
     });
 
     it('gives up after a single retry when still busy (ErrorServerBusy twice)', async () => {

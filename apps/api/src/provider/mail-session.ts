@@ -1,3 +1,4 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { User } from '@prisma/client';
 import { EwsCrypto } from '../ews/ews-crypto';
 
@@ -49,7 +50,14 @@ function getEwsCrypto(): EwsCrypto {
  *  provider is untouched. */
 export function buildMailSession(user: MailSessionUser): MailSession {
   if (user.provider === 'ews') {
-    const credentials = JSON.parse(getEwsCrypto().decrypt(user.authToken as string)) as {
+    // An ews `authToken` is the encrypted credential blob written at login. A
+    // null/empty one means the session is gone (or was never established);
+    // feeding that to EwsCrypto.decrypt yields a cryptic crypto error, so guard
+    // it into a clear re-login prompt BEFORE attempting to decrypt.
+    if (!user.authToken) {
+      throw new UnauthorizedException('Your session is no longer valid. Please log in again.');
+    }
+    const credentials = JSON.parse(getEwsCrypto().decrypt(user.authToken)) as {
       username: string;
       password: string;
     };

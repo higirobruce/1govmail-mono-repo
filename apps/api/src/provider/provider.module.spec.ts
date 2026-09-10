@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../app.module';
 import { MailProviderResolver } from './mail-provider.resolver';
@@ -15,15 +16,8 @@ import { EwsService } from '../ews/ews.service';
  * here touches Postgres, Zimbra or the network.
  */
 describe('ProviderModule wiring', () => {
-  // EwsModule (Phase 3) is now part of the graph; its EwsService factory
-  // asserts MAIL_CRED_KEY at construction, so a key must be present for the
-  // AppModule to boot. Set a throwaway one for the compile (the real value is
-  // an ops secret; see .env.example / ARCHITECTURE §8).
   const ORIGINAL_KEY = process.env.MAIL_CRED_KEY;
-  beforeAll(() => {
-    process.env.MAIL_CRED_KEY ??= 'test-mail-cred-key-provider-module-spec';
-  });
-  afterAll(() => {
+  afterEach(() => {
     if (ORIGINAL_KEY === undefined) delete process.env.MAIL_CRED_KEY;
     else process.env.MAIL_CRED_KEY = ORIGINAL_KEY;
   });
@@ -36,12 +30,45 @@ describe('ProviderModule wiring', () => {
     );
   });
 
-  it('registers the EWS provider so an ews user resolves to the EwsService', async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  // FIX 1: MAIL_CRED_KEY is NOT a whole-app boot requirement. A Zimbra-only
+  // deployment (no ews institution, no key) must boot cleanly — the EwsModule
+  // factory yields `null` instead of constructing EwsService — and an ews login
+  // on such a build gets the standard "not supported" 400, never a null-deref.
+  describe('without MAIL_CRED_KEY (Zimbra-only deployment)', () => {
+    beforeEach(() => {
+      delete process.env.MAIL_CRED_KEY;
+    });
 
-    const resolver = moduleRef.get(MailProviderResolver, { strict: false });
-    const ews = moduleRef.get(EwsService, { strict: false });
-    expect(ews).toBeInstanceOf(EwsService);
-    expect(resolver.forUser({ provider: 'ews' } as any)).toBe(ews);
+    it('AppModule still compiles (the key is not a boot requirement)', async () => {
+      const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+      // The EwsService token is provided but yields null (no key → no instance).
+      expect(moduleRef.get(EwsService, { strict: false })).toBeNull();
+    });
+
+    it('an ews user then gets the clean 400, not a null-deref crash', async () => {
+      const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+      const resolver = moduleRef.get(MailProviderResolver, { strict: false });
+      expect(() => resolver.forUser({ provider: 'ews' } as any)).toThrow(BadRequestException);
+      expect(() => resolver.forUser({ provider: 'ews' } as any)).toThrow(
+        /not supported on this server/i,
+      );
+    });
+  });
+
+  describe('with MAIL_CRED_KEY (an ews institution is configured)', () => {
+    beforeEach(() => {
+      // A throwaway key for the compile (the real value is an ops secret; see
+      // .env.example / ARCHITECTURE §8).
+      process.env.MAIL_CRED_KEY = 'test-mail-cred-key-provider-module-spec';
+    });
+
+    it('registers the EWS provider so an ews user resolves to the EwsService', async () => {
+      const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+
+      const resolver = moduleRef.get(MailProviderResolver, { strict: false });
+      const ews = moduleRef.get(EwsService, { strict: false });
+      expect(ews).toBeInstanceOf(EwsService);
+      expect(resolver.forUser({ provider: 'ews' } as any)).toBe(ews);
+    });
   });
 });

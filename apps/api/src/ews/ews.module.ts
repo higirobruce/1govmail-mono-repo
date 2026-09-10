@@ -17,16 +17,23 @@ import { EwsTransport } from './ews-transport';
  * per-mailbox keep-alive agent cache must be shared so logout eviction reaches
  * the same instance).
  *
- * SECURITY / fail-fast: `new EwsService(...)` asserts `MAIL_CRED_KEY` at
- * construction. Booting an app that has an `ews` institution but no key throws
- * here at startup — the correct, loud failure, not a mid-login surprise.
+ * SECURITY / lazy key: `MAIL_CRED_KEY` is required ONLY when an `ews`
+ * institution is actually configured — it is not a whole-app boot requirement.
+ * A Zimbra-only deployment has no key and must still boot, so the `EwsService`
+ * factory yields `null` when the key is absent rather than constructing (which
+ * would throw the constructor's assertion). The resolver injects `EwsService`
+ * with `@Optional()` and, for a `provider === 'ews'` user with a null service,
+ * falls through to the standard "not supported on this server" 400. When the
+ * key IS present the factory constructs normally and the constructor's own
+ * `MAIL_CRED_KEY` assertion remains the fail-fast for a malformed key.
  */
 @Module({
   providers: [
     { provide: EwsTransport, useFactory: () => new EwsTransport() },
     {
       provide: EwsService,
-      useFactory: (transport: EwsTransport) => new EwsService(transport),
+      useFactory: (transport: EwsTransport): EwsService | null =>
+        process.env.MAIL_CRED_KEY ? new EwsService(transport) : null,
       inject: [EwsTransport],
     },
   ],

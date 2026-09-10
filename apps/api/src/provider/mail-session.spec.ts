@@ -1,3 +1,4 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { buildMailSession } from './mail-session';
 import { EwsCrypto } from '../ews/ews-crypto';
 
@@ -34,6 +35,21 @@ describe('buildMailSession', () => {
       });
       expect(session.authToken).toBeUndefined();
       expect(session.csrfToken).toBeUndefined();
+    });
+
+    it('throws a clear UnauthorizedException when an ews user has no authToken', () => {
+      process.env.MAIL_CRED_KEY = 'a'.repeat(48);
+      const user = {
+        zimbraHost: 'mail.example.gov.rw',
+        email: 'jdoe@example.gov.rw',
+        authToken: null,
+        csrfToken: null,
+        provider: 'ews',
+      };
+      // A null/empty credential blob must NOT reach EwsCrypto.decrypt (a cryptic
+      // error); it means the session is gone → surface a clean re-login prompt.
+      expect(() => buildMailSession(user)).toThrow(UnauthorizedException);
+      expect(() => buildMailSession(user)).toThrow(/log in again/i);
     });
 
     it('surfaces the clear EwsCrypto error when MAIL_CRED_KEY is missing', () => {

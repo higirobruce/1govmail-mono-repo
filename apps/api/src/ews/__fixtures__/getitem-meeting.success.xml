@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Header>
+    <h:ServerVersionInfo MajorVersion="15" MinorVersion="2" MajorBuildNumber="2562" MinorBuildNumber="37"
+      xmlns:h="http://schemas.microsoft.com/exchange/services/2006/types" />
+  </s:Header>
+  <s:Body>
+    <m:GetItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:GetItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Items>
+            <t:MeetingRequest>
+              <t:ItemId Id="MTG-1==" ChangeKey="MTK1"/>
+              <t:ParentFolderId Id="AAA-Inbox=" ChangeKey="CK1"/>
+              <t:Subject>Invitation: Cabinet briefing</t:Subject>
+              <t:HasAttachments>false</t:HasAttachments>
+              <t:Body BodyType="HTML">&lt;html&gt;&lt;body&gt;&lt;p&gt;You are invited to the Cabinet briefing.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</t:Body>
+              <t:Size>9021</t:Size>
+              <t:DateTimeReceived>2026-09-10T08:00:00Z</t:DateTimeReceived>
+              <t:ConversationId Id="CONV-M==" ChangeKey="CVKM"/>
+              <t:From>
+                <t:Mailbox>
+                  <t:Name>Bob Mugisha</t:Name>
+                  <t:EmailAddress>bob.mugisha@minaffet.gov.rw</t:EmailAddress>
+                  <t:RoutingType>SMTP</t:RoutingType>
+                </t:Mailbox>
+              </t:From>
+              <t:ToRecipients>
+                <t:Mailbox>
+                  <t:Name>Test Risa</t:Name>
+                  <t:EmailAddress>test-risa1@minaffet.gov.rw</t:EmailAddress>
+                  <t:RoutingType>SMTP</t:RoutingType>
+                </t:Mailbox>
+              </t:ToRecipients>
+              <t:IsRead>false</t:IsRead>
+            </t:MeetingRequest>
+          </m:Items>
+        </m:GetItemResponseMessage>
+      </m:ResponseMessages>
+    </m:GetItemResponse>
+  </s:Body>
+</s:Envelope>

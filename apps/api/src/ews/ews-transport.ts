@@ -84,6 +84,24 @@ interface EwsResponseError {
   backoffMs?: number;
 }
 
+/**
+ * ErrorServerBusy, in EITHER shape it arrives in — a 200-body
+ * `ResponseClass="Error"` OR (the common real shape) an HTTP-500 SOAP fault.
+ * `handleEwsError` throws this so the single back-off retry engages regardless
+ * of the transport-visible shape; it extends `BadGatewayException` so that if
+ * the throttle persists past the one retry the give-up still surfaces as a
+ * clean 502. `callWithRetry` keys the retry on `instanceof EwsServerBusyError`
+ * and honours `backoffMs` (capped).
+ */
+export class EwsServerBusyError extends BadGatewayException {
+  constructor(
+    messageText: string | undefined,
+    readonly backoffMs?: number,
+  ) {
+    super(`EWS ErrorServerBusy${messageText ? `: ${messageText}` : ''}`);
+  }
+}
+
 /** Depth-first search for the first object node satisfying `pred`. */
 function findNode(obj: any, pred: (node: any) => boolean): any {
   if (!obj || typeof obj !== 'object') return undefined;
@@ -138,7 +156,9 @@ export function inspectEwsXml(xml: string): EwsResponseError | null {
     const responseCode = findValue(fault, 'ResponseCode') ?? findValue(fault, 'faultcode');
     const messageText =
       findValue(fault, 'Message') ?? findValue(fault, 'faultstring') ?? undefined;
-    return { kind: 'fault', responseCode, messageText };
+    // A throttle fault carries BackOffMilliseconds inside <detail>/MessageXml,
+    // exactly like the 200-body error shape — extract it so the retry can honour it.
+    return { kind: 'fault', responseCode, messageText, backoffMs: extractBackoff(fault) };
   }
 
   const errNode = findNode(tree, (n) => n['@_ResponseClass'] === 'Error');
@@ -195,6 +215,13 @@ export function handleEwsError(status: number, xml?: string, err?: any): never {
         info.responseCode === 'ErrorNonExistentMailbox'
       ) {
         throw new NotFoundException('The requested mail item no longer exists.');
+      }
+      // ErrorServerBusy in either shape (200-body error OR this HTTP-500 fault)
+      // → a typed error carrying BackOffMilliseconds so callWithRetry can
+      // honour the back-off and retry once. It IS a BadGatewayException, so a
+      // persistent throttle past the retry still surfaces as a clean 502.
+      if (info.responseCode === 'ErrorServerBusy') {
+        throw new EwsServerBusyError(info.messageText, info.backoffMs);
       }
       const code = info.responseCode ?? (info.kind === 'fault' ? 'SOAPFault' : 'Error');
       const text = info.messageText ? `: ${info.messageText}` : '';

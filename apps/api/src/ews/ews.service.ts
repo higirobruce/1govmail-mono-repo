@@ -30,7 +30,7 @@ import {
 import {
   parseEws, responseClassOf, toArray, toBool, textOf,
 } from './ews-parse';
-import { EwsTransport, handleEwsError, inspectEwsXml } from './ews-transport';
+import { EwsTransport, EwsServerBusyError, handleEwsError, inspectEwsXml } from './ews-transport';
 
 /**
  * Fallback session lifetime (7d) — matches the JWT module's own default for
@@ -175,25 +175,47 @@ export class EwsService implements MailProvider {
 
   /**
    * Run `body` against the endpoint with a single ErrorServerBusy retry.
-   * HTTP-level failures (401, fault, network) throw from inside
-   * `transport.call`. A SOAP-level `ResponseClass="Error"` comes back as XML;
-   * if it is ErrorServerBusy we honour BackOffMilliseconds and retry exactly
-   * once, otherwise (or if still failing) we funnel through `handleEwsError`.
+   *
+   * The throttle arrives in one of two shapes and BOTH must trigger the
+   * back-off:
+   *  - a 200-body `ResponseClass="Error"` — returned as XML, detected here by
+   *    `inspectEwsXml`;
+   *  - the common real shape, an HTTP-500 SOAP fault — thrown from inside
+   *    `transport.call` via `handleEwsError` as a typed `EwsServerBusyError`
+   *    before any body reaches us.
+   *
+   * Either way we honour (a capped) BackOffMilliseconds and retry exactly once
+   * via `retryAfterBackoff`, whose own second attempt is final — so a
+   * persistent throttle surfaces as a clean 502, never a second retry. Any
+   * other Error/fault funnels through `handleEwsError`.
    */
   private async callWithRetry(session: MailSession, body: string): Promise<string> {
-    let xml = await this.transport.call(session, body);
-    const err = inspectEwsXml(xml);
-    if (!err) return xml;
-
-    if (err.responseCode === 'ErrorServerBusy') {
-      await delay(Math.min(err.backoffMs ?? 0, MAX_BACKOFF_MS));
+    let xml: string;
+    try {
       xml = await this.transport.call(session, body);
-      const retryErr = inspectEwsXml(xml);
-      if (!retryErr) return xml;
-      handleEwsError(200, xml); // still failing after the one retry
+    } catch (e) {
+      // HTTP-500 SOAP-fault ErrorServerBusy → the single back-off retry.
+      if (e instanceof EwsServerBusyError) return this.retryAfterBackoff(session, body, e.backoffMs);
+      throw e;
     }
 
+    const err = inspectEwsXml(xml);
+    if (!err) return xml;
+    // 200-body ErrorServerBusy → the same single back-off retry.
+    if (err.responseCode === 'ErrorServerBusy') return this.retryAfterBackoff(session, body, err.backoffMs);
     handleEwsError(200, xml); // any other Error/fault
+  }
+
+  /** The one and only ErrorServerBusy retry, shared by both throttle shapes.
+   *  Sleeps the capped back-off, then re-issues the call once. This second
+   *  attempt is terminal: a throttle (or any error) now funnels straight
+   *  through `handleEwsError` / propagates — there is no further retry. */
+  private async retryAfterBackoff(session: MailSession, body: string, backoffMs?: number): Promise<string> {
+    await delay(Math.min(backoffMs ?? 0, MAX_BACKOFF_MS));
+    const xml = await this.transport.call(session, body);
+    const err = inspectEwsXml(xml);
+    if (!err) return xml;
+    handleEwsError(200, xml); // still failing after the one retry
   }
 
   async authenticate(
@@ -391,13 +413,29 @@ export class EwsService implements MailProvider {
     return meta;
   }
 
+  /** The message-shaped item element names an `Items` container can carry. A
+   *  real inbox returns invites as `MeetingRequest` / `MeetingCancellation` /
+   *  `MeetingResponse` — not `Message` — and they share the message wire shape,
+   *  so the message layer must collect all four or invites vanish from listings
+   *  and cannot be opened. Mirrors the `anyItemIdOf` broadening on the id side. */
+  private static readonly MESSAGE_ITEM_TAGS = [
+    'Message', 'MeetingRequest', 'MeetingCancellation', 'MeetingResponse',
+  ] as const;
+
+  /** Collect every message-shaped item from an `Items` container (Message +
+   *  the three meeting element names), preserving document order per tag. */
+  private messageItemsOf(itemsContainer: any): any[] {
+    if (!itemsContainer) return [];
+    return EwsService.MESSAGE_ITEM_TAGS.flatMap((tag) => toArray(itemsContainer[tag]));
+  }
+
   /** Shared FindItem response → ProviderMessagePage. `total` is the server's
    *  TotalItemsInView; `more` = the window did not reach the end. */
   private parseMessagePage(xml: string, offset: number, folderId: string): ProviderMessagePage {
     const doc = parseEws(xml);
     const rm = this.responseMessageNode(doc, 'FindItemResponse', 'FindItemResponseMessage');
     const root = rm?.RootFolder;
-    const items = toArray(root?.Items?.Message);
+    const items = this.messageItemsOf(root?.Items);
     const messages = items.map((it) => this.mapMessageSummary(it, folderId));
     const total = this.numOr(root?.['@_TotalItemsInView'], messages.length);
     const more = offset + messages.length < total;
@@ -495,7 +533,9 @@ export class EwsService implements MailProvider {
     const xml = await this.callWithRetry(session, getItemEnvelope(messageId));
     const doc = parseEws(xml);
     const rm = this.responseMessageNode(doc, 'GetItemResponse', 'GetItemResponseMessage');
-    const item = toArray(rm?.Items?.Message)[0] ?? {};
+    // Message + MeetingRequest/Cancellation/Response — an invite opens the same
+    // way a plain message does (shared wire shape).
+    const item = this.messageItemsOf(rm?.Items)[0] ?? {};
     const summary = this.mapMessageSummary(item, item?.ParentFolderId?.['@_Id'] ?? '');
 
     const bodyHtml = textOf(item?.Body) ?? null;

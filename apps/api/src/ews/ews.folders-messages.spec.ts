@@ -18,6 +18,8 @@ const FIND_ITEM = fixture('finditem.success.xml');
 const SEARCH_ITEM = fixture('searchitem.success.xml');
 const GET_ITEM = fixture('getitem.success.xml');
 const GET_ITEM_NOTFOUND = fixture('getitem.notfound.xml');
+const FIND_ITEM_MEETING = fixture('finditem-meeting.success.xml');
+const GET_ITEM_MEETING = fixture('getitem-meeting.success.xml');
 const CREATE_FOLDER = fixture('createfolder.success.xml');
 const DELETE_FOLDER = fixture('deletefolder.success.xml');
 const UPDATE_FOLDER = fixture('updatefolder.success.xml');
@@ -153,6 +155,21 @@ describe('EwsService folders + messages (Task 4)', () => {
       const page = await svc.getMessages(SESSION, 'AAA-Inbox=', 25, 55);
       expect(page.more).toBe(false);
     });
+
+    it('includes meeting-request items alongside plain messages in the listing', async () => {
+      // Real inboxes return invites as <t:MeetingRequest> (and Cancellation /
+      // Response) rather than <t:Message>; these must not vanish from listings.
+      const { svc } = svcWith(FIND_ITEM_MEETING);
+      const page = await svc.getMessages(SESSION, 'AAA-Inbox=');
+      expect(page.messages).toHaveLength(2);
+      const byId = Object.fromEntries(page.messages.map((m) => [m.id, m]));
+      expect(byId['MSG-1==']).toBeDefined();
+      const invite = byId['MTG-1=='];
+      expect(invite).toBeDefined();
+      expect(invite.subject).toBe('Invitation: Cabinet briefing');
+      expect(invite.from).toEqual({ email: 'bob.mugisha@minaffet.gov.rw', name: 'Bob Mugisha' });
+      expect(invite.isRead).toBe(false);
+    });
   });
 
   describe('searchMessages', () => {
@@ -215,6 +232,17 @@ describe('EwsService folders + messages (Task 4)', () => {
     it('maps an ErrorItemNotFound response to NotFoundException', async () => {
       const { svc } = svcWith(GET_ITEM_NOTFOUND);
       await expect(svc.getMessage(SESSION, 'nope==')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('opens a MeetingRequest item (invite) the same as a plain message', async () => {
+      const { svc } = svcWith(GET_ITEM_MEETING);
+      const msg = await svc.getMessage(SESSION, 'MTG-1==');
+      expect(msg.id).toBe('MTG-1==');
+      expect(msg.subject).toBe('Invitation: Cabinet briefing');
+      expect(msg.folderId).toBe('AAA-Inbox=');
+      expect(msg.bodyHtml).toContain('<p>You are invited to the Cabinet briefing.</p>');
+      expect(msg.from).toEqual({ email: 'bob.mugisha@minaffet.gov.rw', name: 'Bob Mugisha' });
+      expect(msg.to).toEqual([{ email: 'test-risa1@minaffet.gov.rw', name: 'Test Risa' }]);
     });
   });
 

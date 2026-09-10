@@ -2,6 +2,9 @@ import {
   soapEnvelope, xmlEscape, getFolderEnvelope,
   findFolderEnvelope, findItemEnvelope, searchItemEnvelope, getItemEnvelope,
   createFolderEnvelope, deleteFolderEnvelope, renameFolderEnvelope, emptyFolderEnvelope,
+  getItemChangeKeyEnvelope, markReadEnvelope, moveItemEnvelope, deleteItemEnvelope,
+  createMessageEnvelope, createReplyForwardEnvelope, createAttachmentEnvelope,
+  sendItemEnvelope, updateDraftEnvelope, getAttachmentEnvelope,
 } from './ews-envelopes';
 
 describe('xmlEscape', () => {
@@ -149,5 +152,127 @@ describe('emptyFolderEnvelope', () => {
     const xml = emptyFolderEnvelope('F==');
     expect(xml).toContain('<m:EmptyFolder DeleteType="MoveToDeletedItems" DeleteSubFolders="false">');
     expect(xml).toContain('<t:FolderId Id="F=="/>');
+  });
+});
+
+describe('getItemChangeKeyEnvelope', () => {
+  it('is an IdOnly GetItem for the item (the fresh-change-key probe)', () => {
+    const xml = getItemChangeKeyEnvelope('ITEM-1==');
+    expect(xml).toContain('<m:GetItem>');
+    expect(xml).toContain('<t:BaseShape>IdOnly</t:BaseShape>');
+    expect(xml).toContain('<t:ItemId Id="ITEM-1=="/>');
+  });
+});
+
+describe('markReadEnvelope', () => {
+  it('sets message:IsRead with SuppressReadReceipts and the given change key', () => {
+    const xml = markReadEnvelope('ITEM-1==', 'CK9', true);
+    expect(xml).toContain('<m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite" SuppressReadReceipts="true">');
+    expect(xml).toContain('<t:ItemId Id="ITEM-1==" ChangeKey="CK9"/>');
+    expect(xml).toContain('<t:FieldURI FieldURI="message:IsRead"/>');
+    expect(xml).toContain('<t:IsRead>true</t:IsRead>');
+  });
+  it('writes false when clearing the read flag', () => {
+    expect(markReadEnvelope('I', 'C', false)).toContain('<t:IsRead>false</t:IsRead>');
+  });
+});
+
+describe('moveItemEnvelope / deleteItemEnvelope', () => {
+  it('moveItem targets a concrete FolderId', () => {
+    const xml = moveItemEnvelope('ITEM-1==', 'FOLDER==');
+    expect(xml).toContain('<m:MoveItem>');
+    expect(xml).toContain('<t:FolderId Id="FOLDER=="/>');
+    expect(xml).toContain('<t:ItemId Id="ITEM-1=="/>');
+  });
+  it('deleteItem moves to the deleteditems distinguished folder', () => {
+    const xml = deleteItemEnvelope('ITEM-1==');
+    expect(xml).toContain('<t:DistinguishedFolderId Id="deleteditems"/>');
+    expect(xml).toContain('<t:ItemId Id="ITEM-1=="/>');
+  });
+});
+
+describe('createMessageEnvelope', () => {
+  it('creates a SaveOnly draft into drafts with subject/body/recipients in schema order', () => {
+    const xml = createMessageEnvelope({
+      subject: 'Hi', body: '<p>x</p>', to: ['a@x.rw'], cc: ['b@x.rw'],
+    });
+    expect(xml).toContain('<m:CreateItem MessageDisposition="SaveOnly">');
+    expect(xml).toContain('<t:DistinguishedFolderId Id="drafts"/>');
+    expect(xml).toContain('<t:Subject>Hi</t:Subject>');
+    expect(xml).toContain('<t:Body BodyType="HTML">&lt;p&gt;x&lt;/p&gt;</t:Body>');
+    expect(xml.indexOf('<t:Subject>')).toBeLessThan(xml.indexOf('<t:Body'));
+    expect(xml.indexOf('<t:Body')).toBeLessThan(xml.indexOf('<t:ToRecipients>'));
+    expect(xml).toContain('<t:ToRecipients><t:Mailbox><t:EmailAddress>a@x.rw</t:EmailAddress></t:Mailbox></t:ToRecipients>');
+  });
+  it('omits empty recipient containers', () => {
+    const xml = createMessageEnvelope({ subject: 'Hi', body: 'x', to: ['a@x.rw'] });
+    expect(xml).not.toContain('<t:CcRecipients>');
+    expect(xml).not.toContain('<t:BccRecipients>');
+  });
+});
+
+describe('createReplyForwardEnvelope', () => {
+  it('builds a ReplyToItem referencing the original', () => {
+    const xml = createReplyForwardEnvelope('ORIG==', 'r', { body: '<p>re</p>', to: ['a@x.rw'] });
+    expect(xml).toContain('<t:ReplyToItem>');
+    expect(xml).toContain('<t:ReferenceItemId Id="ORIG=="/>');
+    expect(xml).toContain('<t:NewBodyContent BodyType="HTML">&lt;p&gt;re&lt;/p&gt;</t:NewBodyContent>');
+  });
+  it('builds a ForwardItem for replyType w', () => {
+    const xml = createReplyForwardEnvelope('ORIG==', 'w', { body: 'x' });
+    expect(xml).toContain('<t:ForwardItem>');
+  });
+});
+
+describe('createAttachmentEnvelope', () => {
+  it('attaches a FileAttachment with base64 content to the parent + change key', () => {
+    const xml = createAttachmentEnvelope('DRAFT==', 'CK0', {
+      name: 'a.pdf', contentType: 'application/pdf', contentBase64: 'QUJD',
+    });
+    expect(xml).toContain('<m:CreateAttachment>');
+    expect(xml).toContain('<m:ParentItemId Id="DRAFT==" ChangeKey="CK0"/>');
+    expect(xml).toContain('<t:Name>a.pdf</t:Name>');
+    expect(xml).toContain('<t:Content>QUJD</t:Content>');
+  });
+  it('marks inline images with ContentId before IsInline (schema order)', () => {
+    const xml = createAttachmentEnvelope('D', 'C', {
+      name: 'l.png', contentType: 'image/png', contentBase64: 'QQ==', isInline: true, contentId: 'cid1',
+    });
+    expect(xml).toContain('<t:ContentId>cid1</t:ContentId>');
+    expect(xml).toContain('<t:IsInline>true</t:IsInline>');
+    expect(xml.indexOf('<t:ContentId>')).toBeLessThan(xml.indexOf('<t:IsInline>'));
+  });
+});
+
+describe('sendItemEnvelope', () => {
+  it('sends the staged item saving a copy to sentitems', () => {
+    const xml = sendItemEnvelope('DRAFT==', 'CK1');
+    expect(xml).toContain('<m:SendItem SaveItemToFolder="true">');
+    expect(xml).toContain('<t:ItemId Id="DRAFT==" ChangeKey="CK1"/>');
+    expect(xml).toContain('<t:DistinguishedFolderId Id="sentitems"/>');
+  });
+});
+
+describe('updateDraftEnvelope', () => {
+  it('overwrites only the provided fields, carrying the fresh change key', () => {
+    const xml = updateDraftEnvelope('D==', 'CK9', { subject: 'New', body: '<p>b</p>' });
+    expect(xml).toContain('<m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite">');
+    expect(xml).toContain('<t:ItemId Id="D==" ChangeKey="CK9"/>');
+    expect(xml).toContain('<t:FieldURI FieldURI="item:Subject"/>');
+    expect(xml).toContain('<t:Subject>New</t:Subject>');
+    expect(xml).toContain('<t:FieldURI FieldURI="item:Body"/>');
+  });
+  it('does not emit a SetItemField for an absent field', () => {
+    const xml = updateDraftEnvelope('D==', 'CK9', { subject: 'Only' });
+    expect(xml).not.toContain('item:Body');
+    expect(xml).not.toContain('message:ToRecipients');
+  });
+});
+
+describe('getAttachmentEnvelope', () => {
+  it('requests one attachment by AttachmentId', () => {
+    const xml = getAttachmentEnvelope('ATT-1==');
+    expect(xml).toContain('<m:GetAttachment>');
+    expect(xml).toContain('<t:AttachmentId Id="ATT-1=="/>');
   });
 });

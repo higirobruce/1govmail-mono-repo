@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+    <m:UpdateItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:UpdateItemResponseMessage ResponseClass="Error">
+          <m:MessageText>ChangeKey is required for this operation when deleting, sending, or updating an item.</m:MessageText>
+          <m:ResponseCode>ErrorChangeKeyRequiredForWriteOperations</m:ResponseCode>
+          <m:DescriptiveLinkKey>0</m:DescriptiveLinkKey>
+          <m:Items/>
+        </m:UpdateItemResponseMessage>
+      </m:ResponseMessages>
+    </m:UpdateItemResponse>
+  </s:Body>
+</s:Envelope>

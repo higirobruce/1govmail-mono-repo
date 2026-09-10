@@ -1,4 +1,5 @@
 import ms from 'ms';
+import { Readable } from 'stream';
 import { Logger, UnauthorizedException } from '@nestjs/common';
 import { MailSession } from '../provider/mail-session';
 import {
@@ -16,6 +17,10 @@ import {
   getFolderEnvelope, soapEnvelope, xmlEscape,
   findFolderEnvelope, findItemEnvelope, searchItemEnvelope, getItemEnvelope,
   createFolderEnvelope, deleteFolderEnvelope, renameFolderEnvelope, emptyFolderEnvelope,
+  getItemChangeKeyEnvelope, markReadEnvelope, moveItemEnvelope, deleteItemEnvelope,
+  createMessageEnvelope, createReplyForwardEnvelope, createAttachmentEnvelope,
+  sendItemEnvelope, updateDraftEnvelope, getAttachmentEnvelope,
+  EwsFileAttachment, EwsMessageFields,
 } from './ews-envelopes';
 import {
   parseEws, responseClassOf, toArray, toBool, textOf,
@@ -89,6 +94,21 @@ export class EwsService {
 
   private readonly logger = new Logger(EwsService.name);
   private readonly crypto: EwsCrypto;
+
+  /**
+   * Server-side attachment buffer store (spec §5.3: EWS has no standalone
+   * attachment upload). `uploadAttachment` stashes the raw bytes here keyed by
+   * an opaque handle it returns; the following `sendMessage` resolves each
+   * handle back to its bytes, emits a `CreateAttachment` for it, and deletes
+   * the entry (consume-on-attach) so a completed send leaves nothing behind.
+   * Handles are process-local and single-use — the same model the Zimbra
+   * provider's server-side `aid` occupies, so no call site changes.
+   */
+  private readonly attachmentBuffers = new Map<
+    string,
+    { filename: string; contentType: string; data: Buffer }
+  >();
+  private attachmentSeq = 0;
 
   constructor(private readonly transport: EwsTransport = new EwsTransport()) {
     if (!process.env.MAIL_CRED_KEY) {
@@ -468,21 +488,194 @@ export class EwsService {
       attachments,
     };
   }
-  sendMessage(
-    _s: MailSession, _payload: SendMessagePayload,
-    _attachmentAids?: string[],
-    _inlineImageAids?: Array<{ aid: string; cid: string; ct: string }>,
-    _forwardedAttachments?: Array<{ mid: string; part: string }>,
-  ): Promise<{ id: string; conversationId: string | null }> { return this.notImplemented('sendMessage'); }
-  saveDraft(_s: MailSession, _payload: DraftPayload): Promise<string> { return this.notImplemented('saveDraft'); }
-  deleteMessage(_s: MailSession, _messageId: string): Promise<void> { return this.notImplemented('deleteMessage'); }
-  markRead(_s: MailSession, _messageId: string, _read: boolean): Promise<void> { return this.notImplemented('markRead'); }
-  moveMessage(_s: MailSession, _messageId: string, _folderId: string): Promise<void> { return this.notImplemented('moveMessage'); }
+  // ── send / drafts / mutations (Task 5) ────────────────────────────────────
 
-  // attachments
-  uploadAttachment(_s: MailSession, _filename: string, _contentType: string, _data: Buffer): Promise<string> { return this.notImplemented('uploadAttachment'); }
-  downloadAttachment(_s: MailSession, _messageId: string, _part: string): Promise<{ stream: NodeJS.ReadableStream; contentType: string; filename: string }> { return this.notImplemented('downloadAttachment'); }
-  downloadAttachmentBuffer(_s: MailSession, _messageId: string, _part: string): Promise<{ data: Buffer; contentType: string }> { return this.notImplemented('downloadAttachmentBuffer'); }
+  /** The message fields shared by create/reply/forward/update, pulled off a
+   *  Send or Draft payload (both carry the same optional shape). */
+  private messageFieldsOf(p: SendMessagePayload | DraftPayload): EwsMessageFields {
+    return { subject: p.subject, body: p.body, to: p.to, cc: p.cc, bcc: p.bcc };
+  }
+
+  /** `Envelope.Body.<responseTag>.ResponseMessages.<messageTag>.Items.Message`
+   *  → its `{ id, changeKey }`. Shared by CreateItem/UpdateItem/GetItem reads. */
+  private itemIdOf(doc: any, responseTag: string, messageTag: string): { id: string; changeKey: string } {
+    const rm = this.responseMessageNode(doc, responseTag, messageTag);
+    const idNode = (toArray(rm?.Items?.Message)[0] ?? {})?.ItemId ?? {};
+    return { id: idNode['@_Id'] ?? '', changeKey: idNode['@_ChangeKey'] ?? '' };
+  }
+
+  /** The parent item's NEW change key echoed on a CreateAttachment response
+   *  (`AttachmentId/@RootItemChangeKey`) — the key the next CreateAttachment or
+   *  the SendItem must quote. */
+  private rootChangeKeyOf(doc: any): string {
+    const rm = this.responseMessageNode(doc, 'CreateAttachmentResponse', 'CreateAttachmentResponseMessage');
+    const att = toArray(rm?.Attachments?.FileAttachment)[0] ?? {};
+    return att?.AttachmentId?.['@_RootItemChangeKey'] ?? '';
+  }
+
+  /** The ConversationId echoed on a create response, if the server included it
+   *  (threading is otherwise carried by the References headers EWS sets). */
+  private conversationIdOf(doc: any, responseTag: string, messageTag: string): string | null {
+    const rm = this.responseMessageNode(doc, responseTag, messageTag);
+    const conv = (toArray(rm?.Items?.Message)[0] ?? {})?.ConversationId;
+    return conv?.['@_Id'] ?? null;
+  }
+
+  /** Resolve upload handles (regular + inline) into ready-to-attach files,
+   *  consuming each buffer as it is read. Unknown handles are skipped rather
+   *  than failing the whole send. */
+  private collectAttachments(
+    attachmentAids?: string[],
+    inlineImageAids?: Array<{ aid: string; cid: string; ct: string }>,
+  ): EwsFileAttachment[] {
+    const files: EwsFileAttachment[] = [];
+    for (const aid of attachmentAids ?? []) {
+      const buf = this.attachmentBuffers.get(aid);
+      if (!buf) continue;
+      files.push({ name: buf.filename, contentType: buf.contentType, contentBase64: buf.data.toString('base64') });
+      this.attachmentBuffers.delete(aid);
+    }
+    for (const img of inlineImageAids ?? []) {
+      const buf = this.attachmentBuffers.get(img.aid);
+      if (!buf) continue;
+      files.push({
+        name: buf.filename,
+        contentType: img.ct || buf.contentType,
+        contentBase64: buf.data.toString('base64'),
+        isInline: true,
+        contentId: img.cid,
+      });
+      this.attachmentBuffers.delete(img.aid);
+    }
+    return files;
+  }
+
+  /**
+   * Send flow (spec §5.3): CreateItem `SaveOnly` (a `ReplyToItem`/`ForwardItem`
+   * response object when `replyToId` is set) → one `CreateAttachment` per
+   * buffered file / inline image / forwarded part, threading the parent's
+   * change key forward each time → `SendItem` saving a copy to Sent Items.
+   * Returns the staged item's id (the app correlates the Sent copy off it) and
+   * the ConversationId when the server surfaced one.
+   */
+  async sendMessage(
+    session: MailSession, payload: SendMessagePayload,
+    attachmentAids?: string[],
+    inlineImageAids?: Array<{ aid: string; cid: string; ct: string }>,
+    forwardedAttachments?: Array<{ mid: string; part: string }>,
+  ): Promise<{ id: string; conversationId: string | null }> {
+    const fields = this.messageFieldsOf(payload);
+    const createBody = payload.replyToId
+      ? createReplyForwardEnvelope(payload.replyToId, payload.replyType === 'w' ? 'w' : 'r', fields)
+      : createMessageEnvelope(fields, 'drafts');
+
+    const createDoc = parseEws(await this.callWithRetry(session, createBody));
+    const created = this.itemIdOf(createDoc, 'CreateItemResponse', 'CreateItemResponseMessage');
+    const conversationId = this.conversationIdOf(createDoc, 'CreateItemResponse', 'CreateItemResponseMessage');
+
+    const itemId = created.id;
+    let changeKey = created.changeKey;
+
+    const files = this.collectAttachments(attachmentAids, inlineImageAids);
+    // Forwarded parts reference attachments already on the server — pull the
+    // bytes down and re-attach them as fresh FileAttachments on the draft.
+    for (const fa of forwardedAttachments ?? []) {
+      const dl = await this.fetchAttachment(session, fa.part);
+      files.push({ name: dl.filename, contentType: dl.contentType, contentBase64: dl.data.toString('base64') });
+    }
+
+    for (const file of files) {
+      const attachDoc = parseEws(await this.callWithRetry(session, createAttachmentEnvelope(itemId, changeKey, file)));
+      changeKey = this.rootChangeKeyOf(attachDoc) || changeKey;
+    }
+
+    await this.callWithRetry(session, sendItemEnvelope(itemId, changeKey));
+    return { id: itemId, conversationId };
+  }
+
+  /**
+   * Save a draft (spec §5.3). No id → CreateItem `SaveOnly` into `drafts`,
+   * returning the new ItemId. With an id → read a fresh ChangeKey (GetItem
+   * IdOnly) *immediately before* UpdateItem `AlwaysOverwrite`, then return the
+   * FRESH ItemId UpdateItem hands back (the old id dies with its change key).
+   */
+  async saveDraft(session: MailSession, payload: DraftPayload): Promise<string> {
+    const fields = this.messageFieldsOf(payload);
+    if (!payload.id) {
+      const doc = parseEws(await this.callWithRetry(session, createMessageEnvelope(fields, 'drafts')));
+      return this.itemIdOf(doc, 'CreateItemResponse', 'CreateItemResponseMessage').id;
+    }
+    const fresh = await this.freshChangeKey(session, payload.id);
+    const doc = parseEws(await this.callWithRetry(session, updateDraftEnvelope(payload.id, fresh, fields)));
+    return this.itemIdOf(doc, 'UpdateItemResponse', 'UpdateItemResponseMessage').id;
+  }
+
+  /** GetItem IdOnly to read the item's current ChangeKey — the fetch-fresh step
+   *  that MUST run immediately before any UpdateItem (spec §5.3). */
+  private async freshChangeKey(session: MailSession, itemId: string): Promise<string> {
+    const doc = parseEws(await this.callWithRetry(session, getItemChangeKeyEnvelope(itemId)));
+    return this.itemIdOf(doc, 'GetItemResponse', 'GetItemResponseMessage').changeKey;
+  }
+
+  /** MoveItem to `deleteditems` — soft delete, matching Zimbra's trash
+   *  semantics (spec §5.3). */
+  async deleteMessage(session: MailSession, messageId: string): Promise<void> {
+    await this.callWithRetry(session, deleteItemEnvelope(messageId));
+  }
+
+  /** Toggle read state (spec §5.3): read a fresh ChangeKey with GetItem, then
+   *  UpdateItem `message:IsRead` with SuppressReadReceipts. */
+  async markRead(session: MailSession, messageId: string, read: boolean): Promise<void> {
+    const fresh = await this.freshChangeKey(session, messageId);
+    await this.callWithRetry(session, markReadEnvelope(messageId, fresh, read));
+  }
+
+  /** MoveItem to a concrete destination folder (spec §5.3). */
+  async moveMessage(session: MailSession, messageId: string, folderId: string): Promise<void> {
+    await this.callWithRetry(session, moveItemEnvelope(messageId, folderId));
+  }
+
+  // attachments (Task 5) ───────────────────────────────────────────────────
+
+  /** Buffer the bytes server-side and hand back an opaque, single-use handle;
+   *  the following `sendMessage` attaches them via CreateAttachment. EWS has no
+   *  standalone upload op, so nothing goes over the wire here (spec §5.3). */
+  async uploadAttachment(_session: MailSession, filename: string, contentType: string, data: Buffer): Promise<string> {
+    const handle = `ews-att-${Date.now()}-${++this.attachmentSeq}`;
+    this.attachmentBuffers.set(handle, { filename, contentType, data: Buffer.from(data) });
+    return handle;
+  }
+
+  /** GetAttachment for `part` → decode the base64 `Content` to a Buffer, with
+   *  the name/content-type off the attachment metadata. Shared by both download
+   *  variants and the forwarded-attachment re-attach path. `messageId` is not
+   *  needed — an EWS AttachmentId is self-addressing. */
+  private async fetchAttachment(
+    session: MailSession, part: string,
+  ): Promise<{ data: Buffer; contentType: string; filename: string }> {
+    const doc = parseEws(await this.callWithRetry(session, getAttachmentEnvelope(part)));
+    const rm = this.responseMessageNode(doc, 'GetAttachmentResponse', 'GetAttachmentResponseMessage');
+    const att = toArray(rm?.Attachments?.FileAttachment)[0] ?? {};
+    return {
+      data: Buffer.from(textOf(att?.Content) ?? '', 'base64'),
+      contentType: textOf(att?.ContentType) ?? 'application/octet-stream',
+      filename: textOf(att?.Name) ?? '',
+    };
+  }
+
+  async downloadAttachment(
+    session: MailSession, _messageId: string, part: string,
+  ): Promise<{ stream: NodeJS.ReadableStream; contentType: string; filename: string }> {
+    const a = await this.fetchAttachment(session, part);
+    return { stream: Readable.from(a.data), contentType: a.contentType, filename: a.filename };
+  }
+
+  async downloadAttachmentBuffer(
+    session: MailSession, _messageId: string, part: string,
+  ): Promise<{ data: Buffer; contentType: string }> {
+    const a = await this.fetchAttachment(session, part);
+    return { data: a.data, contentType: a.contentType };
+  }
 
   // contacts + GAL
   getContacts(_s: MailSession, _limit?: number, _offset?: number): Promise<ProviderContact[]> { return this.notImplemented('getContacts'); }

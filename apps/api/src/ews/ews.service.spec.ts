@@ -244,12 +244,13 @@ describe('EwsService', () => {
 
   describe('unimplemented provider methods', () => {
     beforeEach(withKey);
-    it('throw a not-implemented error until Tasks 5-7 fill them', () => {
+    it('throw a not-implemented error until Tasks 6-7 fill them', () => {
       const svc = new EwsService(new FakeTransport([SUCCESS]) as any);
       const s = {} as MailSession;
+      // Contacts + calendar land with Tasks 6-7; send/drafts/mutations are now
+      // real (Task 5) so they are no longer part of this stub sweep.
       expect(() => svc.getContacts(s)).toThrow(/not implemented/);
       expect(() => svc.getCalendarEvents(s, 0, 1)).toThrow(/not implemented/);
-      expect(() => svc.sendMessage(s, {} as any)).toThrow(/not implemented/);
     });
   });
 });

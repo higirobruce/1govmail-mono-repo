@@ -249,3 +249,268 @@ export function emptyFolderEnvelope(folderId: string): string {
     '</m:EmptyFolder>';
   return soapEnvelope(body);
 }
+
+// ── message mutations, send, drafts, attachments (Task 5) ───────────────────
+
+/** The message fields an outgoing message / draft carries, in EWS schema order.
+ *  `to`/`cc`/`bcc` are bare SMTP addresses. */
+export interface EwsMessageFields {
+  subject?: string;
+  body?: string;
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
+}
+
+/** A single file to attach via `CreateAttachment`. `contentBase64` is the raw
+ *  base64 of the bytes (already encoded by the caller). Inline images set
+ *  `isInline` + `contentId` so the HTML body's `cid:` references resolve. */
+export interface EwsFileAttachment {
+  name: string;
+  contentType: string;
+  contentBase64: string;
+  isInline?: boolean;
+  contentId?: string;
+}
+
+/** One `<t:Mailbox>` from a bare SMTP address. */
+function mailboxXml(email: string): string {
+  return `<t:Mailbox><t:EmailAddress>${xmlEscape(email)}</t:EmailAddress></t:Mailbox>`;
+}
+
+/** A `<t:ToRecipients>`/`<t:CcRecipients>`/`<t:BccRecipients>` container, or the
+ *  empty string when the list is absent/empty (EWS rejects an empty container). */
+function recipientsXml(tag: 'ToRecipients' | 'CcRecipients' | 'BccRecipients', emails?: string[]): string {
+  if (!emails || emails.length === 0) return '';
+  return `<t:${tag}>${emails.map(mailboxXml).join('')}</t:${tag}>`;
+}
+
+/** The `<t:Message>` child sequence for a create — Subject, Body (from ItemType)
+ *  then To/Cc/Bcc (from MessageType), which is the schema's required order. */
+function messageFieldsXml(fields: EwsMessageFields): string {
+  let xml = '';
+  if (fields.subject !== undefined) xml += `<t:Subject>${xmlEscape(fields.subject)}</t:Subject>`;
+  if (fields.body !== undefined) xml += `<t:Body BodyType="HTML">${xmlEscape(fields.body)}</t:Body>`;
+  xml += recipientsXml('ToRecipients', fields.to);
+  xml += recipientsXml('CcRecipients', fields.cc);
+  xml += recipientsXml('BccRecipients', fields.bcc);
+  return xml;
+}
+
+/**
+ * GetItem returning only the ItemId (IdOnly shape) — the cheap call made
+ * *immediately before* every UpdateItem to read the current ChangeKey fresh
+ * (spec §5.3: fetch-fresh, never cache change keys). Used by `markRead` and the
+ * draft-update path.
+ */
+export function getItemChangeKeyEnvelope(itemId: string): string {
+  const id = xmlEscape(itemId);
+  const body =
+    '<m:GetItem>' +
+    '<m:ItemShape>' +
+    '<t:BaseShape>IdOnly</t:BaseShape>' +
+    '</m:ItemShape>' +
+    '<m:ItemIds>' +
+    `<t:ItemId Id="${id}"/>` +
+    '</m:ItemIds>' +
+    '</m:GetItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * UpdateItem toggling `message:IsRead` (spec §5.3, `markRead`). Carries the
+ * freshly-read `changeKey`, `SuppressReadReceipts="true"` so flipping the flag
+ * never fires a read receipt, and `MessageDisposition="SaveOnly"` (required for
+ * message updates).
+ */
+export function markReadEnvelope(itemId: string, changeKey: string, read: boolean): string {
+  const id = xmlEscape(itemId);
+  const ck = xmlEscape(changeKey);
+  const body =
+    '<m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite" SuppressReadReceipts="true">' +
+    '<m:ItemChanges>' +
+    '<t:ItemChange>' +
+    `<t:ItemId Id="${id}" ChangeKey="${ck}"/>` +
+    '<t:Updates>' +
+    '<t:SetItemField>' +
+    '<t:FieldURI FieldURI="message:IsRead"/>' +
+    `<t:Message><t:IsRead>${read ? 'true' : 'false'}</t:IsRead></t:Message>` +
+    '</t:SetItemField>' +
+    '</t:Updates>' +
+    '</t:ItemChange>' +
+    '</m:ItemChanges>' +
+    '</m:UpdateItem>';
+  return soapEnvelope(body);
+}
+
+/** MoveItem to a concrete destination folder (spec §5.3, `moveMessage`). */
+export function moveItemEnvelope(itemId: string, folderId: string): string {
+  const body =
+    '<m:MoveItem>' +
+    '<m:ToFolderId>' +
+    `<t:FolderId Id="${xmlEscape(folderId)}"/>` +
+    '</m:ToFolderId>' +
+    '<m:ItemIds>' +
+    `<t:ItemId Id="${xmlEscape(itemId)}"/>` +
+    '</m:ItemIds>' +
+    '</m:MoveItem>';
+  return soapEnvelope(body);
+}
+
+/** MoveItem to the well-known `deleteditems` folder — the soft-delete that
+ *  matches Zimbra's `op:'trash'` (spec §5.3, `deleteMessage`). */
+export function deleteItemEnvelope(itemId: string): string {
+  const body =
+    '<m:MoveItem>' +
+    '<m:ToFolderId>' +
+    '<t:DistinguishedFolderId Id="deleteditems"/>' +
+    '</m:ToFolderId>' +
+    '<m:ItemIds>' +
+    `<t:ItemId Id="${xmlEscape(itemId)}"/>` +
+    '</m:ItemIds>' +
+    '</m:MoveItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * CreateItem `MessageDisposition="SaveOnly"` saving a fresh message into a
+ * distinguished folder (`drafts` for both the send flow's staging draft and
+ * `saveDraft`'s create). The returned ItemId+ChangeKey feed the CreateAttachment
+ * / SendItem steps.
+ */
+export function createMessageEnvelope(fields: EwsMessageFields, savedFolder: 'drafts' | 'sentitems' = 'drafts'): string {
+  const body =
+    '<m:CreateItem MessageDisposition="SaveOnly">' +
+    '<m:SavedItemFolderId>' +
+    `<t:DistinguishedFolderId Id="${savedFolder}"/>` +
+    '</m:SavedItemFolderId>' +
+    '<m:Items>' +
+    '<t:Message>' +
+    messageFieldsXml(fields) +
+    '</t:Message>' +
+    '</m:Items>' +
+    '</m:CreateItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * CreateItem building a `ReplyToItem` (replyType 'r') or `ForwardItem`
+ * ('w') response object against `referenceItemId`, saved as a draft
+ * (`MessageDisposition="SaveOnly"`). EWS sets the `References`/`In-Reply-To`
+ * headers off the referenced item, which is what carries the thread — so the
+ * app supplies only the new recipients + body (spec §5.3, reply/forward).
+ */
+export function createReplyForwardEnvelope(
+  referenceItemId: string, replyType: 'r' | 'w', fields: EwsMessageFields,
+): string {
+  const tag = replyType === 'w' ? 'ForwardItem' : 'ReplyToItem';
+  let inner = '';
+  if (fields.subject !== undefined) inner += `<t:Subject>${xmlEscape(fields.subject)}</t:Subject>`;
+  inner += recipientsXml('ToRecipients', fields.to);
+  inner += recipientsXml('CcRecipients', fields.cc);
+  inner += recipientsXml('BccRecipients', fields.bcc);
+  inner += `<t:ReferenceItemId Id="${xmlEscape(referenceItemId)}"/>`;
+  if (fields.body !== undefined) inner += `<t:NewBodyContent BodyType="HTML">${xmlEscape(fields.body)}</t:NewBodyContent>`;
+  const body =
+    '<m:CreateItem MessageDisposition="SaveOnly">' +
+    '<m:Items>' +
+    `<t:${tag}>` + inner + `</t:${tag}>` +
+    '</m:Items>' +
+    '</m:CreateItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * CreateAttachment adding one `FileAttachment` to the staging draft (spec §5.3,
+ * send flow). `parentChangeKey` MUST be the latest change key (CreateItem's, or
+ * the previous CreateAttachment's `RootItemChangeKey`). Child order follows the
+ * schema: Name, ContentType, ContentId, IsInline, Content.
+ */
+export function createAttachmentEnvelope(
+  parentItemId: string, parentChangeKey: string, file: EwsFileAttachment,
+): string {
+  let att =
+    '<t:FileAttachment>' +
+    `<t:Name>${xmlEscape(file.name)}</t:Name>` +
+    `<t:ContentType>${xmlEscape(file.contentType)}</t:ContentType>`;
+  if (file.contentId) att += `<t:ContentId>${xmlEscape(file.contentId)}</t:ContentId>`;
+  if (file.isInline) att += '<t:IsInline>true</t:IsInline>';
+  att += `<t:Content>${file.contentBase64}</t:Content>`;
+  att += '</t:FileAttachment>';
+  const body =
+    '<m:CreateAttachment>' +
+    `<m:ParentItemId Id="${xmlEscape(parentItemId)}" ChangeKey="${xmlEscape(parentChangeKey)}"/>` +
+    '<m:Attachments>' +
+    att +
+    '</m:Attachments>' +
+    '</m:CreateAttachment>';
+  return soapEnvelope(body);
+}
+
+/** SendItem for the staged draft, saving a copy to Sent Items (spec §5.3, send
+ *  flow, final step). `changeKey` is the latest after the CreateAttachment run. */
+export function sendItemEnvelope(itemId: string, changeKey: string): string {
+  const body =
+    '<m:SendItem SaveItemToFolder="true">' +
+    '<m:ItemIds>' +
+    `<t:ItemId Id="${xmlEscape(itemId)}" ChangeKey="${xmlEscape(changeKey)}"/>` +
+    '</m:ItemIds>' +
+    '<m:SavedItemFolderId>' +
+    '<t:DistinguishedFolderId Id="sentitems"/>' +
+    '</m:SavedItemFolderId>' +
+    '</m:SendItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * UpdateItem overwriting a draft's fields (spec §5.3, `saveDraft` update).
+ * `ConflictResolution="AlwaysOverwrite"` + `MessageDisposition="SaveOnly"`;
+ * only the fields present in `fields` are set. `changeKey` is freshly read.
+ */
+export function updateDraftEnvelope(itemId: string, changeKey: string, fields: EwsMessageFields): string {
+  const setField = (fieldUri: string, inner: string): string =>
+    '<t:SetItemField>' +
+    `<t:FieldURI FieldURI="${fieldUri}"/>` +
+    `<t:Message>${inner}</t:Message>` +
+    '</t:SetItemField>';
+
+  let updates = '';
+  if (fields.subject !== undefined) {
+    updates += setField('item:Subject', `<t:Subject>${xmlEscape(fields.subject)}</t:Subject>`);
+  }
+  if (fields.body !== undefined) {
+    updates += setField('item:Body', `<t:Body BodyType="HTML">${xmlEscape(fields.body)}</t:Body>`);
+  }
+  if (fields.to && fields.to.length > 0) {
+    updates += setField('message:ToRecipients', recipientsXml('ToRecipients', fields.to));
+  }
+  if (fields.cc && fields.cc.length > 0) {
+    updates += setField('message:CcRecipients', recipientsXml('CcRecipients', fields.cc));
+  }
+  if (fields.bcc && fields.bcc.length > 0) {
+    updates += setField('message:BccRecipients', recipientsXml('BccRecipients', fields.bcc));
+  }
+
+  const body =
+    '<m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AlwaysOverwrite">' +
+    '<m:ItemChanges>' +
+    '<t:ItemChange>' +
+    `<t:ItemId Id="${xmlEscape(itemId)}" ChangeKey="${xmlEscape(changeKey)}"/>` +
+    `<t:Updates>${updates}</t:Updates>` +
+    '</t:ItemChange>' +
+    '</m:ItemChanges>' +
+    '</m:UpdateItem>';
+  return soapEnvelope(body);
+}
+
+/** GetAttachment for one attachment part (spec §5.3, download). The response
+ *  carries base64 `Content` + name/content-type metadata. */
+export function getAttachmentEnvelope(attachmentId: string): string {
+  const body =
+    '<m:GetAttachment>' +
+    '<m:AttachmentIds>' +
+    `<t:AttachmentId Id="${xmlEscape(attachmentId)}"/>` +
+    '</m:AttachmentIds>' +
+    '</m:GetAttachment>';
+  return soapEnvelope(body);
+}

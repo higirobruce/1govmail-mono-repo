@@ -153,9 +153,16 @@ export function inspectEwsXml(xml: string): EwsResponseError | null {
   const fault = findNode(tree, (n) => n.faultcode !== undefined || n.faultstring !== undefined);
   if (fault) {
     // ResponseCode may live in <detail>; fall back to faultstring for text.
+    // GetUserAvailability faults are the awkward case: the code can arrive as a
+    // bare .NET HRESULT (e.g. `a:-2146233088`) with the human-readable detail
+    // carried as `MessageText` rather than `Message`/`faultstring` — so include
+    // `MessageText` in the fallbacks to surface a real message, not a lone code.
     const responseCode = findValue(fault, 'ResponseCode') ?? findValue(fault, 'faultcode');
     const messageText =
-      findValue(fault, 'Message') ?? findValue(fault, 'faultstring') ?? undefined;
+      findValue(fault, 'Message') ??
+      findValue(fault, 'MessageText') ??
+      findValue(fault, 'faultstring') ??
+      undefined;
     // A throttle fault carries BackOffMilliseconds inside <detail>/MessageXml,
     // exactly like the 200-body error shape — extract it so the retry can honour it.
     return { kind: 'fault', responseCode, messageText, backoffMs: extractBackoff(fault) };

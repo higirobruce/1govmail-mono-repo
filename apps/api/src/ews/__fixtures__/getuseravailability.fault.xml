@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <s:Fault>
+      <faultcode xmlns:a="http://schemas.microsoft.com/exchange/services/2006/types">a:-2146233088</faultcode>
+      <detail>
+        <e:ResponseCode xmlns:e="http://schemas.microsoft.com/exchange/services/2006/types">-2146233088</e:ResponseCode>
+        <m:MessageText xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">Cannot determine free/busy status for one or more recipients.</m:MessageText>
+      </detail>
+    </s:Fault>
+  </s:Body>
+</s:Envelope>

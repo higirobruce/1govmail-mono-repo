@@ -24,7 +24,7 @@ import {
   findContactsEnvelope, createContactEnvelope, updateContactEnvelope, resolveNamesEnvelope,
   findCalendarEnvelope, getAppointmentEnvelope, createCalendarEventEnvelope,
   updateCalendarEventEnvelope, deleteCalendarEventEnvelope, inviteReplyEnvelope,
-  getUserAvailabilityEnvelope,
+  getUserAvailabilityEnvelope, toUnqualifiedUtc,
   EwsFileAttachment, EwsMessageFields, EwsContactFields, EwsCalendarFields,
 } from './ews-envelopes';
 import {
@@ -344,14 +344,32 @@ export class EwsService implements MailProvider {
     }
   }
 
+  /**
+   * A recognized Exchange system folder `type` → the app's canonical Zimbra-style
+   * folder `path`. The WEB sidebar matches system folders by these exact paths
+   * (see Sidebar.tsx SYSTEM_FOLDERS/BUILTIN_PATHS), so an Exchange "Inbox" /
+   * "Sent Items" / … must surface as '/Inbox' / '/Sent' / … or it falls into the
+   * Labels section and the canonical menu item shows empty. A 'custom' folder has
+   * no entry here and keeps its DisplayName-based path (never a BUILTIN path), so
+   * user folders correctly appear under Labels.
+   */
+  private static readonly SYSTEM_FOLDER_PATHS: Record<string, string> = {
+    inbox: '/Inbox',
+    sent: '/Sent',
+    drafts: '/Drafts',
+    trash: '/Trash',
+    junk: '/Junk',
+  };
+
   private mapFolder(f: any): ProviderFolder {
     const name = textOf(f?.DisplayName) ?? '';
     const kind: ProviderFolderKind = 'mail';
+    const type = this.folderTypeOf(name);
     return {
       id: f?.FolderId?.['@_Id'] ?? '',
       name,
-      path: name,
-      type: this.folderTypeOf(name),
+      path: EwsService.SYSTEM_FOLDER_PATHS[type] ?? name,
+      type,
       kind,
       unreadCount: this.numOr(f?.UnreadCount, 0),
       totalCount: this.numOr(f?.TotalCount, 0),
@@ -630,9 +648,20 @@ export class EwsService implements MailProvider {
     forwardedAttachments?: Array<{ mid: string; part: string }>,
   ): Promise<{ id: string; conversationId: string | null }> {
     const fields = this.messageFieldsOf(payload);
-    const createBody = payload.replyToId
-      ? createReplyForwardEnvelope(payload.replyToId, payload.replyType === 'w' ? 'w' : 'r', fields)
-      : createMessageEnvelope(fields, 'drafts');
+    let createBody: string;
+    if (payload.replyToId) {
+      // Exchange requires the ReferenceItemId to carry the referenced item's
+      // CURRENT ChangeKey for a ReplyToItem/ForwardItem create, else it faults
+      // with ErrorChangeKeyRequiredForWriteOperations. Read it fresh via GetItem
+      // IdOnly immediately before the write — the same fetch-fresh discipline
+      // markRead/saveDraft-update use.
+      const refChangeKey = await this.freshChangeKey(session, payload.replyToId);
+      createBody = createReplyForwardEnvelope(
+        payload.replyToId, refChangeKey, payload.replyType === 'w' ? 'w' : 'r', fields,
+      );
+    } else {
+      createBody = createMessageEnvelope(fields, 'drafts');
+    }
 
     const createDoc = parseEws(await this.callWithRetry(session, createBody));
     const created = this.itemIdOf(createDoc, 'CreateItemResponse', 'CreateItemResponseMessage');
@@ -1048,9 +1077,13 @@ export class EwsService implements MailProvider {
    * the view is located by a targeted walk rather than the generic navigator.
    */
   async getFreeBusy(session: MailSession, email: string, startMs: number, endMs: number): Promise<ProviderFreeBusy> {
-    const startIso = new Date(startMs).toISOString();
-    const endIso = new Date(endMs).toISOString();
-    const xml = await this.callWithRetry(session, getUserAvailabilityEnvelope(email, startIso, endIso));
+    // GetUserAvailability's TimeWindow requires UNQUALIFIED datetimes
+    // (yyyy-MM-ddTHH:mm:ss, no 'Z'/ms) — an ISO string with 'Z'/milliseconds
+    // faults the request generically (0x80131500). The declared zero-bias UTC
+    // TimeZone provides the context for these bare wall-clock boundaries.
+    const startTime = toUnqualifiedUtc(startMs);
+    const endTime = toUnqualifiedUtc(endMs);
+    const xml = await this.callWithRetry(session, getUserAvailabilityEnvelope(email, startTime, endTime));
     const doc = parseEws(xml);
 
     const view = this.deepFindNode(doc, (n) => n?.CalendarEventArray !== undefined);

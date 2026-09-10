@@ -74,13 +74,17 @@ describe('EwsService folders + messages (Task 4)', () => {
 
       expect(byName['Inbox']).toMatchObject({
         id: 'AAA-Inbox=', type: 'inbox', kind: 'mail', unreadCount: 3, totalCount: 42,
-        path: 'Inbox', parentId: 'AAA-Root=',
+        path: '/Inbox', parentId: 'AAA-Root=',
       });
-      expect(byName['Sent Items'].type).toBe('sent');
-      expect(byName['Drafts'].type).toBe('drafts');
-      expect(byName['Deleted Items'].type).toBe('trash');
-      expect(byName['Junk Email'].type).toBe('junk');
-      expect(byName['Projects'].type).toBe('custom');
+      // system folders carry the canonical Zimbra-style path the web sidebar
+      // matches on — NOT the raw Exchange DisplayName
+      expect(byName['Sent Items']).toMatchObject({ type: 'sent', path: '/Sent' });
+      expect(byName['Drafts']).toMatchObject({ type: 'drafts', path: '/Drafts' });
+      expect(byName['Deleted Items']).toMatchObject({ type: 'trash', path: '/Trash' });
+      expect(byName['Junk Email']).toMatchObject({ type: 'junk', path: '/Junk' });
+      // a user/custom folder keeps a DisplayName-based path (never a builtin
+      // path) so it correctly lands under Labels
+      expect(byName['Projects']).toMatchObject({ type: 'custom', path: 'Projects' });
       expect(byName['Projects'].parentId).toBe('AAA-Inbox=');
       // every required field present on every folder
       for (const f of folders) {

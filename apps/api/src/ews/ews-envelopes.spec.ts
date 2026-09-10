@@ -5,6 +5,7 @@ import {
   getItemChangeKeyEnvelope, markReadEnvelope, moveItemEnvelope, deleteItemEnvelope,
   createMessageEnvelope, createReplyForwardEnvelope, createAttachmentEnvelope,
   sendItemEnvelope, updateDraftEnvelope, getAttachmentEnvelope,
+  getUserAvailabilityEnvelope, toUnqualifiedUtc,
 } from './ews-envelopes';
 
 describe('xmlEscape', () => {
@@ -212,15 +213,45 @@ describe('createMessageEnvelope', () => {
 });
 
 describe('createReplyForwardEnvelope', () => {
-  it('builds a ReplyToItem referencing the original', () => {
-    const xml = createReplyForwardEnvelope('ORIG==', 'r', { body: '<p>re</p>', to: ['a@x.rw'] });
+  it('builds a ReplyToItem whose ReferenceItemId carries the fresh ChangeKey', () => {
+    const xml = createReplyForwardEnvelope('ORIG==', 'REF-CK-1', 'r', { body: '<p>re</p>', to: ['a@x.rw'] });
     expect(xml).toContain('<t:ReplyToItem>');
-    expect(xml).toContain('<t:ReferenceItemId Id="ORIG=="/>');
+    expect(xml).toContain('<t:ReferenceItemId Id="ORIG==" ChangeKey="REF-CK-1"/>');
+    // never the change-key-less form that faults ErrorChangeKeyRequiredForWriteOperations
+    expect(xml).not.toContain('<t:ReferenceItemId Id="ORIG=="/>');
     expect(xml).toContain('<t:NewBodyContent BodyType="HTML">&lt;p&gt;re&lt;/p&gt;</t:NewBodyContent>');
   });
-  it('builds a ForwardItem for replyType w', () => {
-    const xml = createReplyForwardEnvelope('ORIG==', 'w', { body: 'x' });
+  it('builds a ForwardItem for replyType w, ChangeKey on the reference', () => {
+    const xml = createReplyForwardEnvelope('ORIG==', 'REF-CK-2', 'w', { body: 'x' });
     expect(xml).toContain('<t:ForwardItem>');
+    expect(xml).toContain('<t:ReferenceItemId Id="ORIG==" ChangeKey="REF-CK-2"/>');
+  });
+});
+
+describe('toUnqualifiedUtc', () => {
+  it('formats epoch ms as unqualified UTC wall-clock with no Z and no milliseconds', () => {
+    const ms = Date.UTC(2026, 8, 10, 13, 5, 7, 123); // 2026-09-10T13:05:07.123Z
+    const out = toUnqualifiedUtc(ms);
+    expect(out).toBe('2026-09-10T13:05:07');
+    expect(out).not.toContain('Z');
+    expect(out).not.toContain('.');
+  });
+  it('zero-pads all fields', () => {
+    expect(toUnqualifiedUtc(Date.UTC(2026, 0, 1, 0, 0, 0))).toBe('2026-01-01T00:00:00');
+  });
+});
+
+describe('getUserAvailabilityEnvelope', () => {
+  it('emits TimeWindow StartTime/EndTime verbatim with no Z and no milliseconds', () => {
+    const start = toUnqualifiedUtc(Date.UTC(2026, 8, 15, 0, 0, 0));
+    const end = toUnqualifiedUtc(Date.UTC(2026, 8, 16, 0, 0, 0));
+    const xml = getUserAvailabilityEnvelope('alice@x.rw', start, end);
+    expect(xml).toContain('<t:StartTime>2026-09-15T00:00:00</t:StartTime>');
+    expect(xml).toContain('<t:EndTime>2026-09-16T00:00:00</t:EndTime>');
+    // the TimeWindow must never carry a Z-qualified / millisecond-bearing value
+    const window = xml.slice(xml.indexOf('<t:TimeWindow>'), xml.indexOf('</t:TimeWindow>'));
+    expect(window).not.toContain('Z<');
+    expect(window).not.toMatch(/\.\d{3}/);
   });
 });
 

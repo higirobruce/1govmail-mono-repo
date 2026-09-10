@@ -165,26 +165,41 @@ describe('EwsService mutations, send, drafts, attachments (Task 5)', () => {
       expect(t.calls[1].body).toContain('ChangeKey="DCK-0"');
     });
 
-    it('builds a ReplyToItem when replyToId is set with replyType r', async () => {
-      const { t, svc } = svcWith(CREATE_DRAFT, SEND_ITEM);
+    it('builds a ReplyToItem when replyToId is set with replyType r, after a fresh GetItem for the ChangeKey', async () => {
+      // reply/forward: GetItem (fresh ref ChangeKey) → CreateItem ReplyToItem → SendItem
+      const { t, svc } = svcWith(GET_CK, CREATE_DRAFT, SEND_ITEM);
       await svc.sendMessage(
         SESSION,
         { to: ['bob@minaffet.gov.rw'], subject: 'Re: Hi', body: '<p>reply</p>', replyToId: 'ORIG==', replyType: 'r' },
       );
-      const create = t.calls[0].body;
+      expect(t.calls).toHaveLength(3);
+      // the GetItem-for-changekey MUST precede the ReplyToItem CreateItem
+      expect(t.calls[0].body).toContain('<m:GetItem>');
+      expect(t.calls[0].body).toContain('<t:BaseShape>IdOnly</t:BaseShape>');
+      expect(t.calls[0].body).toContain('<t:ItemId Id="ORIG=="/>');
+      expect(t.calls[0].body).not.toContain('ReplyToItem');
+
+      const create = t.calls[1].body;
       expect(create).toContain('<t:ReplyToItem>');
-      expect(create).toContain('<t:ReferenceItemId Id="ORIG=="/>');
+      // ReferenceItemId now carries the freshly-read ChangeKey (else Exchange
+      // faults ErrorChangeKeyRequiredForWriteOperations)
+      expect(create).toContain('<t:ReferenceItemId Id="ORIG==" ChangeKey="FRESH-CK-9"/>');
       expect(create).toContain('<t:NewBodyContent BodyType="HTML">');
+      expect(t.calls[2].body).toContain('<m:SendItem');
     });
 
-    it('builds a ForwardItem when replyType is w', async () => {
-      const { t, svc } = svcWith(CREATE_DRAFT, SEND_ITEM);
+    it('builds a ForwardItem when replyType is w, ReferenceItemId carrying the fresh ChangeKey', async () => {
+      const { t, svc } = svcWith(GET_CK, CREATE_DRAFT, SEND_ITEM);
       await svc.sendMessage(
         SESSION,
         { to: ['bob@minaffet.gov.rw'], subject: 'Fwd: Hi', body: '<p>fwd</p>', replyToId: 'ORIG==', replyType: 'w' },
       );
-      expect(t.calls[0].body).toContain('<t:ForwardItem>');
-      expect(t.calls[0].body).toContain('<t:ReferenceItemId Id="ORIG=="/>');
+      expect(t.calls).toHaveLength(3);
+      // GetItem-for-changekey precedes the ForwardItem CreateItem
+      expect(t.calls[0].body).toContain('<m:GetItem>');
+      expect(t.calls[0].body).not.toContain('ForwardItem');
+      expect(t.calls[1].body).toContain('<t:ForwardItem>');
+      expect(t.calls[1].body).toContain('<t:ReferenceItemId Id="ORIG==" ChangeKey="FRESH-CK-9"/>');
     });
   });
 

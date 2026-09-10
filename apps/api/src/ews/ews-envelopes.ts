@@ -399,9 +399,15 @@ export function createMessageEnvelope(fields: EwsMessageFields, savedFolder: 'dr
  * (`MessageDisposition="SaveOnly"`). EWS sets the `References`/`In-Reply-To`
  * headers off the referenced item, which is what carries the thread — so the
  * app supplies only the new recipients + body (spec §5.3, reply/forward).
+ *
+ * Exchange REQUIRES the `ReferenceItemId` to carry the referenced item's CURRENT
+ * `ChangeKey` for a ReplyToItem/ForwardItem create — without it the server
+ * rejects the operation with `ErrorChangeKeyRequiredForWriteOperations`. The
+ * caller reads that key fresh (GetItem IdOnly) immediately before this call, the
+ * same fetch-fresh discipline every UpdateItem uses.
  */
 export function createReplyForwardEnvelope(
-  referenceItemId: string, replyType: 'r' | 'w', fields: EwsMessageFields,
+  referenceItemId: string, referenceChangeKey: string, replyType: 'r' | 'w', fields: EwsMessageFields,
 ): string {
   const tag = replyType === 'w' ? 'ForwardItem' : 'ReplyToItem';
   let inner = '';
@@ -409,7 +415,7 @@ export function createReplyForwardEnvelope(
   inner += recipientsXml('ToRecipients', fields.to);
   inner += recipientsXml('CcRecipients', fields.cc);
   inner += recipientsXml('BccRecipients', fields.bcc);
-  inner += `<t:ReferenceItemId Id="${xmlEscape(referenceItemId)}"/>`;
+  inner += `<t:ReferenceItemId Id="${xmlEscape(referenceItemId)}" ChangeKey="${xmlEscape(referenceChangeKey)}"/>`;
   if (fields.body !== undefined) inner += `<t:NewBodyContent BodyType="HTML">${xmlEscape(fields.body)}</t:NewBodyContent>`;
   const body =
     '<m:CreateItem MessageDisposition="SaveOnly">' +
@@ -906,13 +912,33 @@ export function inviteReplyEnvelope(inviteId: string, verb: 'ACCEPT' | 'DECLINE'
 }
 
 /**
- * GetUserAvailabilityRequest for one mailbox over `[startIso, endIso)` (spec
+ * Format an epoch-ms instant as an UNQUALIFIED local datetime
+ * `YYYY-MM-DDTHH:MM:SS` in UTC wall-clock — no trailing `Z`, no milliseconds,
+ * no offset. `GetUserAvailability`'s `TimeWindow` is finicky: an ISO string
+ * with `Z`/milliseconds (`toISOString()`) trips a generic .NET fault
+ * (`0x80131500`). The declared zero-bias UTC `TimeZone` supplies the context,
+ * so the window boundaries must be the bare wall-clock the server reads against
+ * that zone.
+ */
+export function toUnqualifiedUtc(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +
+    `T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
+  );
+}
+
+/**
+ * GetUserAvailabilityRequest for one mailbox over `[startTime, endTime)` (spec
  * §5.3, `getFreeBusy`). `RequestedView="FreeBusy"` returns the per-slot
  * CalendarEventArray the mapper folds into the {busy,tentative,unavailable}
  * triple. A zero-bias UTC TimeZone is declared so the window is interpreted as
- * the UTC instants the caller passed.
+ * the UTC instants the caller passed. `startTime`/`endTime` MUST be unqualified
+ * `YYYY-MM-DDTHH:MM:SS` (see `toUnqualifiedUtc`) — a `Z`/millisecond-bearing
+ * value faults the request generically.
  */
-export function getUserAvailabilityEnvelope(email: string, startIso: string, endIso: string): string {
+export function getUserAvailabilityEnvelope(email: string, startTime: string, endTime: string): string {
   const body =
     '<m:GetUserAvailabilityRequest>' +
     '<t:TimeZone>' +
@@ -929,8 +955,8 @@ export function getUserAvailabilityEnvelope(email: string, startIso: string, end
     '</m:MailboxDataArray>' +
     '<t:FreeBusyViewOptions>' +
     '<t:TimeWindow>' +
-    `<t:StartTime>${xmlEscape(startIso)}</t:StartTime>` +
-    `<t:EndTime>${xmlEscape(endIso)}</t:EndTime>` +
+    `<t:StartTime>${xmlEscape(startTime)}</t:StartTime>` +
+    `<t:EndTime>${xmlEscape(endTime)}</t:EndTime>` +
     '</t:TimeWindow>' +
     '<t:MergedFreeBusyIntervalInMinutes>30</t:MergedFreeBusyIntervalInMinutes>' +
     '<t:RequestedView>FreeBusy</t:RequestedView>' +

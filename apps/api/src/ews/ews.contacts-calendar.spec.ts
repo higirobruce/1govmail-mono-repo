@@ -29,6 +29,7 @@ const UPDATE_CAL = fixture('updatecalendar.success.xml');
 const DELETE_ITEM = fixture('deleteitem.success.xml');
 const INVITE_REPLY = fixture('invitereply.success.xml');
 const GET_AVAILABILITY = fixture('getuseravailability.success.xml');
+const GET_AVAILABILITY_FAULT = fixture('getuseravailability.fault.xml');
 
 /** Replays `script` entries in order (last one repeats), recording every
  *  outbound body so envelope construction + call order can be asserted. */
@@ -371,8 +372,22 @@ describe('EwsService contacts, GAL, calendar, free/busy (Task 6)', () => {
       expect(body).toContain('<m:GetUserAvailabilityRequest>');
       expect(body).toContain('<t:RequestedView>FreeBusy</t:RequestedView>');
       expect(body).toContain('<t:Address>alice.umutoni@minaffet.gov.rw</t:Address>');
-      expect(body).toContain(`<t:StartTime>${new Date(start).toISOString()}</t:StartTime>`);
-      expect(body).toContain(`<t:EndTime>${new Date(end).toISOString()}</t:EndTime>`);
+      // TimeWindow must be UNQUALIFIED yyyy-MM-ddTHH:mm:ss — no 'Z', no
+      // milliseconds (a Z/ms-bearing ISO value faults the request generically)
+      expect(body).toContain('<t:StartTime>2026-09-15T00:00:00</t:StartTime>');
+      expect(body).toContain('<t:EndTime>2026-09-16T00:00:00</t:EndTime>');
+      const window = body.slice(body.indexOf('<t:TimeWindow>'), body.indexOf('</t:TimeWindow>'));
+      expect(window).not.toContain('Z<');
+      expect(window).not.toMatch(/\.\d{3}/);
+    });
+
+    it('surfaces a GetUserAvailability fault with its MessageText, not a bare .NET code', async () => {
+      const { svc } = svcWith(GET_AVAILABILITY_FAULT);
+      // the generic fault code (a:-2146233088) alone is useless; the human-
+      // readable MessageText must reach the surfaced error
+      await expect(
+        svc.getFreeBusy(SESSION, 'ghost@minaffet.gov.rw', 0, 1),
+      ).rejects.toThrow(/Cannot determine free\/busy status/);
     });
 
     it('folds CalendarEvent BusyType into the {busy, tentative, unavailable} triple (Free dropped)', async () => {

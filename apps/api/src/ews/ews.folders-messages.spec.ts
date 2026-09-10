@@ -215,6 +215,30 @@ describe('EwsService folders + messages (Task 4)', () => {
     });
   });
 
+  describe('searchStructured', () => {
+    it('sends a FindItem with a translated AQS QueryString and folder scope', async () => {
+      const { t, svc } = svcWith(SEARCH_ITEM);
+      await svc.searchStructured(SESSION, { from: 'alice', subject: 'invoice', folderId: 'AAA-Inbox=' });
+      const body = t.calls[0].body;
+      expect(body).toContain('<m:QueryString>from:&quot;alice&quot; subject:&quot;invoice&quot;</m:QueryString>');
+      expect(body).toContain('<t:FolderId Id="AAA-Inbox="/>');
+      expect(body).not.toContain('AAA-Inbox=</m:QueryString>'); // folder never leaks into the query
+    });
+
+    it('scopes to msgfolderroot when no folderId is given', async () => {
+      const { t, svc } = svcWith(SEARCH_ITEM);
+      await svc.searchStructured(SESSION, { keyword: 'invoice' });
+      expect(t.calls[0].body).toContain('<t:DistinguishedFolderId Id="msgfolderroot"/>');
+    });
+
+    it('returns a page of ProviderMessage from the search hits', async () => {
+      const { svc } = svcWith(SEARCH_ITEM);
+      const page = await svc.searchStructured(SESSION, { keyword: 'invoice' });
+      expect(page.total).toBe(1);
+      expect(page.messages[0]).toMatchObject({ id: 'SEARCH-1==', subject: 'Invoice 2026-0042' });
+    });
+  });
+
   describe('getMessage', () => {
     it('sends a GetItem for the id and returns the full message with body + attachments', async () => {
       const { t, svc } = svcWith(GET_ITEM);

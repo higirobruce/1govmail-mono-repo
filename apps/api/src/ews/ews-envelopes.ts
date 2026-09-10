@@ -9,6 +9,8 @@
  * body fragment.
  */
 
+import { MailSearchFilter, quoteAqs } from '../provider/mail-search-filter';
+
 const SOAP_NS = 'http://schemas.xmlsoap.org/soap/envelope/';
 const TYPES_NS = 'http://schemas.microsoft.com/exchange/services/2006/types';
 const MESSAGES_NS = 'http://schemas.microsoft.com/exchange/services/2006/messages';
@@ -167,6 +169,61 @@ export function searchItemEnvelope(query: string, offset: number, max: number): 
     `<m:QueryString>${q}</m:QueryString>` +
     '<m:ParentFolderIds>' +
     '<t:DistinguishedFolderId Id="msgfolderroot"/>' +
+    '</m:ParentFolderIds>' +
+    '</m:FindItem>';
+  return soapEnvelope(body);
+}
+
+/**
+ * Translates a neutral `MailSearchFilter` into an Exchange AQS query string
+ * (spec §5.3, structured search). Every user-supplied text value (keyword,
+ * from, to, subject) is wrapped through `quoteAqs` so it can never break out
+ * of its clause or inject a bare AQS operator. `folderId` is deliberately
+ * NOT part of the query — folder scope is carried by `ParentFolderIds` in
+ * `structuredSearchEnvelope`, never by an AQS token.
+ *
+ * `flagged` is intentionally omitted: AQS's flag-query syntax is unverified
+ * against live Exchange, and the web search panel hides the Flagged control
+ * for EWS accounts (approved scope decision — see task-3 brief).
+ */
+export function buildAqsQuery(f: MailSearchFilter): string {
+  const parts: string[] = [];
+  if (f.keyword?.trim()) parts.push(quoteAqs(f.keyword.trim()));
+  if (f.from?.trim()) parts.push(`from:${quoteAqs(f.from.trim())}`);
+  if (f.to?.trim()) parts.push(`to:${quoteAqs(f.to.trim())}`);
+  if (f.subject?.trim()) parts.push(`subject:${quoteAqs(f.subject.trim())}`);
+
+  const from = f.dateFrom?.trim();
+  const to = f.dateTo?.trim();
+  if (from && to) parts.push(`received:${from}..${to}`);
+  else if (from) parts.push(`received:>=${from}`);
+  else if (to) parts.push(`received:<=${to}`);
+
+  if (f.hasAttachment) parts.push('hasattachment:yes');
+  if (f.unread === true) parts.push('isread:no');
+  else if (f.unread === false) parts.push('isread:yes');
+
+  return parts.join(' ');
+}
+
+/**
+ * FindItem with a translated-AQS `QueryString`, scoped via `ParentFolderIds`
+ * to a single folder (`t:FolderId`) when one is given, else the whole mail
+ * tree (`msgfolderroot`) — the folder is NEVER embedded in the query string
+ * itself. Same paging/sort prelude as the other FindItem envelopes.
+ */
+export function structuredSearchEnvelope(
+  aqs: string, folderId: string | undefined, offset: number, max: number,
+): string {
+  const scope = folderId
+    ? `<t:FolderId Id="${xmlEscape(folderId)}"/>`
+    : '<t:DistinguishedFolderId Id="msgfolderroot"/>';
+  const body =
+    '<m:FindItem Traversal="Shallow">' +
+    findItemPrelude(offset, max) +
+    `<m:QueryString>${xmlEscape(aqs)}</m:QueryString>` +
+    '<m:ParentFolderIds>' +
+    scope +
     '</m:ParentFolderIds>' +
     '</m:FindItem>';
   return soapEnvelope(body);

@@ -26,7 +26,9 @@ import {
   updateCalendarEventEnvelope, deleteCalendarEventEnvelope, inviteReplyEnvelope,
   getUserAvailabilityEnvelope, toUnqualifiedUtc, CONVERSATION_TOPIC_TAG,
   EwsFileAttachment, EwsMessageFields, EwsContactFields, EwsCalendarFields,
+  buildAqsQuery, structuredSearchEnvelope,
 } from './ews-envelopes';
+import { MailSearchFilter } from '../provider/mail-search-filter';
 import {
   parseEws, responseClassOf, toArray, toBool, textOf,
 } from './ews-parse';
@@ -571,8 +573,20 @@ export class EwsService implements MailProvider {
     return this.parseMessagePage(xml, off, '');
   }
 
-  async searchStructured(): Promise<ProviderMessagePage> {
-    throw new Error('searchStructured not yet implemented');
+  /**
+   * FindItem with a filter-translated AQS QueryString, scoped via
+   * ParentFolderIds to `filter.folderId` when given (else the whole mail
+   * tree). Same pagination/parsing as `searchMessages` — the folder never
+   * enters the query string itself (see `buildAqsQuery`).
+   */
+  async searchStructured(
+    session: MailSession, filter: MailSearchFilter, limit?: number, offset?: number,
+  ): Promise<ProviderMessagePage> {
+    const off = this.normOffset(offset);
+    const max = this.normLimit(limit);
+    const aqs = buildAqsQuery(filter);
+    const xml = await this.callWithRetry(session, structuredSearchEnvelope(aqs, filter.folderId, off, max));
+    return this.parseMessagePage(xml, off, filter.folderId ?? '');
   }
 
   /**

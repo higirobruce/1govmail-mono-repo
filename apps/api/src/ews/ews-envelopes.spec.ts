@@ -6,6 +6,7 @@ import {
   createMessageEnvelope, createReplyForwardEnvelope, createAttachmentEnvelope,
   sendItemEnvelope, updateDraftEnvelope, getAttachmentEnvelope,
   getUserAvailabilityEnvelope, toUnqualifiedUtc,
+  buildAqsQuery, structuredSearchEnvelope,
 } from './ews-envelopes';
 
 describe('xmlEscape', () => {
@@ -103,6 +104,72 @@ describe('searchItemEnvelope', () => {
     expect(xml).toContain('<m:QueryString>budget &amp; &quot;Q3&quot;</m:QueryString>');
     expect(xml).toContain('<t:DistinguishedFolderId Id="msgfolderroot"/>');
     expect(xml).toContain('<m:IndexedPageItemView MaxEntriesReturned="20" Offset="0" BasePoint="Beginning"/>');
+  });
+});
+
+describe('buildAqsQuery', () => {
+  it('builds an AQS query without the folder token', () => {
+    const q = buildAqsQuery({
+      from: 'alice', subject: 'Q3', dateFrom: '2026-09-01', dateTo: '2026-09-30',
+      hasAttachment: true, unread: true, folderId: 'F==',
+    });
+    expect(q).toContain('from:"alice"');
+    expect(q).toContain('subject:"Q3"');
+    expect(q).toContain('received:2026-09-01..2026-09-30');
+    expect(q).toContain('hasattachment:yes');
+    expect(q).toContain('isread:no');
+    expect(q).not.toContain('F=='); // folder never goes in the query
+  });
+
+  it('quotes a bare keyword and combines it with other fields', () => {
+    const q = buildAqsQuery({ keyword: 'budget report', to: 'bob' });
+    expect(q).toContain('"budget report"');
+    expect(q).toContain('to:"bob"');
+  });
+
+  it('emits an open-ended received clause for a single date bound', () => {
+    expect(buildAqsQuery({ dateFrom: '2026-01-01' })).toBe('received:>=2026-01-01');
+    expect(buildAqsQuery({ dateTo: '2026-01-31' })).toBe('received:<=2026-01-31');
+  });
+
+  it('emits isread:yes for unread === false', () => {
+    expect(buildAqsQuery({ unread: false })).toBe('isread:yes');
+  });
+
+  it('never emits any flag token, even when flagged is set on the filter', () => {
+    const q = buildAqsQuery({ flagged: true } as any);
+    expect(q).not.toMatch(/flag/i);
+    const q2 = buildAqsQuery({ flagged: false } as any);
+    expect(q2).not.toMatch(/flag/i);
+  });
+
+  it('returns an empty string for an empty filter', () => {
+    expect(buildAqsQuery({})).toBe('');
+  });
+});
+
+describe('structuredSearchEnvelope', () => {
+  it('scopes to the folder id when given, else msgfolderroot', () => {
+    // xmlEscape (applied to every QueryString, per the shared envelope
+    // contract) turns the AQS quotes into &quot; — matches searchItemEnvelope's
+    // existing escaping behavior above.
+    const withFolder = structuredSearchEnvelope('from:"a"', 'FID==', 0, 50);
+    expect(withFolder).toContain('<m:QueryString>from:&quot;a&quot;</m:QueryString>');
+    expect(withFolder).toContain('<t:FolderId Id="FID=="/>');
+
+    const noFolder = structuredSearchEnvelope('from:"a"', undefined, 0, 50);
+    expect(noFolder).toContain('<t:DistinguishedFolderId Id="msgfolderroot"/>');
+  });
+
+  it('escapes the AQS query and wraps it in the ParentFolderIds-scoped FindItem', () => {
+    const xml = structuredSearchEnvelope('subject:"Q3 & Q4"', undefined, 10, 25);
+    expect(xml).toContain('<m:FindItem Traversal="Shallow">');
+    expect(xml).toContain('<m:QueryString>subject:&quot;Q3 &amp; Q4&quot;</m:QueryString>');
+    expect(xml).toContain('<m:IndexedPageItemView MaxEntriesReturned="25" Offset="10" BasePoint="Beginning"/>');
+    // QueryString goes in the body, never as part of ParentFolderIds
+    const parentIdx = xml.indexOf('<m:ParentFolderIds>');
+    const queryIdx = xml.indexOf('<m:QueryString>');
+    expect(queryIdx).toBeLessThan(parentIdx);
   });
 });
 

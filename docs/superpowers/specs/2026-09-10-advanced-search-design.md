@@ -142,7 +142,7 @@ Body: MailSearchFilter + { limit?: number, offset?: number }
 POST (not GET) because the filter is a structured body and to keep personal search terms **out of URLs/logs** (privacy rule). The service:
 - rejects an all-empty filter with 400 (`At least one filter is required`);
 - validates `folderId` belongs to the user;
-- does **not** write-through to the local cache (search is a read-only projection; unlike folder sync it must not mutate `conversationId`/read state).
+- **reuses the exact keyword-search result path** — provider messages are upserted where their folder is synced (so a result is openable by DB id) and returned as lightweight ephemeral rows (`id = providerId`) otherwise, in the same `{ messages, total, offset, limit, hasMore }` shape as `GET /mail/search`. The shared mapping/upsert block is extracted into one private helper both endpoints call. As in keyword search, the upsert's `update` touches only `isRead/isStarred/syncedAt` — never `conversationId` — so search cannot disturb threading.
 
 ## 6 · Frontend — filter-builder panel
 
@@ -175,7 +175,7 @@ POST (not GET) because the filter is a structured body and to keep personal sear
 2. **Zimbra `searchStructured`** — translation + escaping + inclusive dates; unit tests.
 3. **EWS `searchStructured`** — structured envelope (QueryString + ParentFolderIds), translation, tests.
 4. **Memory `searchStructured`** — predicate + tests.
-5. **API layer** — `POST /mail/search/advanced`, validation (all-empty, folder ownership), no cache write-through; controller/service tests.
+5. **API layer** — `POST /mail/search/advanced`, validation (all-empty, folder ownership), reusing the shared keyword-search result-persistence helper; controller/service tests.
 6. **Web client + panel** — `api.mail.searchAdvanced`, `AdvancedSearchPanel`, entry-point toggle, results + chips; component tests.
 
 ---

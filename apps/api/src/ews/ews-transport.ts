@@ -270,12 +270,47 @@ export class EwsTransport {
     }
   }
 
+  /** A single NTLM POST over the given agent, wrapped as a promise. Callers own
+   *  the agent lifecycle (keep-alive reuse vs. a fresh re-handshake). No
+   *  logging here: the caller logs endpoint + status once per attempt. */
+  private postOnce(
+    url: string,
+    username: string,
+    password: string,
+    domain: string,
+    bodyXml: string,
+    agent: https.Agent,
+  ): Promise<NtlmResponse> {
+    return new Promise<NtlmResponse>((resolve, reject) => {
+      this.post(
+        {
+          url,
+          username,
+          password,
+          domain,
+          workstation: '',
+          body: bodyXml,
+          headers: { 'Content-Type': CONTENT_TYPE },
+          agent,
+        },
+        (err, response) => (err ? reject(err) : resolve(response as NtlmResponse)),
+      );
+    });
+  }
+
   /**
    * POST a SOAP envelope to the mailbox's EWS endpoint over NTLM and return
    * the raw response XML (HTTP 200). HTTP-level failures throw through
    * `handleEwsError`; SOAP-level `ResponseClass="Error"` bodies are returned
    * as-is for the caller (EwsService) to inspect — that is where the
    * ErrorServerBusy retry lives.
+   *
+   * NTLM authenticates the *connection*, not the request. When Exchange (or an
+   * idle timeout) recycles the cached keep-alive socket, its NTLM context is
+   * gone and the next request reusing that socket comes back HTTP 401. That is
+   * NOT a dead session — so on a 401 we recover EXACTLY ONCE: evict the stale
+   * agent, re-do the NTLM handshake on a fresh connection, and retry. Only a
+   * SECOND 401 (genuine bad/expired credentials) surfaces as Unauthorized.
    */
   async call(session: MailSession, bodyXml: string): Promise<string> {
     if (!session.credentials) {
@@ -283,24 +318,11 @@ export class EwsTransport {
     }
     const url = ewsEndpoint(session.host);
     const { domain, username } = splitNtlmUsername(session.credentials.username);
+    const password = session.credentials.password;
 
     let res: NtlmResponse;
     try {
-      res = await new Promise<NtlmResponse>((resolve, reject) => {
-        this.post(
-          {
-            url,
-            username,
-            password: session.credentials!.password,
-            domain,
-            workstation: '',
-            body: bodyXml,
-            headers: { 'Content-Type': CONTENT_TYPE },
-            agent: this.agentFor(session.email),
-          },
-          (err, response) => (err ? reject(err) : resolve(response as NtlmResponse)),
-        );
-      });
+      res = await this.postOnce(url, username, password, domain, bodyXml, this.agentFor(session.email));
     } catch (err) {
       // Redacted: only a summarised transport error, never url/creds/body.
       this.logger.debug(`EWS POST ${url} → transport error`);
@@ -311,7 +333,20 @@ export class EwsTransport {
     // never the Authorization header (NTLM bytes) or credentials.
     this.logger.debug(`EWS POST ${url} → HTTP ${res.statusCode}`);
 
-    if (res.statusCode === 401) handleEwsError(401);
+    if (res.statusCode === 401) {
+      // Stale keep-alive NTLM context — re-handshake once on a fresh connection.
+      this.evict(session.email);
+      try {
+        res = await this.postOnce(url, username, password, domain, bodyXml, this.agentFor(session.email));
+      } catch (err) {
+        this.logger.debug(`EWS POST ${url} → transport error`);
+        handleEwsError(0, undefined, err);
+      }
+      this.logger.debug(`EWS POST ${url} → HTTP ${res.statusCode}`);
+      // A second 401 is a genuine auth failure (bad/expired credentials).
+      if (res.statusCode === 401) handleEwsError(401);
+    }
+
     if (res.statusCode < 200 || res.statusCode >= 300) {
       handleEwsError(res.statusCode, res.body);
     }

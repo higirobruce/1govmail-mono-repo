@@ -23,6 +23,19 @@ function stubPoster(reply: Partial<NtlmResponse> | { error: any }) {
   return { post, calls };
 }
 
+/** A stub httpntlm poster that replies with a *scripted sequence* of
+ *  responses — one per call — so a 401-then-200 recovery can be driven. */
+function stubSequence(replies: Array<Partial<NtlmResponse> | { error: any }>) {
+  const calls: NtlmPostOptions[] = [];
+  const post = (opts: NtlmPostOptions, cb: (err: any, res?: NtlmResponse) => void) => {
+    const reply = replies[Math.min(calls.length, replies.length - 1)];
+    calls.push(opts);
+    if ('error' in reply) return cb(reply.error);
+    cb(null, { statusCode: 200, body: SUCCESS, headers: {}, ...reply } as NtlmResponse);
+  };
+  return { post, calls };
+}
+
 const session = (over: Partial<MailSession> = {}): MailSession => ({
   host: 'mail.gov.rw',
   email: 'test-risa1@minaffet.gov.rw',
@@ -129,6 +142,31 @@ describe('EwsTransport.call', () => {
     const { post } = stubPoster({ statusCode: 401, body: '' });
     const t = new EwsTransport(post);
     await expect(t.call(session(), '<body/>')).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('recovers a stale-keep-alive 401 by re-handshaking on a fresh agent, then retrying once', async () => {
+    const { post, calls } = stubSequence([
+      { statusCode: 401, body: '' },
+      { statusCode: 200, body: SUCCESS },
+    ]);
+    const t = new EwsTransport(post);
+    await expect(t.call(session(), '<body/>')).resolves.toBe(SUCCESS);
+    // Exactly one re-handshake: two POSTs, no more.
+    expect(calls).toHaveLength(2);
+    // The stale agent was evicted — the retry used a *different* Agent instance.
+    expect(calls[0].agent).toBeDefined();
+    expect(calls[1].agent).toBeDefined();
+    expect(calls[1].agent).not.toBe(calls[0].agent);
+  });
+
+  it('does not loop: a 401 on BOTH attempts throws Unauthorized after exactly two POSTs', async () => {
+    const { post, calls } = stubSequence([
+      { statusCode: 401, body: '' },
+      { statusCode: 401, body: '' },
+    ]);
+    const t = new EwsTransport(post);
+    await expect(t.call(session(), '<body/>')).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(calls).toHaveLength(2);
   });
 
   it('throws BadGatewayException on a 500 SOAP fault', async () => {

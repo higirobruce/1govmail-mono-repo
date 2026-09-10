@@ -59,6 +59,78 @@ describe('MemoryMailProvider — auth + reads', () => {
     expect(hits.messages.some((m) => m.id === first.id)).toBe(true);
   });
 
+  it('searchStructured filters mailbox by subject/from/to/keyword/dates/attachment/folder/read/flagged with AND logic', async () => {
+    const { store, provider } = setup();
+    await provider.authenticate('memory.local', 'demo@memory.local', 'x');
+    const s = sessionFor('demo@memory.local');
+    const mbox = store.get('demo@memory.local')!;
+    const inbox = mbox.folders.find((f) => f.type === 'inbox')!;
+
+    // Test: empty filter matches all inbox messages (or subset, limited by default 25)
+    const all = await provider.searchStructured(s, {}, 100, 0);
+    expect(all.messages.length).toBeGreaterThan(0);
+    expect(all.total).toBeGreaterThan(0);
+
+    // Test: subject substring match narrows results
+    const firstMsg = mbox.messages.find((m) => m.folderId === inbox.id && m.subject)!;
+    const subjectWord = firstMsg.subject!.split(' ')[0];
+    const bySubject = await provider.searchStructured(s, { subject: subjectWord }, 100, 0);
+    expect(bySubject.messages.some((m) => m.id === firstMsg.id)).toBe(true);
+    expect(bySubject.total).toBeLessThanOrEqual(all.total);
+
+    // Test: from email match
+    const fromMatch = await provider.searchStructured(s, { from: firstMsg.from.email }, 100, 0);
+    expect(fromMatch.messages.some((m) => m.id === firstMsg.id)).toBe(true);
+
+    // Test: folderId exact match narrows to inbox only
+    const inFolder = await provider.searchStructured(s, { folderId: inbox.id }, 100, 0);
+    expect(inFolder.messages.every((m) => m.folderId === inbox.id)).toBe(true);
+
+    // Test: hasAttachment boolean filter
+    const withAttach = mbox.messages.find((m) => m.hasAttachments)!;
+    const attachmentMatches = await provider.searchStructured(s, { hasAttachment: true }, 100, 0);
+    expect(attachmentMatches.messages.some((m) => m.id === withAttach.id)).toBe(true);
+    expect(attachmentMatches.messages.every((m) => m.hasAttachments === true)).toBe(true);
+
+    // Test: unread filter (unread: true means isRead === false)
+    const unreadMsg = mbox.messages.find((m) => !m.isRead)!;
+    const unreadMatches = await provider.searchStructured(s, { unread: true }, 100, 0);
+    expect(unreadMatches.messages.some((m) => m.id === unreadMsg.id)).toBe(true);
+    expect(unreadMatches.messages.every((m) => !m.isRead)).toBe(true);
+
+    // Test: flagged filter
+    const flaggedMsg = mbox.messages.find((m) => m.isFlagged);
+    if (flaggedMsg) {
+      const flaggedMatches = await provider.searchStructured(s, { flagged: true }, 100, 0);
+      expect(flaggedMatches.messages.some((m) => m.id === flaggedMsg.id)).toBe(true);
+      expect(flaggedMatches.messages.every((m) => m.isFlagged === true)).toBe(true);
+    }
+
+    // Test: date range (inclusive bounds: dateFrom at 00:00:00Z, dateTo through 23:59:59Z)
+    const msgWithReceivedAt = mbox.messages.find((m) => m.folderId === inbox.id)!;
+    const dateStr = msgWithReceivedAt.receivedAt.toISOString().split('T')[0];
+    const sameDateMatches = await provider.searchStructured(s, { dateFrom: dateStr, dateTo: dateStr }, 100, 0);
+    expect(sameDateMatches.messages.some((m) => m.id === msgWithReceivedAt.id)).toBe(true);
+
+    // Test: AND combination — subject AND folderId
+    const combined = await provider.searchStructured(s, { subject: subjectWord, folderId: inbox.id }, 100, 0);
+    expect(combined.messages.every((m) => m.folderId === inbox.id && m.subject?.toLowerCase().includes(subjectWord.toLowerCase()))).toBe(true);
+
+    // Test: pagination (offset + limit)
+    const page1 = await provider.searchStructured(s, {}, 5, 0);
+    const page2 = await provider.searchStructured(s, {}, 5, 5);
+    expect(page1.messages.length).toBeLessThanOrEqual(5);
+    expect(page2.messages.length).toBeLessThanOrEqual(5);
+    if (page1.messages.length > 0 && page2.messages.length > 0) {
+      expect(page1.messages[0].id).not.toBe(page2.messages[0].id);
+    }
+
+    // Test: sorting by receivedAt desc
+    const sorted = await provider.searchStructured(s, {}, 100, 0);
+    const timestamps = sorted.messages.map((m) => m.receivedAt.getTime());
+    expect(timestamps).toEqual([...timestamps].sort((a, b) => b - a));
+  });
+
   it('authenticate is idempotent per email: same mailbox identity, password updates on repeat login', async () => {
     const { store, provider } = setup();
     await provider.authenticate('memory.local', 'demo@memory.local', 'pw1');

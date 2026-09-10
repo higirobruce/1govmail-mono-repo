@@ -1,6 +1,7 @@
 import { Readable } from 'stream';
 import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailSession } from '../mail-session';
+import { MailSearchFilter } from '../mail-search-filter';
 import {
   ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderAddress, ProviderAttachmentMeta,
   ProviderAuthResult, MailProviderCapabilities, ProviderContact, ProviderEvent, ProviderEventDetail,
@@ -195,8 +196,25 @@ export class MemoryMailProvider implements MailProvider {
     return { messages, total, more: offset + limit < total };
   }
 
-  async searchStructured(): Promise<ProviderMessagePage> {
-    throw new Error('searchStructured not yet implemented');
+  async searchStructured(s: MailSession, f: MailSearchFilter, limit = 25, offset = 0): Promise<ProviderMessagePage> {
+    const mailbox = this.mb(s);
+    const inc = (h: string | null | undefined, n?: string) => !n?.trim() || (h ?? '').toLowerCase().includes(n.trim().toLowerCase());
+    const dOf = (iso?: string) => iso?.trim() ? new Date(iso.trim() + 'T00:00:00Z').getTime() : undefined;
+    const from = dOf(f.dateFrom), to = f.dateTo?.trim() ? new Date(f.dateTo.trim() + 'T23:59:59Z').getTime() : undefined;
+    const matches = mailbox.messages.filter((m) =>
+      inc(m.subject, f.subject) &&
+      (!f.keyword?.trim() || [m.subject, m.from.email, m.from.name, m.bodyText, m.bodyHtml].some((h) => inc(h, f.keyword))) &&
+      (!f.from?.trim() || inc(m.from.email, f.from) || inc(m.from.name, f.from)) &&
+      (!f.to?.trim() || m.to.some((a) => inc(a.email, f.to) || inc(a.name, f.to))) &&
+      (from === undefined || m.receivedAt.getTime() >= from) &&
+      (to === undefined || m.receivedAt.getTime() <= to) &&
+      (f.hasAttachment === undefined || m.hasAttachments === f.hasAttachment) &&
+      (!f.folderId?.trim() || m.folderId === f.folderId.trim()) &&
+      (f.unread === undefined || m.isRead === !f.unread) &&
+      (f.flagged === undefined || m.isFlagged === f.flagged),
+    ).sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+    const total = matches.length;
+    return { messages: matches.slice(offset, offset + limit), total, more: offset + limit < total };
   }
 
   async markRead(s: MailSession, messageId: string, read: boolean): Promise<void> {

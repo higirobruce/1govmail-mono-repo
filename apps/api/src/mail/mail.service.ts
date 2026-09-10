@@ -618,18 +618,29 @@ export class MailService {
   async searchStructured(userId: string, filter: MailSearchFilter, limit = 50, offset = 0) {
     if (isEmptyFilter(filter)) throw new BadRequestException('At least one filter is required.');
 
+    for (const d of [filter.dateFrom, filter.dateTo]) {
+      if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d.trim())) {
+        throw new BadRequestException('Invalid date format; expected YYYY-MM-DD.');
+      }
+    }
+
     const user = await this.getUser(userId);
 
+    // The web always sends DB folder ids (same contract as getMessages), but
+    // providers only understand their own provider id (zimbraId) — resolve
+    // by DB id here and forward the translated id, mirroring getMessages above.
+    let providerFilter = filter;
     if (filter.folderId) {
-      const owned = await this.prisma.folder.findFirst({
-        where: { userId, zimbraId: filter.folderId },
+      const folder = await this.prisma.folder.findFirst({
+        where: { userId, id: filter.folderId },
       });
-      if (!owned) throw new NotFoundException('Folder not found');
+      if (!folder) throw new NotFoundException('Folder not found');
+      providerFilter = { ...filter, folderId: folder.zimbraId };
     }
 
     const page = await this.resolver.forUser(user).searchStructured(
       buildMailSession(user),
-      filter,
+      providerFilter,
       limit,
       offset,
     );

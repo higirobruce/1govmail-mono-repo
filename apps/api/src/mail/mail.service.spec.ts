@@ -1568,19 +1568,21 @@ describe('MailService.searchStructured', () => {
 
     await expect(service.searchStructured('u1', { folderId: 'not-mine' }, 50, 0)).rejects.toThrow(NotFoundException);
 
-    expect(prisma.folder.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1', zimbraId: 'not-mine' } });
+    // The web sends the DB folder id (same contract as getMessages) — the
+    // lookup must be by DB id, not by provider zimbraId.
+    expect(prisma.folder.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1', id: 'not-mine' } });
     expect(zimbra.searchStructured).not.toHaveBeenCalled();
   });
 
-  it('calls provider.searchStructured and returns the shared result shape', async () => {
+  it('resolves filter.folderId from the DB id to the provider zimbraId before calling the provider (C1)', async () => {
     const { service, prisma, zimbra } = makeService();
     prisma.folder.findFirst
-      // folderId ownership check
-      .mockResolvedValueOnce({ id: 'inbox-id', zimbraId: '2', userId: 'u1', path: '/Inbox' })
-      // persistSearchResults' per-message folder lookup
-      .mockResolvedValueOnce({ id: 'inbox-id', zimbraId: '2', userId: 'u1', path: '/Inbox' });
+      // folderId DB-id → zimbraId resolution
+      .mockResolvedValueOnce({ id: 'inbox-id', zimbraId: 'zf-2', userId: 'u1', path: '/Inbox' })
+      // persistSearchResults' per-message folder lookup (keyed by zimbraId)
+      .mockResolvedValueOnce({ id: 'inbox-id', zimbraId: 'zf-2', userId: 'u1', path: '/Inbox' });
     const providerMessage = {
-      id: 'z1', conversationId: 'c1', folderId: '2',
+      id: 'z1', conversationId: 'c1', folderId: 'zf-2',
       subject: 'Budget', snippet: 'Q3 numbers',
       from: { email: 'a@b.rw', name: 'A' }, to: [{ email: 'u@example.com' }], cc: [], bcc: [],
       receivedAt: new Date('2026-09-01'), size: 100,
@@ -1589,10 +1591,18 @@ describe('MailService.searchStructured', () => {
     zimbra.searchStructured.mockResolvedValue({ messages: [providerMessage], total: 1, more: false });
     prisma.message.upsert.mockResolvedValue({ id: 'm1', zimbraId: 'z1', subject: 'Budget' });
 
-    const filter = { subject: 'Budget', folderId: '2' };
+    // The web sends the DB folder id ('inbox-id'), not the provider id.
+    const filter = { subject: 'Budget', folderId: 'inbox-id' };
     const result = await service.searchStructured('u1', filter, 25, 5);
 
-    expect(zimbra.searchStructured).toHaveBeenCalledWith(expect.anything(), filter, 25, 5);
+    expect(prisma.folder.findFirst).toHaveBeenCalledWith({ where: { userId: 'u1', id: 'inbox-id' } });
+    // The provider must receive the resolved zimbraId, never the raw DB id.
+    expect(zimbra.searchStructured).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ subject: 'Budget', folderId: 'zf-2' }),
+      25,
+      5,
+    );
     expect(result).toEqual({
       messages: [{ id: 'm1', zimbraId: 'z1', subject: 'Budget' }],
       total: 1,
@@ -1600,5 +1610,37 @@ describe('MailService.searchStructured', () => {
       limit: 25,
       hasMore: false,
     });
+  });
+
+  it('rejects a malformed dateFrom with 400, without calling the provider (I2)', async () => {
+    const { service, prisma, zimbra } = makeService();
+
+    await expect(
+      service.searchStructured('u1', { dateFrom: '2026 OR from:x' }, 50, 0),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma.folder.findFirst).not.toHaveBeenCalled();
+    expect(zimbra.searchStructured).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed dateTo with 400, without calling the provider (I2)', async () => {
+    const { service, prisma, zimbra } = makeService();
+
+    await expect(
+      service.searchStructured('u1', { subject: 'x', dateTo: 'not-a-date' }, 50, 0),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(prisma.folder.findFirst).not.toHaveBeenCalled();
+    expect(zimbra.searchStructured).not.toHaveBeenCalled();
+  });
+
+  it('accepts a well-formed YYYY-MM-DD dateFrom/dateTo and forwards it to the provider', async () => {
+    const { service, prisma, zimbra } = makeService();
+    zimbra.searchStructured.mockResolvedValue({ messages: [], total: 0, more: false });
+
+    const filter = { subject: 'Budget', dateFrom: '2026-01-01', dateTo: '2026-09-10' };
+    await service.searchStructured('u1', filter, 25, 0);
+
+    expect(zimbra.searchStructured).toHaveBeenCalledWith(expect.anything(), filter, 25, 0);
   });
 });

@@ -196,7 +196,7 @@ export class MemoryMailProvider implements MailProvider {
     return { messages, total, more: offset + limit < total };
   }
 
-  async searchStructured(s: MailSession, f: MailSearchFilter, limit = 25, offset = 0): Promise<ProviderMessagePage> {
+  async searchStructured(s: MailSession, f: MailSearchFilter, limit = 50, offset = 0): Promise<ProviderMessagePage> {
     const mailbox = this.mb(s);
     const inc = (h: string | null | undefined, n?: string) => !n?.trim() || (h ?? '').toLowerCase().includes(n.trim().toLowerCase());
     const dOf = (iso?: string) => iso?.trim() ? new Date(iso.trim() + 'T00:00:00Z').getTime() : undefined;

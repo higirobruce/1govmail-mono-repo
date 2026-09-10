@@ -66,7 +66,7 @@ describe('MemoryMailProvider — auth + reads', () => {
     const mbox = store.get('demo@memory.local')!;
     const inbox = mbox.folders.find((f) => f.type === 'inbox')!;
 
-    // Test: empty filter matches all inbox messages (or subset, limited by default 25)
+    // Test: empty filter matches all inbox messages (or subset, limited by default 50)
     const all = await provider.searchStructured(s, {}, 100, 0);
     expect(all.messages.length).toBeGreaterThan(0);
     expect(all.total).toBeGreaterThan(0);

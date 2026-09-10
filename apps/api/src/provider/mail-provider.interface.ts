@@ -37,7 +37,9 @@ export interface MailProvider {
   readonly capabilities: MailProviderCapabilities;
 
   // auth
-  authenticate(host: string, email: string, password: string): Promise<ProviderAuthResult>;
+  authenticate(
+    host: string, email: string, password: string, opts?: { ntlmDomain?: string },
+  ): Promise<ProviderAuthResult>;
   /**
    * Second leg of a two-factor login. Task 9 adjustment: Task 5 declared the
    * trailing pair as `(code, tempToken)`, but the implementation and its only

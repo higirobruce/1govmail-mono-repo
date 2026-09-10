@@ -201,6 +201,7 @@ export class ZimbraService implements MailProvider {
     host: string,
     email: string,
     password: string,
+    _opts?: { ntlmDomain?: string },
   ): Promise<ProviderAuthResult> {
     const client = this.buildClient(host);
     try {

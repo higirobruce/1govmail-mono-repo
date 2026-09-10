@@ -83,7 +83,9 @@ export class MemoryMailProvider implements MailProvider {
 
   // ---- auth -----------------------------------------------------------------
 
-  async authenticate(_host: string, email: string, password: string): Promise<ProviderAuthResult> {
+  async authenticate(
+    _host: string, email: string, password: string, _opts?: { ntlmDomain?: string },
+  ): Promise<ProviderAuthResult> {
     const mailbox = this.store.seedFor(email, password);
     return {
       authToken: 'memory-' + email,

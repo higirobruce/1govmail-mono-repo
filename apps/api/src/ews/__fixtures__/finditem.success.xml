@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Header>
+    <h:ServerVersionInfo MajorVersion="15" MinorVersion="2" MajorBuildNumber="2562" MinorBuildNumber="37"
+      xmlns:h="http://schemas.microsoft.com/exchange/services/2006/types" />
+  </s:Header>
+  <s:Body>
+    <m:FindItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:FindItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="2" TotalItemsInView="57" IncludesLastItemInRange="false">
+            <t:Items>
+              <t:Message>
+                <t:ItemId Id="ITEM-1==" ChangeKey="MK1"/>
+                <t:Subject>Quarterly budget review</t:Subject>
+                <t:DateTimeReceived>2026-09-09T14:32:10Z</t:DateTimeReceived>
+                <t:Size>18453</t:Size>
+                <t:Preview>Please find attached the revised figures for Q3 ...</t:Preview>
+                <t:HasAttachments>true</t:HasAttachments>
+                <t:From>
+                  <t:Mailbox>
+                    <t:Name>Alice Umutoni</t:Name>
+                    <t:EmailAddress>alice.umutoni@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                </t:From>
+                <t:ToRecipients>
+                  <t:Mailbox>
+                    <t:Name>Test Risa</t:Name>
+                    <t:EmailAddress>test-risa1@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                </t:ToRecipients>
+                <t:IsRead>false</t:IsRead>
+                <t:ConversationId Id="CONV-A==" ChangeKey="CVK1"/>
+                <t:Flag>
+                  <t:FlagStatus>Flagged</t:FlagStatus>
+                </t:Flag>
+              </t:Message>
+              <t:Message>
+                <t:ItemId Id="ITEM-2==" ChangeKey="MK2"/>
+                <t:Subject>Re: Meeting notes</t:Subject>
+                <t:DateTimeReceived>2026-09-08T09:05:44Z</t:DateTimeReceived>
+                <t:Size>7211</t:Size>
+                <t:Preview>Thanks, that works for me.</t:Preview>
+                <t:HasAttachments>false</t:HasAttachments>
+                <t:From>
+                  <t:Mailbox>
+                    <t:Name>Bob Mugisha</t:Name>
+                    <t:EmailAddress>bob.mugisha@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                </t:From>
+                <t:ToRecipients>
+                  <t:Mailbox>
+                    <t:Name>Test Risa</t:Name>
+                    <t:EmailAddress>test-risa1@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                  <t:Mailbox>
+                    <t:Name>Carol Keza</t:Name>
+                    <t:EmailAddress>carol.keza@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                </t:ToRecipients>
+                <t:IsRead>true</t:IsRead>
+                <t:ConversationId Id="CONV-B==" ChangeKey="CVK2"/>
+                <t:Flag>
+                  <t:FlagStatus>NotFlagged</t:FlagStatus>
+                </t:Flag>
+              </t:Message>
+            </t:Items>
+          </m:RootFolder>
+        </m:FindItemResponseMessage>
+      </m:ResponseMessages>
+    </m:FindItemResponse>
+  </s:Body>
+</s:Envelope>

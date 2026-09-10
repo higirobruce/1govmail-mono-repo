@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Header>
+    <h:ServerVersionInfo MajorVersion="15" MinorVersion="2" MajorBuildNumber="2562" MinorBuildNumber="37"
+      xmlns:h="http://schemas.microsoft.com/exchange/services/2006/types" />
+  </s:Header>
+  <s:Body>
+    <m:FindFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:FindFolderResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="6" TotalItemsInView="6" IncludesLastItemInRange="true">
+            <t:Folders>
+              <t:Folder>
+                <t:FolderId Id="AAA-Inbox=" ChangeKey="CK1"/>
+                <t:ParentFolderId Id="AAA-Root=" ChangeKey="CK0"/>
+                <t:DisplayName>Inbox</t:DisplayName>
+                <t:TotalCount>42</t:TotalCount>
+                <t:ChildFolderCount>0</t:ChildFolderCount>
+                <t:UnreadCount>3</t:UnreadCount>
+              </t:Folder>
+              <t:Folder>
+                <t:FolderId Id="AAA-Sent=" ChangeKey="CK2"/>
+                <t:ParentFolderId Id="AAA-Root=" ChangeKey="CK0"/>
+                <t:DisplayName>Sent Items</t:DisplayName>
+                <t:TotalCount>17</t:TotalCount>
+                <t:ChildFolderCount>0</t:ChildFolderCount>
+                <t:UnreadCount>0</t:UnreadCount>
+              </t:Folder>
+              <t:Folder>
+                <t:FolderId Id="AAA-Drafts=" ChangeKey="CK3"/>
+                <t:ParentFolderId Id="AAA-Root=" ChangeKey="CK0"/>
+                <t:DisplayName>Drafts</t:DisplayName>
+                <t:TotalCount>2</t:TotalCount>
+                <t:ChildFolderCount>0</t:ChildFolderCount>
+                <t:UnreadCount>0</t:UnreadCount>
+              </t:Folder>
+              <t:Folder>
+                <t:FolderId Id="AAA-Deleted=" ChangeKey="CK4"/>
+                <t:ParentFolderId Id="AAA-Root=" ChangeKey="CK0"/>
+                <t:DisplayName>Deleted Items</t:DisplayName>
+                <t:TotalCount>8</t:TotalCount>
+                <t:ChildFolderCount>0</t:ChildFolderCount>
+                <t:UnreadCount>1</t:UnreadCount>
+              </t:Folder>
+              <t:Folder>
+                <t:FolderId Id="AAA-Junk=" ChangeKey="CK5"/>
+                <t:ParentFolderId Id="AAA-Root=" ChangeKey="CK0"/>
+                <t:DisplayName>Junk Email</t:DisplayName>
+                <t:TotalCount>4</t:TotalCount>
+                <t:ChildFolderCount>0</t:ChildFolderCount>
+                <t:UnreadCount>4</t:UnreadCount>
+              </t:Folder>
+              <t:Folder>
+                <t:FolderId Id="AAA-Projects=" ChangeKey="CK6"/>
+                <t:ParentFolderId Id="AAA-Inbox=" ChangeKey="CK1"/>
+                <t:DisplayName>Projects</t:DisplayName>
+                <t:TotalCount>11</t:TotalCount>
+                <t:ChildFolderCount>0</t:ChildFolderCount>
+                <t:UnreadCount>2</t:UnreadCount>
+              </t:Folder>
+            </t:Folders>
+          </m:RootFolder>
+        </m:FindFolderResponseMessage>
+      </m:ResponseMessages>
+    </m:FindFolderResponse>
+  </s:Body>
+</s:Envelope>

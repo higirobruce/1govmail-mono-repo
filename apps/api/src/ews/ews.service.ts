@@ -5,14 +5,21 @@ import {
   ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderContact,
   ProviderEvent, ProviderEventDetail, ProviderFreeBusy, ProviderAuthResult,
   MailProviderCapabilities, ProviderIdentity, ProviderSignature,
+  ProviderAddress, ProviderAttachmentMeta, ProviderFolderKind,
 } from '../provider/provider-types';
 import {
   SendMessagePayload, DraftPayload, CalendarEventPayload, ModifyCalendarEventPayload,
 } from '../provider/mail-provider.interface';
 import { CapabilityNotSupportedError } from '../provider/capability.error';
 import { EwsCrypto } from './ews-crypto';
-import { getFolderEnvelope, soapEnvelope, xmlEscape } from './ews-envelopes';
-import { parseEws, responseClassOf } from './ews-parse';
+import {
+  getFolderEnvelope, soapEnvelope, xmlEscape,
+  findFolderEnvelope, findItemEnvelope, searchItemEnvelope, getItemEnvelope,
+  createFolderEnvelope, deleteFolderEnvelope, renameFolderEnvelope, emptyFolderEnvelope,
+} from './ews-envelopes';
+import {
+  parseEws, responseClassOf, toArray, toBool, textOf,
+} from './ews-parse';
 import { EwsTransport, handleEwsError, inspectEwsXml } from './ews-transport';
 
 /**
@@ -218,7 +225,133 @@ export class EwsService {
     return undefined;
   }
 
-  // ── not-yet-implemented MailProvider surface (Tasks 4-7) ──────────────────
+  // ── EWS → neutral DTO mappers (Task 4) ────────────────────────────────────
+
+  /** Default page size when a caller omits `limit`. Mirrors the app's list
+   *  pages; the server caps its own view regardless. */
+  private static readonly DEFAULT_PAGE_SIZE = 50;
+
+  private normLimit(limit?: number): number {
+    if (typeof limit !== 'number' || !Number.isFinite(limit) || limit <= 0) {
+      return EwsService.DEFAULT_PAGE_SIZE;
+    }
+    return Math.trunc(limit);
+  }
+
+  private normOffset(offset?: number): number {
+    if (typeof offset !== 'number' || !Number.isFinite(offset) || offset <= 0) return 0;
+    return Math.trunc(offset);
+  }
+
+  private numOr(value: any, fallback: number): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  /** Navigate `Envelope.Body.<responseTag>.ResponseMessages.<messageTag>` on a
+   *  parsed tree. The ResponseClass has already been vetted by callWithRetry
+   *  (any Error threw before we get here), so this only has to locate the node.
+   */
+  private responseMessageNode(doc: any, responseTag: string, messageTag: string): any {
+    return doc?.Envelope?.Body?.[responseTag]?.ResponseMessages?.[messageTag];
+  }
+
+  /** Well-known Exchange English display names → the app's folder `type`. Any
+   *  other folder is a user folder → 'custom'. */
+  private folderTypeOf(displayName: string | undefined): string {
+    switch ((displayName ?? '').trim().toLowerCase()) {
+      case 'inbox': return 'inbox';
+      case 'sent items': return 'sent';
+      case 'drafts': return 'drafts';
+      case 'deleted items': return 'trash';
+      case 'junk email': return 'junk';
+      default: return 'custom';
+    }
+  }
+
+  private mapFolder(f: any): ProviderFolder {
+    const name = textOf(f?.DisplayName) ?? '';
+    const kind: ProviderFolderKind = 'mail';
+    return {
+      id: f?.FolderId?.['@_Id'] ?? '',
+      name,
+      path: name,
+      type: this.folderTypeOf(name),
+      kind,
+      unreadCount: this.numOr(f?.UnreadCount, 0),
+      totalCount: this.numOr(f?.TotalCount, 0),
+      parentId: f?.ParentFolderId?.['@_Id'],
+    };
+  }
+
+  /** A single `<t:Mailbox>` node → ProviderAddress. */
+  private mapMailbox(mb: any): ProviderAddress {
+    const email = textOf(mb?.EmailAddress) ?? '';
+    const name = textOf(mb?.Name);
+    return name ? { email, name } : { email };
+  }
+
+  /** A recipients container (`ToRecipients`/`CcRecipients`/`BccRecipients`),
+   *  whose `Mailbox` may be absent, one object, or an array. */
+  private mapMailboxList(container: any): ProviderAddress[] {
+    return toArray(container?.Mailbox).map((mb) => this.mapMailbox(mb));
+  }
+
+  /** The fields shared by a FindItem summary and a GetItem message. cc/bcc are
+   *  left empty here (FindItem does not request them) and filled by getMessage.
+   */
+  private mapMessageSummary(item: any, folderId: string): ProviderMessage {
+    const from = item?.From?.Mailbox
+      ? this.mapMailbox(item.From.Mailbox)
+      : { email: '' };
+    const subjectText = textOf(item?.Subject);
+    return {
+      id: item?.ItemId?.['@_Id'] ?? '',
+      conversationId: item?.ConversationId?.['@_Id'] ?? null,
+      folderId: item?.ParentFolderId?.['@_Id'] ?? folderId,
+      subject: subjectText === undefined ? null : subjectText,
+      snippet: textOf(item?.Preview) ?? null,
+      from,
+      to: this.mapMailboxList(item?.ToRecipients),
+      cc: [],
+      bcc: [],
+      receivedAt: new Date(textOf(item?.DateTimeReceived) ?? 0),
+      size: this.numOr(item?.Size, 0),
+      isRead: toBool(item?.IsRead),
+      isFlagged: (textOf(item?.Flag?.FlagStatus) ?? '') === 'Flagged',
+      hasAttachments: toBool(item?.HasAttachments),
+      isDraft: false,
+      tags: [],
+    };
+  }
+
+  private mapAttachment(a: any): ProviderAttachmentMeta {
+    const contentId = textOf(a?.ContentId);
+    const meta: ProviderAttachmentMeta = {
+      part: a?.AttachmentId?.['@_Id'] ?? '',
+      filename: textOf(a?.Name) ?? '',
+      contentType: textOf(a?.ContentType) ?? 'application/octet-stream',
+      size: this.numOr(a?.Size, 0),
+      isInline: toBool(a?.IsInline),
+    };
+    if (contentId) meta.contentId = contentId;
+    return meta;
+  }
+
+  /** Shared FindItem response → ProviderMessagePage. `total` is the server's
+   *  TotalItemsInView; `more` = the window did not reach the end. */
+  private parseMessagePage(xml: string, offset: number, folderId: string): ProviderMessagePage {
+    const doc = parseEws(xml);
+    const rm = this.responseMessageNode(doc, 'FindItemResponse', 'FindItemResponseMessage');
+    const root = rm?.RootFolder;
+    const items = toArray(root?.Items?.Message);
+    const messages = items.map((it) => this.mapMessageSummary(it, folderId));
+    const total = this.numOr(root?.['@_TotalItemsInView'], messages.length);
+    const more = offset + messages.length < total;
+    return { messages, total, more };
+  }
+
+  // ── not-yet-implemented MailProvider surface (Tasks 5-7) ──────────────────
   // Listed in full so Task 7 can add `implements MailProvider` with no surface
   // change. Each throws until its task lands.
 
@@ -226,17 +359,115 @@ export class EwsService {
     throw new Error(`EWS ${method}: not implemented`);
   }
 
-  // folders
-  getFolders(_s: MailSession): Promise<ProviderFolder[]> { return this.notImplemented('getFolders'); }
-  createFolder(_s: MailSession, _name: string, _parentId?: string): Promise<ProviderFolder> { return this.notImplemented('createFolder'); }
-  deleteFolder(_s: MailSession, _folderId: string): Promise<void> { return this.notImplemented('deleteFolder'); }
-  renameFolder(_s: MailSession, _folderId: string, _name: string): Promise<void> { return this.notImplemented('renameFolder'); }
-  emptyFolder(_s: MailSession, _folderId: string): Promise<void> { return this.notImplemented('emptyFolder'); }
+  // folders (Task 4) ─────────────────────────────────────────────────────────
 
-  // messages
-  getMessages(_s: MailSession, _folderId: string, _limit?: number, _offset?: number): Promise<ProviderMessagePage> { return this.notImplemented('getMessages'); }
-  getMessage(_s: MailSession, _messageId: string): Promise<ProviderMessage> { return this.notImplemented('getMessage'); }
-  searchMessages(_s: MailSession, _query: string, _limit?: number, _offset?: number): Promise<ProviderMessagePage> { return this.notImplemented('searchMessages'); }
+  /**
+   * FindFolder Deep from `msgfolderroot` (spec §5.3). Maps every folder in the
+   * mail tree to a neutral ProviderFolder, resolving the well-known display
+   * names to the app's folder `type` and stamping `kind: 'mail'`.
+   */
+  async getFolders(session: MailSession): Promise<ProviderFolder[]> {
+    const xml = await this.callWithRetry(session, findFolderEnvelope());
+    const doc = parseEws(xml);
+    const rm = this.responseMessageNode(doc, 'FindFolderResponse', 'FindFolderResponseMessage');
+    const folders = toArray(rm?.RootFolder?.Folders?.Folder);
+    return folders.map((f) => this.mapFolder(f));
+  }
+
+  /** CreateFolder under `parentId` (or `msgfolderroot`) — returns the new,
+   *  empty folder as a ProviderFolder (spec §5.3). */
+  async createFolder(session: MailSession, name: string, parentId?: string): Promise<ProviderFolder> {
+    const xml = await this.callWithRetry(session, createFolderEnvelope(name, parentId));
+    const doc = parseEws(xml);
+    const rm = this.responseMessageNode(doc, 'CreateFolderResponse', 'CreateFolderResponseMessage');
+    const folder = toArray(rm?.Folders?.Folder)[0];
+    const id = folder?.FolderId?.['@_Id'] ?? '';
+    const displayName = textOf(folder?.DisplayName) ?? name;
+    return {
+      id,
+      name: displayName,
+      path: displayName,
+      type: 'custom',
+      kind: 'mail',
+      unreadCount: this.numOr(folder?.UnreadCount, 0),
+      totalCount: this.numOr(folder?.TotalCount, 0),
+      parentId,
+    };
+  }
+
+  /** DeleteFolder HardDelete (spec §5.3). */
+  async deleteFolder(session: MailSession, folderId: string): Promise<void> {
+    await this.callWithRetry(session, deleteFolderEnvelope(folderId));
+  }
+
+  /** UpdateFolder folder:DisplayName (spec §5.3). */
+  async renameFolder(session: MailSession, folderId: string, name: string): Promise<void> {
+    await this.callWithRetry(session, renameFolderEnvelope(folderId, name));
+  }
+
+  /** EmptyFolder MoveToDeletedItems, keeping subfolders (spec §5.3). */
+  async emptyFolder(session: MailSession, folderId: string): Promise<void> {
+    await this.callWithRetry(session, emptyFolderEnvelope(folderId));
+  }
+
+  // messages (Task 4) ────────────────────────────────────────────────────────
+
+  /**
+   * FindItem over one folder, newest-first, paged (spec §5.3). `total` is the
+   * server's TotalItemsInView; `more` is true when the window did not reach the
+   * end (`offset + returned < total`).
+   */
+  async getMessages(
+    session: MailSession, folderId: string, limit?: number, offset?: number,
+  ): Promise<ProviderMessagePage> {
+    const off = this.normOffset(offset);
+    const max = this.normLimit(limit);
+    const xml = await this.callWithRetry(session, findItemEnvelope(folderId, off, max));
+    return this.parseMessagePage(xml, off, folderId);
+  }
+
+  /**
+   * FindItem with an AQS QueryString across the mailbox (spec §5.3). Same
+   * pagination as getMessages; each hit's own ParentFolderId is preferred for
+   * `folderId` since a search spans folders.
+   */
+  async searchMessages(
+    session: MailSession, query: string, limit?: number, offset?: number,
+  ): Promise<ProviderMessagePage> {
+    const off = this.normOffset(offset);
+    const max = this.normLimit(limit);
+    const xml = await this.callWithRetry(session, searchItemEnvelope(query, off, max));
+    return this.parseMessagePage(xml, off, '');
+  }
+
+  /**
+   * GetItem for one message, HTML body, no MIME (spec §5.3). Parses the body,
+   * full address lists, and attachment metadata. An unknown id comes back as
+   * ErrorItemNotFound → NotFoundException via the shared error funnel. Does NOT
+   * mark the message read (the app marks read explicitly — current contract).
+   */
+  async getMessage(session: MailSession, messageId: string): Promise<ProviderMessage> {
+    const xml = await this.callWithRetry(session, getItemEnvelope(messageId));
+    const doc = parseEws(xml);
+    const rm = this.responseMessageNode(doc, 'GetItemResponse', 'GetItemResponseMessage');
+    const item = toArray(rm?.Items?.Message)[0] ?? {};
+    const summary = this.mapMessageSummary(item, item?.ParentFolderId?.['@_Id'] ?? '');
+
+    const bodyHtml = textOf(item?.Body) ?? null;
+    const attachments = [
+      ...toArray(item?.Attachments?.FileAttachment),
+      ...toArray(item?.Attachments?.ItemAttachment),
+    ].map((a) => this.mapAttachment(a));
+
+    return {
+      ...summary,
+      cc: this.mapMailboxList(item?.CcRecipients),
+      bcc: this.mapMailboxList(item?.BccRecipients),
+      bodyHtml,
+      bodyText: null,
+      attachments,
+    };
+  }
   sendMessage(
     _s: MailSession, _payload: SendMessagePayload,
     _attachmentAids?: string[],

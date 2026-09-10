@@ -1,6 +1,11 @@
 import { readFileSync } from 'fs';
 import * as https from 'https';
-import { BadGatewayException, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { MailSession } from '../provider/mail-session';
 import { parseEws } from './ews-parse';
 
@@ -179,6 +184,18 @@ export function handleEwsError(status: number, xml?: string, err?: any): never {
   if (xml) {
     const info = inspectEwsXml(xml);
     if (info) {
+      // A missing item/folder is a 404, not a bad gateway — the established
+      // not-found convention (mirrors MemoryMailProvider): getMessage /
+      // renameFolder / emptyFolder etc. on an unknown id surface as
+      // NotFoundException so callers can distinguish "gone" from "upstream
+      // broke". ErrorNonExistentMailbox is folded in for the same reason.
+      if (
+        info.responseCode === 'ErrorItemNotFound' ||
+        info.responseCode === 'ErrorFolderNotFound' ||
+        info.responseCode === 'ErrorNonExistentMailbox'
+      ) {
+        throw new NotFoundException('The requested mail item no longer exists.');
+      }
       const code = info.responseCode ?? (info.kind === 'fault' ? 'SOAPFault' : 'Error');
       const text = info.messageText ? `: ${info.messageText}` : '';
       throw new BadGatewayException(`EWS ${code}${text}`);

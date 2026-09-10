@@ -1,4 +1,8 @@
-import { soapEnvelope, xmlEscape, getFolderEnvelope } from './ews-envelopes';
+import {
+  soapEnvelope, xmlEscape, getFolderEnvelope,
+  findFolderEnvelope, findItemEnvelope, searchItemEnvelope, getItemEnvelope,
+  createFolderEnvelope, deleteFolderEnvelope, renameFolderEnvelope, emptyFolderEnvelope,
+} from './ews-envelopes';
 
 describe('xmlEscape', () => {
   it('escapes & < > " \'', () => {
@@ -49,5 +53,101 @@ describe('getFolderEnvelope', () => {
   it('escapes the distinguished id', () => {
     const xml = getFolderEnvelope('a&b');
     expect(xml).toContain('<t:DistinguishedFolderId Id="a&amp;b"/>');
+  });
+});
+
+describe('findFolderEnvelope', () => {
+  const xml = findFolderEnvelope();
+  it('is a Deep FindFolder rooted at msgfolderroot', () => {
+    expect(xml).toContain('<m:FindFolder Traversal="Deep">');
+    expect(xml).toContain('<t:DistinguishedFolderId Id="msgfolderroot"/>');
+    expect(xml).toContain('<t:BaseShape>Default</t:BaseShape>');
+  });
+});
+
+describe('findItemEnvelope', () => {
+  const xml = findItemEnvelope('FOLDER-1==', 50, 25);
+  it('pages with IndexedPageItemView (Offset/MaxEntriesReturned) over the folder', () => {
+    expect(xml).toContain('<m:FindItem Traversal="Shallow">');
+    expect(xml).toContain('<m:IndexedPageItemView MaxEntriesReturned="25" Offset="50" BasePoint="Beginning"/>');
+    expect(xml).toContain('<t:FolderId Id="FOLDER-1=="/>');
+  });
+  it('sorts item:DateTimeReceived descending', () => {
+    expect(xml).toContain('<t:FieldOrder Order="Descending">');
+    expect(xml).toContain('<t:FieldURI FieldURI="item:DateTimeReceived"/>');
+  });
+  it('requests IdOnly + the summary AdditionalProperties', () => {
+    expect(xml).toContain('<t:BaseShape>IdOnly</t:BaseShape>');
+    for (const fu of [
+      'item:Subject', 'message:From', 'message:ToRecipients', 'item:DateTimeReceived',
+      'item:Size', 'message:IsRead', 'item:HasAttachments', 'item:Flag',
+      'conversation:ConversationId', 'item:Preview',
+    ]) {
+      expect(xml).toContain(`<t:FieldURI FieldURI="${fu}"/>`);
+    }
+  });
+  it('clamps a negative offset and zero max to safe values', () => {
+    const clamped = findItemEnvelope('F', -5, 0);
+    expect(clamped).toContain('Offset="0"');
+    expect(clamped).toContain('MaxEntriesReturned="1"');
+  });
+});
+
+describe('searchItemEnvelope', () => {
+  it('carries an escaped AQS QueryString and scopes to msgfolderroot', () => {
+    const xml = searchItemEnvelope('budget & "Q3"', 0, 20);
+    expect(xml).toContain('<m:QueryString>budget &amp; &quot;Q3&quot;</m:QueryString>');
+    expect(xml).toContain('<t:DistinguishedFolderId Id="msgfolderroot"/>');
+    expect(xml).toContain('<m:IndexedPageItemView MaxEntriesReturned="20" Offset="0" BasePoint="Beginning"/>');
+  });
+});
+
+describe('getItemEnvelope', () => {
+  const xml = getItemEnvelope('ITEM-1==');
+  it('requests an HTML body with no MIME content for the given ItemId', () => {
+    expect(xml).toContain('<m:GetItem>');
+    expect(xml).toContain('<t:BodyType>HTML</t:BodyType>');
+    expect(xml).toContain('<t:IncludeMimeContent>false</t:IncludeMimeContent>');
+    expect(xml).toContain('<t:ItemId Id="ITEM-1=="/>');
+  });
+});
+
+describe('createFolderEnvelope', () => {
+  it('creates under msgfolderroot by default', () => {
+    const xml = createFolderEnvelope('Reports');
+    expect(xml).toContain('<m:CreateFolder>');
+    expect(xml).toContain('<t:DistinguishedFolderId Id="msgfolderroot"/>');
+    expect(xml).toContain('<t:DisplayName>Reports</t:DisplayName>');
+  });
+  it('creates under a concrete parent FolderId when given, escaping the name', () => {
+    const xml = createFolderEnvelope('A & B', 'PARENT==');
+    expect(xml).toContain('<t:FolderId Id="PARENT=="/>');
+    expect(xml).toContain('<t:DisplayName>A &amp; B</t:DisplayName>');
+  });
+});
+
+describe('deleteFolderEnvelope', () => {
+  it('is a HardDelete for the FolderId', () => {
+    const xml = deleteFolderEnvelope('F==');
+    expect(xml).toContain('<m:DeleteFolder DeleteType="HardDelete">');
+    expect(xml).toContain('<t:FolderId Id="F=="/>');
+  });
+});
+
+describe('renameFolderEnvelope', () => {
+  it('sets folder:DisplayName via UpdateFolder', () => {
+    const xml = renameFolderEnvelope('F==', 'Archive');
+    expect(xml).toContain('<m:UpdateFolder>');
+    expect(xml).toContain('<t:FieldURI FieldURI="folder:DisplayName"/>');
+    expect(xml).toContain('<t:DisplayName>Archive</t:DisplayName>');
+    expect(xml).toContain('<t:FolderId Id="F=="/>');
+  });
+});
+
+describe('emptyFolderEnvelope', () => {
+  it('moves contents to Deleted Items and keeps subfolders', () => {
+    const xml = emptyFolderEnvelope('F==');
+    expect(xml).toContain('<m:EmptyFolder DeleteType="MoveToDeletedItems" DeleteSubFolders="false">');
+    expect(xml).toContain('<t:FolderId Id="F=="/>');
   });
 });

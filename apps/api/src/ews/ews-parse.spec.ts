@@ -1,4 +1,6 @@
-import { parseEws, responseClassOf, responseCodeOf, messageTextOf } from './ews-parse';
+import {
+  parseEws, responseClassOf, responseCodeOf, messageTextOf, toArray, toBool, textOf,
+} from './ews-parse';
 
 const GET_FOLDER_SUCCESS = `<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
@@ -83,5 +85,35 @@ describe('responseClassOf / responseCodeOf / messageTextOf', () => {
     expect(responseClassOf(msg)).toBe('Error');
     expect(responseCodeOf(msg)).toBe('ErrorInvalidIdMalformed');
     expect(messageTextOf(msg)).toBe('Id is malformed.');
+  });
+});
+
+describe('toArray', () => {
+  it('wraps a lone object, passes an array through, and empties null/undefined', () => {
+    expect(toArray({ a: 1 })).toEqual([{ a: 1 }]);
+    expect(toArray([1, 2])).toEqual([1, 2]);
+    expect(toArray(undefined)).toEqual([]);
+    expect(toArray(null)).toEqual([]);
+  });
+});
+
+describe('toBool', () => {
+  it('treats the string "true", boolean true and 1 as true; everything else false', () => {
+    expect(toBool('true')).toBe(true);
+    expect(toBool(true)).toBe(true);
+    expect(toBool(1)).toBe(true);
+    expect(toBool('false')).toBe(false);
+    expect(toBool(false)).toBe(false);
+    expect(toBool(undefined)).toBe(false);
+  });
+});
+
+describe('textOf', () => {
+  it('reads a bare value or the #text of an attributed node, undefined when absent', () => {
+    expect(textOf('hello')).toBe('hello');
+    expect(textOf(42)).toBe('42');
+    expect(textOf({ '@_BodyType': 'HTML', '#text': '<p>hi</p>' })).toBe('<p>hi</p>');
+    expect(textOf(undefined)).toBeUndefined();
+    expect(textOf({ '@_BodyType': 'HTML' })).toBeUndefined();
   });
 });

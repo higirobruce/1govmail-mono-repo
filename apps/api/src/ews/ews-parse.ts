@@ -42,3 +42,33 @@ export function responseCodeOf(messageNode: any): string | undefined {
 export function messageTextOf(messageNode: any): string | undefined {
   return messageNode?.MessageText;
 }
+
+/**
+ * Normalise a repeated-element slot into an array. fast-xml-parser collapses a
+ * single occurrence to the bare object and drops the key entirely when absent,
+ * so `Folders.Folder` / `Items.Message` / `ToRecipients.Mailbox` are variously
+ * `undefined`, one object, or an array. Callers that iterate must funnel
+ * through this.
+ */
+export function toArray<T = any>(value: T | T[] | undefined | null): T[] {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+/** Coerce an EWS boolean text/attribute (`true`/`false`, already possibly a
+ *  JS boolean after tag-value parsing) to a real boolean. */
+export function toBool(value: any): boolean {
+  return value === true || value === 'true' || value === 1;
+}
+
+/** Read the text content of a node that may be either a bare string/number or
+ *  an object carrying `#text` (present when the element also has attributes,
+ *  e.g. `<t:Body BodyType="HTML">…</t:Body>`). */
+export function textOf(node: any): string | undefined {
+  if (node === undefined || node === null) return undefined;
+  if (typeof node === 'object') {
+    const t = node['#text'];
+    return t === undefined || t === null ? undefined : String(t);
+  }
+  return String(node);
+}

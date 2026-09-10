@@ -2,6 +2,8 @@ import { UnauthorizedException } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
+import { CapabilityNotSupportedError } from '../provider/capability.error';
+import { EwsCrypto } from '../ews/ews-crypto';
 
 // The service injects the resolver, not a provider. These build the REAL
 // resolver over the zimbra mock, so `forUser` still has to be handed a
@@ -327,5 +329,72 @@ describe('SettingsService getSettings', () => {
     expect(zimbra.getPrefs).toHaveBeenCalledWith(session);
     expect(zimbra.getIdentities).toHaveBeenCalledWith(session);
     expect(zimbra.getSignatures).toHaveBeenCalledWith(session);
+  });
+});
+
+// spec §7: an EWS user's settings page must NOT 500. When the provider lacks
+// the identities/signatures/serverPrefs capabilities, getSettings must return
+// those sections empty rather than call the provider (which now throws
+// CapabilityNotSupportedError), while still surfacing the capability flags so
+// the frontend can hide the sections.
+describe('SettingsService getSettings capability branch (EWS)', () => {
+  const ALL_FALSE = {
+    signatures: false, identities: false, serverPrefs: false,
+    changePassword: false, twoFactor: false,
+  };
+
+  // buildMailSession decrypts an EWS user's authToken, so the row needs a real
+  // EwsCrypto blob (not a placeholder) and the matching key on the env.
+  const KEY = 'test-mail-cred-key-0123456789abcdef';
+  const ORIGINAL_KEY = process.env.MAIL_CRED_KEY;
+  beforeAll(() => { process.env.MAIL_CRED_KEY = KEY; });
+  afterAll(() => {
+    if (ORIGINAL_KEY === undefined) delete process.env.MAIL_CRED_KEY;
+    else process.env.MAIL_CRED_KEY = ORIGINAL_KEY;
+  });
+
+  const ewsUser = {
+    id: 'u2',
+    email: 'test-risa1@minaffet.gov.rw',
+    displayName: 'Test Risa',
+    zimbraHost: 'webmail.minaffet.gov.rw',
+    authToken: new EwsCrypto(KEY).encrypt(
+      JSON.stringify({ username: 'MINAFFET\\test-risa1', password: 'pw' }),
+    ),
+    csrfToken: null,
+    provider: 'ews',
+  };
+
+  /** A provider whose settings methods THROW if reached — the branch under test
+   *  must skip them entirely when the matching capability is false. */
+  function makeCapProvider(capabilities: any) {
+    const boom = (name: string) => () => {
+      throw new CapabilityNotSupportedError(name);
+    };
+    return {
+      capabilities,
+      getPrefs: jest.fn(boom('server preferences')),
+      getIdentities: jest.fn(boom('identities')),
+      getSignatures: jest.fn(boom('signatures')),
+    };
+  }
+
+  it('returns empty prefs/identities/signatures (and the false flags) without throwing', async () => {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue(ewsUser);
+    const provider = makeCapProvider(ALL_FALSE);
+    const resolver = { forUser: () => provider, zimbra: () => makeZimbra() } as any;
+    const service = new SettingsService(prisma, resolver);
+
+    const result = await service.getSettings('u2');
+
+    expect(result.prefs).toEqual({});
+    expect(result.identities).toEqual([]);
+    expect(result.signatures).toEqual([]);
+    expect(result.capabilities).toEqual(ALL_FALSE);
+    // the throwing provider methods were never called
+    expect(provider.getPrefs).not.toHaveBeenCalled();
+    expect(provider.getIdentities).not.toHaveBeenCalled();
+    expect(provider.getSignatures).not.toHaveBeenCalled();
   });
 });

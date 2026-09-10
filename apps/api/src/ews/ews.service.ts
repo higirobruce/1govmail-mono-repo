@@ -9,6 +9,7 @@ import {
   ProviderAddress, ProviderAttachmentMeta, ProviderFolderKind,
 } from '../provider/provider-types';
 import {
+  MailProvider,
   SendMessagePayload, DraftPayload, CalendarEventPayload, ModifyCalendarEventPayload,
 } from '../provider/mail-provider.interface';
 import { CapabilityNotSupportedError } from '../provider/capability.error';
@@ -103,7 +104,7 @@ const PHONE_KEY_TO_TYPE: Record<string, string> = {
  * an `authToken` that is `EwsCrypto.encrypt(JSON({username, password}))`, the
  * exact blob `buildMailSession` decrypts back into `session.credentials`.
  */
-export class EwsService {
+export class EwsService implements MailProvider {
   readonly name = 'ews' as const;
   readonly capabilities: MailProviderCapabilities = {
     signatures: false,
@@ -390,14 +391,6 @@ export class EwsService {
     const total = this.numOr(root?.['@_TotalItemsInView'], messages.length);
     const more = offset + messages.length < total;
     return { messages, total, more };
-  }
-
-  // ── not-yet-implemented MailProvider surface (Tasks 5-7) ──────────────────
-  // Listed in full so Task 7 can add `implements MailProvider` with no surface
-  // change. Each throws until its task lands.
-
-  private notImplemented(method: string): never {
-    throw new Error(`EWS ${method}: not implemented`);
   }
 
   // folders (Task 4) ─────────────────────────────────────────────────────────
@@ -1028,14 +1021,40 @@ export class EwsService {
     return { busy, tentative, unavailable };
   }
 
-  // settings-surface (capability-gated)
-  getPrefs(_s: MailSession): Promise<Record<string, string>> { return this.notImplemented('getPrefs'); }
-  modifyPrefs(_s: MailSession, _prefs: Record<string, string>): Promise<void> { return this.notImplemented('modifyPrefs'); }
-  getIdentities(_s: MailSession): Promise<ProviderIdentity[]> { return this.notImplemented('getIdentities'); }
-  modifyIdentity(_s: MailSession, _id: string, _attrs: Record<string, string>): Promise<void> { return this.notImplemented('modifyIdentity'); }
-  getSignatures(_s: MailSession): Promise<ProviderSignature[]> { return this.notImplemented('getSignatures'); }
-  createSignature(_s: MailSession, _name: string, _contentHtml: string): Promise<string> { return this.notImplemented('createSignature'); }
-  modifySignature(_s: MailSession, _id: string, _name: string, _contentHtml: string): Promise<void> { return this.notImplemented('modifySignature'); }
-  deleteSignature(_s: MailSession, _id: string): Promise<void> { return this.notImplemented('deleteSignature'); }
-  changePassword(_s: MailSession, _oldPassword: string, _newPassword: string): Promise<void> { return this.notImplemented('changePassword'); }
+  // settings-surface (capability-gated) ─────────────────────────────────────
+  // Every flag in `capabilities` is false for EWS (spec §7): Exchange exposes
+  // none of these over the EWS operations this module speaks. Each method
+  // throws the typed CapabilityNotSupportedError so a DIRECT call surfaces as a
+  // clean HTTP 400 via CapabilityNotSupportedFilter — never a silent no-op or a
+  // 500. SettingsService.getSettings capability-branches BEFORE the read
+  // methods so a normal settings-page load never reaches getPrefs/getIdentities/
+  // getSignatures at all. Thrown synchronously (not async-rejected) to match
+  // the interface's Promise return without an extra microtask.
+  getPrefs(_s: MailSession): Promise<Record<string, string>> {
+    throw new CapabilityNotSupportedError('server preferences');
+  }
+  modifyPrefs(_s: MailSession, _prefs: Record<string, string>): Promise<void> {
+    throw new CapabilityNotSupportedError('server preferences');
+  }
+  getIdentities(_s: MailSession): Promise<ProviderIdentity[]> {
+    throw new CapabilityNotSupportedError('identities');
+  }
+  modifyIdentity(_s: MailSession, _id: string, _attrs: Record<string, string>): Promise<void> {
+    throw new CapabilityNotSupportedError('identities');
+  }
+  getSignatures(_s: MailSession): Promise<ProviderSignature[]> {
+    throw new CapabilityNotSupportedError('signatures');
+  }
+  createSignature(_s: MailSession, _name: string, _contentHtml: string): Promise<string> {
+    throw new CapabilityNotSupportedError('signatures');
+  }
+  modifySignature(_s: MailSession, _id: string, _name: string, _contentHtml: string): Promise<void> {
+    throw new CapabilityNotSupportedError('signatures');
+  }
+  deleteSignature(_s: MailSession, _id: string): Promise<void> {
+    throw new CapabilityNotSupportedError('signatures');
+  }
+  changePassword(_s: MailSession, _oldPassword: string, _newPassword: string): Promise<void> {
+    throw new CapabilityNotSupportedError('password changes');
+  }
 }

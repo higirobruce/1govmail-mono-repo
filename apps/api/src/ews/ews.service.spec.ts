@@ -6,6 +6,7 @@ import { handleEwsError } from './ews-transport';
 import { EwsCrypto } from './ews-crypto';
 import { CapabilityNotSupportedError } from '../provider/capability.error';
 import { MailSession } from '../provider/mail-session';
+import { MailProvider } from '../provider/mail-provider.interface';
 
 const KEY = 'test-mail-cred-key-0123456789abcdef';
 const fixture = (name: string) =>
@@ -242,23 +243,35 @@ describe('EwsService', () => {
     });
   });
 
-  describe('unimplemented provider methods', () => {
+  describe('capability-gapped settings surface', () => {
     beforeEach(withKey);
-    it('throw a not-implemented error until Task 7 fills them', () => {
+    it('each of the 9 settings methods throws CapabilityNotSupportedError (Task 7)', () => {
       const svc = new EwsService(new FakeTransport([SUCCESS]) as any);
       const s = {} as MailSession;
-      // Contacts, GAL, calendar, and free/busy are now real (Task 6); send/
-      // drafts/mutations are real (Task 5). Only the settings surface
-      // (Task 7) is still stubbed.
-      expect(() => svc.getPrefs(s)).toThrow(/not implemented/);
-      expect(() => svc.modifyPrefs(s, {})).toThrow(/not implemented/);
-      expect(() => svc.getIdentities(s)).toThrow(/not implemented/);
-      expect(() => svc.modifyIdentity(s, 'id', {})).toThrow(/not implemented/);
-      expect(() => svc.getSignatures(s)).toThrow(/not implemented/);
-      expect(() => svc.createSignature(s, 'name', '<p>html</p>')).toThrow(/not implemented/);
-      expect(() => svc.modifySignature(s, 'id', 'name', '<p>html</p>')).toThrow(/not implemented/);
-      expect(() => svc.deleteSignature(s, 'id')).toThrow(/not implemented/);
-      expect(() => svc.changePassword(s, 'old', 'new')).toThrow(/not implemented/);
+      // EWS declares signatures/identities/serverPrefs/changePassword all off
+      // (spec §7). A direct call must fail loud with the typed error the global
+      // filter maps to a clean HTTP 400 — never a silent no-op or a 500.
+      const isCap = CapabilityNotSupportedError;
+      expect(() => svc.getPrefs(s)).toThrow(isCap);
+      expect(() => svc.modifyPrefs(s, {})).toThrow(isCap);
+      expect(() => svc.getIdentities(s)).toThrow(isCap);
+      expect(() => svc.modifyIdentity(s, 'id', {})).toThrow(isCap);
+      expect(() => svc.getSignatures(s)).toThrow(isCap);
+      expect(() => svc.createSignature(s, 'name', '<p>html</p>')).toThrow(isCap);
+      expect(() => svc.modifySignature(s, 'id', 'name', '<p>html</p>')).toThrow(isCap);
+      expect(() => svc.deleteSignature(s, 'id')).toThrow(isCap);
+      expect(() => svc.changePassword(s, 'old', 'new')).toThrow(isCap);
+    });
+  });
+
+  describe('MailProvider conformance', () => {
+    beforeEach(withKey);
+    it('structurally satisfies the MailProvider interface (implements clause)', () => {
+      const svc = new EwsService(new FakeTransport([SUCCESS]) as any);
+      // A typed const: tsc rejects this line if any interface method is missing
+      // or off-signature — the structural check that backs `implements`.
+      const _p: MailProvider = svc;
+      expect(_p).toBe(svc);
     });
   });
 });

@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { buildMailSession } from '../provider/mail-session';
+import type { ProviderIdentity, ProviderSignature } from '../provider/provider-types';
 import { inlineSignatureImages } from '../common/signature-images';
 import { UpdateAiProfileDto } from './dto/ai-profile.dto';
 
@@ -36,10 +37,28 @@ export class SettingsService {
     const user = await this.getUser(userId);
     const provider = this.resolver.forUser(user);
     const session = buildMailSession(user);
+    const caps = provider.capabilities;
+
+    // Capability-branch (spec §7): a provider that lacks serverPrefs/identities/
+    // signatures (EWS: all false) throws CapabilityNotSupportedError from these
+    // methods, so we must NOT call them — the settings page would 500. Return
+    // those sections empty instead; the `capabilities` object below tells the
+    // frontend which to hide. Zimbra (all true) still calls the provider for
+    // every section, so its payload is unchanged.
+    //
+    // TODO(exchange-signatures): when a local EmailSignature table lands (spec
+    // §7), an EWS user's signatures should be read from Postgres here instead of
+    // returning an empty list.
     const [prefs, identities, signatures] = await Promise.all([
-      provider.getPrefs(session),
-      provider.getIdentities(session),
-      provider.getSignatures(session),
+      caps.serverPrefs
+        ? provider.getPrefs(session)
+        : Promise.resolve<Record<string, string>>({}),
+      caps.identities
+        ? provider.getIdentities(session)
+        : Promise.resolve<ProviderIdentity[]>([]),
+      caps.signatures
+        ? provider.getSignatures(session)
+        : Promise.resolve<ProviderSignature[]>([]),
     ]);
 
     // Convert Zimbra-relative image paths (e.g. Briefcase GIFs) to inline

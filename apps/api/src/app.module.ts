@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProviderModule } from './provider/provider.module';
@@ -18,6 +18,7 @@ import { AiModule } from './ai/ai.module';
 import { ChatModule } from './chat/chat.module';
 import { AgentModule } from './agent/agent.module';
 import { AuditModule } from './common/audit/audit.module';
+import { CapabilityNotSupportedFilter } from './common/filters/capability-not-supported.filter';
 
 @Module({
   imports: [
@@ -46,6 +47,9 @@ import { AuditModule } from './common/audit/audit.module';
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Maps CapabilityNotSupportedError (e.g. an EWS user directly POSTing to
+    // change-password / prefs) to a clean HTTP 400 instead of a 500 (spec §7).
+    { provide: APP_FILTER, useClass: CapabilityNotSupportedFilter },
   ],
 })
 export class AppModule {}

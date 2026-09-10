@@ -88,6 +88,47 @@ describe('EwsService', () => {
       expect(decrypted).toEqual({ username: 'MINAFFET\\test-risa1', password: 'fake-pw-123' });
     });
 
+    describe('session lifetime derives from JWT_EXPIRES_IN', () => {
+      const ORIGINAL_JWT = process.env.JWT_EXPIRES_IN;
+      afterEach(() => {
+        if (ORIGINAL_JWT === undefined) delete process.env.JWT_EXPIRES_IN;
+        else process.env.JWT_EXPIRES_IN = ORIGINAL_JWT;
+      });
+
+      const authOnce = async () => {
+        const t = new FakeTransport([SUCCESS, RESOLVE]);
+        const svc = new EwsService(t as any);
+        return svc.authenticate('mail.gov.rw', 'test-risa1@minaffet.gov.rw', 'fake-pw-123', {
+          ntlmDomain: 'MINAFFET',
+        });
+      };
+
+      it('mirrors JWT_EXPIRES_IN when set (2h → 2*3600*1000)', async () => {
+        process.env.JWT_EXPIRES_IN = '2h';
+        expect((await authOnce()).lifetime).toBe(2 * 3600 * 1000);
+      });
+
+      it('handles a day-form duration (3d)', async () => {
+        process.env.JWT_EXPIRES_IN = '3d';
+        expect((await authOnce()).lifetime).toBe(3 * 24 * 3600 * 1000);
+      });
+
+      it('accepts a bare-number (milliseconds) value', async () => {
+        process.env.JWT_EXPIRES_IN = '600000';
+        expect((await authOnce()).lifetime).toBe(600000);
+      });
+
+      it('falls back to 7d when JWT_EXPIRES_IN is unset', async () => {
+        delete process.env.JWT_EXPIRES_IN;
+        expect((await authOnce()).lifetime).toBe(7 * 24 * 3600 * 1000);
+      });
+
+      it('falls back to 7d when JWT_EXPIRES_IN is unparseable', async () => {
+        process.env.JWT_EXPIRES_IN = 'not-a-duration';
+        expect((await authOnce()).lifetime).toBe(7 * 24 * 3600 * 1000);
+      });
+    });
+
     it('runs the GetFolder(inbox) probe body', async () => {
       const t = new FakeTransport([SUCCESS, RESOLVE]);
       const svc = new EwsService(t as any);

@@ -1,3 +1,4 @@
+import ms from 'ms';
 import { Logger, UnauthorizedException } from '@nestjs/common';
 import { MailSession } from '../provider/mail-session';
 import {
@@ -15,13 +16,38 @@ import { parseEws, responseClassOf } from './ews-parse';
 import { EwsTransport, handleEwsError, inspectEwsXml } from './ews-transport';
 
 /**
- * Session lifetime handed back from `authenticate`. EWS/NTLM has no
- * server-issued token TTL — every call re-presents the stored credentials — so
- * this is purely how long the app's own JWT session stays valid before a fresh
- * login. Pinned to 8h to match a working day; AuthService.createSession writes
- * it to User.tokenExpiry, which JwtStrategy enforces per request.
+ * Fallback session lifetime (7d) — matches the JWT module's own default for
+ * `JWT_EXPIRES_IN` (see auth.module.ts). Used only when the env var is
+ * missing or unparseable.
  */
-const EWS_SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000;
+const DEFAULT_SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Session lifetime `authenticate` returns → written to `User.tokenExpiry`
+ * (AuthService.createSession), which JwtStrategy enforces per request.
+ *
+ * EWS/NTLM has no server-issued token TTL — every call re-presents the stored
+ * credentials, and the encrypted credential blob sits at rest until logout
+ * regardless — so the ONLY thing this governs is when the app's own JWT
+ * session expires. Spec §5.2: "Set tokenExpiry to the JWT expiry." So we
+ * derive it from the SAME env the JWT module signs with (`JWT_EXPIRES_IN`,
+ * default '7d'); hardcoding a shorter value would force EWS users to
+ * re-authenticate while their JWT is still valid, for no security benefit.
+ *
+ * Parsed via the `ms` package (already a transitive dep of @nestjs/jwt, which
+ * uses it to interpret the very same value): accepts '7d' / '24h' / '30m' etc.
+ * and a bare number (milliseconds). Anything unparseable → 7d fallback.
+ */
+function ewsSessionLifetimeMs(): number {
+  const raw = process.env.JWT_EXPIRES_IN;
+  if (!raw) return DEFAULT_SESSION_LIFETIME_MS;
+  try {
+    const parsed = ms(raw as ms.StringValue);
+    return typeof parsed === 'number' && parsed > 0 ? parsed : DEFAULT_SESSION_LIFETIME_MS;
+  } catch {
+    return DEFAULT_SESSION_LIFETIME_MS;
+  }
+}
 
 /** Cap on how long we will honour a server's BackOffMilliseconds before the
  *  single retry, so a hostile/huge value cannot stall a request indefinitely. */
@@ -131,7 +157,7 @@ export class EwsService {
 
     return {
       authToken: this.crypto.encrypt(JSON.stringify({ username, password })),
-      lifetime: EWS_SESSION_LIFETIME_MS,
+      lifetime: ewsSessionLifetimeMs(),
       displayName,
       twoFactorRequired: false,
     };

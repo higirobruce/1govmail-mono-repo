@@ -5,16 +5,20 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
+import { EwsService } from '../ews/ews.service';
 import { AuditService } from '../common/audit/audit.service';
 import { InstitutionRegistry } from './institution.registry';
 
 // Rows shaped like Task 1's seed (see institution.registry.spec.ts), plus a
 // 'legacy' row whose host matches what the pre-existing tests below already
 // use as their zimbraHost, so the legacy resolveByHost path still resolves.
+// 'other' carries a provider this build does not register, standing in for the
+// "unsupported provider" gate now that ews is a real provider.
 const institutionRows = [
   { id: 'risa', label: 'RISA', provider: 'zimbra', host: 'mail.risa.gov.rw:8443', ewsDomain: null, enabled: true, position: 0 },
   { id: 'legacy', label: 'Legacy', provider: 'zimbra', host: 'mail.example.com', ewsDomain: null, enabled: true, position: 1 },
   { id: 'minaffet', label: 'MINAFFET', provider: 'ews', host: 'webmail.minaffet.gov.rw', ewsDomain: 'MINAFFET', enabled: true, position: 2 },
+  { id: 'other', label: 'Other', provider: 'imap', host: 'imap.example.com', ewsDomain: null, enabled: true, position: 3 },
 ];
 
 function makeService() {
@@ -23,6 +27,14 @@ function makeService() {
     session: { create: jest.fn(), deleteMany: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), delete: jest.fn() },
   } as unknown as PrismaService;
   const zimbra = { authenticate: jest.fn(), verifyTwoFactor: jest.fn() } as unknown as ZimbraService;
+  // EWS provider mock (Phase 3). `evictSession` backs the logout keep-alive
+  // eviction; `authenticate` returns the ENCRYPTED credential blob a real
+  // EwsService would, so the "no plaintext persisted" assertion is meaningful.
+  const ews = {
+    authenticate: jest.fn(),
+    verifyTwoFactor: jest.fn(),
+    evictSession: jest.fn(),
+  } as unknown as EwsService;
   const jwt = { sign: jest.fn(() => 'signed.jwt.token'), verify: jest.fn() } as unknown as JwtService;
   const audit = { record: jest.fn() } as unknown as AuditService;
   const institutionRegistry = {
@@ -30,15 +42,16 @@ function makeService() {
     resolve: jest.fn(async (id: string) => institutionRows.find((r) => r.id === id) ?? null),
     resolveByHost: jest.fn(async (host: string) => institutionRows.find((r) => r.host === host) ?? null),
   } as unknown as InstitutionRegistry;
-  // The REAL resolver over the zimbra mock: login/2FA resolve their provider
-  // through it, so the "ews institution is rejected" test below exercises the
-  // actual gate (the resolver's BadRequestException) rather than a stub.
-  const resolver = new MailProviderResolver(zimbra);
+  // The REAL resolver over the zimbra + ews mocks: login/2FA/logout resolve
+  // their provider through it, so the ews-login and eviction tests below
+  // exercise the actual seam rather than a stub.
+  const resolver = new MailProviderResolver(zimbra, undefined, ews);
   const service = new AuthService(prisma, resolver, jwt, audit, institutionRegistry);
   return {
     service,
     prisma: prisma as any,
     zimbra: zimbra as any,
+    ews: ews as any,
     jwt: jwt as any,
     audit: audit as any,
     institutionRegistry: institutionRegistry as any,
@@ -186,7 +199,8 @@ describe('AuthService.login institution resolution', () => {
 
     const res = await service.login({ institution: 'risa', email: 'u@risa.gov.rw', password: 'pw' } as any);
 
-    expect(zimbra.authenticate).toHaveBeenCalledWith('mail.risa.gov.rw:8443', 'u@risa.gov.rw', 'pw');
+    // 4th arg carries ntlmDomain (undefined for zimbra — accepted-and-ignored).
+    expect(zimbra.authenticate).toHaveBeenCalledWith('mail.risa.gov.rw:8443', 'u@risa.gov.rw', 'pw', { ntlmDomain: undefined });
     expect(prisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({ provider: 'zimbra', institutionId: 'risa' }),
       update: expect.objectContaining({ provider: 'zimbra', institutionId: 'risa' }),
@@ -216,7 +230,7 @@ describe('AuthService.login institution resolution', () => {
 
     await service.login({ zimbraHost: 'mail.risa.gov.rw:8443', email: 'u@risa.gov.rw', password: 'pw' } as any);
 
-    expect(zimbra.authenticate).toHaveBeenCalledWith('mail.risa.gov.rw:8443', 'u@risa.gov.rw', 'pw');
+    expect(zimbra.authenticate).toHaveBeenCalledWith('mail.risa.gov.rw:8443', 'u@risa.gov.rw', 'pw', { ntlmDomain: undefined });
   });
 
   it('rejects a zimbraHost not present in the registry', async () => {
@@ -225,17 +239,117 @@ describe('AuthService.login institution resolution', () => {
       .rejects.toThrow(BadRequestException);
   });
 
-  it('rejects ews/memory institutions until their providers exist', async () => {
+  it('rejects institutions whose provider this build does not register (400)', async () => {
     const { service, zimbra } = makeService();
-    // Task 3's temporary special case is gone: the rejection is now the
-    // MailProviderResolver refusing to resolve a provider this build does not
-    // register — still a 400, still readable, and lifted in Phase 2/3 by
-    // adding the case to the resolver.
-    await expect(service.login({ institution: 'minaffet', email: 'a@minaffet.gov.rw', password: 'x' } as any))
+    // The rejection is the MailProviderResolver refusing to resolve a provider
+    // this build does not register — still a 400, still readable. ews is now
+    // registered (Phase 3), so 'other' (provider: 'imap') stands in for the
+    // unsupported case.
+    await expect(service.login({ institution: 'other', email: 'a@other.gov.rw', password: 'x' } as any))
       .rejects.toThrow(BadRequestException);
-    await expect(service.login({ institution: 'minaffet', email: 'a@minaffet.gov.rw', password: 'x' } as any))
+    await expect(service.login({ institution: 'other', email: 'a@other.gov.rw', password: 'x' } as any))
       .rejects.toThrow(/not supported on this server/i);
     expect(zimbra.authenticate).not.toHaveBeenCalled();
+  });
+});
+
+describe('AuthService.login — EWS credential storage (Phase 3)', () => {
+  // Verify the ntlmDomain flow and the encrypted-at-rest guarantee with a
+  // REAL EwsCrypto blob flowing through createSession unchanged.
+  const KEY = 'test-mail-cred-key-auth-service-spec';
+  const ORIGINAL_KEY = process.env.MAIL_CRED_KEY;
+  beforeAll(() => { process.env.MAIL_CRED_KEY = KEY; });
+  afterAll(() => {
+    if (ORIGINAL_KEY === undefined) delete process.env.MAIL_CRED_KEY;
+    else process.env.MAIL_CRED_KEY = ORIGINAL_KEY;
+  });
+
+  it('passes the institution ntlmDomain to authenticate and persists ONLY the encrypted blob', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { EwsCrypto } = require('../ews/ews-crypto');
+    const crypto = new EwsCrypto(KEY);
+    const PLAINTEXT_PW = 'super-secret-pw-123';
+    const encryptedBlob = crypto.encrypt(
+      JSON.stringify({ username: 'MINAFFET\\a', password: PLAINTEXT_PW }),
+    );
+
+    const { service, prisma, ews } = makeService();
+    ews.authenticate.mockResolvedValue({
+      twoFactorRequired: false,
+      authToken: encryptedBlob,
+      lifetime: 3_600_000,
+      displayName: 'Test Minaffet',
+    });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u-ews', email: 'a@minaffet.gov.rw', displayName: 'Test Minaffet', zimbraHost: 'webmail.minaffet.gov.rw',
+    });
+
+    await service.login({ institution: 'minaffet', email: 'a@minaffet.gov.rw', password: PLAINTEXT_PW } as any);
+
+    // 4th arg carries the institution's ewsDomain as ntlmDomain.
+    expect(ews.authenticate).toHaveBeenCalledWith(
+      'webmail.minaffet.gov.rw',
+      'a@minaffet.gov.rw',
+      PLAINTEXT_PW,
+      { ntlmDomain: 'MINAFFET' },
+    );
+
+    // createSession stored the encrypted blob unchanged.
+    const upsertArg = (prisma.user.upsert as jest.Mock).mock.calls[0][0];
+    expect(upsertArg.create.authToken).toBe(encryptedBlob);
+    expect(upsertArg.update.authToken).toBe(encryptedBlob);
+    expect(upsertArg.create).toEqual(expect.objectContaining({ provider: 'ews', institutionId: 'minaffet' }));
+
+    // The persisted value is NOT the plaintext password, and decrypts back to
+    // the credentials — proving no plaintext ever touched the DB.
+    expect(upsertArg.create.authToken).not.toBe(PLAINTEXT_PW);
+    expect(upsertArg.create.authToken).not.toContain(PLAINTEXT_PW);
+    const decrypted = JSON.parse(crypto.decrypt(upsertArg.create.authToken));
+    expect(decrypted.password).toBe(PLAINTEXT_PW);
+    expect(decrypted.username).toBe('MINAFFET\\a');
+  });
+
+  it('still passes ntlmDomain (undefined) for a zimbra institution — accepted-and-ignored', async () => {
+    const { service, prisma, zimbra } = makeService();
+    zimbra.authenticate.mockResolvedValue({
+      twoFactorRequired: false, authToken: 'zimbra-tok', csrfToken: 'csrf',
+      lifetime: 3_600_000, displayName: 'Test User',
+    });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u1', email: 'u@risa.gov.rw', displayName: 'Test User', zimbraHost: 'mail.risa.gov.rw:8443',
+    });
+
+    await service.login({ institution: 'risa', email: 'u@risa.gov.rw', password: 'pw' } as any);
+
+    expect(zimbra.authenticate).toHaveBeenCalledWith(
+      'mail.risa.gov.rw:8443', 'u@risa.gov.rw', 'pw', { ntlmDomain: undefined },
+    );
+  });
+});
+
+describe('AuthService.logout — EWS keep-alive eviction (Phase 3)', () => {
+  it('evicts the transport keep-alive agent for an ews user on logout', async () => {
+    const { service, prisma, ews } = makeService();
+    prisma.session.deleteMany.mockResolvedValue({ count: 1 });
+    prisma.user.update.mockResolvedValue({ email: 'a@minaffet.gov.rw', provider: 'ews' });
+
+    await service.logout('u-ews', { ip: '10.0.0.1', userAgent: 'Vitest/1.0' });
+
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'u-ews' },
+      data: { authToken: null, tokenExpiry: null },
+    }));
+    expect(ews.evictSession).toHaveBeenCalledWith('a@minaffet.gov.rw');
+  });
+
+  it('does not evict for a zimbra user (no keep-alive agent to drop)', async () => {
+    const { service, prisma, ews } = makeService();
+    prisma.session.deleteMany.mockResolvedValue({ count: 1 });
+    prisma.user.update.mockResolvedValue({ email: 'u@risa.gov.rw', provider: 'zimbra' });
+
+    await service.logout('u1', {});
+
+    expect(ews.evictSession).not.toHaveBeenCalled();
   });
 });
 

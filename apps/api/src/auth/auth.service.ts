@@ -66,7 +66,14 @@ export class AuthService {
 
     let zimbraResult: ProviderAuthResult;
     try {
-      zimbraResult = await provider.authenticate(zimbraHost, email, password);
+      // EWS needs the institution's NTLM domain (Institution.ewsDomain →
+      // `DOMAIN\localpart`); zimbra/memory accept-and-ignore the 4th arg
+      // (Task 1 widened their signatures). No plaintext is persisted: for EWS
+      // the returned `authToken` is already the AES-256-GCM-encrypted
+      // credential blob, and createSession stores it unchanged.
+      zimbraResult = await provider.authenticate(zimbraHost, email, password, {
+        ntlmDomain: inst.ewsDomain ?? undefined,
+      });
     } catch (err) {
       await this.audit.record('LOGIN_FAILURE', {
         email,
@@ -265,8 +272,13 @@ export class AuthService {
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: { authToken: null, tokenExpiry: null },
-      select: { email: true },
+      select: { email: true, provider: true },
     });
+    // Drop any keep-alive transport socket held for this mailbox. Only EWS
+    // caches an authenticated per-mailbox https.Agent (NTLM authenticates the
+    // connection); the resolver no-ops for every other provider. Evicting an
+    // unknown email is harmless, so this is unconditional at the call site.
+    this.resolver.evictSession({ provider: user.provider }, user.email);
     await this.audit.record('LOGOUT', {
       userId,
       email: user.email,

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ZimbraModule } from '../zimbra/zimbra.module';
+import { EwsModule } from '../ews/ews.module';
 import { MailProviderResolver } from './mail-provider.resolver';
 import { MemoryStore } from './memory/memory-store';
 import { MemoryMailProvider } from './memory/memory-mail.provider';
@@ -19,7 +20,7 @@ import { MemoryMailProvider } from './memory/memory-mail.provider';
  * `MAIL_PROVIDER_MEMORY==='true'`.
  */
 @Module({
-  imports: [ZimbraModule],
+  imports: [ZimbraModule, EwsModule],
   providers: [
     { provide: MemoryStore, useFactory: () => new MemoryStore() },
     {

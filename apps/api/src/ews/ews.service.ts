@@ -142,6 +142,17 @@ export class EwsService implements MailProvider {
     this.crypto = new EwsCrypto();
   }
 
+  /**
+   * Logout hook (Task 8): drop the transport's cached keep-alive https.Agent
+   * for this mailbox so a later, differently-authenticated session can never
+   * reuse a stale authenticated NTLM socket. Evicting an unknown email is a
+   * no-op, so callers may invoke this unconditionally. `MailProviderResolver`
+   * routes here only for `provider === 'ews'`.
+   */
+  evictSession(email: string): void {
+    this.transport.evict(email);
+  }
+
   // ── auth ────────────────────────────────────────────────────────────────
 
   /**

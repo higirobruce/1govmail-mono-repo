@@ -20,6 +20,7 @@ const GET_ITEM = fixture('getitem.success.xml');
 const GET_ITEM_NOTFOUND = fixture('getitem.notfound.xml');
 const FIND_ITEM_MEETING = fixture('finditem-meeting.success.xml');
 const GET_ITEM_MEETING = fixture('getitem-meeting.success.xml');
+const CONV_TOPIC = fixture('finditem-conversationtopic.success.xml');
 const CREATE_FOLDER = fixture('createfolder.success.xml');
 const DELETE_FOLDER = fixture('deletefolder.success.xml');
 const UPDATE_FOLDER = fixture('updatefolder.success.xml');
@@ -142,6 +143,26 @@ describe('EwsService folders + messages (Task 4)', () => {
       expect(m2.isRead).toBe(true);
       expect(m2.isFlagged).toBe(false);
       expect(m2.to).toHaveLength(2);
+    });
+
+    it('requests the ConversationTopic extended property (Exchange FindItem never returns ConversationId)', async () => {
+      const { t, svc } = svcWith(FIND_ITEM);
+      await svc.getMessages(SESSION, 'AAA-Inbox=');
+      expect(t.calls[0].body).toContain(
+        '<t:ExtendedFieldURI PropertyTag="0x0070" PropertyType="String"/>',
+      );
+    });
+
+    it('groups by ConversationTopic and falls back to ItemId so conversationId is never null', async () => {
+      const { svc } = svcWith(CONV_TOPIC);
+      const page = await svc.getMessages(SESSION, 'AAA-Inbox=');
+      // Two messages sharing the (prefix-stripped) topic collapse to one thread key…
+      expect(page.messages[0].conversationId).toBe('Budget planning');
+      expect(page.messages[1].conversationId).toBe('Budget planning');
+      // …and a message with no topic (and no ConversationId) falls back to its own id.
+      expect(page.messages[2].conversationId).toBe('ITEM-C==');
+      // Never null — a null id would drop the message onto the single-message layout.
+      expect(page.messages.every((m) => m.conversationId)).toBe(true);
     });
 
     it('computes pagination: total from TotalItemsInView, more when window is short', async () => {

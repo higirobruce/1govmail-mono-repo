@@ -237,6 +237,13 @@ export class MailService {
         return this.prisma.message.upsert({
           where: { userId_zimbraId: { userId, zimbraId } },
           update: {
+            // conversationId is refreshed (not just set on insert) so a row that
+            // was synced before the provider populated a grouping key — e.g. every
+            // EWS row synced before ConversationTopic mapping existed — heals to a
+            // real thread key on the next folder load instead of staying null and
+            // stranded on the single-message layout. It is stable for a given
+            // message, so re-writing it is idempotent for the Zimbra path.
+            conversationId: m.conversationId,
             isRead:    m.isRead,
             isStarred: m.isFlagged,
             isDraft:   m.isDraft,
@@ -492,69 +499,80 @@ export class MailService {
       return { conversationId: null, messages: [] };
     }
 
-    // Back-fill conversation messages not yet in the local DB by querying Zimbra.
-    // This ensures the full thread history is visible when a user was CC'd mid-thread
-    // or when older messages haven't been reached by the incremental folder sync yet.
+    // Back-fill conversation messages not yet in the local DB by querying the
+    // provider. This ensures the full thread history is visible when a user was
+    // CC'd mid-thread or when older messages haven't been reached by the
+    // incremental folder sync yet.
+    //
+    // The back-fill uses the `conv:<id>` search syntax, which is Zimbra's — an
+    // Exchange (EWS) backend rejects/ignores it as a plain AQS query, so we gate
+    // on provider. EWS derives conversationId from the ConversationTopic extended
+    // property (FindItem never returns the strongly-typed ConversationId), and
+    // stamps it on every folder-synced row, so the local group-by below is
+    // already complete for EWS without a back-fill; sending it a malformed
+    // `conv:` query would be wrong, not merely useless.
     try {
       const user = await this.getUser(userId);
 
-      // Find zimbraIds already in the DB for this conversation to avoid re-fetching
-      const existing = await this.prisma.message.findMany({
-        where: { userId, conversationId: msg.conversationId },
-        select: { zimbraId: true },
-      });
-      const existingZimbraIds = new Set(existing.map((m) => m.zimbraId));
+      if (user.provider === 'zimbra') {
+        // Find zimbraIds already in the DB for this conversation to avoid re-fetching
+        const existing = await this.prisma.message.findMany({
+          where: { userId, conversationId: msg.conversationId },
+          select: { zimbraId: true },
+        });
+        const existingZimbraIds = new Set(existing.map((m) => m.zimbraId));
 
-      const { messages: threadMsgs } = await this.resolver.forUser(user).searchMessages(
-        buildMailSession(user),
-        `conv:${msg.conversationId}`,
-        200,
-        0,
-      );
+        const { messages: threadMsgs } = await this.resolver.forUser(user).searchMessages(
+          buildMailSession(user),
+          `conv:${msg.conversationId}`,
+          200,
+          0,
+        );
 
-      // Build a folder zimbraId → DB folder map so we avoid per-message DB lookups
-      const folders = await this.prisma.folder.findMany({
-        where: { userId },
-        select: { id: true, zimbraId: true },
-      });
-      const folderByZimbraId = new Map(folders.map((f) => [f.zimbraId, f.id]));
+        // Build a folder zimbraId → DB folder map so we avoid per-message DB lookups
+        const folders = await this.prisma.folder.findMany({
+          where: { userId },
+          select: { id: true, zimbraId: true },
+        });
+        const folderByZimbraId = new Map(folders.map((f) => [f.zimbraId, f.id]));
 
-      // Collect the missing rows and insert them in ONE batched write — a
-      // 20-message thread used to cost 20 serial upsert round-trips inside the
-      // open-thread request. skipDuplicates covers the race where a row appears
-      // between the existing-ids read and this insert (the old upsert's only
-      // remaining job, since already-synced ids are filtered out above).
-      const rows = threadMsgs.flatMap((m) => {
-        if (existingZimbraIds.has(m.id)) return []; // already synced
+        // Collect the missing rows and insert them in ONE batched write — a
+        // 20-message thread used to cost 20 serial upsert round-trips inside the
+        // open-thread request. skipDuplicates covers the race where a row appears
+        // between the existing-ids read and this insert (the old upsert's only
+        // remaining job, since already-synced ids are filtered out above).
+        const rows = threadMsgs.flatMap((m) => {
+          if (existingZimbraIds.has(m.id)) return []; // already synced
 
-        const folderId = folderByZimbraId.get(m.folderId);
-        if (!folderId) return []; // folder not yet synced — skip
+          const folderId = folderByZimbraId.get(m.folderId);
+          if (!folderId) return []; // folder not yet synced — skip
 
-        return [{
-          userId,
-          folderId,
-          zimbraId:       m.id,
-          conversationId: msg.conversationId,
-          subject:        m.subject,
-          snippet:        m.snippet,
-          fromEmail:      m.from.email,
-          fromName:       m.from.name ?? null,
-          toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name ?? null })),
-          ccRecipients:   m.cc.map((a) => ({ email: a.email, name: a.name ?? null })),
-          isRead:         m.isRead,
-          isStarred:      m.isFlagged,
-          isDraft:        m.isDraft,
-          hasAttachments: m.hasAttachments,
-          receivedAt:     m.receivedAt,
-        }];
-      });
+          return [{
+            userId,
+            folderId,
+            zimbraId:       m.id,
+            conversationId: msg.conversationId,
+            subject:        m.subject,
+            snippet:        m.snippet,
+            fromEmail:      m.from.email,
+            fromName:       m.from.name ?? null,
+            toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name ?? null })),
+            ccRecipients:   m.cc.map((a) => ({ email: a.email, name: a.name ?? null })),
+            isRead:         m.isRead,
+            isStarred:      m.isFlagged,
+            isDraft:        m.isDraft,
+            hasAttachments: m.hasAttachments,
+            receivedAt:     m.receivedAt,
+          }];
+        });
 
-      if (rows.length > 0) {
-        await this.prisma.message.createMany({ data: rows, skipDuplicates: true });
+        if (rows.length > 0) {
+          await this.prisma.message.createMany({ data: rows, skipDuplicates: true });
+        }
       }
     } catch (err: any) {
-      // Back-fill is best-effort — a Zimbra outage must not break the thread view
-      this.logger.warn(`[getConversation] Zimbra back-fill failed: ${err?.message}`);
+      // Back-fill is best-effort — a provider outage must not break the thread view
+      this.logger.warn(`[getConversation] conversation back-fill failed: ${err?.message}`);
     }
 
     const messages = await this.prisma.message.findMany({

@@ -24,7 +24,7 @@ import {
   findContactsEnvelope, createContactEnvelope, updateContactEnvelope, resolveNamesEnvelope,
   findCalendarEnvelope, getAppointmentEnvelope, createCalendarEventEnvelope,
   updateCalendarEventEnvelope, deleteCalendarEventEnvelope, inviteReplyEnvelope,
-  getUserAvailabilityEnvelope, toUnqualifiedUtc,
+  getUserAvailabilityEnvelope, toUnqualifiedUtc, CONVERSATION_TOPIC_TAG,
   EwsFileAttachment, EwsMessageFields, EwsContactFields, EwsCalendarFields,
 } from './ews-envelopes';
 import {
@@ -393,6 +393,36 @@ export class EwsService implements MailProvider {
   /** The fields shared by a FindItem summary and a GetItem message. cc/bcc are
    *  left empty here (FindItem does not request them) and filled by getMessage.
    */
+  /**
+   * Read a requested extended MAPI property's string value off a parsed item,
+   * matching by numeric property tag. fast-xml-parser may surface the tag
+   * attribute as the hex string `'0x0070'` or the coerced number `112`; `Number`
+   * folds both to the same value. `ExtendedProperty` is one object when a single
+   * property was requested and an array when several were, so funnel through
+   * `toArray`.
+   */
+  private extendedPropString(item: any, propertyTag: number): string | undefined {
+    for (const ep of toArray(item?.ExtendedProperty)) {
+      if (Number(ep?.ExtendedFieldURI?.['@_PropertyTag']) === propertyTag) {
+        return textOf(ep?.Value);
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * The grouping key the whole app threads on (`conversationId`). Exchange's
+   * `FindItem` never returns the strongly-typed ConversationId (see
+   * `CONVERSATION_TOPIC_TAG`), so prefer the ConversationTopic extended property,
+   * fall back to a ConversationId if one did arrive (GetItem sometimes carries
+   * it), and finally to the item's own id so a message is never left ungrouped
+   * (null) — a null id would drop it onto the degraded single-message layout.
+   */
+  private conversationKey(item: any): string | null {
+    const topic = this.extendedPropString(item, CONVERSATION_TOPIC_TAG)?.trim();
+    return (topic || undefined) ?? item?.ConversationId?.['@_Id'] ?? item?.ItemId?.['@_Id'] ?? null;
+  }
+
   private mapMessageSummary(item: any, folderId: string): ProviderMessage {
     const from = item?.From?.Mailbox
       ? this.mapMailbox(item.From.Mailbox)
@@ -400,7 +430,7 @@ export class EwsService implements MailProvider {
     const subjectText = textOf(item?.Subject);
     return {
       id: item?.ItemId?.['@_Id'] ?? '',
-      conversationId: item?.ConversationId?.['@_Id'] ?? null,
+      conversationId: this.conversationKey(item),
       folderId: item?.ParentFolderId?.['@_Id'] ?? folderId,
       subject: subjectText === undefined ? null : subjectText,
       snippet: textOf(item?.Preview) ?? null,

@@ -1054,6 +1054,32 @@ describe('MailService.getConversation back-fill batching', () => {
 
     expect((prisma as any).message.createMany).not.toHaveBeenCalled();
   });
+
+  it('does NOT run the Zimbra conv: back-fill for a non-Zimbra (EWS) provider, but still returns the local group', async () => {
+    const ewsUser = { ...user, provider: 'ews' };
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(ewsUser) },
+      message: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'm1', conversationId: 'Budget planning' }),
+        // Only the final ordered listing runs — the back-fill's own findMany is
+        // inside the (skipped) zimbra branch.
+        findMany: jest.fn().mockResolvedValue([{ id: 'm1' }, { id: 'm2' }]),
+        createMany: jest.fn(),
+        upsert: jest.fn(),
+      },
+      folder: { findMany: jest.fn() },
+    } as unknown as PrismaService;
+    // If the gate leaked, this malformed `conv:<topic>` query would hit Exchange.
+    const provider = { searchMessages: jest.fn() } as unknown as ZimbraService;
+    const service = new MailService(prisma, makeResolver(provider), {} as NotificationsService, {} as TasksService);
+
+    const result = await service.getConversation('u1', 'm1');
+
+    expect((provider as any).searchMessages).not.toHaveBeenCalled();
+    expect((prisma as any).folder.findMany).not.toHaveBeenCalled();
+    expect((prisma as any).message.createMany).not.toHaveBeenCalled();
+    expect(result.messages).toHaveLength(2);
+  });
 });
 
 describe('MailService.getMessage embed budget (async image embedding)', () => {

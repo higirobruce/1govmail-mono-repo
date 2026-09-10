@@ -81,10 +81,26 @@ export function findFolderEnvelope(): string {
   return soapEnvelope(body);
 }
 
+/**
+ * PidTagConversationTopic (property tag 0x0070, PtypString) requested as an
+ * extended MAPI property. Exchange's `FindItem` refuses to return the
+ * strongly-typed `conversation:ConversationId` even when it is asked for
+ * (verified live against MINAFFET: every other requested field comes back, that
+ * one never does), which left every EWS message with a null conversationId and
+ * so stuck on the single-message layout. The store keeps ConversationTopic
+ * prefix-stripped ("Re:"/"Fwd:" removed) and identical across a reply chain, and
+ * extended properties are NOT subject to the FindItem ConversationId limitation
+ * — so it is a reliable grouping key. Shared by the FindItem summary set and the
+ * GetItem shape so both list and single-open paths group the same way.
+ */
+export const CONVERSATION_TOPIC_TAG = 0x0070;
+const CONVERSATION_TOPIC_FIELD =
+  '<t:ExtendedFieldURI PropertyTag="0x0070" PropertyType="String"/>';
+
 /** The AdditionalProperties block shared by the two FindItem envelopes
  *  (`getMessages`, `searchMessages`) — the message-summary field set from
  *  spec §5.3 (subject, from/to, date, size, IsRead, HasAttachments, flags,
- *  ConversationId, preview). */
+ *  ConversationId, ConversationTopic, preview). */
 const FINDITEM_SUMMARY_FIELDS =
   '<t:AdditionalProperties>' +
   '<t:FieldURI FieldURI="item:Subject"/>' +
@@ -96,6 +112,7 @@ const FINDITEM_SUMMARY_FIELDS =
   '<t:FieldURI FieldURI="item:HasAttachments"/>' +
   '<t:FieldURI FieldURI="item:Flag"/>' +
   '<t:FieldURI FieldURI="conversation:ConversationId"/>' +
+  CONVERSATION_TOPIC_FIELD +
   '<t:FieldURI FieldURI="item:Preview"/>' +
   '</t:AdditionalProperties>';
 
@@ -172,6 +189,7 @@ export function getItemEnvelope(itemId: string): string {
     '<t:BodyType>HTML</t:BodyType>' +
     '<t:AdditionalProperties>' +
     '<t:FieldURI FieldURI="conversation:ConversationId"/>' +
+    CONVERSATION_TOPIC_FIELD +
     '</t:AdditionalProperties>' +
     '</m:ItemShape>' +
     '<m:ItemIds>' +

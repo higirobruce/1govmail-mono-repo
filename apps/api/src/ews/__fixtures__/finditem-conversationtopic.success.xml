@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <m:FindItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:FindItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="3" TotalItemsInView="3" IncludesLastItemInRange="true">
+            <t:Items>
+              <!-- Real MINAFFET shape: NO <t:ConversationId>; the topic arrives as
+                   the PidTagConversationTopic (0x0070) extended property. -->
+              <t:Message>
+                <t:ItemId Id="ITEM-A==" ChangeKey="MKA"/>
+                <t:Subject>Budget planning</t:Subject>
+                <t:DateTimeReceived>2026-09-09T14:32:10Z</t:DateTimeReceived>
+                <t:Size>1200</t:Size>
+                <t:HasAttachments>false</t:HasAttachments>
+                <t:From><t:Mailbox><t:EmailAddress>a@minaffet.gov.rw</t:EmailAddress></t:Mailbox></t:From>
+                <t:IsRead>true</t:IsRead>
+                <t:ExtendedProperty>
+                  <t:ExtendedFieldURI PropertyTag="0x0070" PropertyType="String"/>
+                  <t:Value>Budget planning</t:Value>
+                </t:ExtendedProperty>
+              </t:Message>
+              <!-- A reply: subject carries "Re:" but the ConversationTopic is
+                   prefix-stripped and identical, so it groups with ITEM-A. -->
+              <t:Message>
+                <t:ItemId Id="ITEM-B==" ChangeKey="MKB"/>
+                <t:Subject>Re: Budget planning</t:Subject>
+                <t:DateTimeReceived>2026-09-09T15:10:00Z</t:DateTimeReceived>
+                <t:Size>900</t:Size>
+                <t:HasAttachments>false</t:HasAttachments>
+                <t:From><t:Mailbox><t:EmailAddress>b@minaffet.gov.rw</t:EmailAddress></t:Mailbox></t:From>
+                <t:IsRead>false</t:IsRead>
+                <t:ExtendedProperty>
+                  <t:ExtendedFieldURI PropertyTag="0x0070" PropertyType="String"/>
+                  <t:Value>Budget planning</t:Value>
+                </t:ExtendedProperty>
+              </t:Message>
+              <!-- No topic at all → conversationId must fall back to the ItemId
+                   so the message is never left ungrouped (null). -->
+              <t:Message>
+                <t:ItemId Id="ITEM-C==" ChangeKey="MKC"/>
+                <t:Subject>Standalone note</t:Subject>
+                <t:DateTimeReceived>2026-09-09T16:00:00Z</t:DateTimeReceived>
+                <t:Size>300</t:Size>
+                <t:HasAttachments>false</t:HasAttachments>
+                <t:From><t:Mailbox><t:EmailAddress>c@minaffet.gov.rw</t:EmailAddress></t:Mailbox></t:From>
+                <t:IsRead>true</t:IsRead>
+              </t:Message>
+            </t:Items>
+          </m:RootFolder>
+        </m:FindItemResponseMessage>
+      </m:ResponseMessages>
+    </m:FindItemResponse>
+  </s:Body>
+</s:Envelope>

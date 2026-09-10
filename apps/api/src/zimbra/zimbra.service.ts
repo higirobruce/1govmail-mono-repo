@@ -37,6 +37,7 @@ import {
   mapZimbraMessage,
   ZimbraAppointment,
 } from './zimbra.mappers';
+import { MailSearchFilter, quoteZimbra } from '../provider/mail-search-filter';
 
 // The Zimbra wire shapes live in zimbra.mappers.ts (the only place that knows
 // `su`/`fr`/`e[]`/`mp[]`/flag chars, and the calendar's `inst[]`/`inv[].comp[]`
@@ -50,6 +51,31 @@ const AUTH_FAULT_CODES = new Set([
   'service.AUTH_REQUIRED',
   'account.AUTH_FAILED',
 ]);
+
+/** Shift a 'YYYY-MM-DD' epoch by `days`, format as M/D/YYYY (Zimbra date form). */
+function zimbraDate(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return `${dt.getUTCMonth() + 1}/${dt.getUTCDate()}/${dt.getUTCFullYear()}`;
+}
+
+/** Translate a neutral MailSearchFilter to a Zimbra query string. */
+export function buildZimbraQuery(f: MailSearchFilter): string {
+  const p: string[] = [];
+  if (f.keyword?.trim()) p.push(`content:${quoteZimbra(f.keyword.trim())}`);
+  if (f.from?.trim()) p.push(`from:${quoteZimbra(f.from.trim())}`);
+  if (f.to?.trim()) p.push(`to:${quoteZimbra(f.to.trim())}`);
+  if (f.subject?.trim()) p.push(`subject:${quoteZimbra(f.subject.trim())}`);
+  if (f.dateFrom?.trim()) p.push(`after:${zimbraDate(f.dateFrom.trim(), -1)}`);
+  if (f.dateTo?.trim()) p.push(`before:${zimbraDate(f.dateTo.trim(), +1)}`);
+  if (f.hasAttachment) p.push('has:attachment');
+  if (f.folderId?.trim()) p.push(`inid:${f.folderId.trim()}`);
+  if (f.unread === true) p.push('is:unread');
+  else if (f.unread === false) p.push('is:read');
+  if (f.flagged === true) p.push('is:flagged');
+  else if (f.flagged === false) p.push('is:unflagged');
+  return p.join(' ');
+}
 
 @Injectable()
 export class ZimbraService implements MailProvider {
@@ -474,8 +500,13 @@ export class ZimbraService implements MailProvider {
     }
   }
 
-  async searchStructured(): Promise<ProviderMessagePage> {
-    throw new Error('searchStructured not yet implemented');
+  async searchStructured(
+    s: MailSession,
+    filter: MailSearchFilter,
+    limit = 50,
+    offset = 0,
+  ): Promise<ProviderMessagePage> {
+    return this.searchMessages(s, buildZimbraQuery(filter), limit, offset);
   }
 
   // ─── Send / Modify ───────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+export type { MailSearchFilter } from './mail-search-filter';
+
 /**
  * What a folder holds. Task 9 adjustment (Task 6 controller ruling): Task 5
  * carried Zimbra's own `view` string ('message' | 'contact' | 'appointment' |

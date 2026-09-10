@@ -195,6 +195,10 @@ export class MemoryMailProvider implements MailProvider {
     return { messages, total, more: offset + limit < total };
   }
 
+  async searchStructured(): Promise<ProviderMessagePage> {
+    throw new Error('searchStructured not yet implemented');
+  }
+
   async markRead(s: MailSession, messageId: string, read: boolean): Promise<void> {
     const mailbox = this.mb(s);
     const message = mailbox.messages.find((m) => m.id === messageId);

@@ -4,6 +4,7 @@ import {
   ProviderEvent, ProviderEventDetail, ProviderFreeBusy, ProviderAuthResult,
   MailProviderCapabilities, ProviderAddress, ProviderIdentity, ProviderSignature,
 } from './provider-types';
+import { MailSearchFilter } from './mail-search-filter';
 
 export interface SendMessagePayload {
   to: string[]; cc?: string[]; bcc?: string[];
@@ -63,6 +64,7 @@ export interface MailProvider {
   getMessages(s: MailSession, folderId: string, limit?: number, offset?: number): Promise<ProviderMessagePage>;
   getMessage(s: MailSession, messageId: string): Promise<ProviderMessage>;
   searchMessages(s: MailSession, query: string, limit?: number, offset?: number): Promise<ProviderMessagePage>;
+  searchStructured(s: MailSession, filter: MailSearchFilter, limit?: number, offset?: number): Promise<ProviderMessagePage>;
   sendMessage(
     s: MailSession, payload: SendMessagePayload,
     attachmentAids?: string[],

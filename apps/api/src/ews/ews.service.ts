@@ -571,6 +571,10 @@ export class EwsService implements MailProvider {
     return this.parseMessagePage(xml, off, '');
   }
 
+  async searchStructured(): Promise<ProviderMessagePage> {
+    throw new Error('searchStructured not yet implemented');
+  }
+
   /**
    * GetItem for one message, HTML body, no MIME (spec §5.3). Parses the body,
    * full address lists, and attachment metadata. An unknown id comes back as

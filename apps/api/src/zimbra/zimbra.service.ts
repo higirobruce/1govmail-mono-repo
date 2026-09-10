@@ -474,6 +474,10 @@ export class ZimbraService implements MailProvider {
     }
   }
 
+  async searchStructured(): Promise<ProviderMessagePage> {
+    throw new Error('searchStructured not yet implemented');
+  }
+
   // ─── Send / Modify ───────────────────────────────────────────────────────────
 
   /**

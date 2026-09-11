@@ -32,17 +32,46 @@ function getToken(): string | null {
 
 async function request<T>(
   path: string,
-  options: RequestInit = {},
+  options: RequestInit & { timeoutMs?: number } = {},
 ): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
+  const { timeoutMs, signal: callerSignal, ...init } = options;
+
+  // Optional client-side timeout. Without it, a request that hangs at the
+  // network level (the server accepts the connection but never responds) leaves
+  // the caller's await pending forever — an infinite spinner with no error,
+  // because fetch itself has no default timeout. With `timeoutMs` we abort and
+  // throw a clean error the caller's catch can surface. Composes with a
+  // caller-supplied AbortSignal (e.g. semantic search cancels on unmount).
+  let controller: AbortController | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  if (timeoutMs) {
+    controller = new AbortController();
+    timer = setTimeout(() => { timedOut = true; controller!.abort(); }, timeoutMs);
+    if (callerSignal) {
+      if (callerSignal.aborted) controller.abort();
+      else callerSignal.addEventListener('abort', () => controller!.abort(), { once: true });
+    }
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal: controller ? controller.signal : callerSignal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
+  } catch (err: any) {
+    if (timedOut) throw new Error('Request timed out — please try again');
+    throw err; // caller-initiated abort or a genuine network error
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 
   if (!res.ok) {
     // Only hard-redirect to /login when a token WAS sent and the server
@@ -281,7 +310,7 @@ export const api = {
     },
     search: (query: string, limit = 50, offset = 0) => {
       if (USE_MOCK) return delay({ messages: MOCK_MESSAGES.filter(m => JSON.stringify(m).toLowerCase().includes(query.toLowerCase())), total: 0, offset: 0, limit: 50, hasMore: false });
-      return request<any>(`/mail/search?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`);
+      return request<any>(`/mail/search?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`, { timeoutMs: 20000 });
     },
     /** Structured (field-by-field) search — POST /mail/search/advanced. Same response shape as `search`. */
     searchAdvanced: (filter: MailSearchFilter, limit = 50, offset = 0) => {
@@ -289,6 +318,7 @@ export const api = {
       return request<any>('/mail/search/advanced', {
         method: 'POST',
         body: JSON.stringify({ ...filter, limit, offset }),
+        timeoutMs: 20000,
       });
     },
     /** Semantic (vector) mail search — phase 4. Same response shape as `search`. */

@@ -338,6 +338,13 @@ export default function MailPage() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchTotal, setSearchTotal]     = useState(0);
   const searchOffsetRef = useRef(0);
+  // Synchronous "a search request is in flight" guard. The infinite-scroll
+  // IntersectionObserver can fire onLoadMore several times before the async
+  // setLoadingMoreSearch(true) re-renders, which used to launch a burst of
+  // concurrent load-more requests that saturated the provider connection pool
+  // and made every search hang. A ref flips synchronously, so re-entrant
+  // load-more calls are rejected immediately regardless of setState timing.
+  const searchInFlightRef = useRef(false);
   const [searchHasMore, setSearchHasMore] = useState(false);
   const [loadingSearch, setLoadingSearch]     = useState(false);
   const [loadingMoreSearch, setLoadingMoreSearch] = useState(false);
@@ -1146,6 +1153,7 @@ export default function MailPage() {
 
   const runSearch = useCallback(async (query: string, reset = true) => {
     if (!query.trim()) return;
+    searchInFlightRef.current = true;
     if (reset) {
       searchOffsetRef.current = 0;
       setSearchResults([]);
@@ -1167,6 +1175,7 @@ export default function MailPage() {
     } catch (err: any) {
       toast.error('Search failed', { description: err?.message });
     } finally {
+      searchInFlightRef.current = false;
       setLoadingSearch(false);
       setLoadingMoreSearch(false);
     }
@@ -1185,6 +1194,7 @@ export default function MailPage() {
   // searchResults/searchTotal/searchHasMore state so results render in the
   // existing list.
   const runAdvancedSearch = useCallback(async (filter: MailSearchFilter, reset = true) => {
+    searchInFlightRef.current = true;
     if (reset) {
       searchOffsetRef.current = 0;
       setSearchResults([]);
@@ -1206,6 +1216,7 @@ export default function MailPage() {
     } catch (err: any) {
       toast.error('Search failed', { description: err?.message });
     } finally {
+      searchInFlightRef.current = false;
       setLoadingSearch(false);
       setLoadingMoreSearch(false);
     }
@@ -1619,7 +1630,10 @@ export default function MailPage() {
             onSelect={openMessage}
             onPrefetch={prefetchMessage}
             onLoadMore={() => {
-              if (loadingMoreSearch || !searchHasMore) return;
+              // searchInFlightRef flips synchronously, so a burst of observer
+              // callbacks can't launch concurrent load-more requests before the
+              // loadingMoreSearch state has re-rendered.
+              if (searchInFlightRef.current || loadingMoreSearch || !searchHasMore) return;
               if (advancedFilter) runAdvancedSearch(advancedFilter, false);
               else runSearch(searchQuery, false);
             }}

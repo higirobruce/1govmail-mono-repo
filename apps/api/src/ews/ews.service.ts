@@ -569,8 +569,50 @@ export class EwsService implements MailProvider {
   ): Promise<ProviderMessagePage> {
     const off = this.normOffset(offset);
     const max = this.normLimit(limit);
-    const xml = await this.callWithRetry(session, searchItemEnvelope(query, off, max));
-    return this.parseMessagePage(xml, off, '');
+    const folderIds = await this.searchFolderIds(session);
+    // One window covering [0, off+max) per folder, because the merge re-sorts
+    // across folders — a per-folder Offset would slice each folder separately
+    // and produce the wrong global page.
+    const xml = await this.callWithRetry(session, searchItemEnvelope(query, 0, off + max, folderIds));
+    return this.parseMergedMessagePage(xml, folderIds, off, max);
+  }
+
+  /**
+   * Every mail folder id in the mailbox, for a mailbox-wide search.
+   *
+   * `FindItem` cannot recurse (no Deep traversal), so "search the whole
+   * mailbox" has to name each folder explicitly — scoping to `msgfolderroot`
+   * silently returns zero because that container holds no mail. Enumerating the
+   * real folders (rather than a fixed list of distinguished ids) also covers the
+   * user's own custom folders.
+   */
+  private async searchFolderIds(session: MailSession): Promise<string[]> {
+    const folders = await this.getFolders(session);
+    return folders.filter((f) => f.kind === 'mail' && f.id).map((f) => f.id);
+  }
+
+  /**
+   * Merge the one-FindItemResponseMessage-per-folder answer into a single page.
+   * Responses come back in the order the folders were requested, which is how
+   * each item recovers the folder it came from (the summary field set does not
+   * carry ParentFolderId).
+   */
+  private parseMergedMessagePage(
+    xml: string, folderIds: string[], offset: number, limit: number,
+  ): ProviderMessagePage {
+    const doc = parseEws(xml);
+    const responses = toArray(this.responseMessageNode(doc, 'FindItemResponse', 'FindItemResponseMessage'));
+    const all: ProviderMessage[] = [];
+    let total = 0;
+    responses.forEach((rm: any, i: number) => {
+      const root = rm?.RootFolder;
+      const items = this.messageItemsOf(root?.Items);
+      all.push(...items.map((it) => this.mapMessageSummary(it, folderIds[i] ?? '')));
+      total += this.numOr(root?.['@_TotalItemsInView'], items.length);
+    });
+    all.sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+    const messages = all.slice(offset, offset + limit);
+    return { messages, total, more: offset + messages.length < total };
   }
 
   /**
@@ -585,8 +627,16 @@ export class EwsService implements MailProvider {
     const off = this.normOffset(offset);
     const max = this.normLimit(limit);
     const aqs = buildAqsQuery(filter);
-    const xml = await this.callWithRetry(session, structuredSearchEnvelope(aqs, filter.folderId, off, max));
-    return this.parseMessagePage(xml, off, filter.folderId ?? '');
+    // An explicit folder is a single-folder FindItem and pages natively.
+    if (filter.folderId) {
+      const xml = await this.callWithRetry(session, structuredSearchEnvelope(aqs, filter.folderId, off, max));
+      return this.parseMessagePage(xml, off, filter.folderId);
+    }
+    // No folder chosen = whole mailbox, which FindItem can only do by naming
+    // every folder (see searchFolderIds).
+    const folderIds = await this.searchFolderIds(session);
+    const xml = await this.callWithRetry(session, structuredSearchEnvelope(aqs, folderIds, 0, off + max));
+    return this.parseMergedMessagePage(xml, folderIds, off, max);
   }
 
   /**

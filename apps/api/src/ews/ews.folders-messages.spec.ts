@@ -21,6 +21,7 @@ const GET_ITEM_NOTFOUND = fixture('getitem.notfound.xml');
 const FIND_ITEM_MEETING = fixture('finditem-meeting.success.xml');
 const GET_ITEM_MEETING = fixture('getitem-meeting.success.xml');
 const CONV_TOPIC = fixture('finditem-conversationtopic.success.xml');
+const MULTI_FOLDER = fixture('finditem-multifolder.success.xml');
 const CREATE_FOLDER = fixture('createfolder.success.xml');
 const DELETE_FOLDER = fixture('deletefolder.success.xml');
 const UPDATE_FOLDER = fixture('updatefolder.success.xml');
@@ -198,14 +199,23 @@ describe('EwsService folders + messages (Task 4)', () => {
   });
 
   describe('searchMessages', () => {
-    it('sends a FindItem with an AQS QueryString', async () => {
-      const { t, svc } = svcWith(SEARCH_ITEM);
+    it('enumerates the mail folders first, then sends a FindItem scoped to them', async () => {
+      // FindItem has no deep traversal, so a mailbox-wide search must name every
+      // folder: scoping to msgfolderroot searches an empty container and always
+      // returns zero (this shipped broken and returned nothing on real Exchange).
+      const { t, svc } = svcWith(FIND_FOLDER, SEARCH_ITEM);
       await svc.searchMessages(SESSION, 'invoice');
-      expect(t.calls[0].body).toContain('<m:QueryString>invoice</m:QueryString>');
+
+      expect(t.calls[0].body).toContain('<m:FindFolder Traversal="Deep">');
+      const search = t.calls[1].body;
+      expect(search).toContain('<m:QueryString>invoice</m:QueryString>');
+      expect(search).toContain('<t:FolderId Id="AAA-Inbox="/>');
+      expect(search).toContain('<t:FolderId Id="AAA-Sent="/>');
+      expect(search).not.toContain('msgfolderroot');
     });
 
     it('returns a page of ProviderMessage from the search hits', async () => {
-      const { svc } = svcWith(SEARCH_ITEM);
+      const { svc } = svcWith(FIND_FOLDER, SEARCH_ITEM);
       const page = await svc.searchMessages(SESSION, 'invoice');
       expect(page.total).toBe(1);
       expect(page.more).toBe(false);
@@ -236,6 +246,44 @@ describe('EwsService folders + messages (Task 4)', () => {
       const page = await svc.searchStructured(SESSION, { keyword: 'invoice' });
       expect(page.total).toBe(1);
       expect(page.messages[0]).toMatchObject({ id: 'SEARCH-1==', subject: 'Invoice 2026-0042' });
+    });
+  });
+
+  describe('searchStructured (advanced search)', () => {
+    it('searches the WHOLE mailbox by naming every folder, never msgfolderroot', async () => {
+      // The bug this covers: scoping to msgfolderroot made every mailbox-wide
+      // advanced search return zero on real Exchange, because FindItem cannot
+      // recurse and that container holds no mail.
+      const { t, svc } = svcWith(FIND_FOLDER, MULTI_FOLDER);
+      await svc.searchStructured(SESSION, { from: 'alice@minaffet.gov.rw' });
+
+      expect(t.calls[0].body).toContain('<m:FindFolder Traversal="Deep">');
+      const search = t.calls[1].body;
+      expect(search).toContain('from:&quot;alice@minaffet.gov.rw&quot;');
+      expect(search).toContain('<t:FolderId Id="AAA-Inbox="/>');
+      expect(search).toContain('<t:FolderId Id="AAA-Sent="/>');
+      expect(search).not.toContain('msgfolderroot');
+    });
+
+    it('merges the per-folder responses newest-first and sums their totals', async () => {
+      const { svc } = svcWith(FIND_FOLDER, MULTI_FOLDER);
+      const page = await svc.searchStructured(SESSION, { from: 'x@y.rw' });
+
+      // one hit from each folder, ordered across folders by date
+      expect(page.messages.map((m) => m.id)).toEqual(['SENT-1==', 'INBOX-1==']);
+      expect(page.total).toBe(2);
+      // each item recovers the folder it came from via response order
+      expect(page.messages[0].folderId).toBe('AAA-Sent=');
+      expect(page.messages[1].folderId).toBe('AAA-Inbox=');
+    });
+
+    it('keeps a single-folder search to one FindItem, with no folder enumeration', async () => {
+      const { t, svc } = svcWith(SEARCH_ITEM);
+      await svc.searchStructured(SESSION, { from: 'a@b.rw', folderId: 'AAA-Inbox=' });
+
+      expect(t.calls).toHaveLength(1);
+      expect(t.calls[0].body).toContain('<t:FolderId Id="AAA-Inbox="/>');
+      expect(t.calls[0].body).not.toContain('FindFolder');
     });
   });
 

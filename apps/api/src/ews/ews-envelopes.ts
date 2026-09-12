@@ -161,15 +161,43 @@ export function findItemEnvelope(folderId: string, offset: number, max: number):
  * query passes straight through (AQS handles bare words). Scoped to the whole
  * mail tree via `msgfolderroot`.
  */
-export function searchItemEnvelope(query: string, offset: number, max: number): string {
-  const q = xmlEscape(query);
+export function searchItemEnvelope(
+  query: string,
+  offset: number,
+  max: number,
+  folderIds?: string | string[],
+): string {
+  return aqsFindItem(query, folderIds, offset, max);
+}
+
+/**
+ * `<m:ParentFolderIds>` for a search.
+ *
+ * `FindItem` has NO deep traversal (its Traversal attribute only accepts
+ * Shallow/SoftDeleted/Associated — unlike FindFolder), so scoping a search to
+ * `msgfolderroot` searches a CONTAINER that holds no mail and always returns
+ * zero. A mailbox-wide search must therefore name every folder explicitly;
+ * FindItem accepts many ParentFolderIds and answers with one
+ * FindItemResponseMessage per folder, in request order.
+ *
+ * The `msgfolderroot` fallback is kept only for the degenerate case of an empty
+ * list, so a caller that cannot enumerate folders still produces valid SOAP.
+ */
+function parentFolderIds(folderIds?: string | string[]): string {
+  const ids = (Array.isArray(folderIds) ? folderIds : folderIds ? [folderIds] : []).filter(Boolean);
+  const inner = ids.length
+    ? ids.map((id) => `<t:FolderId Id="${xmlEscape(id)}"/>`).join('')
+    : '<t:DistinguishedFolderId Id="msgfolderroot"/>';
+  return `<m:ParentFolderIds>${inner}</m:ParentFolderIds>`;
+}
+
+/** Shared AQS FindItem builder for the keyword and structured search paths. */
+function aqsFindItem(query: string, folderIds: string | string[] | undefined, offset: number, max: number): string {
   const body =
     '<m:FindItem Traversal="Shallow">' +
     findItemPrelude(offset, max) +
-    `<m:QueryString>${q}</m:QueryString>` +
-    '<m:ParentFolderIds>' +
-    '<t:DistinguishedFolderId Id="msgfolderroot"/>' +
-    '</m:ParentFolderIds>' +
+    `<m:QueryString>${xmlEscape(query)}</m:QueryString>` +
+    parentFolderIds(folderIds) +
     '</m:FindItem>';
   return soapEnvelope(body);
 }
@@ -213,20 +241,12 @@ export function buildAqsQuery(f: MailSearchFilter): string {
  * itself. Same paging/sort prelude as the other FindItem envelopes.
  */
 export function structuredSearchEnvelope(
-  aqs: string, folderId: string | undefined, offset: number, max: number,
+  aqs: string,
+  folderIds: string | string[] | undefined,
+  offset: number,
+  max: number,
 ): string {
-  const scope = folderId
-    ? `<t:FolderId Id="${xmlEscape(folderId)}"/>`
-    : '<t:DistinguishedFolderId Id="msgfolderroot"/>';
-  const body =
-    '<m:FindItem Traversal="Shallow">' +
-    findItemPrelude(offset, max) +
-    `<m:QueryString>${xmlEscape(aqs)}</m:QueryString>` +
-    '<m:ParentFolderIds>' +
-    scope +
-    '</m:ParentFolderIds>' +
-    '</m:FindItem>';
-  return soapEnvelope(body);
+  return aqsFindItem(aqs, folderIds, offset, max);
 }
 
 /**

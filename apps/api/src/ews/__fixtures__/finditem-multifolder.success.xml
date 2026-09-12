@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <m:FindItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <!-- One FindItemResponseMessage per requested ParentFolderId, in request order. -->
+        <m:FindItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="1" TotalItemsInView="1" IncludesLastItemInRange="true">
+            <t:Items>
+              <t:Message>
+                <t:ItemId Id="INBOX-1==" ChangeKey="K1"/>
+                <t:Subject>older inbox hit</t:Subject>
+                <t:DateTimeReceived>2026-09-01T08:00:00Z</t:DateTimeReceived>
+                <t:Size>100</t:Size>
+                <t:HasAttachments>false</t:HasAttachments>
+                <t:From><t:Mailbox><t:EmailAddress>a@minaffet.gov.rw</t:EmailAddress></t:Mailbox></t:From>
+                <t:IsRead>true</t:IsRead>
+              </t:Message>
+            </t:Items>
+          </m:RootFolder>
+        </m:FindItemResponseMessage>
+        <m:FindItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="1" TotalItemsInView="1" IncludesLastItemInRange="true">
+            <t:Items>
+              <t:Message>
+                <t:ItemId Id="SENT-1==" ChangeKey="K2"/>
+                <t:Subject>newer sent hit</t:Subject>
+                <t:DateTimeReceived>2026-09-05T09:30:00Z</t:DateTimeReceived>
+                <t:Size>200</t:Size>
+                <t:HasAttachments>false</t:HasAttachments>
+                <t:From><t:Mailbox><t:EmailAddress>b@minaffet.gov.rw</t:EmailAddress></t:Mailbox></t:From>
+                <t:IsRead>true</t:IsRead>
+              </t:Message>
+            </t:Items>
+          </m:RootFolder>
+        </m:FindItemResponseMessage>
+      </m:ResponseMessages>
+    </m:FindItemResponse>
+  </s:Body>
+</s:Envelope>

@@ -1542,8 +1542,11 @@ describe('MailService.searchStructured', () => {
   function makeService() {
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue(user) },
-      folder: { findFirst: jest.fn() },
+      folder: { findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
       message: { upsert: jest.fn() },
+      // persistSearchResults batches its writes; emulate the batch faithfully
+      // so the mocked upserts still resolve in order.
+      $transaction: jest.fn((ops: any[]) => Promise.all(ops)),
     } as unknown as PrismaService;
     const zimbra = {
       searchStructured: jest.fn(),
@@ -1576,11 +1579,11 @@ describe('MailService.searchStructured', () => {
 
   it('resolves filter.folderId from the DB id to the provider zimbraId before calling the provider (C1)', async () => {
     const { service, prisma, zimbra } = makeService();
+    // folderId DB-id → zimbraId resolution
     prisma.folder.findFirst
-      // folderId DB-id → zimbraId resolution
-      .mockResolvedValueOnce({ id: 'inbox-id', zimbraId: 'zf-2', userId: 'u1', path: '/Inbox' })
-      // persistSearchResults' per-message folder lookup (keyed by zimbraId)
       .mockResolvedValueOnce({ id: 'inbox-id', zimbraId: 'zf-2', userId: 'u1', path: '/Inbox' });
+    // persistSearchResults resolves folders for the whole page in one read
+    prisma.folder.findMany.mockResolvedValue([{ id: 'inbox-id', zimbraId: 'zf-2' }]);
     const providerMessage = {
       id: 'z1', conversationId: 'c1', folderId: 'zf-2',
       subject: 'Budget', snippet: 'Q3 numbers',
@@ -1642,5 +1645,103 @@ describe('MailService.searchStructured', () => {
     await service.searchStructured('u1', filter, 25, 0);
 
     expect(zimbra.searchStructured).toHaveBeenCalledWith(expect.anything(), filter, 25, 0);
+  });
+});
+
+
+describe('MailService search-result persistence (round-trip batching)', () => {
+  const user = {
+    id: 'u1', email: 'u@example.com', zimbraHost: 'mail.example.com',
+    authToken: 'tok', csrfToken: null, provider: 'zimbra',
+    tokenExpiry: new Date(Date.now() + 60_000),
+  };
+
+  const providerMessage = (id: string, folderId: string, subject: string) => ({
+    id, conversationId: 'c1', folderId, subject, snippet: 's',
+    from: { email: 'a@b.rw', name: 'A' }, to: [{ email: 'u@example.com' }], cc: [], bcc: [],
+    receivedAt: new Date('2026-09-01'), size: 10,
+    isRead: false, isFlagged: false, hasAttachments: false, isDraft: false, tags: [],
+  });
+
+  function makeService(messages: any[]) {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      folder: {
+        findFirst: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'f-inbox', zimbraId: '2' },
+          { id: 'f-sent', zimbraId: '5' },
+        ]),
+      },
+      message: {
+        upsert: jest.fn((args: any) => Promise.resolve({
+          id: 'db-' + args.where.userId_zimbraId.zimbraId,
+          zimbraId: args.where.userId_zimbraId.zimbraId,
+        })),
+      },
+      $transaction: jest.fn((ops: any[]) => Promise.all(ops)),
+    } as unknown as PrismaService;
+    const zimbra = {
+      searchMessages: jest.fn().mockResolvedValue({ messages, total: messages.length, more: false }),
+    } as unknown as ZimbraService;
+    const service = new MailService(prisma, makeResolver(zimbra), {} as NotificationsService, {} as TasksService);
+    return { service, prisma: prisma as any, zimbra: zimbra as any };
+  }
+
+  it('reads folders once and batches every write into a single transaction', async () => {
+    const messages = [
+      providerMessage('z1', '2', 'one'),
+      providerMessage('z2', '5', 'two'),
+      providerMessage('z3', '2', 'three'),
+    ];
+    const { service, prisma } = makeService(messages);
+
+    const out = await service.searchMessages('u1', 'budget', 50, 0);
+
+    // ONE folder read for the whole page — never one per message (the old
+    // shape cost ~2 sequential round-trips per result).
+    expect(prisma.folder.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.folder.findFirst).not.toHaveBeenCalled();
+    // ONE batched write for the whole page.
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(3);
+    // Provider order preserved.
+    expect(out.messages.map((m: any) => m.zimbraId)).toEqual(['z1', 'z2', 'z3']);
+    expect(out.total).toBe(3);
+  });
+
+  it('never selects message bodies into a search page', async () => {
+    const { service, prisma } = makeService([providerMessage('z1', '2', 'one')]);
+
+    await service.searchMessages('u1', 'budget', 50, 0);
+
+    const selected = prisma.message.upsert.mock.calls[0][0].select;
+    expect(selected).toBeDefined();
+    expect(selected.bodyHtml).toBeUndefined();
+    expect(selected.bodyText).toBeUndefined();
+    expect(selected.subject).toBe(true);
+  });
+
+  it('degrades a message whose folder is not synced to an ephemeral row instead of dropping it', async () => {
+    const { service, prisma } = makeService([
+      providerMessage('z1', '2', 'synced'),
+      providerMessage('z9', '999', 'unsynced-folder'),
+    ]);
+
+    const out = await service.searchMessages('u1', 'budget', 50, 0);
+
+    expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(1); // only the synced one is written
+    expect(out.messages).toHaveLength(2);                          // but both are returned
+    expect(out.messages[1]).toMatchObject({ id: 'z9', zimbraId: 'z9' });
+  });
+
+  it('costs zero DB round-trips when the provider returns no results', async () => {
+    const { service, prisma } = makeService([]);
+
+    const out = await service.searchMessages('u1', 'nothing-matches', 50, 0);
+
+    expect(prisma.folder.findMany).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ messages: [], total: 0, hasMore: false });
   });
 });

@@ -10,7 +10,7 @@ import { matchSenderRule, type SenderRuleLike } from './sender-rule-matcher';
 import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
 import { inlineSignatureImages } from '../common/signature-images';
 import { MailSearchFilter, isEmptyFilter } from '../provider/mail-search-filter';
-import { ProviderMessagePage } from '../provider/provider-types';
+import { ProviderMessage, ProviderMessagePage } from '../provider/provider-types';
 
 const CARD_WINDOWS = ['today', '24h', 'week'] as const;
 type CardWindow = (typeof CARD_WINDOWS)[number];
@@ -67,6 +67,40 @@ interface WindowCardRow {
 // this app's own Sidebar (apps/web/components/layout/Sidebar.tsx) already
 // treats both as "the spam folder", so enforcement must match both too.
 const SPAM_FOLDER_PATHS = ['/Junk', '/Spam'];
+
+/**
+ * Metadata-only column set for message rows returned to a list view (folder
+ * listing and search results). Bodies are deliberately excluded: `bodyHtml`
+ * with embedded base64 inline images, multiplied by a 50-row page, produces a
+ * response big enough to stall JSON.stringify (V8 string-length limit) and to
+ * take seconds to ship to the client.
+ */
+const MESSAGE_LIST_SELECT = {
+  id: true,
+  userId: true,
+  folderId: true,
+  zimbraId: true,
+  conversationId: true,
+  subject: true,
+  snippet: true,
+  fromEmail: true,
+  fromName: true,
+  toRecipients: true,
+  ccRecipients: true,
+  bccRecipients: true,
+  replyTo: true,
+  isRead: true,
+  isStarred: true,
+  isDraft: true,
+  hasAttachments: true,
+  flags: true,
+  tags: true,
+  sentAt: true,
+  receivedAt: true,
+  syncedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 // Browsers cannot load cid: URLs — replace with src="" so the image is skipped
 // silently instead of rendering a broken-image icon. Applied to embedPending
@@ -267,35 +301,7 @@ export class MailService {
             hasAttachments: m.hasAttachments,
             receivedAt:     m.receivedAt,
           },
-          // Metadata only — the list view never needs bodies, and bodyHtml
-          // with embedded base64 images for 50 messages at once can exceed
-          // V8's string length limit in JSON.stringify.
-          select: {
-            id: true,
-            userId: true,
-            folderId: true,
-            zimbraId: true,
-            conversationId: true,
-            subject: true,
-            snippet: true,
-            fromEmail: true,
-            fromName: true,
-            toRecipients: true,
-            ccRecipients: true,
-            bccRecipients: true,
-            replyTo: true,
-            isRead: true,
-            isStarred: true,
-            isDraft: true,
-            hasAttachments: true,
-            flags: true,
-            tags: true,
-            sentAt: true,
-            receivedAt: true,
-            syncedAt: true,
-            createdAt: true,
-            updatedAt: true,
-          },
+          select: MESSAGE_LIST_SELECT,
         });
       }),
     );
@@ -661,62 +667,95 @@ export class MailService {
   ) {
     const { messages, total, more } = page;
 
-    const saved: any[] = [];
-    for (const m of messages) {
+    // Nothing to persist: skip the folder read entirely so an empty result set
+    // costs zero DB round-trips.
+    if (messages.length === 0) {
+      return { messages: [] as any[], total, offset, limit, hasMore: more };
+    }
+
+    // One folder read for the whole page. This used to be a `findFirst` per
+    // message which, together with the per-message upsert below, cost ~2
+    // sequential round-trips per result — measured at 5.7s of a 7.7s search
+    // for a 50-result page.
+    const folders = await this.prisma.folder.findMany({
+      where: { userId },
+      select: { id: true, zimbraId: true },
+    });
+    const folderIdByZimbraId = new Map(folders.map((f) => [f.zimbraId, f.id]));
+
+    /** Shape returned for a result we cannot persist (folder not synced yet, or
+     *  its write failed): `id` is the provider id so getMessage's fallback path
+     *  can still open it. Mirrors the persisted row's metadata-only shape. */
+    const ephemeral = (m: ProviderMessage) => ({
+      id:             m.id,
+      zimbraId:       m.id,
+      subject:        m.subject,
+      snippet:        m.snippet,
+      fromEmail:      m.from.email,
+      fromName:       m.from.name ?? null,
+      toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+      isRead:         m.isRead,
+      isStarred:      m.isFlagged,
+      hasAttachments: m.hasAttachments,
+      receivedAt:     m.receivedAt,
+      // Tag sync is not implemented — the DB rows carry [] too, and the
+      // provider's parsed `tags` are deliberately not surfaced here so
+      // the ephemeral and persisted shapes stay identical.
+      tags:           [],
+    });
+
+    const upsertArgs = (m: ProviderMessage, folderId: string) => ({
+      where:  { userId_zimbraId: { userId, zimbraId: m.id } },
+      update: { isRead: m.isRead, isStarred: m.isFlagged, syncedAt: new Date() },
+      create: {
+        userId,
+        folderId,
+        zimbraId:       m.id,
+        conversationId: m.conversationId,
+        subject:        m.subject,
+        snippet:        m.snippet,
+        fromEmail:      m.from.email,
+        fromName:       m.from.name ?? null,
+        toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+        isRead:         m.isRead,
+        isStarred:      m.isFlagged,
+        hasAttachments: m.hasAttachments,
+        receivedAt:     m.receivedAt,
+      },
+      select: MESSAGE_LIST_SELECT,
+    });
+
+    const persistable = messages.flatMap((m) => {
+      const folderId = folderIdByZimbraId.get(m.folderId);
+      return folderId ? [{ m, folderId }] : [];
+    });
+
+    // Batch every write into ONE transaction round-trip instead of one per row.
+    const rowByProviderId = new Map<string, any>();
+    if (persistable.length > 0) {
       try {
-        const zimbraId = m.id;
-
-        // Find the synced folder in DB (may be absent if not yet synced)
-        const folder = await this.prisma.folder.findFirst({
-          where: { userId, zimbraId: m.folderId },
-        });
-
-        if (folder) {
-          // Persist / update so the message is fetchable by DB id later
-          const msg = await this.prisma.message.upsert({
-            where:  { userId_zimbraId: { userId, zimbraId } },
-            update: { isRead: m.isRead, isStarred: m.isFlagged, syncedAt: new Date() },
-            create: {
-              userId,
-              folderId:      folder.id,
-              zimbraId,
-              conversationId: m.conversationId,
-              subject:        m.subject,
-              snippet:        m.snippet,
-              fromEmail:      m.from.email,
-              fromName:       m.from.name ?? null,
-              toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
-              isRead:         m.isRead,
-              isStarred:      m.isFlagged,
-              hasAttachments: m.hasAttachments,
-              receivedAt:     m.receivedAt,
-            },
-          });
-          saved.push(msg);
-        } else {
-          // Folder not synced yet — return a lightweight ephemeral result
-          saved.push({
-            id:            zimbraId, // use zimbraId as id so getMessage falls back correctly
-            zimbraId,
-            subject:        m.subject,
-            snippet:        m.snippet,
-            fromEmail:      m.from.email,
-            fromName:       m.from.name ?? null,
-            toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
-            isRead:         m.isRead,
-            isStarred:      m.isFlagged,
-            hasAttachments: m.hasAttachments,
-            receivedAt:     m.receivedAt,
-            // Tag sync is not implemented — the DB rows carry [] too, and the
-            // provider's parsed `tags` are deliberately not surfaced here so
-            // the ephemeral and persisted shapes stay identical.
-            tags:           [],
-          });
-        }
+        const rows = await this.prisma.$transaction(
+          persistable.map(({ m, folderId }) => this.prisma.message.upsert(upsertArgs(m, folderId))),
+        );
+        for (const row of rows) rowByProviderId.set(row.zimbraId, row);
       } catch (err: any) {
-        this.logger.error(`Search upsert failed for zimbraId=${m.id}: ${err?.message}`);
+        // A single bad row aborts the whole transaction, so fall back to
+        // per-row writes: one failure must not cost the user every result.
+        this.logger.error(`Search batch upsert failed (${err?.message}) — falling back to per-row writes`);
+        for (const { m, folderId } of persistable) {
+          try {
+            const row = await this.prisma.message.upsert(upsertArgs(m, folderId));
+            rowByProviderId.set(row.zimbraId, row);
+          } catch (rowErr: any) {
+            this.logger.error(`Search upsert failed for zimbraId=${m.id}: ${rowErr?.message}`);
+          }
+        }
       }
     }
+
+    // Provider order is the result order; anything unpersisted degrades to an
+    // ephemeral row rather than vanishing from the page.
+    const saved = messages.map((m) => rowByProviderId.get(m.id) ?? ephemeral(m));
 
     return { messages: saved, total, offset, limit, hasMore: more };
   }

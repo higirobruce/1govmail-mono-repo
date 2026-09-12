@@ -850,7 +850,11 @@ export class ZimbraService implements MailProvider {
       const contentType: string = response.headers['content-type'] ?? 'image/png';
       return { data: Buffer.from(response.data as ArrayBuffer), contentType };
     } catch (err: any) {
-      this.logger.error(`downloadZimbraPath failed for path=${relativePath}: ${err?.message}`);
+      // WARN, not ERROR: a body can legitimately reference an image that is
+      // gone, forbidden, or malformed, and every caller already degrades
+      // gracefully (the inline-image embedder leaves the original URL in
+      // place). Logging it at ERROR buried genuine failures in log noise.
+      this.logger.warn(`downloadZimbraPath failed for path=${relativePath}: ${err?.message}`);
       throw new BadGatewayException('Failed to download Zimbra resource');
     }
   }

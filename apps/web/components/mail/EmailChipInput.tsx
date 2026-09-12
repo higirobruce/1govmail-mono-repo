@@ -3,12 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import { Label } from '@/components/ui/label';
-import { api } from '@/lib/api';
-
-interface ContactSuggestion {
-  email: string;
-  display: string;
-}
+import { useContactSuggestions, type ContactSuggestion } from '@/hooks/useContactSuggestions';
 
 export function EmailChipInput({
   label,
@@ -24,41 +19,18 @@ export function EmailChipInput({
   autoFocus?: boolean;
 }) {
   const [input, setInput] = useState('');
-  const [suggestions, setSuggestions] = useState<ContactSuggestion[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Shared with advanced search's single-address fields so both behave alike.
+  const { suggestions, loading: loadingSuggestions, clear } = useContactSuggestions(input, { exclude: value });
 
   useEffect(() => {
     if (autoFocus) inputRef.current?.focus();
   }, [autoFocus]);
 
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (input.trim().length < 2) {
-      setSuggestions([]);
-      setActiveIdx(-1);
-      setLoadingSuggestions(false);
-      return;
-    }
-    setLoadingSuggestions(true);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const results = await api.contacts.autocomplete(input.trim());
-        setSuggestions(results.filter((r) => !value.includes(r.email)));
-      } catch {
-        setSuggestions([]);
-      } finally {
-        setLoadingSuggestions(false);
-        setActiveIdx(-1);
-      }
-    }, 280);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [input]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const closeSuggestions = () => { setSuggestions([]); setActiveIdx(-1); setLoadingSuggestions(false); };
+  const closeSuggestions = () => { clear(); setActiveIdx(-1); };
   const commit = (raw: string) => {
     const email = raw.trim().replace(/,+$/, '');
     if (email && !value.includes(email)) onChange([...value, email]);
@@ -99,7 +71,7 @@ export function EmailChipInput({
           ref={inputRef}
           type="text"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => { setInput(e.target.value); setActiveIdx(-1); }}
           onKeyDown={handleKey}
           onBlur={() => setTimeout(() => {
             if (!dropdownRef.current?.contains(document.activeElement)) {

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
+import { EmailAutocompleteInput } from './EmailAutocompleteInput';
 import type { MailSearchFilter } from '@/lib/api';
 
 interface FolderOption {
@@ -152,20 +153,20 @@ export default function AdvancedSearchPanel({
         </div>
         <div>
           <label className={fieldLabelCls} htmlFor="adv-search-from">From</label>
-          <Input
+          <EmailAutocompleteInput
             id="adv-search-from"
             value={state.from}
-            onChange={(e) => set('from', e.target.value)}
+            onChange={(v) => set('from', v)}
             placeholder="Sender"
             className={inputCls}
           />
         </div>
         <div>
           <label className={fieldLabelCls} htmlFor="adv-search-to">To</label>
-          <Input
+          <EmailAutocompleteInput
             id="adv-search-to"
             value={state.to}
-            onChange={(e) => set('to', e.target.value)}
+            onChange={(v) => set('to', v)}
             placeholder="Recipient"
             className={inputCls}
           />

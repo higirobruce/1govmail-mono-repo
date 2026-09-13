@@ -1,6 +1,6 @@
 import ms from 'ms';
 import { Readable } from 'stream';
-import { Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadGatewayException, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailSession } from '../provider/mail-session';
 import {
   ProviderFolder, ProviderMessage, ProviderMessagePage, ProviderContact,
@@ -39,6 +39,22 @@ import { EwsTransport, EwsServerBusyError, handleEwsError, inspectEwsXml } from 
  * `JWT_EXPIRES_IN` (see auth.module.ts). Used only when the env var is
  * missing or unparseable.
  */
+/**
+ * How many per-folder searches run at once during a mailbox-wide search.
+ * A mailbox-wide search is a fan-out (EWS cannot search several folders in one
+ * request — see `searchAcrossFolders`), so this is the knob between latency and
+ * how hard one user's search leans on the Exchange throttling policy.
+ */
+export const EWS_SEARCH_CONCURRENCY = 6;
+
+/**
+ * Upper bound on how many folders one mailbox-wide search will cover. A mailbox
+ * with hundreds of folders would otherwise turn a single search into hundreds of
+ * EWS requests. Hitting it is logged, never silent — folders beyond the cap are
+ * genuinely not searched.
+ */
+export const EWS_SEARCH_MAX_FOLDERS = 40;
+
 const DEFAULT_SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
@@ -560,25 +576,23 @@ export class EwsService implements MailProvider {
   }
 
   /**
-   * FindItem with an AQS QueryString across the mailbox (spec §5.3). Same
-   * pagination as getMessages; each hit's own ParentFolderId is preferred for
-   * `folderId` since a search spans folders.
+   * Mailbox-wide keyword search: one AQS FindItem per folder, merged (spec
+   * §5.3). Same pagination as getMessages; each hit carries the folder its own
+   * request was scoped to.
    */
   async searchMessages(
     session: MailSession, query: string, limit?: number, offset?: number,
   ): Promise<ProviderMessagePage> {
     const off = this.normOffset(offset);
     const max = this.normLimit(limit);
-    const folderIds = await this.searchFolderIds(session);
-    // One window covering [0, off+max) per folder, because the merge re-sorts
-    // across folders — a per-folder Offset would slice each folder separately
-    // and produce the wrong global page.
-    const xml = await this.callWithRetry(session, searchItemEnvelope(query, 0, off + max, folderIds));
-    return this.parseMergedMessagePage(xml, folderIds, off, max);
+    return this.searchAcrossFolders(
+      session, (folderId, windowSize) => searchItemEnvelope(query, 0, windowSize, folderId), off, max,
+    );
   }
 
   /**
-   * Every mail folder id in the mailbox, for a mailbox-wide search.
+   * Every mail folder id in the mailbox, for a mailbox-wide search, ordered so
+   * that a capped fan-out keeps the folders a user actually searches.
    *
    * `FindItem` cannot recurse (no Deep traversal), so "search the whole
    * mailbox" has to name each folder explicitly — scoping to `msgfolderroot`
@@ -587,39 +601,97 @@ export class EwsService implements MailProvider {
    * user's own custom folders.
    */
   private async searchFolderIds(session: MailSession): Promise<string[]> {
-    const folders = await this.getFolders(session);
-    return folders.filter((f) => f.kind === 'mail' && f.id).map((f) => f.id);
+    const folders = (await this.getFolders(session)).filter((f) => f.kind === 'mail' && f.id);
+    const rank = (type?: string) => (type === 'trash' || type === 'junk' ? 1 : 0);
+    return folders
+      .map((f, i) => ({ f, i }))
+      .sort((a, b) => rank(a.f.type) - rank(b.f.type) || a.i - b.i)
+      .map(({ f }) => f.id);
   }
 
   /**
-   * Merge the one-FindItemResponseMessage-per-folder answer into a single page.
-   * Responses come back in the order the folders were requested, which is how
-   * each item recovers the folder it came from (the summary field set does not
-   * carry ParentFolderId).
+   * Search every folder in the mailbox and merge the answers into one page.
+   *
+   * EWS offers no way to do this in a single request: `FindItem` cannot recurse
+   * (msgfolderroot holds no mail), and naming several ParentFolderIds at once is
+   * refused on a shared mailbox — `ErrorInvalidOperation: "Shared folder search
+   * cannot be performed on multiple folders."`, captured raw from live Exchange
+   * 15.2. So the fan-out IS the operation: one single-folder FindItem each, run
+   * a few at a time, merged and paged here.
+   *
+   * Each request asks for a full [0, offset+limit) window because the merge
+   * re-sorts across folders — a per-folder Offset would slice each folder
+   * separately and produce the wrong global page.
+   *
+   * One folder failing does not fail the search (a mailbox can hold a folder
+   * Exchange refuses to search); every folder failing does, so a broken mailbox
+   * is loud instead of looking empty.
    */
-  private parseMergedMessagePage(
-    xml: string, folderIds: string[], offset: number, limit: number,
-  ): ProviderMessagePage {
-    const doc = parseEws(xml);
-    const responses = toArray(this.responseMessageNode(doc, 'FindItemResponse', 'FindItemResponseMessage'));
-    const all: ProviderMessage[] = [];
-    let total = 0;
-    responses.forEach((rm: any, i: number) => {
-      const root = rm?.RootFolder;
-      const items = this.messageItemsOf(root?.Items);
-      all.push(...items.map((it) => this.mapMessageSummary(it, folderIds[i] ?? '')));
-      total += this.numOr(root?.['@_TotalItemsInView'], items.length);
+  private async searchAcrossFolders(
+    session: MailSession,
+    envelopeFor: (folderId: string, windowSize: number) => string,
+    offset: number,
+    limit: number,
+  ): Promise<ProviderMessagePage> {
+    const allFolderIds = await this.searchFolderIds(session);
+    if (!allFolderIds.length) {
+      this.logger.warn('mailbox-wide search: no mail folders to search');
+      return { messages: [], total: 0, more: false };
+    }
+    const folderIds = allFolderIds.slice(0, EWS_SEARCH_MAX_FOLDERS);
+    if (allFolderIds.length > folderIds.length) {
+      this.logger.warn(
+        `mailbox-wide search capped at ${EWS_SEARCH_MAX_FOLDERS} folders — ` +
+        `${allFolderIds.length - folderIds.length} folder(s) not searched`,
+      );
+    }
+
+    const windowSize = offset + limit;
+    const failures: unknown[] = [];
+    const pages = await this.mapWithConcurrency(folderIds, EWS_SEARCH_CONCURRENCY, async (folderId) => {
+      try {
+        const xml = await this.callWithRetry(session, envelopeFor(folderId, windowSize));
+        return this.parseMessagePage(xml, 0, folderId);
+      } catch (err) {
+        // A dead session is not a per-folder problem — fail the whole search
+        // rather than reporting an empty mailbox to a signed-out user.
+        if (err instanceof UnauthorizedException) throw err;
+        this.logger.warn(`search skipped folder ${folderId}: ${(err as any)?.message ?? 'unknown error'}`);
+        failures.push(err);
+        return null;
+      }
     });
+
+    const ok = pages.filter((p): p is ProviderMessagePage => p !== null);
+    if (!ok.length) throw failures[0] ?? new BadGatewayException('EWS search returned nothing to merge.');
+
+    const all = ok.flatMap((p) => p.messages);
     all.sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
     const messages = all.slice(offset, offset + limit);
+    const total = ok.reduce((sum, p) => sum + p.total, 0);
     return { messages, total, more: offset + messages.length < total };
   }
 
+  /** Run `task` over `items` with at most `limit` in flight, preserving order. */
+  private async mapWithConcurrency<T, R>(
+    items: T[], limit: number, task: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      for (let i = next++; i < items.length; i = next++) {
+        results[i] = await task(items[i]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+  }
+
   /**
-   * FindItem with a filter-translated AQS QueryString, scoped via
-   * ParentFolderIds to `filter.folderId` when given (else the whole mail
-   * tree). Same pagination/parsing as `searchMessages` — the folder never
-   * enters the query string itself (see `buildAqsQuery`).
+   * FindItem with a filter-translated AQS QueryString: one request scoped to
+   * `filter.folderId` when given, else a fan-out over the whole mailbox. Same
+   * pagination/parsing as `searchMessages` — the folder never enters the query
+   * string itself (see `buildAqsQuery`).
    */
   async searchStructured(
     session: MailSession, filter: MailSearchFilter, limit?: number, offset?: number,
@@ -632,11 +704,11 @@ export class EwsService implements MailProvider {
       const xml = await this.callWithRetry(session, structuredSearchEnvelope(aqs, filter.folderId, off, max));
       return this.parseMessagePage(xml, off, filter.folderId);
     }
-    // No folder chosen = whole mailbox, which FindItem can only do by naming
-    // every folder (see searchFolderIds).
-    const folderIds = await this.searchFolderIds(session);
-    const xml = await this.callWithRetry(session, structuredSearchEnvelope(aqs, folderIds, 0, off + max));
-    return this.parseMergedMessagePage(xml, folderIds, off, max);
+    // No folder chosen = whole mailbox, which EWS can only do one folder at a
+    // time (see searchAcrossFolders).
+    return this.searchAcrossFolders(
+      session, (folderId, windowSize) => structuredSearchEnvelope(aqs, folderId, 0, windowSize), off, max,
+    );
   }
 
   /**

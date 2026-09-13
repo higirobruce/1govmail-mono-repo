@@ -99,10 +99,14 @@ describe('findItemEnvelope', () => {
 });
 
 describe('searchItemEnvelope', () => {
-  it('carries an escaped AQS QueryString and scopes to msgfolderroot', () => {
-    const xml = searchItemEnvelope('budget & "Q3"', 0, 20);
+  it('carries an escaped AQS QueryString scoped to the one folder it was given', () => {
+    // Never msgfolderroot (FindItem cannot recurse) and never more than one
+    // folder (live Exchange: "Shared folder search cannot be performed on
+    // multiple folders") — a mailbox-wide search fans these out per folder.
+    const xml = searchItemEnvelope('budget & "Q3"', 0, 20, 'AAA-Inbox=');
     expect(xml).toContain('<m:QueryString>budget &amp; &quot;Q3&quot;</m:QueryString>');
-    expect(xml).toContain('<t:DistinguishedFolderId Id="msgfolderroot"/>');
+    expect(xml).toContain('<m:ParentFolderIds><t:FolderId Id="AAA-Inbox="/></m:ParentFolderIds>');
+    expect(xml).not.toContain('msgfolderroot');
     expect(xml).toContain('<m:IndexedPageItemView MaxEntriesReturned="20" Offset="0" BasePoint="Beginning"/>');
   });
 });
@@ -149,20 +153,19 @@ describe('buildAqsQuery', () => {
 });
 
 describe('structuredSearchEnvelope', () => {
-  it('scopes to the folder id when given, else msgfolderroot', () => {
+  it('scopes to exactly one folder id', () => {
     // xmlEscape (applied to every QueryString, per the shared envelope
     // contract) turns the AQS quotes into &quot; — matches searchItemEnvelope's
     // existing escaping behavior above.
     const withFolder = structuredSearchEnvelope('from:"a"', 'FID==', 0, 50);
     expect(withFolder).toContain('<m:QueryString>from:&quot;a&quot;</m:QueryString>');
-    expect(withFolder).toContain('<t:FolderId Id="FID=="/>');
-
-    const noFolder = structuredSearchEnvelope('from:"a"', undefined, 0, 50);
-    expect(noFolder).toContain('<t:DistinguishedFolderId Id="msgfolderroot"/>');
+    expect(withFolder).toContain('<m:ParentFolderIds><t:FolderId Id="FID=="/></m:ParentFolderIds>');
+    expect(withFolder.match(/<t:FolderId /g)).toHaveLength(1);
+    expect(withFolder).not.toContain('msgfolderroot');
   });
 
   it('escapes the AQS query and wraps it in the ParentFolderIds-scoped FindItem', () => {
-    const xml = structuredSearchEnvelope('subject:"Q3 & Q4"', undefined, 10, 25);
+    const xml = structuredSearchEnvelope('subject:"Q3 & Q4"', 'FID==', 10, 25);
     expect(xml).toContain('<m:FindItem Traversal="Shallow">');
     expect(xml).toContain('<m:QueryString>subject:&quot;Q3 &amp; Q4&quot;</m:QueryString>');
     expect(xml).toContain('<m:IndexedPageItemView MaxEntriesReturned="25" Offset="10" BasePoint="Beginning"/>');

@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { NotFoundException } from '@nestjs/common';
-import { EwsService } from './ews.service';
+import { EWS_SEARCH_CONCURRENCY, EWS_SEARCH_MAX_FOLDERS, EwsService } from './ews.service';
 import { MailSession } from '../provider/mail-session';
 
 /**
@@ -21,7 +21,6 @@ const GET_ITEM_NOTFOUND = fixture('getitem.notfound.xml');
 const FIND_ITEM_MEETING = fixture('finditem-meeting.success.xml');
 const GET_ITEM_MEETING = fixture('getitem-meeting.success.xml');
 const CONV_TOPIC = fixture('finditem-conversationtopic.success.xml');
-const MULTI_FOLDER = fixture('finditem-multifolder.success.xml');
 const CREATE_FOLDER = fixture('createfolder.success.xml');
 const DELETE_FOLDER = fixture('deletefolder.success.xml');
 const UPDATE_FOLDER = fixture('updatefolder.success.xml');
@@ -38,6 +37,130 @@ class FakeTransport {
     return this.script[idx];
   }
 }
+
+/**
+ * Exchange rejects a FindItem that names more than one ParentFolderId
+ * ("ErrorInvalidOperation: Shared folder search cannot be performed on multiple
+ * folders" — captured live from MINAFFET), so a mailbox-wide search fans out
+ * one request per folder. This transport answers the FindFolder enumeration and
+ * then routes each per-folder FindItem by the FolderId in its body, so the
+ * assertions do not depend on the (concurrent, therefore unordered) call order.
+ */
+class FanoutTransport {
+  public calls: Array<{ session: MailSession; body: string }> = [];
+  public inFlight = 0;
+  public peakInFlight = 0;
+  constructor(
+    private folderXml: string,
+    private byFolder: Record<string, string | (() => Promise<string>)>,
+  ) {}
+  async call(session: MailSession, body: string): Promise<string> {
+    this.calls.push({ session, body });
+    if (body.includes('<m:FindFolder')) return this.folderXml;
+    const id = /<t:FolderId Id="([^"]*)"\/>/.exec(body)?.[1] ?? '';
+    this.inFlight += 1;
+    this.peakInFlight = Math.max(this.peakInFlight, this.inFlight);
+    try {
+      const scripted = this.byFolder[id];
+      if (scripted === undefined) throw new Error(`unscripted folder ${id}`);
+      return typeof scripted === 'function' ? await scripted() : scripted;
+    } finally {
+      this.inFlight -= 1;
+    }
+  }
+  /** The FolderId each per-folder FindItem was scoped to, in call order. */
+  searchedFolderIds(): string[] {
+    return this.calls
+      .filter((c) => !c.body.includes('<m:FindFolder'))
+      .map((c) => /<t:FolderId Id="([^"]*)"\/>/.exec(c.body)?.[1] ?? '');
+  }
+}
+
+/** A one-hit FindItemResponse for a single folder. */
+const hitXml = (id: string, receivedIso: string) =>
+  `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
+  <m:FindItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages><m:FindItemResponseMessage ResponseClass="Success">
+      <m:ResponseCode>NoError</m:ResponseCode>
+      <m:RootFolder TotalItemsInView="1" IncludesLastItemInRange="true"><t:Items>
+        <t:Message>
+          <t:ItemId Id="${id}" ChangeKey="K"/>
+          <t:Subject>hit ${id}</t:Subject>
+          <t:DateTimeReceived>${receivedIso}</t:DateTimeReceived>
+          <t:Size>10</t:Size>
+          <t:HasAttachments>false</t:HasAttachments>
+          <t:From><t:Mailbox><t:EmailAddress>a@minaffet.gov.rw</t:EmailAddress></t:Mailbox></t:From>
+          <t:IsRead>true</t:IsRead>
+        </t:Message>
+      </t:Items></m:RootFolder>
+    </m:FindItemResponseMessage></m:ResponseMessages>
+  </m:FindItemResponse>
+</s:Body></s:Envelope>`;
+
+/** An empty (but successful) FindItemResponse. */
+const EMPTY_HITS = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
+  <m:FindItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages><m:FindItemResponseMessage ResponseClass="Success">
+      <m:ResponseCode>NoError</m:ResponseCode>
+      <m:RootFolder TotalItemsInView="0" IncludesLastItemInRange="true"><t:Items/></m:RootFolder>
+    </m:FindItemResponseMessage></m:ResponseMessages>
+  </m:FindItemResponse>
+</s:Body></s:Envelope>`;
+
+/** The exact shape Exchange returned for the rejected multi-folder search. */
+const SHARED_FOLDER_ERROR = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
+  <m:FindItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages><m:FindItemResponseMessage ResponseClass="Error">
+      <m:MessageText>Shared folder search cannot be performed on multiple folders.</m:MessageText>
+      <m:ResponseCode>ErrorInvalidOperation</m:ResponseCode>
+    </m:FindItemResponseMessage></m:ResponseMessages>
+  </m:FindItemResponse>
+</s:Body></s:Envelope>`;
+
+/** A FindFolderResponse carrying no folders at all. */
+const EMPTY_FOLDERS = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
+  <m:FindFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages><m:FindFolderResponseMessage ResponseClass="Success">
+      <m:ResponseCode>NoError</m:ResponseCode>
+      <m:RootFolder TotalItemsInView="0"><t:Folders/></m:RootFolder>
+    </m:FindFolderResponseMessage></m:ResponseMessages>
+  </m:FindFolderResponse>
+</s:Body></s:Envelope>`;
+
+/** A FindFolderResponse with `count` plain mail folders (F0, F1, ...). */
+const manyFolders = (count: number) => `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
+  <m:FindFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages><m:FindFolderResponseMessage ResponseClass="Success">
+      <m:ResponseCode>NoError</m:ResponseCode>
+      <m:RootFolder TotalItemsInView="${count}"><t:Folders>
+        ${Array.from({ length: count }, (_, i) =>
+          `<t:Folder><t:FolderId Id="F${i}=" ChangeKey="K"/><t:DisplayName>Folder ${i}</t:DisplayName>` +
+          `<t:TotalCount>1</t:TotalCount><t:UnreadCount>0</t:UnreadCount></t:Folder>`).join('')}
+      </t:Folders></m:RootFolder>
+    </m:FindFolderResponseMessage></m:ResponseMessages>
+  </m:FindFolderResponse>
+</s:Body></s:Envelope>`;
+
+/** The six mail folders in the FindFolder fixture. */
+const ALL_FOLDERS = ['AAA-Inbox=', 'AAA-Sent=', 'AAA-Drafts=', 'AAA-Deleted=', 'AAA-Junk=', 'AAA-Projects='];
+
+const fanoutWith = (byFolder: Record<string, string | (() => Promise<string>)>) => {
+  const t = new FanoutTransport(FIND_FOLDER, byFolder);
+  return { t, svc: new EwsService(t as any) };
+};
+
+const allFoldersAnswering = (xml: string) =>
+  Object.fromEntries(ALL_FOLDERS.map((id) => [id, xml])) as Record<string, string>;
 
 const SESSION: MailSession = {
   host: 'webmail.minaffet.gov.rw',
@@ -199,29 +322,106 @@ describe('EwsService folders + messages (Task 4)', () => {
   });
 
   describe('searchMessages', () => {
-    it('enumerates the mail folders first, then sends a FindItem scoped to them', async () => {
-      // FindItem has no deep traversal, so a mailbox-wide search must name every
-      // folder: scoping to msgfolderroot searches an empty container and always
-      // returns zero (this shipped broken and returned nothing on real Exchange).
-      const { t, svc } = svcWith(FIND_FOLDER, SEARCH_ITEM);
+    it('enumerates the mail folders, then sends ONE FindItem per folder', async () => {
+      // FindItem can neither recurse (no Deep traversal — msgfolderroot holds no
+      // mail) nor take more than one ParentFolderId on a shared mailbox
+      // (ErrorInvalidOperation "Shared folder search cannot be performed on
+      // multiple folders", captured live from MINAFFET). So mailbox-wide search
+      // is a fan-out: one single-folder FindItem each, merged here.
+      const { t, svc } = fanoutWith(allFoldersAnswering(EMPTY_HITS));
       await svc.searchMessages(SESSION, 'invoice');
 
       expect(t.calls[0].body).toContain('<m:FindFolder Traversal="Deep">');
-      const search = t.calls[1].body;
-      expect(search).toContain('<m:QueryString>invoice</m:QueryString>');
-      expect(search).toContain('<t:FolderId Id="AAA-Inbox="/>');
-      expect(search).toContain('<t:FolderId Id="AAA-Sent="/>');
-      expect(search).not.toContain('msgfolderroot');
+      expect(t.searchedFolderIds().sort()).toEqual([...ALL_FOLDERS].sort());
+      for (const call of t.calls.slice(1)) {
+        expect(call.body).toContain('<m:QueryString>invoice</m:QueryString>');
+        expect(call.body.match(/<t:FolderId /g)).toHaveLength(1); // never multi-folder
+        expect(call.body).not.toContain('msgfolderroot');
+      }
     });
 
-    it('returns a page of ProviderMessage from the search hits', async () => {
-      const { svc } = svcWith(FIND_FOLDER, SEARCH_ITEM);
-      const page = await svc.searchMessages(SESSION, 'invoice');
-      expect(page.total).toBe(1);
-      expect(page.more).toBe(false);
-      expect(page.messages[0]).toMatchObject({
-        id: 'SEARCH-1==', subject: 'Invoice 2026-0042', hasAttachments: true,
+    it('merges the per-folder hits newest-first and sums their totals', async () => {
+      const { svc } = fanoutWith({
+        'AAA-Inbox=': hitXml('INBOX-1==', '2026-09-01T08:00:00Z'),
+        'AAA-Sent=': hitXml('SENT-1==', '2026-09-09T08:00:00Z'),
+        'AAA-Drafts=': EMPTY_HITS,
+        'AAA-Deleted=': EMPTY_HITS,
+        'AAA-Junk=': EMPTY_HITS,
+        'AAA-Projects=': hitXml('PROJ-1==', '2026-09-05T08:00:00Z'),
       });
+      const page = await svc.searchMessages(SESSION, 'invoice');
+
+      expect(page.messages.map((m) => m.id)).toEqual(['SENT-1==', 'PROJ-1==', 'INBOX-1==']);
+      expect(page.total).toBe(3);
+      expect(page.more).toBe(false);
+      // each hit carries the folder its own request was scoped to
+      expect(page.messages.map((m) => m.folderId)).toEqual(['AAA-Sent=', 'AAA-Projects=', 'AAA-Inbox=']);
+    });
+
+    it('applies limit/offset to the MERGED result, not per folder', async () => {
+      const { svc } = fanoutWith({
+        'AAA-Inbox=': hitXml('INBOX-1==', '2026-09-01T08:00:00Z'),
+        'AAA-Sent=': hitXml('SENT-1==', '2026-09-09T08:00:00Z'),
+        'AAA-Drafts=': EMPTY_HITS,
+        'AAA-Deleted=': EMPTY_HITS,
+        'AAA-Junk=': EMPTY_HITS,
+        'AAA-Projects=': hitXml('PROJ-1==', '2026-09-05T08:00:00Z'),
+      });
+      const page = await svc.searchMessages(SESSION, 'invoice', 1, 1);
+      expect(page.messages.map((m) => m.id)).toEqual(['PROJ-1==']); // 2nd newest overall
+      expect(page.total).toBe(3);
+      expect(page.more).toBe(true);
+    });
+
+    it('skips a folder whose own search fails and still returns the rest', async () => {
+      // A mailbox can hold a folder Exchange refuses to search; one bad folder
+      // must not take the whole search down with it.
+      const { svc } = fanoutWith({
+        ...allFoldersAnswering(EMPTY_HITS),
+        'AAA-Inbox=': hitXml('INBOX-1==', '2026-09-01T08:00:00Z'),
+        'AAA-Junk=': SHARED_FOLDER_ERROR,
+      });
+      const page = await svc.searchMessages(SESSION, 'invoice');
+      expect(page.messages.map((m) => m.id)).toEqual(['INBOX-1==']);
+      expect(page.total).toBe(1);
+    });
+
+    it('throws when EVERY folder search fails, instead of reporting an empty mailbox', async () => {
+      const { svc } = fanoutWith(allFoldersAnswering(SHARED_FOLDER_ERROR));
+      await expect(svc.searchMessages(SESSION, 'invoice')).rejects.toThrow(/ErrorInvalidOperation/);
+    });
+
+    it('bounds how many folder searches run at once', async () => {
+      const slow = () => new Promise<string>((r) => setTimeout(() => r(EMPTY_HITS), 5));
+      const { t, svc } = fanoutWith(
+        Object.fromEntries(ALL_FOLDERS.map((id) => [id, slow])) as Record<string, () => Promise<string>>,
+      );
+      await svc.searchMessages(SESSION, 'invoice');
+      expect(t.peakInFlight).toBeGreaterThan(1); // genuinely parallel
+      expect(t.peakInFlight).toBeLessThanOrEqual(EWS_SEARCH_CONCURRENCY);
+    });
+
+    it('caps the fan-out and says so, rather than firing one request per folder forever', async () => {
+      const over = EWS_SEARCH_MAX_FOLDERS + 5;
+      const t = new FanoutTransport(
+        manyFolders(over),
+        Object.fromEntries(Array.from({ length: over }, (_, i) => [`F${i}=`, EMPTY_HITS])),
+      );
+      const svc = new EwsService(t as any);
+      const warn = jest.spyOn((svc as any).logger, 'warn').mockImplementation(() => undefined);
+
+      await svc.searchMessages(SESSION, 'invoice');
+
+      expect(t.searchedFolderIds()).toHaveLength(EWS_SEARCH_MAX_FOLDERS);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(String(over - EWS_SEARCH_MAX_FOLDERS)));
+      warn.mockRestore();
+    });
+
+    it('returns an empty page when the mailbox reports no mail folders', async () => {
+      const { t, svc } = svcWith(EMPTY_FOLDERS);
+      const page = await svc.searchMessages(SESSION, 'invoice');
+      expect(page).toEqual({ messages: [], total: 0, more: false });
+      expect(t.calls).toHaveLength(1); // nothing to search — no FindItem at all
     });
   });
 
@@ -235,44 +435,52 @@ describe('EwsService folders + messages (Task 4)', () => {
       expect(body).not.toContain('AAA-Inbox=</m:QueryString>'); // folder never leaks into the query
     });
 
-    it('scopes to msgfolderroot when no folderId is given', async () => {
-      const { t, svc } = svcWith(SEARCH_ITEM);
+    it('fans out over every mail folder when no folderId is given', async () => {
+      const { t, svc } = fanoutWith(allFoldersAnswering(EMPTY_HITS));
       await svc.searchStructured(SESSION, { keyword: 'invoice' });
-      expect(t.calls[0].body).toContain('<t:DistinguishedFolderId Id="msgfolderroot"/>');
+      expect(t.searchedFolderIds().sort()).toEqual([...ALL_FOLDERS].sort());
+      // FindFolder is legitimately rooted at msgfolderroot; no SEARCH may be.
+      const searches = t.calls.filter((c) => !c.body.includes('<m:FindFolder'));
+      expect(searches.some((c) => c.body.includes('msgfolderroot'))).toBe(false);
     });
 
     it('returns a page of ProviderMessage from the search hits', async () => {
       const { svc } = svcWith(SEARCH_ITEM);
-      const page = await svc.searchStructured(SESSION, { keyword: 'invoice' });
+      const page = await svc.searchStructured(SESSION, { keyword: 'invoice', folderId: 'AAA-Inbox=' });
       expect(page.total).toBe(1);
       expect(page.messages[0]).toMatchObject({ id: 'SEARCH-1==', subject: 'Invoice 2026-0042' });
     });
   });
 
   describe('searchStructured (advanced search)', () => {
-    it('searches the WHOLE mailbox by naming every folder, never msgfolderroot', async () => {
-      // The bug this covers: scoping to msgfolderroot made every mailbox-wide
-      // advanced search return zero on real Exchange, because FindItem cannot
-      // recurse and that container holds no mail.
-      const { t, svc } = svcWith(FIND_FOLDER, MULTI_FOLDER);
+    it('searches the WHOLE mailbox as one single-folder FindItem per folder', async () => {
+      // Two live Exchange constraints stack here: FindItem cannot recurse (so
+      // msgfolderroot searches an empty container and returns zero) AND it
+      // refuses more than one ParentFolderId on this mailbox
+      // ("Shared folder search cannot be performed on multiple folders").
+      const { t, svc } = fanoutWith(allFoldersAnswering(EMPTY_HITS));
       await svc.searchStructured(SESSION, { from: 'alice@minaffet.gov.rw' });
 
       expect(t.calls[0].body).toContain('<m:FindFolder Traversal="Deep">');
-      const search = t.calls[1].body;
-      expect(search).toContain('from:&quot;alice@minaffet.gov.rw&quot;');
-      expect(search).toContain('<t:FolderId Id="AAA-Inbox="/>');
-      expect(search).toContain('<t:FolderId Id="AAA-Sent="/>');
-      expect(search).not.toContain('msgfolderroot');
+      expect(t.searchedFolderIds().sort()).toEqual([...ALL_FOLDERS].sort());
+      for (const call of t.calls.slice(1)) {
+        expect(call.body).toContain('from:&quot;alice@minaffet.gov.rw&quot;');
+        expect(call.body.match(/<t:FolderId /g)).toHaveLength(1);
+        expect(call.body).not.toContain('msgfolderroot');
+      }
     });
 
     it('merges the per-folder responses newest-first and sums their totals', async () => {
-      const { svc } = svcWith(FIND_FOLDER, MULTI_FOLDER);
+      const { svc } = fanoutWith({
+        ...allFoldersAnswering(EMPTY_HITS),
+        'AAA-Inbox=': hitXml('INBOX-1==', '2026-09-01T08:00:00Z'),
+        'AAA-Sent=': hitXml('SENT-1==', '2026-09-09T08:00:00Z'),
+      });
       const page = await svc.searchStructured(SESSION, { from: 'x@y.rw' });
 
-      // one hit from each folder, ordered across folders by date
       expect(page.messages.map((m) => m.id)).toEqual(['SENT-1==', 'INBOX-1==']);
       expect(page.total).toBe(2);
-      // each item recovers the folder it came from via response order
+      // each item recovers the folder its own request was scoped to
       expect(page.messages[0].folderId).toBe('AAA-Sent=');
       expect(page.messages[1].folderId).toBe('AAA-Inbox=');
     });

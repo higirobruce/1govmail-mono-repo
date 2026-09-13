@@ -156,48 +156,49 @@ export function findItemEnvelope(folderId: string, offset: number, max: number):
 }
 
 /**
- * FindItem with an AQS `QueryString` across the mailbox (spec §5.3,
+ * FindItem with an AQS `QueryString` over ONE folder (spec §5.3,
  * `searchMessages`). Same shape/paging as `findItemEnvelope`; the plain-text
- * query passes straight through (AQS handles bare words). Scoped to the whole
- * mail tree via `msgfolderroot`.
+ * query passes straight through (AQS handles bare words).
+ *
+ * A mailbox-wide search is the caller's job: it enumerates the folders and
+ * issues one of these per folder (see `EwsService.searchAcrossFolders`).
  */
 export function searchItemEnvelope(
   query: string,
   offset: number,
   max: number,
-  folderIds?: string | string[],
+  folderId: string,
 ): string {
-  return aqsFindItem(query, folderIds, offset, max);
+  return aqsFindItem(query, folderId, offset, max);
 }
 
 /**
- * `<m:ParentFolderIds>` for a search.
+ * `<m:ParentFolderIds>` for a search — exactly ONE folder, always.
  *
- * `FindItem` has NO deep traversal (its Traversal attribute only accepts
- * Shallow/SoftDeleted/Associated — unlike FindFolder), so scoping a search to
- * `msgfolderroot` searches a CONTAINER that holds no mail and always returns
- * zero. A mailbox-wide search must therefore name every folder explicitly;
- * FindItem accepts many ParentFolderIds and answers with one
- * FindItemResponseMessage per folder, in request order.
+ * Two live Exchange constraints force this, both observed against MINAFFET
+ * (Exchange 15.2):
+ *  - `FindItem` has NO deep traversal (its Traversal attribute only accepts
+ *    Shallow/SoftDeleted/Associated — unlike FindFolder), so scoping a search
+ *    to `msgfolderroot` searches a CONTAINER that holds no mail and silently
+ *    returns zero.
+ *  - naming several folders in one request is refused outright on a shared
+ *    mailbox: `ErrorInvalidOperation — "Shared folder search cannot be
+ *    performed on multiple folders."` (captured raw from the live server).
  *
- * The `msgfolderroot` fallback is kept only for the degenerate case of an empty
- * list, so a caller that cannot enumerate folders still produces valid SOAP.
+ * So neither "search the root" nor "search them all at once" exists in EWS;
+ * searching a whole mailbox means one request per folder, merged client-side.
  */
-function parentFolderIds(folderIds?: string | string[]): string {
-  const ids = (Array.isArray(folderIds) ? folderIds : folderIds ? [folderIds] : []).filter(Boolean);
-  const inner = ids.length
-    ? ids.map((id) => `<t:FolderId Id="${xmlEscape(id)}"/>`).join('')
-    : '<t:DistinguishedFolderId Id="msgfolderroot"/>';
-  return `<m:ParentFolderIds>${inner}</m:ParentFolderIds>`;
+function parentFolderIds(folderId: string): string {
+  return `<m:ParentFolderIds><t:FolderId Id="${xmlEscape(folderId)}"/></m:ParentFolderIds>`;
 }
 
 /** Shared AQS FindItem builder for the keyword and structured search paths. */
-function aqsFindItem(query: string, folderIds: string | string[] | undefined, offset: number, max: number): string {
+function aqsFindItem(query: string, folderId: string, offset: number, max: number): string {
   const body =
     '<m:FindItem Traversal="Shallow">' +
     findItemPrelude(offset, max) +
     `<m:QueryString>${xmlEscape(query)}</m:QueryString>` +
-    parentFolderIds(folderIds) +
+    parentFolderIds(folderId) +
     '</m:FindItem>';
   return soapEnvelope(body);
 }
@@ -236,17 +237,16 @@ export function buildAqsQuery(f: MailSearchFilter): string {
 
 /**
  * FindItem with a translated-AQS `QueryString`, scoped via `ParentFolderIds`
- * to a single folder (`t:FolderId`) when one is given, else the whole mail
- * tree (`msgfolderroot`) — the folder is NEVER embedded in the query string
- * itself. Same paging/sort prelude as the other FindItem envelopes.
+ * to one folder — the folder is NEVER embedded in the query string itself.
+ * Same paging/sort prelude as the other FindItem envelopes.
  */
 export function structuredSearchEnvelope(
   aqs: string,
-  folderIds: string | string[] | undefined,
+  folderId: string,
   offset: number,
   max: number,
 ): string {
-  return aqsFindItem(aqs, folderIds, offset, max);
+  return aqsFindItem(aqs, folderId, offset, max);
 }
 
 /**

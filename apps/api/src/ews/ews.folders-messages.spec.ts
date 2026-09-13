@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { EWS_SEARCH_CONCURRENCY, EWS_SEARCH_MAX_FOLDERS, EwsService } from './ews.service';
 import { MailSession } from '../provider/mail-session';
 
@@ -29,10 +29,10 @@ const EMPTY_FOLDER = fixture('emptyfolder.success.xml');
 /** Replays `script` entries in order (last one repeats), recording every
  *  outbound body so envelope construction can be asserted. */
 class FakeTransport {
-  public calls: Array<{ session: MailSession; body: string }> = [];
+  public calls: Array<{ session: MailSession; body: string; opts?: any }> = [];
   constructor(private script: string[]) {}
-  async call(session: MailSession, body: string): Promise<string> {
-    this.calls.push({ session, body });
+  async call(session: MailSession, body: string, opts?: any): Promise<string> {
+    this.calls.push({ session, body, opts });
     const idx = Math.min(this.calls.length - 1, this.script.length - 1);
     return this.script[idx];
   }
@@ -47,15 +47,15 @@ class FakeTransport {
  * assertions do not depend on the (concurrent, therefore unordered) call order.
  */
 class FanoutTransport {
-  public calls: Array<{ session: MailSession; body: string }> = [];
+  public calls: Array<{ session: MailSession; body: string; opts?: any }> = [];
   public inFlight = 0;
   public peakInFlight = 0;
   constructor(
     private folderXml: string,
     private byFolder: Record<string, string | (() => Promise<string>)>,
   ) {}
-  async call(session: MailSession, body: string): Promise<string> {
-    this.calls.push({ session, body });
+  async call(session: MailSession, body: string, opts?: any): Promise<string> {
+    this.calls.push({ session, body, opts });
     if (body.includes('<m:FindFolder')) return this.folderXml;
     const id = /<t:FolderId Id="([^"]*)"\/>/.exec(body)?.[1] ?? '';
     this.inFlight += 1;
@@ -384,6 +384,39 @@ describe('EwsService folders + messages (Task 4)', () => {
       const page = await svc.searchMessages(SESSION, 'invoice');
       expect(page.messages.map((m) => m.id)).toEqual(['INBOX-1==']);
       expect(page.total).toBe(1);
+    });
+
+    it('asks for an isolated connection per folder, since NTLM authenticates the socket', async () => {
+      // Sharing one keep-alive agent across parallel searches interleaves the
+      // NTLM handshakes and Exchange answers 401 — which signed the user out
+      // mid-search. Each per-folder request gets its own connection.
+      const { t, svc } = fanoutWith(allFoldersAnswering(EMPTY_HITS));
+      await svc.searchMessages(SESSION, 'invoice');
+      const searches = t.calls.filter((c) => !c.body.includes('<m:FindFolder'));
+      expect(searches).not.toHaveLength(0);
+      for (const call of searches) expect(call.opts).toMatchObject({ isolatedConnection: true });
+    });
+
+    it('does NOT sign the user out when one folder comes back 401', async () => {
+      // The folder enumeration that opens every mailbox-wide search already
+      // proved the session is alive, so a lone 401 here is a transport hiccup,
+      // not a dead session — treat it like any other per-folder failure.
+      const unauthorized = () => Promise.reject(new UnauthorizedException('Your mail session is no longer valid.'));
+      const { svc } = fanoutWith({
+        ...allFoldersAnswering(EMPTY_HITS),
+        'AAA-Inbox=': hitXml('INBOX-1==', '2026-09-01T08:00:00Z'),
+        'AAA-Junk=': unauthorized,
+      });
+      const page = await svc.searchMessages(SESSION, 'invoice');
+      expect(page.messages.map((m) => m.id)).toEqual(['INBOX-1==']);
+    });
+
+    it('DOES surface Unauthorized when every folder comes back 401', async () => {
+      const unauthorized = () => Promise.reject(new UnauthorizedException('Your mail session is no longer valid.'));
+      const { svc } = fanoutWith(
+        Object.fromEntries(ALL_FOLDERS.map((id) => [id, unauthorized])) as Record<string, () => Promise<string>>,
+      );
+      await expect(svc.searchMessages(SESSION, 'invoice')).rejects.toBeInstanceOf(UnauthorizedException);
     });
 
     it('throws when EVERY folder search fails, instead of reporting an empty mailbox', async () => {

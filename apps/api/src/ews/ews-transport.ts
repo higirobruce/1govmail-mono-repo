@@ -243,6 +243,17 @@ export function handleEwsError(status: number, xml?: string, err?: any): never {
   throw new BadGatewayException('EWS request failed.');
 }
 
+/** Per-call transport options. */
+export interface EwsCallOptions {
+  /**
+   * Give this call its own connection instead of the session's shared
+   * keep-alive pool. Required whenever several calls for ONE session run at
+   * the same time: NTLM authenticates the connection, so pooled parallel calls
+   * interleave their handshake legs and Exchange answers 401.
+   */
+  isolatedConnection?: boolean;
+}
+
 // ── Transport ───────────────────────────────────────────────────────────────
 
 export class EwsTransport {
@@ -256,25 +267,50 @@ export class EwsTransport {
   // `post` is injectable so tests substitute a stub for httpntlm.
   constructor(private readonly post: NtlmPoster = httpntlm.post) {}
 
+  private newAgent(extra: https.AgentOptions = {}): https.Agent {
+    const caPath = process.env.MAIL_CA_BUNDLE;
+    // A private CA bundle may be *added*; TLS verification is never disabled.
+    const ca = caPath ? readFileSync(caPath) : undefined;
+    return new https.Agent({ keepAlive: true, ...(ca ? { ca } : {}), ...extra });
+  }
+
   private agentFor(email: string): https.Agent {
     let agent = this.agents.get(email);
     if (!agent) {
-      const caPath = process.env.MAIL_CA_BUNDLE;
-      // A private CA bundle may be *added*; TLS verification is never disabled.
-      const ca = caPath ? readFileSync(caPath) : undefined;
-      agent = new https.Agent(ca ? { keepAlive: true, ca } : { keepAlive: true });
+      agent = this.newAgent();
       this.agents.set(email, agent);
     }
     return agent;
   }
 
-  /** Drop the cached agent for a session (logout). */
+  /**
+   * A connection nobody else can touch, for calls that run in parallel with
+   * their siblings. `maxSockets: 1` keeps the NTLM type-1/2/3 legs on a single
+   * socket; a pooled agent would spread them over several and Exchange would
+   * answer 401. The caller destroys it when the call ends.
+   */
+  private newIsolatedAgent(): https.Agent {
+    return this.newAgent({ maxSockets: 1 });
+  }
+
+  /** Drop the cached agent for a session (logout) — sockets and all. */
   evict(email: string): void {
     const agent = this.agents.get(email);
     if (agent) {
       agent.destroy();
       this.agents.delete(email);
     }
+  }
+
+  /**
+   * Retire a session's pooled agent WITHOUT destroying it, so the next call
+   * builds a fresh NTLM context while requests already in flight keep the
+   * sockets they are using. Destroying it instead resets that whole pool, which
+   * is how one spurious 401 used to take its siblings down with it (observed
+   * live: a burst of ECONNRESET across a mailbox-wide search).
+   */
+  private retireAgent(email: string): void {
+    this.agents.delete(email);
   }
 
   /** A single NTLM POST over the given agent, wrapped as a promise. Callers own
@@ -319,44 +355,61 @@ export class EwsTransport {
    * agent, re-do the NTLM handshake on a fresh connection, and retry. Only a
    * SECOND 401 (genuine bad/expired credentials) surfaces as Unauthorized.
    */
-  async call(session: MailSession, bodyXml: string): Promise<string> {
+  async call(session: MailSession, bodyXml: string, opts?: EwsCallOptions): Promise<string> {
     if (!session.credentials) {
       throw new BadGatewayException('EWS transport: session is missing credentials.');
     }
     const url = ewsEndpoint(session.host);
     const { domain, username } = splitNtlmUsername(session.credentials.username);
     const password = session.credentials.password;
+    const isolated = opts?.isolatedConnection === true;
+    const privateAgents: https.Agent[] = [];
 
-    let res: NtlmResponse;
+    /** The connection this attempt rides: a private one when the caller is
+     *  running siblings in parallel, else the session's pooled keep-alive. */
+    const nextAgent = (): https.Agent => {
+      if (!isolated) return this.agentFor(session.email);
+      const agent = this.newIsolatedAgent();
+      privateAgents.push(agent);
+      return agent;
+    };
+
     try {
-      res = await this.postOnce(url, username, password, domain, bodyXml, this.agentFor(session.email));
-    } catch (err) {
-      // Redacted: only a summarised transport error, never url/creds/body.
-      this.logger.debug(`EWS POST ${url} → transport error`);
-      handleEwsError(0, undefined, err);
-    }
-
-    // Endpoint + status only. Never the body (may contain message content) and
-    // never the Authorization header (NTLM bytes) or credentials.
-    this.logger.debug(`EWS POST ${url} → HTTP ${res.statusCode}`);
-
-    if (res.statusCode === 401) {
-      // Stale keep-alive NTLM context — re-handshake once on a fresh connection.
-      this.evict(session.email);
+      let res: NtlmResponse;
       try {
-        res = await this.postOnce(url, username, password, domain, bodyXml, this.agentFor(session.email));
+        res = await this.postOnce(url, username, password, domain, bodyXml, nextAgent());
       } catch (err) {
+        // Redacted: only a summarised transport error, never url/creds/body.
         this.logger.debug(`EWS POST ${url} → transport error`);
         handleEwsError(0, undefined, err);
       }
-      this.logger.debug(`EWS POST ${url} → HTTP ${res.statusCode}`);
-      // A second 401 is a genuine auth failure (bad/expired credentials).
-      if (res.statusCode === 401) handleEwsError(401);
-    }
 
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      handleEwsError(res.statusCode, res.body);
+      // Endpoint + status only. Never the body (may contain message content) and
+      // never the Authorization header (NTLM bytes) or credentials.
+      this.logger.debug(`EWS POST ${url} → HTTP ${res.statusCode}`);
+
+      if (res.statusCode === 401) {
+        // Stale keep-alive NTLM context — re-handshake once on a fresh
+        // connection. The old pooled agent is retired, never destroyed: its
+        // sockets may be carrying sibling requests.
+        if (!isolated) this.retireAgent(session.email);
+        try {
+          res = await this.postOnce(url, username, password, domain, bodyXml, nextAgent());
+        } catch (err) {
+          this.logger.debug(`EWS POST ${url} → transport error`);
+          handleEwsError(0, undefined, err);
+        }
+        this.logger.debug(`EWS POST ${url} → HTTP ${res.statusCode}`);
+        // A second 401 is a genuine auth failure (bad/expired credentials).
+        if (res.statusCode === 401) handleEwsError(401);
+      }
+
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        handleEwsError(res.statusCode, res.body);
+      }
+      return res.body;
+    } finally {
+      for (const agent of privateAgents) agent.destroy();
     }
-    return res.body;
   }
 }

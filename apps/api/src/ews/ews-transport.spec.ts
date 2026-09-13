@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs';
+import * as https from 'https';
 import { join } from 'path';
 import { BadGatewayException, UnauthorizedException } from '@nestjs/common';
 import { EwsTransport, handleEwsError, NtlmPostOptions, NtlmResponse } from './ews-transport';
@@ -188,6 +189,61 @@ describe('EwsTransport.call', () => {
     await t.call(session(), '<body/>');
     expect(calls[0].agent).toBeDefined();
     expect(calls[0].agent).toBe(calls[1].agent);
+  });
+
+  it('gives each isolated call its OWN single-socket agent, and disposes it', async () => {
+    // NTLM authenticates the CONNECTION, not the request: concurrent calls that
+    // share a pooled agent interleave their type-1/2/3 legs across sockets and
+    // Exchange answers 401. A fan-out therefore asks for an isolated connection
+    // — its own agent, capped at one socket so all three legs ride it.
+    const destroy = jest.spyOn(https.Agent.prototype, 'destroy');
+    const { post, calls } = stubPoster({});
+    const t = new EwsTransport(post);
+
+    await t.call(session(), '<body/>', { isolatedConnection: true });
+    await t.call(session(), '<body/>', { isolatedConnection: true });
+
+    expect(calls[0].agent).not.toBe(calls[1].agent); // never shared between calls
+    expect((calls[0].agent as any).maxSockets).toBe(1); // all NTLM legs on one socket
+    expect(destroy).toHaveBeenCalledTimes(2); // each private agent disposed
+    destroy.mockRestore();
+  });
+
+  it('keeps the isolated agent out of the shared per-session pool', async () => {
+    const { post, calls } = stubPoster({});
+    const t = new EwsTransport(post);
+    await t.call(session(), '<body/>');                                  // shared
+    await t.call(session(), '<body/>', { isolatedConnection: true });     // isolated
+    await t.call(session(), '<body/>');                                  // shared again
+    expect(calls[2].agent).toBe(calls[0].agent);      // pool survived untouched
+    expect(calls[1].agent).not.toBe(calls[0].agent);
+  });
+
+  it('renews the session agent on a 401 WITHOUT destroying it', async () => {
+    // Destroying the shared agent resets every socket in its pool — which
+    // killed sibling requests mid-flight with ECONNRESET (observed live during
+    // a mailbox-wide search). Drop it from the pool instead and let it die idle.
+    const destroy = jest.spyOn(https.Agent.prototype, 'destroy');
+    const { post, calls } = stubSequence([
+      { statusCode: 401, body: '' },
+      { statusCode: 200, body: SUCCESS },
+    ]);
+    const t = new EwsTransport(post);
+
+    await expect(t.call(session(), '<body/>')).resolves.toBe(SUCCESS);
+    expect(calls[1].agent).not.toBe(calls[0].agent); // fresh connection for the retry
+    expect(destroy).not.toHaveBeenCalled();          // but the old pool is NOT reset
+    destroy.mockRestore();
+  });
+
+  it('still destroys the agent on evict (logout)', async () => {
+    const destroy = jest.spyOn(https.Agent.prototype, 'destroy');
+    const { post } = stubPoster({});
+    const t = new EwsTransport(post);
+    await t.call(session(), '<body/>');
+    t.evict(session().email);
+    expect(destroy).toHaveBeenCalledTimes(1);
+    destroy.mockRestore();
   });
 
   it('uses distinct agents for distinct session emails', async () => {

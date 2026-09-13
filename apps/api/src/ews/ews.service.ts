@@ -32,7 +32,7 @@ import { MailSearchFilter } from '../provider/mail-search-filter';
 import {
   parseEws, responseClassOf, toArray, toBool, textOf,
 } from './ews-parse';
-import { EwsTransport, EwsServerBusyError, handleEwsError, inspectEwsXml } from './ews-transport';
+import { EwsCallOptions, EwsTransport, EwsServerBusyError, handleEwsError, inspectEwsXml } from './ews-transport';
 
 /**
  * Fallback session lifetime (7d) — matches the JWT module's own default for
@@ -207,20 +207,20 @@ export class EwsService implements MailProvider {
    * persistent throttle surfaces as a clean 502, never a second retry. Any
    * other Error/fault funnels through `handleEwsError`.
    */
-  private async callWithRetry(session: MailSession, body: string): Promise<string> {
+  private async callWithRetry(session: MailSession, body: string, opts?: EwsCallOptions): Promise<string> {
     let xml: string;
     try {
-      xml = await this.transport.call(session, body);
+      xml = await this.transport.call(session, body, opts);
     } catch (e) {
       // HTTP-500 SOAP-fault ErrorServerBusy → the single back-off retry.
-      if (e instanceof EwsServerBusyError) return this.retryAfterBackoff(session, body, e.backoffMs);
+      if (e instanceof EwsServerBusyError) return this.retryAfterBackoff(session, body, e.backoffMs, opts);
       throw e;
     }
 
     const err = inspectEwsXml(xml);
     if (!err) return xml;
     // 200-body ErrorServerBusy → the same single back-off retry.
-    if (err.responseCode === 'ErrorServerBusy') return this.retryAfterBackoff(session, body, err.backoffMs);
+    if (err.responseCode === 'ErrorServerBusy') return this.retryAfterBackoff(session, body, err.backoffMs, opts);
     handleEwsError(200, xml); // any other Error/fault
   }
 
@@ -228,9 +228,11 @@ export class EwsService implements MailProvider {
    *  Sleeps the capped back-off, then re-issues the call once. This second
    *  attempt is terminal: a throttle (or any error) now funnels straight
    *  through `handleEwsError` / propagates — there is no further retry. */
-  private async retryAfterBackoff(session: MailSession, body: string, backoffMs?: number): Promise<string> {
+  private async retryAfterBackoff(
+    session: MailSession, body: string, backoffMs?: number, opts?: EwsCallOptions,
+  ): Promise<string> {
     await delay(Math.min(backoffMs ?? 0, MAX_BACKOFF_MS));
-    const xml = await this.transport.call(session, body);
+    const xml = await this.transport.call(session, body, opts);
     const err = inspectEwsXml(xml);
     if (!err) return xml;
     handleEwsError(200, xml); // still failing after the one retry
@@ -650,12 +652,21 @@ export class EwsService implements MailProvider {
     const failures: unknown[] = [];
     const pages = await this.mapWithConcurrency(folderIds, EWS_SEARCH_CONCURRENCY, async (folderId) => {
       try {
-        const xml = await this.callWithRetry(session, envelopeFor(folderId, windowSize));
+        // Each folder gets its OWN connection: NTLM authenticates the socket, so
+        // parallel calls sharing the session's pooled agent interleave their
+        // handshakes and Exchange answers 401 (which signed the user out
+        // mid-search — observed live, with sibling requests then dying on
+        // ECONNRESET as the 401 handler reset the shared pool).
+        const xml = await this.callWithRetry(
+          session, envelopeFor(folderId, windowSize), { isolatedConnection: true },
+        );
         return this.parseMessagePage(xml, 0, folderId);
       } catch (err) {
-        // A dead session is not a per-folder problem — fail the whole search
-        // rather than reporting an empty mailbox to a signed-out user.
-        if (err instanceof UnauthorizedException) throw err;
+        // Every failure is per-folder here, a 401 included: the folder
+        // enumeration that opened this search already proved the session is
+        // alive, so a lone 401 is a transport hiccup, not a dead session. If
+        // the session really has expired, every folder fails and the 401 still
+        // surfaces below.
         this.logger.warn(`search skipped folder ${folderId}: ${(err as any)?.message ?? 'unknown error'}`);
         failures.push(err);
         return null;

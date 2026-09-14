@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { useAIStore } from '@/stores/ai.store';
+import { AiProfileNudge } from './AiProfileNudge';
 import {
   MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square,
   Mail, FileText, Calendar, SquarePen, ChevronDown, ChevronUp,
@@ -301,6 +303,17 @@ function AnswerBody({
  */
 export default function AskPanel() {
   const router = useRouter();
+
+  // The AI profile this device already mirrors (lib/ai/profileSync.ts), reused
+  // to decide whether to invite the user to fill it in. `profileSyncedFor` is
+  // null until the first account sync completes — until then the profile is
+  // unknown rather than empty, so the nudge stays quiet instead of flashing.
+  const profileCard = useAIStore((s) => s.profileCard);
+  const customInstructions = useAIStore((s) => s.customInstructions);
+  const profileSyncedFor = useAIStore((s) => s.profileSyncedFor);
+  const nudgeProfile = profileSyncedFor
+    ? { ...profileCard, instructions: customInstructions }
+    : undefined;
   const pathname = usePathname();
   const panelResize = useResizable({ key: 'aiPanel', defaultWidth: 420, min: 320, max: 640, edge: 'left' });
   const open = useAskStore((s) => s.open);
@@ -667,6 +680,11 @@ export default function AskPanel() {
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      <AiProfileNudge
+        profile={nudgeProfile}
+        onOpenSettings={() => { collapseStore(); router.push('/settings'); }}
+      />
 
       {/* Scope chip — one per variant, same row shell for both. */}
       {scope?.kind === 'doc' && (

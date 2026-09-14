@@ -18,7 +18,7 @@ import {
 import {
   normalizeProfileDraft, mergeSuggestions, AI_PROFILE_FIELD_MAX_CHARS,
   type AiProfileDraft,
-} from './ai-profile-helpers';
+} from '@/lib/ai/profileDraft';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';

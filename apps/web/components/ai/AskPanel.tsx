@@ -681,10 +681,7 @@ export default function AskPanel() {
         </button>
       </div>
 
-      <AiProfileNudge
-        profile={nudgeProfile}
-        onOpenSettings={() => { collapseStore(); router.push('/settings'); }}
-      />
+      <AiProfileNudge profile={nudgeProfile} />
 
       {/* Scope chip — one per variant, same row shell for both. */}
       {scope?.kind === 'doc' && (

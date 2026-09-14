@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+    <m:ResolveNamesResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:ResolveNamesResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:ResolutionSet TotalItemsInView="1" IncludesLastItemInRange="true">
+            <t:Resolution>
+              <t:Mailbox>
+                <t:Name>Test Risa</t:Name>
+                <t:EmailAddress>test-risa1@minaffet.gov.rw</t:EmailAddress>
+                <t:RoutingType>SMTP</t:RoutingType>
+                <t:MailboxType>Mailbox</t:MailboxType>
+              </t:Mailbox>
+            </t:Resolution>
+          </m:ResolutionSet>
+        </m:ResolveNamesResponseMessage>
+      </m:ResponseMessages>
+    </m:ResolveNamesResponse>
+  </s:Body>
+</s:Envelope>

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Header>
+    <h:ServerVersionInfo MajorVersion="15" MinorVersion="2" MajorBuildNumber="2562" MinorBuildNumber="37"
+      xmlns:h="http://schemas.microsoft.com/exchange/services/2006/types" />
+  </s:Header>
+  <s:Body>
+    <m:FindItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:FindItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="1" TotalItemsInView="1" IncludesLastItemInRange="true">
+            <t:Items>
+              <t:Message>
+                <t:ItemId Id="SEARCH-1==" ChangeKey="SK1"/>
+                <t:Subject>Invoice 2026-0042</t:Subject>
+                <t:DateTimeReceived>2026-09-07T11:20:00Z</t:DateTimeReceived>
+                <t:Size>9302</t:Size>
+                <t:Preview>Your invoice is attached.</t:Preview>
+                <t:HasAttachments>true</t:HasAttachments>
+                <t:From>
+                  <t:Mailbox>
+                    <t:Name>Billing</t:Name>
+                    <t:EmailAddress>billing@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                </t:From>
+                <t:ToRecipients>
+                  <t:Mailbox>
+                    <t:Name>Test Risa</t:Name>
+                    <t:EmailAddress>test-risa1@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                </t:ToRecipients>
+                <t:IsRead>true</t:IsRead>
+                <t:ConversationId Id="CONV-INV==" ChangeKey="CVK9"/>
+                <t:Flag>
+                  <t:FlagStatus>NotFlagged</t:FlagStatus>
+                </t:Flag>
+              </t:Message>
+            </t:Items>
+          </m:RootFolder>
+        </m:FindItemResponseMessage>
+      </m:ResponseMessages>
+    </m:FindItemResponse>
+  </s:Body>
+</s:Envelope>

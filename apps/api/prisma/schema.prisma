@@ -17,10 +17,14 @@ model User {
   id           String    @id @default(cuid())
   email        String    @unique
   displayName  String?
+  /// Mail server host generally (Zimbra, EWS, etc.)
   zimbraHost   String
   authToken    String?
   csrfToken    String?
   tokenExpiry  DateTime?
+  /// Mail backend for this account: 'zimbra' | 'ews' | 'memory'
+  provider      String  @default("zimbra")
+  institutionId String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -54,6 +58,22 @@ model User {
   aiProfile              UserAiProfile?
 
   @@map("users")
+}
+
+// ─── Institutions ─────────────────────────────────────────────────────────────
+
+/// Login-time mapping: institution -> mail backend. Seeded by migration;
+/// host/provider never come from the client.
+model Institution {
+  id        String  @id
+  label     String
+  provider  String
+  host      String
+  ewsDomain String?
+  enabled   Boolean @default(true)
+  position  Int     @default(0)
+
+  @@map("institutions")
 }
 
 // ─── Audit log ───────────────────────────────────────────────────────────────

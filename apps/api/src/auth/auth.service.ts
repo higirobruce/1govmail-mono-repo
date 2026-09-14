@@ -1,13 +1,22 @@
-import { Injectable, UnauthorizedException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
+import { ProviderAuthResult } from '../provider/provider-types';
+import { MailProvider } from '../provider/mail-provider.interface';
 import { AuditService } from '../common/audit/audit.service';
+import { InstitutionRegistry } from './institution.registry';
+import { LoginDto } from './dto/login.dto';
 
 export interface AuthContext {
   ip?: string | null;
   userAgent?: string | null;
+}
+
+interface ResolvedInstitution {
+  provider: string;
+  institutionId: string;
 }
 
 @Injectable()
@@ -16,15 +25,55 @@ export class AuthService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
+    private readonly institutionRegistry: InstitutionRegistry,
   ) {}
 
-  async login(email: string, password: string, zimbraHost: string, ctx: AuthContext = {}) {
-    let zimbraResult: Awaited<ReturnType<ZimbraService['authenticate']>>;
+  async login(dto: LoginDto, ctx: AuthContext = {}) {
+    const { email, password } = dto;
+
+    const inst = dto.institution
+      ? await this.institutionRegistry.resolve(dto.institution)
+      : dto.zimbraHost
+        ? await this.institutionRegistry.resolveByHost(dto.zimbraHost)
+        : null;
+    if (!inst) {
+      throw new BadRequestException('Unknown institution. Pick your institution from the list.');
+    }
+    if (dto.zimbraHost && !dto.institution) {
+      this.logger.warn(`Legacy zimbraHost login for ${inst.id} — client should send institution`);
+    }
+    // The resolver IS the gate: Task 3's temporary `inst.provider !== 'zimbra'
+    // throw is gone, so an institution on a backend this build does not speak
+    // yet fails here with the resolver's BadRequestException — and the moment
+    // Phase 2/3 registers that provider, login starts working with no change
+    // to this method. The resolver's message names the internal provider key
+    // (fine for its other call sites); re-wrap it here so a user-facing login
+    // error never leaks that key — only the institution's own label.
+    let provider: MailProvider;
     try {
-      zimbraResult = await this.zimbra.authenticate(zimbraHost, email, password);
+      provider = this.resolver.forUser({ provider: inst.provider });
+    } catch (err) {
+      if (err instanceof BadRequestException) {
+        throw new BadRequestException(`${inst.label} sign-in is not supported on this server yet.`);
+      }
+      throw err;
+    }
+    const zimbraHost = inst.host;
+    const resolvedInstitution: ResolvedInstitution = { provider: inst.provider, institutionId: inst.id };
+
+    let zimbraResult: ProviderAuthResult;
+    try {
+      // EWS needs the institution's NTLM domain (Institution.ewsDomain →
+      // `DOMAIN\localpart`); zimbra/memory accept-and-ignore the 4th arg
+      // (Task 1 widened their signatures). No plaintext is persisted: for EWS
+      // the returned `authToken` is already the AES-256-GCM-encrypted
+      // credential blob, and createSession stores it unchanged.
+      zimbraResult = await provider.authenticate(zimbraHost, email, password, {
+        ntlmDomain: inst.ewsDomain ?? undefined,
+      });
     } catch (err) {
       await this.audit.record('LOGIN_FAILURE', {
         email,
@@ -48,6 +97,8 @@ export class AuthService {
           email,
           zimbraHost,
           preAuthToken: zimbraResult.authToken,
+          provider: resolvedInstitution.provider,
+          institutionId: resolvedInstitution.institutionId,
         },
         { expiresIn: '5m' },
       );
@@ -60,11 +111,18 @@ export class AuthService {
       return { requiresTwoFactor: true as const, twoFactorToken };
     }
 
-    return this.createSession(email, zimbraHost, zimbraResult, ctx);
+    return this.createSession(email, zimbraHost, zimbraResult, ctx, resolvedInstitution);
   }
 
   async loginTwoFactor(twoFactorToken: string, code: string, ctx: AuthContext = {}) {
-    let payload: { sub: string; email: string; zimbraHost: string; preAuthToken: string };
+    let payload: {
+      sub: string;
+      email: string;
+      zimbraHost: string;
+      preAuthToken: string;
+      provider?: string;
+      institutionId?: string;
+    };
     try {
       payload = this.jwt.verify(twoFactorToken) as typeof payload;
     } catch {
@@ -74,11 +132,16 @@ export class AuthService {
       throw new UnauthorizedException('Invalid two-factor session token.');
     }
 
-    const { email, zimbraHost, preAuthToken } = payload;
+    const { email, zimbraHost, preAuthToken, provider, institutionId } = payload;
 
-    let zimbraResult: Awaited<ReturnType<ZimbraService['verifyTwoFactor']>>;
+    // Challenge tokens minted before the provider column existed carry no
+    // `provider`; they can only have come from the Zimbra login leg, so
+    // default to it rather than 400-ing a 2FA prompt that is already open.
+    const mailProvider = this.resolver.forUser({ provider: provider ?? 'zimbra' });
+
+    let zimbraResult: ProviderAuthResult;
     try {
-      zimbraResult = await this.zimbra.verifyTwoFactor(
+      zimbraResult = await mailProvider.verifyTwoFactor(
         zimbraHost,
         email,
         preAuthToken,
@@ -95,17 +158,24 @@ export class AuthService {
       throw err;
     }
 
-    return this.createSession(email, zimbraHost, zimbraResult, ctx);
+    return this.createSession(
+      email,
+      zimbraHost,
+      zimbraResult,
+      ctx,
+      provider && institutionId ? { provider, institutionId } : undefined,
+    );
   }
 
   /** Persist the Zimbra session and return a signed JWT for the frontend. */
   private async createSession(
     email: string,
     originalHost: string,
-    zimbraResult: import('../zimbra/zimbra.service').ZimbraAuthResult,
+    zimbraResult: ProviderAuthResult,
     ctx: AuthContext,
+    institution?: ResolvedInstitution,
   ) {
-    const effectiveHost = zimbraResult.refer ?? originalHost;
+    const effectiveHost = zimbraResult.redirectHost ?? originalHost;
     // Guard against a misconfigured/omitted Zimbra `lifetime`: if it were
     // falsy, NaN, or unreasonably small, tokenExpiry would land at or before
     // "now" — the very next request would fail JwtStrategy's expiresAt check,
@@ -128,6 +198,7 @@ export class AuthService {
         tokenExpiry,
         displayName: zimbraResult.displayName ?? undefined,
         zimbraHost: effectiveHost,
+        ...(institution ? { provider: institution.provider, institutionId: institution.institutionId } : {}),
       },
       create: {
         email,
@@ -136,6 +207,7 @@ export class AuthService {
         csrfToken: zimbraResult.csrfToken ?? null,
         tokenExpiry,
         displayName: zimbraResult.displayName,
+        ...(institution ? { provider: institution.provider, institutionId: institution.institutionId } : {}),
       },
     });
 
@@ -200,8 +272,13 @@ export class AuthService {
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: { authToken: null, tokenExpiry: null },
-      select: { email: true },
+      select: { email: true, provider: true },
     });
+    // Drop any keep-alive transport socket held for this mailbox. Only EWS
+    // caches an authenticated per-mailbox https.Agent (NTLM authenticates the
+    // connection); the resolver no-ops for every other provider. Evicting an
+    // unknown email is harmless, so this is unconditional at the call site.
+    this.resolver.evictSession({ provider: user.provider }, user.email);
     await this.audit.record('LOGOUT', {
       userId,
       email: user.email,

@@ -579,8 +579,6 @@ export default function ThreadView({
         messageCount={threadMessages.length}
         unreadCount={unreadCount}
         lastReceivedAt={lastMessage.receivedAt}
-        lastSenderEmail={lastMessage.fromEmail}
-        currentUserEmail={user?.email ?? ''}
         onClose={onClose}
         onReply={() => { setActiveTab('messages'); setInlineReply({ mode: 'reply', target: lastMessage }); }}
         onReplyAll={() => { setActiveTab('messages'); setInlineReply({ mode: 'replyAll', target: lastMessage }); }}

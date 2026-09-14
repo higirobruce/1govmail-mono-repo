@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Header>
+    <h:ServerVersionInfo MajorVersion="15" MinorVersion="2" MajorBuildNumber="2562" MinorBuildNumber="37"
+      xmlns:h="http://schemas.microsoft.com/exchange/services/2006/types" />
+  </s:Header>
+  <s:Body>
+    <m:GetUserAvailabilityResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:FreeBusyResponseArray>
+        <m:FreeBusyResponse>
+          <m:ResponseMessage ResponseClass="Success">
+            <m:ResponseCode>NoError</m:ResponseCode>
+          </m:ResponseMessage>
+          <m:FreeBusyView>
+            <t:FreeBusyViewType>FreeBusy</t:FreeBusyViewType>
+            <t:CalendarEventArray>
+              <t:CalendarEvent>
+                <t:StartTime>2026-09-15T09:00:00Z</t:StartTime>
+                <t:EndTime>2026-09-15T10:00:00Z</t:EndTime>
+                <t:BusyType>Busy</t:BusyType>
+              </t:CalendarEvent>
+              <t:CalendarEvent>
+                <t:StartTime>2026-09-15T11:00:00Z</t:StartTime>
+                <t:EndTime>2026-09-15T11:30:00Z</t:EndTime>
+                <t:BusyType>Tentative</t:BusyType>
+              </t:CalendarEvent>
+              <t:CalendarEvent>
+                <t:StartTime>2026-09-15T14:00:00Z</t:StartTime>
+                <t:EndTime>2026-09-15T15:00:00Z</t:EndTime>
+                <t:BusyType>OOF</t:BusyType>
+              </t:CalendarEvent>
+              <t:CalendarEvent>
+                <t:StartTime>2026-09-15T16:00:00Z</t:StartTime>
+                <t:EndTime>2026-09-15T16:30:00Z</t:EndTime>
+                <t:BusyType>Free</t:BusyType>
+              </t:CalendarEvent>
+            </t:CalendarEventArray>
+          </m:FreeBusyView>
+        </m:FreeBusyResponse>
+      </m:FreeBusyResponseArray>
+    </m:GetUserAvailabilityResponse>
+  </s:Body>
+</s:Envelope>

@@ -29,7 +29,7 @@ interface AuthState {
   login: (
     email: string,
     password: string,
-    zimbraHost: string,
+    institution: string,
   ) => Promise<{ requiresTwoFactor: true; twoFactorToken: string } | void>;
   twoFactor: (twoFactorToken: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -44,8 +44,8 @@ export const useAuthStore = create<AuthState>()(
       token: USE_MOCK ? 'mock-token' : null,
       isAuthenticated: USE_MOCK,
 
-      login: async (email, password, zimbraHost) => {
-        const result = await api.auth.login(email, password, zimbraHost);
+      login: async (email, password, institution) => {
+        const result = await api.auth.login(email, password, institution);
         // 2FA required — return the challenge token so the UI can prompt for OTP
         if ('requiresTwoFactor' in result && result.requiresTwoFactor) {
           return { requiresTwoFactor: true as const, twoFactorToken: result.twoFactorToken };

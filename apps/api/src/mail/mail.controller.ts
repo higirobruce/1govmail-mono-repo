@@ -33,6 +33,7 @@ import { CreateSenderRuleDto } from './dto/create-sender-rule.dto';
 import { UpdateCommitmentDto } from './dto/update-commitment.dto';
 import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import type { MailSearchFilter } from '../provider/mail-search-filter';
 
 @UseGuards(JwtAuthGuard)
 @Controller('mail')
@@ -62,6 +63,17 @@ export class MailController {
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
   ) {
     return this.mailService.searchMessages(req.user.sub, q ?? '', limit, offset);
+  }
+
+  // POST, not GET: structured search carries free-text terms in the body
+  // instead of a query string, matching the "terms out of URLs" constraint.
+  @Post('search/advanced')
+  searchAdvanced(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: MailSearchFilter & { limit?: number; offset?: number },
+  ) {
+    const { limit = 50, offset = 0, ...filter } = body ?? {};
+    return this.mailService.searchStructured(req.user.sub, filter, limit, offset);
   }
 
   @Get('messages/:messageId/conversation')

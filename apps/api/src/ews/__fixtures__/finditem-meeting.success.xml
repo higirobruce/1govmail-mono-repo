@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Header>
+    <h:ServerVersionInfo MajorVersion="15" MinorVersion="2" MajorBuildNumber="2562" MinorBuildNumber="37"
+      xmlns:h="http://schemas.microsoft.com/exchange/services/2006/types" />
+  </s:Header>
+  <s:Body>
+    <m:FindItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:FindItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="2" TotalItemsInView="2" IncludesLastItemInRange="true">
+            <t:Items>
+              <t:Message>
+                <t:ItemId Id="MSG-1==" ChangeKey="MK1"/>
+                <t:Subject>Quarterly budget review</t:Subject>
+                <t:DateTimeReceived>2026-09-09T14:32:10Z</t:DateTimeReceived>
+                <t:Size>18453</t:Size>
+                <t:Preview>Please find attached the revised figures ...</t:Preview>
+                <t:HasAttachments>false</t:HasAttachments>
+                <t:From>
+                  <t:Mailbox>
+                    <t:Name>Alice Umutoni</t:Name>
+                    <t:EmailAddress>alice.umutoni@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                </t:From>
+                <t:IsRead>true</t:IsRead>
+                <t:ConversationId Id="CONV-A==" ChangeKey="CVK1"/>
+              </t:Message>
+              <t:MeetingRequest>
+                <t:ItemId Id="MTG-1==" ChangeKey="MTK1"/>
+                <t:Subject>Invitation: Cabinet briefing</t:Subject>
+                <t:DateTimeReceived>2026-09-10T08:00:00Z</t:DateTimeReceived>
+                <t:Size>9021</t:Size>
+                <t:Preview>You are invited to the Cabinet briefing ...</t:Preview>
+                <t:HasAttachments>false</t:HasAttachments>
+                <t:From>
+                  <t:Mailbox>
+                    <t:Name>Bob Mugisha</t:Name>
+                    <t:EmailAddress>bob.mugisha@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                </t:From>
+                <t:ToRecipients>
+                  <t:Mailbox>
+                    <t:Name>Test Risa</t:Name>
+                    <t:EmailAddress>test-risa1@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                </t:ToRecipients>
+                <t:IsRead>false</t:IsRead>
+                <t:ConversationId Id="CONV-M==" ChangeKey="CVKM"/>
+              </t:MeetingRequest>
+            </t:Items>
+          </m:RootFolder>
+        </m:FindItemResponseMessage>
+      </m:ResponseMessages>
+    </m:FindItemResponse>
+  </s:Body>
+</s:Envelope>

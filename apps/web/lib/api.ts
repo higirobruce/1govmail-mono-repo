@@ -32,17 +32,46 @@ function getToken(): string | null {
 
 async function request<T>(
   path: string,
-  options: RequestInit = {},
+  options: RequestInit & { timeoutMs?: number } = {},
 ): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
+  const { timeoutMs, signal: callerSignal, ...init } = options;
+
+  // Optional client-side timeout. Without it, a request that hangs at the
+  // network level (the server accepts the connection but never responds) leaves
+  // the caller's await pending forever — an infinite spinner with no error,
+  // because fetch itself has no default timeout. With `timeoutMs` we abort and
+  // throw a clean error the caller's catch can surface. Composes with a
+  // caller-supplied AbortSignal (e.g. semantic search cancels on unmount).
+  let controller: AbortController | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  if (timeoutMs) {
+    controller = new AbortController();
+    timer = setTimeout(() => { timedOut = true; controller!.abort(); }, timeoutMs);
+    if (callerSignal) {
+      if (callerSignal.aborted) controller.abort();
+      else callerSignal.addEventListener('abort', () => controller!.abort(), { once: true });
+    }
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal: controller ? controller.signal : callerSignal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
+  } catch (err: any) {
+    if (timedOut) throw new Error('Request timed out — please try again');
+    throw err; // caller-initiated abort or a genuine network error
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 
   if (!res.ok) {
     // Only hard-redirect to /login when a token WAS sent and the server
@@ -213,15 +242,19 @@ export const api = {
   },
 
   auth: {
-    login: (email: string, password: string, zimbraHost: string) => {
+    institutions: () => {
+      if (USE_MOCK) return delay<Array<{ id: string; label: string }>>([{ id: 'memory', label: 'Demo (local)' }]);
+      return request<Array<{ id: string; label: string }>>('/auth/institutions');
+    },
+    login: (email: string, password: string, institution: string) => {
       if (USE_MOCK)
-        return delay({ accessToken: 'mock-token', user: { id: 'u1', email, displayName: 'Demo User', zimbraHost } });
+        return delay({ accessToken: 'mock-token', user: { id: 'u1', email, displayName: 'Demo User', zimbraHost: 'mail.company.com' } });
       return request<
         | { accessToken: string; user: any }
         | { requiresTwoFactor: true; twoFactorToken: string }
       >('/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password, zimbraHost }),
+        body: JSON.stringify({ email, password, institution }),
       });
     },
     twoFactor: (twoFactorToken: string, code: string) => {
@@ -277,7 +310,16 @@ export const api = {
     },
     search: (query: string, limit = 50, offset = 0) => {
       if (USE_MOCK) return delay({ messages: MOCK_MESSAGES.filter(m => JSON.stringify(m).toLowerCase().includes(query.toLowerCase())), total: 0, offset: 0, limit: 50, hasMore: false });
-      return request<any>(`/mail/search?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`);
+      return request<any>(`/mail/search?q=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}`, { timeoutMs: 20000 });
+    },
+    /** Structured (field-by-field) search — POST /mail/search/advanced. Same response shape as `search`. */
+    searchAdvanced: (filter: MailSearchFilter, limit = 50, offset = 0) => {
+      if (USE_MOCK) return delay({ messages: [], total: 0, offset: 0, limit, hasMore: false });
+      return request<any>('/mail/search/advanced', {
+        method: 'POST',
+        body: JSON.stringify({ ...filter, limit, offset }),
+        timeoutMs: 20000,
+      });
     },
     /** Semantic (vector) mail search — phase 4. Same response shape as `search`. */
     semanticSearch: (query: string, limit = 5, opts?: { signal?: AbortSignal }) => {
@@ -541,15 +583,12 @@ export const api = {
      * Fetches prefs, identities, signatures and basic profile in one shot.
      */
     get: () => {
-      if (USE_MOCK) return delay<any>({ email: '', zimbraHost: '', displayName: '', prefs: {}, identities: [], signatures: [] });
-      return request<{
-        email: string;
-        zimbraHost: string;
-        displayName: string | null;
-        prefs: Record<string, string>;
-        identities: Array<{ id: string; name: string; attrs: Record<string, string> }>;
-        signatures: Array<{ id: string; name: string; contentHtml: string; contentText: string }>;
-      }>('/settings');
+      if (USE_MOCK) {
+        return delay<SettingsResponse>({
+          email: '', zimbraHost: '', displayName: '', prefs: {}, identities: [], signatures: [],
+        });
+      }
+      return request<SettingsResponse>('/settings');
     },
 
     /** PATCH /settings/prefs — update one or more Zimbra preference keys */
@@ -969,6 +1008,63 @@ export interface AiProfileSuggestions {
   jobTitle: string | null;
   institution: string | null;
   department: string | null;
+}
+
+/**
+ * Which of the provider-backed settings sections the mail backend behind this
+ * account can actually serve. Zimbra reports every flag true.
+ *
+ * Consumers must treat both an absent object and an absent individual flag as
+ * "supported" — a server from before this field, a request that races a
+ * deploy, and a backend that grows a capability this client does not know
+ * about all have to keep rendering everything. Run it through
+ * `resolveCapabilities` (app/(app)/settings/capabilities.ts) rather than
+ * reading the flags off the response directly.
+ */
+export interface SettingsCapabilities {
+  /** Stored signatures can be listed, created, edited and deleted. */
+  signatures: boolean;
+  /** Sending identities (display name, reply-to) can be read and edited. */
+  identities: boolean;
+  /** Server-side mail preferences (reading/composing/vacation) can be read and written. */
+  serverPrefs: boolean;
+  /** The account password can be changed from the settings page. */
+  changePassword: boolean;
+  /** The backend can run a two-factor challenge. Consumed at login, not in settings. */
+  twoFactor: boolean;
+}
+
+export interface SettingsResponse {
+  email: string;
+  zimbraHost: string;
+  displayName: string | null;
+  /** Optional: a server from before this field simply omits it. Used to gate
+   *  provider-specific UI (e.g. hiding the Flagged filter for EWS accounts,
+   *  whose backend intentionally ignores it). */
+  provider?: string;
+  prefs: Record<string, string>;
+  identities: Array<{ id: string; name: string; attrs: Record<string, string> }>;
+  signatures: Array<{ id: string; name: string; contentHtml: string; contentText: string }>;
+  /** Optional: a server from before this field simply omits it, and a partial
+   *  object is legal — every absent flag defaults to supported. */
+  capabilities?: Partial<SettingsCapabilities>;
+}
+
+/** Provider-agnostic structured mail search filter — mirrors
+ *  apps/api/src/provider/mail-search-filter.ts. Every field optional; present
+ *  fields combine with AND. Booleans: true/false select that state, undefined
+ *  means "either". Empty/absent fields should be omitted before posting. */
+export interface MailSearchFilter {
+  keyword?: string;
+  from?: string;
+  to?: string;
+  subject?: string;
+  dateFrom?: string;   // 'YYYY-MM-DD', inclusive
+  dateTo?: string;     // 'YYYY-MM-DD', inclusive
+  hasAttachment?: boolean;
+  folderId?: string;
+  unread?: boolean;
+  flagged?: boolean;
 }
 
 export interface Doc {

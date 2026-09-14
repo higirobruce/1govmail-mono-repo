@@ -17,7 +17,7 @@
 5. [Frontend — Next.js Web App](#5-frontend--nextjs-web-app)
 6. [Desktop — Electron Shell](#6-desktop--electron-shell)
 7. [Authentication Flow](#7-authentication-flow)
-8. [Zimbra Integration Layer](#8-zimbra-integration-layer)
+8. [Mail Provider Layer & Zimbra Integration](#8-mail-provider-layer--zimbra-integration)
 9. [Real-Time Collaboration (Docs)](#9-real-time-collaboration-docs)
 10. [Background Jobs & Schedulers](#10-background-jobs--schedulers)
 11. [API Endpoint Reference](#11-api-endpoint-reference)
@@ -100,8 +100,9 @@ email-client/
 apps/api/src/
 ├── main.ts                  Express bootstrap + Hocuspocus startup
 ├── app.module.ts            Root NestJS module (imports all below)
-├── auth/                    JWT auth, 2FA, login/logout
-├── zimbra/                  All Zimbra SOAP calls (single service, 1600 lines)
+├── auth/                    JWT auth, 2FA, login/logout, Institution registry
+├── provider/                MailProvider interface, MailSession, MailProviderResolver
+├── zimbra/                  All Zimbra SOAP calls (the MailProvider implementation)
 ├── prisma/                  PrismaService (singleton, better-sqlite3 adapter)
 ├── mail/                    Folder/message CRUD, snooze, scheduled send, templates, rules
 ├── contacts/                Contact CRUD + distribution group management
@@ -158,16 +159,19 @@ apps/web/
 ```
 AppModule
  ├── PrismaModule          (global — injected by all other modules)
- ├── AuthModule            depends on: ZimbraModule, PrismaModule, JwtModule
- ├── ZimbraModule          no NestJS deps (pure axios SOAP client)
- ├── MailModule            depends on: ZimbraModule, PrismaModule, ScheduleModule
- ├── ContactsModule        depends on: ZimbraModule, PrismaModule
- ├── CalendarModule        depends on: ZimbraModule, PrismaModule
- ├── TasksModule           depends on: ZimbraModule, PrismaModule, ScheduleModule
- ├── SettingsModule        depends on: ZimbraModule, PrismaModule
+ ├── ProviderModule        depends on: ZimbraModule — exports MailProviderResolver
+ │    └── ZimbraModule     no NestJS deps (pure axios SOAP client)
+ ├── AuthModule            depends on: ProviderModule, PrismaModule, JwtModule
+ ├── MailModule            depends on: ProviderModule, PrismaModule, ScheduleModule
+ ├── ContactsModule        depends on: ProviderModule, PrismaModule
+ ├── CalendarModule        depends on: ProviderModule, PrismaModule
+ ├── TasksModule           depends on: ProviderModule, PrismaModule, ScheduleModule
+ ├── SettingsModule        depends on: ProviderModule, PrismaModule
  ├── NotificationsModule   depends on: PrismaModule
- ├── DocsModule            depends on: PrismaModule
+ ├── DocsModule            depends on: ProviderModule, PrismaModule, MailModule
  └── CollabModule          (standalone — started outside NestJS HTTP lifecycle)
+
+No feature module imports ZimbraModule any more — see §8, Mail provider layer.
 ```
 
 ### Module responsibilities
@@ -175,7 +179,8 @@ AppModule
 | Module | Controller prefix | Key responsibilities |
 |--------|------------------|---------------------|
 | **Auth** | `/auth` | Login (Zimbra SOAP AuthRequest), 2FA (TOTP), JWT issuance, session management |
-| **Zimbra** | *(no controller)* | All Zimbra SOAP calls — single service injected everywhere |
+| **Provider** | *(no controller)* | `MailProviderResolver` — the seam every feature service injects; picks the backend off `User.provider` |
+| **Zimbra** | *(no controller)* | All Zimbra SOAP calls — the `MailProvider` implementation behind the resolver |
 | **Mail** | `/mail` | Message list/fetch/search, send (with attachments), drafts, snooze, scheduled send, templates, mail rules, mute, bulk ops |
 | **Contacts** | `/contacts` | Contact CRUD (synced from/to Zimbra), autocomplete, distribution groups (local SQLite only) |
 | **Calendar** | `/calendar` | Event CRUD (synced from/to Zimbra), free/busy lookup (single + batch), RSVP |
@@ -194,8 +199,9 @@ HTTP request
   → JwtAuthGuard (validates Bearer token via Passport JWT strategy)
   → Controller method (extracts req.user.sub = userId)
   → Service method
-    → PrismaService (local SQLite)   ← for enrichment data
-    → ZimbraService (axios SOAP)     ← for mail/contacts/calendar
+    → PrismaService (local SQLite)     ← for enrichment data
+    → resolver.forUser(user)           ← picks the MailProvider off User.provider
+      → ZimbraService (axios SOAP)     ← for mail/contacts/calendar
   → Response JSON
 ```
 
@@ -442,9 +448,49 @@ Each login upserts a `Session` row tracking `token`, `expiresAt`, `userAgent`, `
 
 ---
 
-## 8. Zimbra Integration Layer
+## 8. Mail Provider Layer & Zimbra Integration
 
-`ZimbraService` (`apps/api/src/zimbra/zimbra.service.ts`) is the **only place** in the codebase that communicates with Zimbra. All other services depend on this one.
+### Mail provider layer
+
+No feature service knows which mail backend it is talking to. Everything provider-facing goes through `apps/api/src/provider/`:
+
+| File | Role |
+|------|------|
+| `mail-provider.interface.ts` | `MailProvider` — the neutral contract: auth, folders, messages, attachments, contacts/GAL, calendar, and the settings surface. Every method takes a `MailSession` as its first argument. Payloads/results are the neutral `Provider*` types in `provider-types.ts` — no wire vocabulary (`su`, `fr`, `_jsns`) escapes the implementation. |
+| `mail-session.ts` | `MailSession` (`host`, `email`, `authToken`/`csrfToken`, and — Phase 3 — decrypted `credentials`) plus `buildMailSession(user)`, the **only** place `User` columns map to a provider session. It requires `User.provider`, which forces every narrowed `select` that feeds a session to carry the column. `MailSessionUser` is that `Pick<User, …>`, for the few internal helpers handed a row instead of a `userId`. |
+| `mail-provider.resolver.ts` | `MailProviderResolver` — the injection seam. `forUser(user)` switches on `User.provider` and returns the `MailProvider` (`zimbra`, `ews`, and env-gated `memory`); an unregistered provider raises a `BadRequestException` reading *Mail provider "imap" is not supported on this server yet.* `evictSession(user, email)` tears down per-session transport state on logout (EWS keep-alive agent). `zimbra()` hands back the Zimbra service itself for the two sanctioned extras below. |
+| `provider.module.ts` | `ProviderModule` imports `ZimbraModule` + `EwsModule` and exports the resolver. The seven feature modules (`auth`, `mail`, `contacts`, `calendar`, `settings`, `tasks`, `docs`) import **ProviderModule, never ZimbraModule/EwsModule** — `provider.module.spec.ts` compiles `AppModule` to fail loudly if one regresses. |
+| `capability.error.ts` | `CapabilityNotSupportedError` — what a provider throws for a surface it cannot serve (see capability flags below). |
+
+Usage is the same everywhere: resolve per request, then call the interface.
+
+```ts
+const user = await this.getUser(userId);       // the User row (carries `provider`)
+const provider = this.resolver.forUser(user);  // MailProvider for this account
+await provider.markRead(buildMailSession(user), id, true);
+```
+
+**Institution registry & login.** Hosts and providers are server-side data, never client input: `Institution` rows (`id`, `label`, `provider`, `host`, `ewsDomain`, `enabled`, `position`) back the login dropdown, and `AuthService.login` resolves the chosen institution (or a legacy `zimbraHost`) through `InstitutionRegistry`. It then calls `resolver.forUser({ provider: inst.provider })` — so **the resolver is the login gate**: an institution whose provider this build does not register fails there with the same 400, and registering the provider is all it takes to enable those logins. The winning provider + institution id are stamped onto the `User` row (`provider`, `institutionId`) at session creation, and every later request branches off that column. The 2FA challenge token carries them through the second leg.
+
+**Capability flags.** `MailProvider.capabilities` (`signatures`, `identities`, `serverPrefs`, `changePassword`, `twoFactor`) declares which settings sections a backend can serve. `GET /settings` forwards them (the one sanctioned Phase 1 addition to the REST surface) and the client hides what is unsupported, defaulting every absent flag to `true` so older clients render exactly as before. Zimbra declares all five true.
+
+**The two sanctioned Zimbra-only extras.** `downloadZimbraPath` (Briefcase/REST path fetch, used to inline signature images) and `galSelfLookup` (seeds the AI-profile form) have no equivalent elsewhere, so they stay **off** the interface. Call sites reach them via `resolver.zimbra()` and must check `user.provider === 'zimbra'` first, degrading gracefully otherwise: signature HTML and image URLs are left untouched, and the suggestions endpoint returns its all-null shape instead of erroring.
+
+**Phases 2 and 3 plug in behind the resolver.** A memory provider (Phase 2, for tests/demo) and EWS (Phase 3, for Exchange institutions) each add their module to `ProviderModule` and their `case` to `forUser` — no feature service, controller, or REST payload changes.
+
+### The memory implementation (Phase 2)
+
+`MemoryMailProvider` (`apps/api/src/provider/memory/`) `implements MailProvider` (`name: 'memory'`) against an in-process store — no mail server, database, or network. It exists so the **whole app** (inbox, threads, compose/send, drafts, move-to-folder, search, contacts, calendar, settings) can be run and tested end-to-end against a deterministic fake: `MemoryStore` seeds a mailbox on first `authenticate` for any email (`seedFor` is idempotent and time-injected, so seeded content is reproducible), and every later call mutates that in-memory mailbox. It declares **all capability flags true**, so every settings section renders.
+
+It is **gated by `MAIL_PROVIDER_MEMORY`**. Two things read the flag, and both must agree:
+- `InstitutionRegistry` surfaces a synthetic `memory` row (`id: 'memory'`, `provider: 'memory'`, `host: 'memory.local'`) in `list()`/`resolve()` **only** when `MAIL_PROVIDER_MEMORY === 'true'`.
+- `MailProviderResolver.forUser({ provider: 'memory' })` returns the `MemoryMailProvider` **only** when the same flag is set; with the flag off it falls through to the standard `BadRequestException`, refusing `memory` exactly as it refuses an unregistered provider (`ews`).
+
+`ProviderModule` always provides the pair (`MemoryStore` as a single shared instance → `MemoryMailProvider`, injected `@Optional()` into the resolver); the env flag, not their presence, decides whether logins can reach them. The memory subtree depends on nothing in the feature modules, so it adds no edge to the module graph. With the flag on and a seeded `memory` institution, `AuthService.login` resolves it through the registry, the resolver hands back the fake, `authenticate` seeds + issues a token, and the account is stamped `provider: 'memory'` — the Postgres cache layer then upserts the memory provider's messages exactly as it does for Zimbra.
+
+### The Zimbra implementation
+
+`ZimbraService` (`apps/api/src/zimbra/zimbra.service.ts`) `implements MailProvider` (`name: 'zimbra'`) and is the **only place** in the codebase that communicates with Zimbra — wire↔neutral mapping lives beside it in `zimbra.mappers.ts`. Feature services depend on the resolver, not on this class.
 
 ### SOAP transport
 
@@ -462,6 +508,8 @@ Some Zimbra deployments respond to `AuthRequest` with a `refer` field containing
 
 ### Method catalogue
 
+Every method below (apart from `authenticate`/`verifyTwoFactor`, which run before a session exists) takes a `MailSession` first — the pre-Phase-1 `(host, authToken, csrfToken, …)` argument lists are gone. `downloadZimbraPath` and `galSelfLookup` are the two extras that stay off the `MailProvider` interface (see above).
+
 | Domain | Methods |
 |--------|---------|
 | **Auth** | `authenticate`, `verifyTwoFactor` |
@@ -476,6 +524,24 @@ Some Zimbra deployments respond to `AuthRequest` with a `refer` field containing
 ### Important: deleteMessage vs discardDraft
 
 `deleteMessage` uses Zimbra's `MsgActionRequest { op: 'trash' }` — it moves to Trash, not permanent deletion. When used for drafts (`discardDraft`), the API also does a `prisma.message.deleteMany` on the local DB to prevent stale records appearing in conversation fetches.
+
+### The EWS implementation (Phase 3)
+
+`EwsService` (`apps/api/src/ews/ews.service.ts`) `implements MailProvider` (`name: 'ews'`) and is the only place that speaks Exchange Web Services. It is registered behind the resolver exactly like every other backend: `EwsModule` provides `EwsService` + `EwsTransport` (both via `useFactory`), `ProviderModule` imports it, and `forUser({ provider: 'ews' })` returns it. **There is no env gate** — unlike the memory fake, EWS is a real provider and the `Institution` table alone decides who is `ews` (e.g. the `minaffet` row: `provider: 'ews'`, `host: 'webmail.minaffet.gov.rw'`, `ewsDomain: 'MINAFFET'`). The `ews` subtree depends on nothing in the feature modules, so it adds no edge to the module graph (acyclic).
+
+**Transport / NTLM / keep-alive** (`ews-transport.ts`). Exchange fronts EWS with Windows Integrated Auth (NTLM) — there is no bearer token. Every SOAP call re-presents the mailbox `{ username, password }` (decrypted per-request into `MailSession.credentials`) through `httpntlm`, which runs the type-1/2/3 handshake. Because NTLM authenticates the **TCP connection**, `EwsTransport` caches one keep-alive `https.Agent` **per session email** so the handshake is not repeated on every call. On logout the agent is evicted (see below). TLS is always verified: `rejectUnauthorized` is left at its secure default and appears nowhere; `MAIL_CA_BUNDLE` may *add* a private CA but can never disable verification. Credentials, the request body, and the NTLM `Authorization` bytes never reach a log line — only endpoint + HTTP status are logged.
+
+**Credential encryption (AES-256-GCM, encrypted-at-rest).** EWS has no server-issued session token, so the credentials themselves must persist. `EwsCrypto` (`ews-crypto.ts`) encrypts `JSON({ username, password })` with **AES-256-GCM**; the 32-byte key is `scryptSync(MAIL_CRED_KEY, <fixed app salt>, 32)`, memoized per instance. `authenticate` returns that ciphertext as its `authToken`, and `AuthService.createSession` stores it **unchanged** in `User.authToken` — so **no plaintext password ever touches the DB**. `buildMailSession` decrypts it back into `session.credentials` per request. `MAIL_CRED_KEY` is **required only when an `ews` institution is configured — not a whole-app boot requirement**: `EwsModule`'s `EwsService` factory yields `null` when the key is absent (it does not construct `EwsService`, whose constructor would otherwise assert the key), so a **Zimbra-only deployment boots fine without it**. An `ews` login on such a keyless build resolves through `MailProviderResolver` to a null `EwsService` and falls through to the standard **"not supported on this server" 400** — never a null-deref crash — while every non-`ews` route keeps working. When the key **is** present the factory constructs normally and `EwsService`'s constructor assertion remains the fail-fast for a missing/malformed key. It MUST NOT reuse `JWT_SECRET` — a separate secret means rotating or leaking one does not affect the other.
+
+**The `ntlmDomain` flow.** `AuthService.login` threads the institution's `ewsDomain` into the provider: `provider.authenticate(host, email, password, { ntlmDomain: inst.ewsDomain ?? undefined })`. `EwsService.deriveNtlmUsername` turns a bare email + domain into `DOMAIN\localpart` (e.g. `MINAFFET\alice`), passes a user-typed `DOMAIN\user` through untouched, and falls back to the raw email (UPN-style) when no domain is given. zimbra/memory accept-and-ignore the 4th arg (Task 1 widened their signatures), so the single call site serves all providers.
+
+**Logout keep-alive eviction.** `AuthService.logout` calls `resolver.evictSession({ provider }, email)`. Only the `ews` branch acts — it delegates to `EwsService.evictSession(email)` → `EwsTransport.evict(email)`, which `destroy()`s and drops that mailbox's cached agent so a later, differently-authenticated session can never reuse a stale authenticated socket. Evicting an unknown email is a no-op; `evictSession` is deliberately off the `MailProvider` interface (a transport-lifecycle concern, not a mail op).
+
+**Capability matrix — all false.** `EwsService.capabilities` declares `signatures`, `identities`, `serverPrefs`, `changePassword`, and `twoFactor` **all `false`** (spec §7): the EWS operations this module speaks expose none of them. `SettingsService.getSettings` capability-branches **before** the read methods, so a normal settings-page load never reaches `getPrefs`/`getIdentities`/`getSignatures` and the unsupported sections are simply **hidden** in the client. A *direct* call to any of the nine settings methods throws the typed `CapabilityNotSupportedError`, which the global `CapabilityNotSupportedFilter` maps to a clean **HTTP 400** — never a silent no-op or a 500. `verifyTwoFactor` throws the same error (EWS is single-leg NTLM and never challenges).
+
+**Error handling & back-off.** `handleEwsError` is the single funnel: HTTP 401 → `UnauthorizedException`; `ErrorItemNotFound`/`ErrorFolderNotFound`/`ErrorNonExistentMailbox` → `NotFoundException`; SOAP faults / other `ResponseClass="Error"` / non-2xx → `BadGatewayException` (summarised, never echoing request detail). A single `ErrorServerBusy` retry honouring `BackOffMilliseconds` (capped at 30s) lives at the `EwsService` call boundary. `UpdateItem` operations read a fresh `ChangeKey` (GetItem IdOnly) immediately before writing.
+
+**Folder-type mapping caveat (locale).** `folderTypeOf` maps the well-known folders by their **English** `DisplayName` (`Inbox`, `Sent Items`, `Drafts`, `Deleted Items`, `Junk Email`). A French- (or otherwise) localized mailbox will map inbox/sent/trash/junk to `custom` — this must be verified against the real MINAFFET mailbox and hardened before pilot (see `docs/exchange-ews-smoke-checklist.md`).
 
 ---
 
@@ -746,6 +812,9 @@ SnoozeModal (web)
 | `FRONTEND_URL` | `http://localhost:3000` | No | CORS allowed origin |
 | `PORT` | `3001` | No | API HTTP port |
 | `HOCUSPOCUS_PORT` | `1234` | No | Collab WebSocket port |
+| `MAIL_CRED_KEY` | — | **Yes, if any `ews` institution exists** | AES-256-GCM key for EWS mailbox credentials encrypted at rest in `User.authToken`. ≥32 bytes of entropy (`openssl rand -hex 32`). **Must NOT reuse `JWT_SECRET`.** Required **only** when an `ews` institution is configured — a Zimbra-only deployment boots without it (the `EwsService` factory yields `null` and `ews` logins get a clean 400). |
+| `MAIL_CA_BUNDLE` | — | No | Path to a PEM bundle for an internal/private CA, *added* to EWS TLS trust. Never disables verification. |
+| `MAIL_PROVIDER_MEMORY` | `false` | No | `true` exposes the in-process memory backend (tests/demo) — never set in production. |
 
 ### `apps/web/.env.local`
 

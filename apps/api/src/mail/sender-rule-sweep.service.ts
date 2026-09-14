@@ -90,7 +90,7 @@ export class SenderRuleSweepService {
       try {
         await this.mailService.enforceSenderRules(
           userId,
-          { zimbraHost: user.zimbraHost, authToken: user.authToken, csrfToken: user.csrfToken },
+          user,
           message,
           rules,
           junkFolder,

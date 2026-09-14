@@ -62,6 +62,7 @@ import { MermaidBlock } from './extensions/MermaidBlock';
 import Image from '@tiptap/extension-image';
 import { PresentationMode } from './PresentationMode';
 import { bearerHeaders } from '@/lib/authed-fetch';
+import { uuid } from '@/lib/uuid';
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_WS_URL ?? 'ws://localhost:1234';
 
@@ -1240,7 +1241,7 @@ export function DocsEditor({
               onMouseDown={(e) => {
                 e.preventDefault();
                 setHeadingMenuOpen(false);
-                const anchorId = crypto.randomUUID();
+                const anchorId = uuid();
                 editor.chain().focus().setComment(anchorId).run();
                 setPendingAnchorId(anchorId);
                 setActivePanel('comments');
@@ -1453,7 +1454,7 @@ export function DocsEditor({
             const depth = $from.depth > 0 ? 1 : 0;
             const from = $from.start(depth);
             const to = $from.end(depth);
-            const anchorId = crypto.randomUUID();
+            const anchorId = uuid();
             editor.chain().focus().setTextSelection({ from, to }).setComment(anchorId).run();
             // Collapse selection back so highlight doesn't look odd
             editor.commands.setTextSelection(from);

@@ -1,4 +1,5 @@
 import type { OfflineDB, OutboxOp, OutboxStatus } from './db';
+import { uuid } from '../uuid';
 
 export interface EnqueueOptions {
   maxAttempts?: number;
@@ -27,7 +28,7 @@ export class Outbox {
 
   constructor(private readonly db: OfflineDB, deps: OutboxDeps = {}) {
     this.now = deps.now ?? Date.now;
-    this.randomId = deps.randomId ?? (() => crypto.randomUUID());
+    this.randomId = deps.randomId ?? uuid;
     this.random = deps.random ?? Math.random;
   }
 

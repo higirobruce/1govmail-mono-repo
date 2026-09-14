@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Header>
+    <h:ServerVersionInfo MajorVersion="15" MinorVersion="2" MajorBuildNumber="2562" MinorBuildNumber="37"
+      xmlns:h="http://schemas.microsoft.com/exchange/services/2006/types" />
+  </s:Header>
+  <s:Body>
+    <m:GetItemResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:GetItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Items>
+            <t:CalendarItem>
+              <t:ItemId Id="APPT-1==" ChangeKey="ACK1"/>
+              <t:Subject>Budget review</t:Subject>
+              <t:Start>2026-09-15T09:00:00Z</t:Start>
+              <t:End>2026-09-15T10:00:00Z</t:End>
+              <t:Organizer>
+                <t:Mailbox>
+                  <t:Name>Test Risa</t:Name>
+                  <t:EmailAddress>test-risa1@minaffet.gov.rw</t:EmailAddress>
+                  <t:RoutingType>SMTP</t:RoutingType>
+                </t:Mailbox>
+              </t:Organizer>
+              <t:RequiredAttendees>
+                <t:Attendee>
+                  <t:Mailbox>
+                    <t:Name>Alice Umutoni</t:Name>
+                    <t:EmailAddress>alice.umutoni@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                  <t:ResponseType>Accept</t:ResponseType>
+                </t:Attendee>
+                <t:Attendee>
+                  <t:Mailbox>
+                    <t:Name>Bob Mugisha</t:Name>
+                    <t:EmailAddress>bob.mugisha@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                  <t:ResponseType>NoResponseReceived</t:ResponseType>
+                </t:Attendee>
+              </t:RequiredAttendees>
+              <t:OptionalAttendees>
+                <t:Attendee>
+                  <t:Mailbox>
+                    <t:Name>Carol Ndayambaje</t:Name>
+                    <t:EmailAddress>carol.n@minaffet.gov.rw</t:EmailAddress>
+                    <t:RoutingType>SMTP</t:RoutingType>
+                  </t:Mailbox>
+                  <t:ResponseType>Tentative</t:ResponseType>
+                </t:Attendee>
+              </t:OptionalAttendees>
+            </t:CalendarItem>
+          </m:Items>
+        </m:GetItemResponseMessage>
+      </m:ResponseMessages>
+    </m:GetItemResponse>
+  </s:Body>
+</s:Envelope>

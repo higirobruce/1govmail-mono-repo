@@ -1,20 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
+import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Loader2, Mail, Lock, Building2, ShieldCheck } from 'lucide-react';
-
-// ── Institution registry ───────────────────────────────────────────────────────
-// Add new institutions here — they will appear in the sign-in dropdown.
-const INSTITUTIONS = [
-  { label: 'RISA', host: 'mail.risa.gov.rw:8443' },
-  { label: 'MINICT', host: 'mail.minict.gov.rw' },
-  { label: 'MINAFFET', host: 'mail.minaffet.gov.rw' },
-];
+import { canSubmit, institutionsToOptions, type InstitutionOption } from './institutions';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -25,8 +19,36 @@ export default function LoginPage() {
   const [form, setForm] = useState({
     email: '',
     password: '',
-    zimbraHost: INSTITUTIONS[0].host,
+    institution: '',
   });
+
+  // ── Institutions ──────────────────────────────────────────────────────────
+  const [institutions, setInstitutions] = useState<InstitutionOption[]>([]);
+  const [institutionsLoading, setInstitutionsLoading] = useState(true);
+  const [institutionsError, setInstitutionsError] = useState<string | null>(null);
+
+  const loadInstitutions = () => {
+    setInstitutionsLoading(true);
+    setInstitutionsError(null);
+    api.auth
+      .institutions()
+      .then((rows) => {
+        const options = institutionsToOptions(rows);
+        setInstitutions(options);
+        setForm((f) => ({ ...f, institution: f.institution || options[0]?.id || '' }));
+      })
+      .catch(() => {
+        setInstitutionsError('Could not load institutions');
+      })
+      .finally(() => {
+        setInstitutionsLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    loadInstitutions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── 2FA step ──────────────────────────────────────────────────────────────
   const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
@@ -38,10 +60,16 @@ export default function LoginPage() {
   // ── Step 1: credentials ───────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Defense in depth: the submit button is disabled in this state, but an
+    // Enter-key submit can bypass a disabled button in some browsers/flows.
+    // Never let the form submit with no institution selected.
+    if (!canSubmit({ loading, institutionsLoading, institutionsError, institution: form.institution })) {
+      return;
+    }
     setError(null);
     setLoading(true);
     try {
-      const result = await login(form.email, form.password, form.zimbraHost);
+      const result = await login(form.email, form.password, form.institution);
       if (result?.requiresTwoFactor) {
         // Transition to OTP step — store the challenge token in local state
         setTwoFactorToken(result.twoFactorToken);
@@ -97,7 +125,7 @@ export default function LoginPage() {
           <p className="text-sm text-muted-foreground mt-1">
             {isTwoFactorStep
               ? 'Enter your authenticator code'
-              : 'Sign in to your Zimbra account'}
+              : 'Sign in to your account'}
           </p>
         </div>
 
@@ -178,18 +206,34 @@ export default function LoginPage() {
                   <select
                     id="institution"
                     className="flex h-10 w-full rounded-md border border-border/60 bg-muted/50 pl-10 pr-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 disabled:opacity-50 disabled:cursor-not-allowed appearance-none"
-                    value={form.zimbraHost}
-                    onChange={(e) => setForm((f) => ({ ...f, zimbraHost: e.target.value }))}
+                    value={form.institution}
+                    onChange={(e) => setForm((f) => ({ ...f, institution: e.target.value }))}
                     required
-                    disabled={loading}
+                    disabled={loading || institutionsLoading || !!institutionsError}
                   >
-                    {INSTITUTIONS.map((inst) => (
-                      <option key={inst.host} value={inst.host}>
-                        {inst.label}
-                      </option>
-                    ))}
+                    {institutionsLoading ? (
+                      <option value="">Loading institutions…</option>
+                    ) : (
+                      institutions.map((inst) => (
+                        <option key={inst.id} value={inst.id}>
+                          {inst.label}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
+                {institutionsError && (
+                  <div className="flex items-center justify-between gap-2 text-xs text-destructive">
+                    <span>{institutionsError} — retry</span>
+                    <button
+                      type="button"
+                      onClick={loadInstitutions}
+                      className="underline hover:text-destructive/80"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Email */}
@@ -241,7 +285,7 @@ export default function LoginPage() {
               <Button
                 type="submit"
                 className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium h-10 rounded-lg transition-all duration-150"
-                disabled={loading}
+                disabled={!canSubmit({ loading, institutionsLoading, institutionsError, institution: form.institution })}
               >
                 {loading ? (
                   <>
@@ -257,7 +301,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-muted-foreground/50 mt-6">
-          Your credentials are used only to authenticate with your Zimbra server.
+          Your credentials are used only to authenticate with your institution's mail server.
         </p>
 
         <p className="text-center text-[0.6875rem] text-muted-foreground/30 mt-3 tracking-wide">

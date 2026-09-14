@@ -1,10 +1,11 @@
-import { inlineSignatureImages } from './signature-images';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { inlineSignatureImages, ZimbraPathReader } from './signature-images';
 
+// The helper takes the Zimbra-extra structurally now (what
+// MailProviderResolver.zimbra() satisfies), not the ZimbraService class.
 function makeZimbra() {
   return {
     downloadZimbraPath: jest.fn(),
-  } as unknown as ZimbraService & { downloadZimbraPath: jest.Mock };
+  } as unknown as ZimbraPathReader & { downloadZimbraPath: jest.Mock };
 }
 
 describe('inlineSignatureImages', () => {

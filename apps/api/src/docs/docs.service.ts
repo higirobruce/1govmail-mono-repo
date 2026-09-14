@@ -17,7 +17,8 @@ import {
 } from '@nestjs/common';
 import { InviteRole, Prisma, SharePermission } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
+import { buildMailSession } from '../provider/mail-session';
 import { CreateDocDto } from './dto/create-doc.dto';
 import { UpdateDocDto } from './dto/update-doc.dto';
 import { ShareDocDto } from './dto/share-doc.dto';
@@ -33,7 +34,7 @@ export class DocsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
   ) {}
 
   // ── Owned docs ────────────────────────────────────────────────────────────
@@ -344,7 +345,14 @@ export class DocsService {
     const doc = await this.verifyOwnership(userId, docId);
     const inviter = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true, displayName: true, zimbraHost: true, authToken: true, csrfToken: true },
+      // `provider` is here only because buildMailSession requires it (Task 9):
+      // sendInviteEmail builds a session off this projection, and the column
+      // is the Phase 3 branch key, so a session must never be built from a
+      // row that omitted it.
+      select: {
+        email: true, displayName: true, zimbraHost: true,
+        authToken: true, csrfToken: true, provider: true,
+      },
     });
     if (!inviter) throw new NotFoundException('User not found');
 
@@ -786,7 +794,10 @@ export class DocsService {
   }
 
   private async sendInviteEmail(
-    inviter: { displayName: string | null; email: string; zimbraHost: string; authToken: string | null; csrfToken: string | null },
+    inviter: {
+      displayName: string | null; email: string; zimbraHost: string;
+      authToken: string | null; csrfToken: string | null; provider: string;
+    },
     toEmail: string,
     docTitle: string,
     role: InviteRole,
@@ -809,11 +820,9 @@ export class DocsService {
         <p style="color:#6b7280;font-size:12px;margin-top:32px">Sent from 1Gov Mail.</p>
       </body></html>
     `;
-    await this.zimbra.sendMessage(
-      inviter.zimbraHost,
-      inviter.authToken,
+    await this.resolver.forUser(inviter).sendMessage(
+      buildMailSession(inviter),
       { to: [toEmail], subject, body },
-      inviter.csrfToken ?? undefined,
     );
   }
 

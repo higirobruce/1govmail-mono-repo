@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import { SettingsController } from './settings.controller';
-import { ZimbraModule } from '../zimbra/zimbra.module';
+import { ProviderModule } from '../provider/provider.module';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-  imports: [ZimbraModule, PrismaModule],
+  imports: [ProviderModule, PrismaModule],
   providers: [SettingsService],
   controllers: [SettingsController],
 })

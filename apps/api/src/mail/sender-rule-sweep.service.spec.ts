@@ -8,9 +8,11 @@ import { MailService } from './mail.service';
 describe('SenderRuleSweepService', () => {
   const validUser = (id: string) => ({
     id,
+    email: `${id}@example.com`,
     zimbraHost: 'mail.example.com',
     authToken: 'tok',
     csrfToken: null,
+    provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   });
 
@@ -83,7 +85,17 @@ describe('SenderRuleSweepService', () => {
     expect(mailService.enforceSenderRules).toHaveBeenCalledTimes(1);
     expect(mailService.enforceSenderRules).toHaveBeenCalledWith(
       'u1',
-      { zimbraHost: 'mail.example.com', authToken: 'tok', csrfToken: null },
+      // The sweep hands over the User row it already loaded — MailService
+      // needs User.provider to pick a provider, and owns buildMailSession.
+      // (objectContaining, not validUser('u1'): its tokenExpiry is computed
+      // from Date.now() and would race the assertion by a millisecond.)
+      expect.objectContaining({
+        id: 'u1',
+        email: 'u1@example.com',
+        zimbraHost: 'mail.example.com',
+        authToken: 'tok',
+        provider: 'zimbra',
+      }),
       { id: 'm1', zimbraId: 'z1', fromEmail: 'spam@evil.com', folderId: 'f-inbox' },
       rules,
       junk,

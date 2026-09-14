@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
-import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { NotificationsService } from '../notifications/notifications.service';
+import { buildMailSession } from '../provider/mail-session';
 
 @Injectable()
 export class TasksScheduler {
@@ -10,7 +11,7 @@ export class TasksScheduler {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly zimbra: ZimbraService,
+    private readonly resolver: MailProviderResolver,
     private readonly notifications: NotificationsService,
   ) {}
 
@@ -68,11 +69,9 @@ export class TasksScheduler {
   <p style="color:#888;font-size:12px;">Sent from 1Gov Mail.</p>
 </body></html>`;
 
-        await this.zimbra.sendMessage(
-          user.zimbraHost,
-          user.authToken,
+        await this.resolver.forUser(user).sendMessage(
+          buildMailSession(user),
           { to: [user.email], subject: `Reminder: ${task.title}`, body },
-          user.csrfToken ?? undefined,
         );
 
         await this.prisma.task.update({

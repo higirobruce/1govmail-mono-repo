@@ -16,6 +16,7 @@ import { mergeParsedEvent, sameAttendees, toFormDateTime } from '@/lib/calendar/
 import { quickAddEventPrefill } from '@/lib/calendar/quickAddEvent';
 import type { EventFormValues, EventFieldKey } from '@/lib/calendar/eventPrefill';
 import { parseMailDragPayload, dropPrefillFromPayload } from '@/lib/calendar/dropPrefill';
+import { PHONE_MEDIA_QUERY, defaultCalView, type CalView as CalViewType } from '@/lib/calendar/defaultView';
 import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
@@ -69,7 +70,7 @@ interface CalEvent {
   linkedSubject?: string | null;
 }
 
-type CalView = 'day' | 'workweek' | 'week' | 'month' | 'year' | 'agenda';
+type CalView = CalViewType;
 
 interface FreeBusyData {
   email: string;
@@ -1919,7 +1920,9 @@ export default function CalendarPage() {
   const [hydrated, setHydrated] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const [calView, setCalView]       = useState<CalView>('agenda');
+  // Server-rendered first, so the initial value must not read `window` — a
+  // phone gets corrected to 'day' by the mount effect below, one frame later.
+  const [calView, setCalView]       = useState<CalView>(() => defaultCalView(false));
   const confirm = useConfirmStore((s) => s.confirm);
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [events, setEvents]         = useState<CalEvent[]>([]);
@@ -1955,6 +1958,14 @@ export default function CalendarPage() {
   const [freeBusyList, setFreeBusyList] = useState<FreeBusyData[]>([]);
   const [loadingFB, setLoadingFB]       = useState(false);
   const [suggestSlot, setSuggestSlot]   = useState<{ start: Date; end: Date; attendees: string[] } | null>(null);
+
+  // Phones open on today instead of the work week. Done on mount rather than in
+  // the initial state because this page is server-rendered and `window` does
+  // not exist there; running it once (not on resize) keeps a view the user
+  // picks during the visit from being yanked away by a rotation.
+  useEffect(() => {
+    if (window.matchMedia(PHONE_MEDIA_QUERY).matches) setCalView(defaultCalView(true));
+  }, []);
 
   // Auth guard
   useEffect(() => {

@@ -12,6 +12,7 @@ import { parseTaskInput } from '@/lib/ai/taskParse';
 import { AIClient } from '@/lib/ai/client';
 import { getCachedBody, setCachedBody, fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import type { TriageLabel } from '@email-client/shared';
+import { isSpamFolderPath } from '@email-client/shared';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { AIRail } from '@/components/layout/AIRail';
@@ -836,6 +837,33 @@ export default function MailPage() {
     });
   }, [activeMessageId, folders, messages, activeFolderId, updateFolderCounts, removeMessageFromCache, invalidateMessages, offline]);
 
+  /**
+   * "Not spam": the server moves the message to the Inbox AND clears the block
+   * that filed it, so it cannot be dragged back on the next sync. Goes over
+   * the network directly rather than through the offline queue, because it is
+   * not a plain move — it changes sender rules too.
+   */
+  const markNotSpam = useCallback(async (messageId: string) => {
+    const sourceFolderId = activeFolderId;
+    const removed = messages.find((m) => m.id === messageId);
+    const wasUnread = removed ? !removed.isRead : false;
+
+    removeMessageFromCache(sourceFolderId, messageId);
+    setActiveMessageId((current) => (current === messageId ? undefined : current));
+    setActiveMessage((current: any) => (current?.id === messageId ? null : current));
+    updateFolderCounts(sourceFolderId, wasUnread ? -1 : 0, -1);
+
+    try {
+      const result = await api.mail.notSpam(messageId);
+      toast.success(result?.unblocked ? 'Moved to Inbox — sender unblocked' : 'Moved to Inbox');
+      invalidateMessages();
+    } catch (err: any) {
+      invalidateMessages();
+      updateFolderCounts(sourceFolderId, wasUnread ? +1 : 0, +1);
+      toast.error('Could not move the message', { description: err?.message });
+    }
+  }, [activeFolderId, messages, removeMessageFromCache, updateFolderCounts, invalidateMessages]);
+
   const deleteMessage = useCallback(async () => {
     if (!activeMessageId) return;
     const messageId = activeMessageId;
@@ -1002,6 +1030,11 @@ export default function MailPage() {
 
     if (type === 'snooze') {
       setSnoozeTarget({ messageId, folderId: activeFolderId });
+      return;
+    }
+
+    if (type === 'notSpam') {
+      await markNotSpam(messageId);
       return;
     }
 
@@ -1639,6 +1672,7 @@ export default function MailPage() {
             }}
             hasMore={searchHasMore}
             onContextAction={handleContextAction}
+            inSpamFolder={isSpamFolderPath(activeFolder?.path)}
             onBulkAction={handleBulkAction}
             folders={folders}
             mutedConversationIds={mutedConversationIds}
@@ -1694,6 +1728,7 @@ export default function MailPage() {
               }}
               hasMore={!!hasNextPage && !triageLabelFilter}
               onContextAction={handleContextAction}
+              inSpamFolder={isSpamFolderPath(activeFolder?.path)}
               onBulkAction={handleBulkAction}
               filterTagNames={selectedLabelNames}
               folders={folders}
@@ -1738,6 +1773,11 @@ export default function MailPage() {
             folders.find((f) => f.id === activeFolderId)?.path === '/Trash' &&
             folders.some((f) => f.path === '/Inbox')
               ? moveToInbox
+              : undefined
+          }
+          onNotSpam={
+            isSpamFolderPath(activeFolder?.path) && activeMessageId
+              ? () => markNotSpam(activeMessageId)
               : undefined
           }
           folders={folders}

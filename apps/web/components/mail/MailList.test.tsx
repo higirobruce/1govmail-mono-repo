@@ -43,3 +43,30 @@ describe('MailList context-menu "Ask about this thread" gate', () => {
     expect(screen.getByText('Ask about this thread')).not.toBeNull();
   });
 });
+
+describe('MailList "Not spam" row', () => {
+  it('is absent outside the spam folder', () => {
+    render(<MailList messages={[message]} onSelect={() => {}} onContextAction={() => {}} />);
+    openContextMenu();
+    expect(screen.queryByText('Not spam')).toBeNull();
+  });
+
+  it('appears in the spam folder and reports the message it was used on', () => {
+    const actions: any[] = [];
+    render(
+      <MailList
+        messages={[message]}
+        onSelect={() => {}}
+        onContextAction={(a) => actions.push(a)}
+        inSpamFolder
+      />,
+    );
+    openContextMenu();
+    // The menu commits on mousedown (it fires before blur closes the menu),
+    // so a click event alone never reaches the handler.
+    fireEvent.mouseDown(screen.getByText('Not spam'));
+
+    expect(actions).toEqual([{ type: 'notSpam', messageId: 'm1' }]);
+  });
+});
+

@@ -7,7 +7,7 @@ import {
   Paperclip, Download, Loader2, MoreHorizontal,
   ChevronLeft, ChevronRight, X, Mail, User, Calendar,
   Eye, File, FileText, Image as ImageIcon, Printer, BellOff, Bell, AlarmClock,
-  ScrollText, X as XIcon,
+  ScrollText, X as XIcon, ShieldOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -74,6 +74,8 @@ interface MailDetailProps {
   onDelete?: () => void;
   onToggleStar?: () => void;
   onMoveToInbox?: () => void;
+  /** Only provided while viewing the spam folder. */
+  onNotSpam?: () => void;
   folders?: FolderItem[];
   onMoveToFolder?: (folderId: string) => void;
   onMute?: () => void;
@@ -247,6 +249,7 @@ export default function MailDetail({
   onDelete,
   onToggleStar,
   onMoveToInbox,
+  onNotSpam,
   folders = [],
   onMoveToFolder,
   onMute,
@@ -552,6 +555,9 @@ export default function MailDetail({
           />
           {onMoveToInbox && (
             <ActionBtn icon={Inbox} label="Move to Inbox" onClick={onMoveToInbox} />
+          )}
+          {onNotSpam && (
+            <ActionBtn icon={ShieldOff} label="Not spam" onClick={onNotSpam} />
           )}
           {labelFolders.length > 0 && onMoveToFolder && (
             <div ref={folderDropdownRef} className="relative">

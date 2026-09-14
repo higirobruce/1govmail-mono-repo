@@ -396,6 +396,16 @@ export const api = {
         body: JSON.stringify({ folderId }),
       });
     },
+
+    /** Rescue a message from the spam folder. Also clears whatever block put it
+     *  there; `unblocked` says whether a rule actually changed. */
+    notSpam: (messageId: string) => {
+      if (USE_MOCK) return delay({ success: true, unblocked: false });
+      return request<{ success: boolean; unblocked: boolean }>(
+        `/mail/messages/${messageId}/not-spam`,
+        { method: 'PATCH' },
+      );
+    },
     createFolder: (name: string) => {
       if (USE_MOCK) return delay({ id: `f-${Date.now()}`, name, path: `/${name}`, unreadCount: 0, totalCount: 0 });
       return request<any>('/mail/folders', {

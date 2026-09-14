@@ -141,6 +141,17 @@ export class MailController {
     return this.mailService.moveMessage(req.user.sub, messageId, folderId);
   }
 
+  /** Rescue a message from Junk: move it to the Inbox and clear the block that
+   *  put it there, so the next sync does not re-file it. */
+  @Patch('messages/:messageId/not-spam')
+  @HttpCode(HttpStatus.OK)
+  markNotSpam(
+    @Req() req: AuthenticatedRequest,
+    @Param('messageId') messageId: string,
+  ) {
+    return this.mailService.markNotSpam(req.user.sub, messageId);
+  }
+
   @Post('folders')
   @HttpCode(HttpStatus.OK)
   createFolder(

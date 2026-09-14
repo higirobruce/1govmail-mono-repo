@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, Logger, UnauthorizedException, ConflictException } from '@nestjs/common';
-import { deriveLabel, formatAttachments, mdToHtml, type ExtractedCard, type TriageLabel } from '@email-client/shared';
+import { deriveLabel, formatAttachments, isSpamFolderPath, mdToHtml, type ExtractedCard, type TriageLabel } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { MailSessionUser, buildMailSession } from '../provider/mail-session';
@@ -63,10 +63,6 @@ interface WindowCardRow {
   };
 }
 
-// Different Zimbra deployments report the spam folder under either path —
-// this app's own Sidebar (apps/web/components/layout/Sidebar.tsx) already
-// treats both as "the spam folder", so enforcement must match both too.
-const SPAM_FOLDER_PATHS = ['/Junk', '/Spam'];
 
 /**
  * Metadata-only column set for message rows returned to a list view (folder
@@ -236,7 +232,7 @@ export class MailService {
     if (matchSenderRule(message.fromEmail, rules) !== 'BLOCK') return;
 
     const currentFolder = await this.prisma.folder.findFirst({ where: { userId, id: message.folderId } });
-    if (currentFolder && SPAM_FOLDER_PATHS.includes(currentFolder.path)) return;
+    if (isSpamFolderPath(currentFolder?.path)) return;
 
     if (!junkFolder) {
       this.logger.warn(
@@ -1207,6 +1203,71 @@ export class MailService {
     });
 
     return { success: true };
+  }
+
+  /**
+   * "Not spam": rescue a message from Junk AND stop the rules that put it
+   * there from putting it back.
+   *
+   * The move alone is not enough. `enforceSenderRules` re-files mail from a
+   * BLOCKed sender on every Inbox sync (and the sweep cron does the same), so a
+   * rescued message would reappear in Junk minutes later and the button would
+   * look broken. Clearing the block is therefore part of the operation, not a
+   * separate courtesy.
+   */
+  async markNotSpam(userId: string, messageId: string) {
+    const user = await this.getUser(userId);
+
+    const message = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
+    if (!message) throw new NotFoundException('Message not found');
+
+    const currentFolder = await this.prisma.folder.findFirst({ where: { userId, id: message.folderId } });
+    if (!isSpamFolderPath(currentFolder?.path)) {
+      throw new BadRequestException('This message is not in the spam folder.');
+    }
+
+    const inbox = await this.prisma.folder.findFirst({ where: { userId, path: '/Inbox' } });
+    if (!inbox) throw new NotFoundException('No Inbox folder is synced for this account');
+
+    await this.resolver
+      .forUser(user)
+      .moveMessage(buildMailSession(user), message.zimbraId, inbox.zimbraId);
+    await this.prisma.message.update({ where: { id: messageId }, data: { folderId: inbox.id } });
+
+    const unblocked = await this.unblockSender(userId, message.fromEmail);
+    return { success: true, unblocked };
+  }
+
+  /**
+   * Make `fromEmail` deliverable again, with the lightest touch that works.
+   *
+   * An exact-address BLOCK is simply deleted. A DOMAIN-wide BLOCK is left
+   * alone — dismantling a whole domain policy because one message was rescued
+   * is far more than the user asked for — and the sender is carved out of it
+   * with a narrower ALLOW instead, which is exactly the pairing
+   * `matchSenderRule` documents (ALLOW wins over BLOCK). Both can apply at
+   * once: deleting the exact rule still leaves the domain rule matching.
+   *
+   * Returns whether anything changed, so the caller can tell the user.
+   */
+  private async unblockSender(userId: string, fromEmail: string): Promise<boolean> {
+    const email = (fromEmail ?? '').trim().toLowerCase();
+    if (!email) return false;
+
+    const rules = await this.prisma.senderRule.findMany({ where: { userId } });
+    if (matchSenderRule(email, rules) !== 'BLOCK') return false;
+
+    const exact = rules.find(
+      (rule) => rule.type === 'BLOCK' && rule.address.trim().toLowerCase() === email,
+    );
+    if (exact) await this.prisma.senderRule.delete({ where: { id: exact.id } });
+
+    const remaining = exact ? rules.filter((rule) => rule.id !== exact.id) : rules;
+    if (matchSenderRule(email, remaining) === 'BLOCK') {
+      await this.prisma.senderRule.create({ data: { userId, type: 'ALLOW', address: email } });
+    }
+
+    return true;
   }
 
   async deleteFolder(userId: string, folderId: string) {

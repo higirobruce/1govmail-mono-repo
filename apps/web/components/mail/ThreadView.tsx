@@ -118,6 +118,8 @@ interface Props {
   onDelete: () => void;
   onToggleStar: () => void;
   onMoveToInbox?: () => void;
+  /** Only provided while viewing the spam folder. */
+  onNotSpam?: () => void;
   folders?: any[];
   onMoveToFolder?: (folderId: string) => void;
   /** Increment to force the thread conversation to re-fetch (e.g. after sending a reply). */
@@ -139,6 +141,7 @@ export default function ThreadView({
   onDelete,
   onToggleStar,
   onMoveToInbox,
+  onNotSpam,
   folders,
   onMoveToFolder,
   refreshKey,
@@ -466,6 +469,7 @@ export default function ThreadView({
           onDelete={onDelete}
           onToggleStar={onToggleStar}
           onMoveToInbox={onMoveToInbox}
+          onNotSpam={onNotSpam}
           folders={folders}
           onMoveToFolder={onMoveToFolder}
           onMute={onMute}

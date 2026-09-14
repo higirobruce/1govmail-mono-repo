@@ -1745,3 +1745,114 @@ describe('MailService search-result persistence (round-trip batching)', () => {
     expect(out).toMatchObject({ messages: [], total: 0, hasMore: false });
   });
 });
+
+describe('MailService markNotSpam', () => {
+  // `provider` is what MailProviderResolver.forUser reads — the DB always
+  // carries it, so the fixture has to as well or the resolver rejects the user.
+  const user = { id: 'u1', authToken: 'tok', tokenExpiry: new Date(Date.now() + 60_000), provider: 'zimbra' };
+  const junk = { id: 'f-junk', zimbraId: 'z-junk', path: '/Junk' };
+  const inbox = { id: 'f-inbox', zimbraId: 'z-inbox', path: '/Inbox' };
+  const message = { id: 'm1', userId: 'u1', zimbraId: 'z-m1', folderId: 'f-junk', fromEmail: 'sender@evil.com' };
+
+  /** Prisma + provider wiring shared by the cases below. */
+  function makeNotSpamService(rules: Array<{ id: string; type: string; address: string }>) {
+    const moveMessage = jest.fn().mockResolvedValue(undefined);
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      message: { findFirst: jest.fn().mockResolvedValue(message), update: jest.fn().mockResolvedValue(message) },
+      folder: {
+        findFirst: jest.fn(({ where }: any) =>
+          Promise.resolve(where.id === 'f-junk' ? junk : where.path === '/Inbox' ? inbox : null),
+        ),
+      },
+      senderRule: {
+        findMany: jest.fn().mockResolvedValue(rules),
+        delete: jest.fn().mockResolvedValue(undefined),
+        create: jest.fn().mockResolvedValue(undefined),
+      },
+    } as unknown as PrismaService;
+    const zimbra = { moveMessage } as unknown as ZimbraService;
+    const service = new MailService(
+      prisma, makeResolver(zimbra), {} as NotificationsService, { create: jest.fn() } as unknown as TasksService,
+    );
+    return { service, prisma: prisma as any, moveMessage };
+  }
+
+  it('moves the message to the Inbox', async () => {
+    const { service, prisma, moveMessage } = makeNotSpamService([]);
+
+    await service.markNotSpam('u1', 'm1');
+
+    expect(moveMessage).toHaveBeenCalledWith(expect.anything(), 'z-m1', 'z-inbox');
+    expect(prisma.message.update).toHaveBeenCalledWith({
+      where: { id: 'm1' }, data: { folderId: 'f-inbox' },
+    });
+  });
+
+  it('deletes the exact-address BLOCK rule, so the next sync cannot re-file it', async () => {
+    // Without this the message is dragged straight back to Junk by
+    // enforceSenderRules on the next Inbox sync, and the button looks broken.
+    const { service, prisma } = makeNotSpamService([
+      { id: 'r1', type: 'BLOCK', address: 'sender@evil.com' },
+    ]);
+
+    const result = await service.markNotSpam('u1', 'm1');
+
+    expect(prisma.senderRule.delete).toHaveBeenCalledWith({ where: { id: 'r1' } });
+    expect(prisma.senderRule.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ unblocked: true });
+  });
+
+  it('keeps a domain-wide BLOCK and allows just this sender instead', async () => {
+    // Deleting @evil.com because one message was rescued would unblock the
+    // whole domain. ALLOW beats BLOCK in the matcher, so a narrower allow is
+    // the intended way to carve out one sender.
+    const { service, prisma } = makeNotSpamService([
+      { id: 'r1', type: 'BLOCK', address: '@evil.com' },
+    ]);
+
+    const result = await service.markNotSpam('u1', 'm1');
+
+    expect(prisma.senderRule.delete).not.toHaveBeenCalled();
+    expect(prisma.senderRule.create).toHaveBeenCalledWith({
+      data: { userId: 'u1', type: 'ALLOW', address: 'sender@evil.com' },
+    });
+    expect(result).toMatchObject({ unblocked: true });
+  });
+
+  it('removes the exact rule AND allows the sender when a domain block also covers them', async () => {
+    const { service, prisma } = makeNotSpamService([
+      { id: 'r1', type: 'BLOCK', address: 'sender@evil.com' },
+      { id: 'r2', type: 'BLOCK', address: '@evil.com' },
+    ]);
+
+    await service.markNotSpam('u1', 'm1');
+
+    expect(prisma.senderRule.delete).toHaveBeenCalledWith({ where: { id: 'r1' } });
+    expect(prisma.senderRule.create).toHaveBeenCalledWith({
+      data: { userId: 'u1', type: 'ALLOW', address: 'sender@evil.com' },
+    });
+  });
+
+  it('touches no rules when the sender was never blocked', async () => {
+    const { service, prisma } = makeNotSpamService([
+      { id: 'r1', type: 'BLOCK', address: 'someone-else@evil.com' },
+    ]);
+
+    const result = await service.markNotSpam('u1', 'm1');
+
+    expect(prisma.senderRule.delete).not.toHaveBeenCalled();
+    expect(prisma.senderRule.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ unblocked: false });
+  });
+
+  it('refuses a message that is not in a spam folder', async () => {
+    const { service, prisma, moveMessage } = makeNotSpamService([]);
+    prisma.folder.findFirst.mockImplementation(({ where }: any) =>
+      Promise.resolve(where.id === 'f-junk' ? { ...junk, path: '/Archive' } : inbox),
+    );
+
+    await expect(service.markNotSpam('u1', 'm1')).rejects.toBeInstanceOf(BadRequestException);
+    expect(moveMessage).not.toHaveBeenCalled();
+  });
+});

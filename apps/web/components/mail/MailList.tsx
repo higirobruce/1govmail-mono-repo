@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { format, parseISO, startOfDay, subDays } from 'date-fns';
-import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip, AlertTriangle, MessagesSquare } from 'lucide-react';
+import { Loader2, Mail, Reply, Forward, Trash2, Star, MailOpen, MailCheck, FolderOpen, ChevronRight, ListTodo, AlarmClock, BellOff, X, CalendarPlus, Paperclip, AlertTriangle, MessagesSquare, ShieldOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MailAvatar } from './MailAvatar';
 import { ClassificationChip } from './ClassificationChip';
@@ -42,7 +42,7 @@ const TRIAGE_LABEL_META: Record<string, { text: string; textClass: string; dotCl
 };
 
 export interface ContextAction {
-  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'createEvent' | 'snooze' | 'mute' | 'print' | 'askThread';
+  type: 'reply' | 'forward' | 'markRead' | 'markUnread' | 'star' | 'unstar' | 'delete' | 'moveToFolder' | 'createTask' | 'createEvent' | 'snooze' | 'mute' | 'print' | 'askThread' | 'notSpam';
   messageId: string;
   targetFolderId?: string;
 }
@@ -75,6 +75,9 @@ interface MailListProps {
   cardsById?: Record<string, TriageCard>;
   /** Gates the "Ask about this thread" context-menu row — omitted entirely when AI is off. */
   aiEnabled?: boolean;
+  /** True when the list is showing the spam folder, which is the only place
+   *  "Not spam" makes sense. */
+  inSpamFolder?: boolean;
 }
 
 type Tab = 'all' | 'unread' | 'starred';
@@ -163,6 +166,7 @@ function ContextMenu({
   folders = [],
   mutedConversationIds = [],
   aiEnabled = false,
+  inSpamFolder = false,
 }: {
   state: CtxMenuState;
   onAction: (action: ContextAction) => void;
@@ -170,6 +174,7 @@ function ContextMenu({
   folders?: FolderItem[];
   mutedConversationIds?: string[];
   aiEnabled?: boolean;
+  inSpamFolder?: boolean;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [showFolders, setShowFolders] = useState(false);
@@ -247,6 +252,7 @@ function ContextMenu({
       {item(ListTodo,     'Create Task',    'createTask')}
       {item(CalendarPlus, 'Create Event',   'createEvent')}
       {aiEnabled && item(MessagesSquare, 'Ask about this thread', 'askThread')}
+      {inSpamFolder && item(ShieldOff, 'Not spam', 'notSpam')}
       {labelFolders.length > 0 && (
         <>
           <div className="my-1 h-px bg-border-faint" />
@@ -464,6 +470,7 @@ export default function MailList({
   filterTagNames,
   cardsById,
   aiEnabled = false,
+  inSpamFolder = false,
 }: MailListProps) {
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
@@ -698,6 +705,7 @@ export default function MailList({
           folders={folders}
           mutedConversationIds={mutedConversationIds}
           aiEnabled={aiEnabled}
+          inSpamFolder={inSpamFolder}
         />
       )}
 

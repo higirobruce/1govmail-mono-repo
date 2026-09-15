@@ -157,6 +157,60 @@ poll at once, so detection must be idempotent without a lock.
 > was actually updated), which restructures the upsert loop. Two tabs in the
 > same instant may still produce two chimes; that is accepted.
 
+> **Amended a third time 2026-09-15, after a second scoped re-review.** The
+> transition-plus-recency rule above — "suppress only when a `NEW_MAIL` row for
+> this user records the same `(baseline → current)` pair AND is younger than 15
+> seconds" — is the third guard on this path to lose real mail, and it is
+> replaced rather than retuned.
+>
+> Its justification was that "a read-then-refill needs at least two sync cycles
+> (the folder poll is two minutes) with a human reading mail in between". That
+> premise is false for this codebase. There are three folder-sync paths, not
+> one: `Sidebar.tsx` polls `getFolders` every **60 seconds** on every non-mail
+> page, the mail page syncs on mount, and `useInboxSync` fires its first sync
+> **10 seconds** after mount. A whole notify → read → refill cycle fits inside
+> 15 seconds. Traced: a message arrives and notifies at t=0 (pair `0→1`, stored
+> becomes 1); the user opens and reads it; a sync at t=11s takes stored back to
+> 0; another message arrives at t=12s; a sidebar sync at t=14s sees a genuine
+> `+1` with the same pair `0→1` inside the window and suppresses it
+> **permanently**, because the upsert advances the baseline anyway and the next
+> sync sees no delta. At the unread counts these mailboxes actually run at
+> (0→1→0→1) the pair contributes almost nothing and the clock does all the
+> work. No window is safe, because nothing puts a floor on how fast a baseline
+> can legitimately return.
+>
+> Dedupe is now a **compare-and-swap on the stored folder row**, which is what
+> the note above listed as out of scope. The notification decision OWNS the
+> baseline advance:
+>
+> ```
+> UPDATE folder SET unreadCount = <current> WHERE id = <inbox.id> AND unreadCount = <previous>
+> ```
+>
+> (Prisma `updateMany` with both `id` and the expected `unreadCount` in the
+> `where`, returning `{ count }`.) Notify only when `count === 1`. A `count` of
+> `0` means a concurrent sync already advanced this exact baseline, so that
+> sync owns the announcement and this one returns silently. The question is no
+> longer "does this look like something we already said?" — which no
+> combination of clock and numbers can answer — but "is this sync the one that
+> moved the mailbox off that baseline?", which the database answers atomically.
+> Cadence, clock skew and user behaviour stop mattering entirely.
+>
+> Retired with it: the 15-second constant, `isDuplicateTransition`, and
+> `NotificationsService.getLatestNotification`, which had no other caller and
+> is deleted. `metadata` still carries `baseline`, `unreadCount` and `delta`
+> for debugging, but nothing compares them across rows.
+>
+> **The upsert loop is unaffected.** `getFolders` persists every provider
+> folder after `notifyNewMail` returns, and for `/Inbox` it writes the same
+> value the compare-and-swap just wrote. `mail.service.ts` is the only writer
+> of `Folder.unreadCount` in the codebase, so no other path can resurrect a
+> baseline. The one residual is pre-existing and unchanged by this fix: a
+> concurrent sync whose provider fetch predates the arrival upserts the older
+> count and rewinds the baseline, after which the next sync announces the same
+> arrival again. Its cost is one extra chime — never a lost message, which is
+> the only failure direction this feature must not take.
+
 **Failure is silent.** A notification failure must never break `getFolders` —
 the folder list is the user's mailbox and matters more than an alert. Wrap in
 try/catch and log at WARN, exactly as the existing folder-persist loop does.
@@ -231,11 +285,11 @@ turning a sound off.
 
 | File | Change |
 |---|---|
-| `apps/api/src/mail/mail.service.ts` | read stored folders before upsert; detect the `/Inbox` unread increase; create `NEW_MAIL` |
-| `apps/api/src/notifications/notifications.service.ts` | `getLatestNotification(userId, type)` — the newest row of a type, with its `metadata` and `createdAt`, for the dedupe guard. (Originally specified as `hasRecentNotification(userId, type, withinMs)`; a clock-only lookback loses arrivals, so that method was removed in the 09-15 fix wave and does not exist.) |
+| `apps/api/src/mail/mail.service.ts` | read the stored `/Inbox` row before the upsert loop; on an unread increase, claim the transition with a conditional baseline advance and create `NEW_MAIL` only if it matched (§4.1) |
+| `apps/api/src/notifications/notifications.service.ts` | **no change.** Two dedupe helpers were specified here and both are gone: `hasRecentNotification(userId, type, withinMs)` (a clock-only lookback loses arrivals) and then `getLatestNotification(userId, type)` (comparing rows cannot tell a duplicate from a refill). Dedupe is a compare-and-swap on the folder row — see §4.1 — so the notifications service needs nothing new. |
 | `apps/web/lib/notifications/chime.ts` | new — Web Audio synthesizer and the four tones |
 | `apps/web/lib/notifications/announce.ts` | new — pure logic: which rows are new, which are audible, what the OS notification says |
-| `apps/web/stores/notifications.store.ts` | new — sound on/off, volume, per-type tone, last announced id |
+| `apps/web/stores/notifications.store.ts` | new — sound on/off, volume, per-type tone, and `lastAnnouncedAt`: the `createdAt` of the newest row this device has announced, moving forward only. A timestamp, not an id — ids are cuids and are not ordered. Every completed poll records one, an empty poll included (its own clock, backdated a minute), so a null marker means exactly "this device has never polled" and no second flag is needed |
 | `apps/web/components/notifications/NotificationAlerts.tsx` | new — the shell mount that ties feed → toast → chime → OS notification |
 | `apps/web/components/layout/AIRail.tsx` | add the bell, with its unread badge |
 | `apps/web/app/(app)/layout.tsx` | mount `NotificationAlerts` |
@@ -247,17 +301,22 @@ turning a sound off.
 The pure parts carry the tests, because they are the parts that can be wrong in
 ways nobody notices:
 
-- **`announce.ts`** — selects only rows newer than the last announced id;
-  classifies audible versus silent types; never announces a backlog on first run;
-  is stable when the feed returns rows out of order.
+- **`announce.ts`** — selects only rows whose `createdAt` is newer than
+  `lastAnnouncedAt`; classifies audible versus silent types; announces nothing
+  at all on a device that has never polled (a null marker); is stable when the
+  feed returns rows out of order.
 - **`chime.ts`** — builds the expected note sequence per tone; a rejected
   `AudioContext` resolves quietly instead of throwing; volume 0 plays nothing.
-- **`notifications.store`** — defaults (sound on, volume, tones), and that the
-  last-announced id only moves forward.
+- **`notifications.store`** — defaults (sound on, volume, tones), and that
+  `lastAnnouncedAt` only moves forward, so a slow poll landing after a fast one
+  cannot rewind the marker and replay what was already heard.
 - **API** — an `/Inbox` unread increase creates exactly one `NEW_MAIL`; no
-  increase creates none; a decrease (the user read mail elsewhere) creates none;
-  a second sync inside the dedupe window creates none; a notification failure
-  does not break `getFolders`.
+  increase creates none, and writes nothing; a decrease (the user read mail
+  elsewhere) creates none, and writes nothing; a mailbox with no stored Inbox
+  row yet creates none and does not crash; a read-then-refill repeating a
+  transition announced seconds ago DOES notify; a concurrent sync whose
+  conditional baseline advance matches zero rows creates none; a notification
+  failure does not break `getFolders`.
 - **`NotificationAlerts`** — a new row triggers toast and chime; a hidden
   document also raises an OS notification; a visible one does not; a tab that
   sees another tab's claim stays silent.
@@ -280,6 +339,14 @@ ways nobody notices:
   on-screen toast still work there. `10.10.94.155` (HTTPS) and production are
   unaffected. This is the same secure-context limit that already breaks
   `crypto.randomUUID` on that box.
+- **A device coming back from a long absence announces everything that
+  arrived while it was away.** `lastAnnouncedAt` dates what has already been
+  heard; it does not date a row as too old to be worth saying. Reopen a tab
+  after a day and every row stamped since its marker is announced oldest-first
+  — up to the fifty the feed carries, with a chime for each audible one. Only a
+  device's very FIRST poll suppresses what it finds. This is pre-existing
+  behaviour, not a regression, and the obvious fixes (an age ceiling, or
+  collapsing a burst into one summary toast) are additive later.
 - **Nothing is heard while the app is closed**, by design.
 
 ## 9. If the closed-app tier is wanted later

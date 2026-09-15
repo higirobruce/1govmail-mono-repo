@@ -1449,7 +1449,12 @@ themselves introduced.
    recorded a marker on an empty poll (`newestCreatedAt([])` is null), so a
    device whose first poll was empty came back as "initialized, no marker" —
    which meant "announce everything" — and replayed up to fifty rows. An empty
-   poll now records the client's own ISO time, making that state unwritable.
+   poll now records a marker, making that state unwritable. **Corrected by 11
+   and 12 below:** the marker is backdated a minute rather than being the
+   client's own `now`, and this fixes only the never-marked device — a device
+   that already holds a marker still announces everything stamped after it,
+   which is now recorded as a known limit in spec §8 rather than claimed as a
+   protection.
 9. **`initialized` is deleted.** With a marker recorded on every completed poll
    — an empty one included — a null marker can only mean "this device has never
    polled", so `selectNewNotifications` suppresses on a null marker full stop
@@ -1458,3 +1463,43 @@ themselves introduced.
    would otherwise have replayed its whole feed once. Gone from the store, its
    actions, the persisted shape, `selectNewNotifications`' signature and the
    announce effect.
+
+## Post-review corrections (third fix wave, 2026-09-15)
+
+A second scoped re-review found that correction 7 was the third guard on this
+path to lose real mail, and that two claims in the client half were untrue.
+
+10. **Correction 7's transition-plus-recency guard dropped real arrivals** —
+    see the third amendment in spec §4.1. Its 15-second bound rested on "a
+    read-then-refill needs two sync cycles two minutes apart", which is false
+    here: `Sidebar.tsx` polls `getFolders` every 60s on every non-mail page,
+    the mail page syncs on mount, and `useInboxSync` fires 10s after mount, so
+    a whole notify → read → refill cycle fits inside the window — and the
+    upsert advances the baseline whether or not anything was announced, so the
+    suppressed arrival is lost for good. Retuning was not attempted: nothing
+    puts a floor on how fast a baseline can legitimately return. The decision
+    now OWNS the baseline advance — `folder.updateMany` with the measured
+    `unreadCount` in the `where`, notifying only when it matched one row — so
+    the database decides atomically which sync owns the transition and no
+    reasoning about cadence, clock skew or user behaviour is involved.
+    `NEW_MAIL_DUPLICATE_MS`, `isDuplicateTransition` and
+    `NotificationsService.getLatestNotification` are deleted, along with the
+    tests that pinned the window and the pair. `metadata` keeps
+    `baseline`/`unreadCount`/`delta` for debugging only.
+11. **Correction 8's empty-poll marker installed a suppression floor on a fast
+    clock.** An empty feed proves ZERO notification rows exist for that user
+    (`getNotifications` filters on `userId` alone), so the marker suppresses
+    nothing real — but it is monotonic and persisted, so a device whose clock
+    ran fast recorded a floor in the FUTURE that never rewound and stayed
+    silent for the whole skew, and even a perfect clock lost a row created
+    during the response round-trip. It now records `Date.now() - 60_000`:
+    provably zero replay cost, and it absorbs both.
+12. **A test and three comments claimed a protection that does not exist.** The
+    test named "never replays the backlog a device missed while it was away"
+    stamps its rows BEFORE the marker, so it proves only that older rows are
+    not announced. Rows genuinely missed while away are stamped AFTER the
+    marker and ARE announced — up to fifty toasts and chimes. The assertions
+    were kept, the name and comment corrected, the same correction applied to
+    the store's `lastAnnouncedAt` comment and to `selectNewNotifications`, and
+    the behaviour recorded in spec §8. No behaviour changed: a long-absence
+    burst is pre-existing and out of scope.

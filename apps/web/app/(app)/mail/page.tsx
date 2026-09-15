@@ -484,15 +484,10 @@ export default function MailPage() {
         if (!inbox) return;
 
         const currentUnread: number = inbox.unreadCount ?? 0;
-        const prev = lastInboxUnreadRef.current;
 
-        if (prev !== null && currentUnread > prev) {
-          const newCount = currentUnread - prev;
-          window.electronAPI?.sendNotification(
-            `${newCount} new message${newCount !== 1 ? 's' : ''}`,
-            `You have ${currentUnread} unread message${currentUnread !== 1 ? 's' : ''} in your inbox.`,
-          );
-        }
+        // New-mail alerting lives in NotificationAlerts (app shell) now, driven
+        // by the server-side NEW_MAIL notification. Announcing here too would
+        // make the desktop build alert twice for one arrival.
 
         // Update Dock badge on macOS
         window.electronAPI?.setBadgeCount(currentUnread);

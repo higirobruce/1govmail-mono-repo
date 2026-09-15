@@ -1403,10 +1403,11 @@ The whole-branch review found three blockers in the seams between the tasks
 above. What the plan got wrong, and what the code now does:
 
 1. **Task 1's dedupe guard was time-based** (`hasRecentNotification`), which
-   silently discarded real arrivals — see the amendment in spec §4.1. Dedupe is
-   now by `metadata.unreadCount`, via
+   silently discarded real arrivals — see the amendment in spec §4.1. Dedupe
+   moved to `metadata.unreadCount`, via
    `NotificationsService.getLatestNotification`. `hasRecentNotification` had no
-   other caller and is gone.
+   other caller and is gone. **Superseded by correction 7 below: the
+   count-based rule was wrong too.**
 2. **Task 1 dropped spec §4.1's body text** (sender and subject of the newest
    unread message) without recording it as a deviation. It is implemented, with
    the unread total as the fallback.
@@ -1426,3 +1427,28 @@ above. What the plan got wrong, and what the code now does:
    a browser user never triggered the folder sync that detection depends on. It
    now runs in `useInboxSync` for every environment; the dock badge stays
    Electron-only.
+
+## Post-review corrections (second fix wave, 2026-09-15)
+
+A scoped re-review of the wave above found two defects that the fixes
+themselves introduced.
+
+7. **Correction 1's count-based dedupe dropped real arrivals** — see the second
+   amendment in spec §4.1. `metadata.unreadCount` only ever records a level
+   that EXCEEDED the last one, so it is a high-water mark that never falls: a
+   read-then-refill back to the same count was suppressed, and a user who once
+   reached 50 unread heard nothing until they passed 50 again. Transition
+   identity alone has the same hole (reading mail moves the baseline
+   backwards). The guard now suppresses only an identical `(baseline →
+   current)` transition younger than `NEW_MAIL_DUPLICATE_MS` (15s), and
+   `metadata` carries `baseline` alongside `unreadCount` and `delta`.
+   `getLatestNotification` stays unbounded; the age bound is applied by the
+   caller against the row's `createdAt`, so the clock can narrow a comparison
+   but never hide a row. Full concurrency-safety remains out of scope.
+8. **Correction 4's `initialized` flag could replay a whole backlog.** Nothing
+   recorded a marker on an empty poll (`newestCreatedAt([])` is null), so a
+   device whose first poll was empty came back as "initialized, no marker" —
+   which meant "announce everything" — and replayed up to fifty rows. An empty
+   poll now records the client's own ISO time, making that state unwritable.
+   The `initialized` branch is kept only for stores the previous build already
+   persisted.

@@ -102,7 +102,8 @@ Create one notification:
 - `body`: the sender and subject of the newest unread message when the DB
   already holds it; otherwise the inbox unread total
 - `actionUrl: '/mail'`
-- `metadata: { unreadCount, delta }`
+- `metadata: { baseline, unreadCount, delta }` — the unread count the delta was
+  measured FROM, the count announced, and the delta the title text uses
 
 **Dedupe.** The browser polls every two minutes, and several tabs or devices may
 poll at once, so detection must be idempotent without a lock.
@@ -119,6 +120,43 @@ poll at once, so detection must be idempotent without a lock.
 > the count about to be announced. A repeated sync at the same level stays
 > quiet; any higher level always notifies.
 
+> **Amended again 2026-09-15, after a scoped re-review of the fix wave.** The
+> count-based rule above — "suppress only when the most recent `NEW_MAIL` row's
+> `metadata.unreadCount` is already greater than or equal to the count about to
+> be announced" — is itself wrong, and drops real arrivals. A row is only ever
+> written when the count EXCEEDS the last announced level, so
+> `metadata.unreadCount` is monotonically non-decreasing across rows: it is a
+> high-water mark that never falls. Unread 0→3 notifies (the row records 3), the
+> user reads all three so the stored baseline returns to 0, three new messages
+> take the inbox back to 3 — a genuine `+3` — and `3 >= 3` suppresses it. A user
+> who once reached 50 unread and then cleared their inbox hears nothing until
+> they pass 50 again, with no reset except deleting that row by hand from the
+> bell.
+>
+> Transition identity alone does not fix it either, and was considered and
+> rejected rather than built: reading mail moves the baseline BACKWARDS, so the
+> pair `(0 → 3)` recurs verbatim after a read-then-refill and would be
+> suppressed for exactly the same reason.
+>
+> Dedupe is now by **transition AND recency**: suppress only when a `NEW_MAIL`
+> row for this user records the same `(baseline → current)` pair AND is younger
+> than `MailService.NEW_MAIL_DUPLICATE_MS` (15s). Time is the only thing that
+> separates the two cases — two tabs racing one arrival compute the identical
+> transition within milliseconds, while a read-then-refill needs at least two
+> sync cycles (the folder poll is two minutes) with a human reading mail in
+> between. The row therefore records the `baseline` it measured from as well as
+> the count it announced. The query is still unbounded
+> (`getLatestNotification`); the age bound is applied by the caller against the
+> row's `createdAt`, so the clock can narrow a comparison but can never hide a
+> row.
+>
+> **Still out of scope:** full concurrency-safety. `notifyNewMail` was never
+> concurrency-safe — the original clock guard raced identically — and making it
+> so needs a compare-and-swap on the folder row (`UPDATE folder SET unreadCount
+> = current WHERE id = ? AND unreadCount = previous`, notifying only when a row
+> was actually updated), which restructures the upsert loop. Two tabs in the
+> same instant may still produce two chimes; that is accepted.
+
 **Failure is silent.** A notification failure must never break `getFolders` —
 the folder list is the user's mailbox and matters more than an alert. Wrap in
 try/catch and log at WARN, exactly as the existing folder-persist loop does.
@@ -130,8 +168,17 @@ A new `NotificationAlerts` component mounts once in the `(app)` layout, beside
 
 1. polls `GET /notifications` every 30s (the query the bell already uses, so the
    two share one cache entry and one request);
-2. keeps the highest notification id it has already announced, in
-   `localStorage`, so a reload does not replay the backlog;
+2. keeps a marker of what it has already announced, so a reload does not
+   replay the backlog. **As built** this is the `createdAt` of the newest row
+   announced, not "the highest notification id" — ids are cuids and are not
+   reliably ordered — and it lives in the persisted `notifications` Zustand
+   store rather than a bare `localStorage` key. Two fields carry it:
+   `lastAnnouncedAt` (the timestamp, moving forward only) and `initialized`
+   (whether this device has ever completed a poll). Every completed poll
+   records a marker, including one that comes back empty — that one has no
+   server timestamp to borrow and records the client's own ISO time, because
+   otherwise "initialized with no marker" means "announce everything" and a
+   device that returns to a full feed replays all fifty rows;
 3. for each newer row, in order: shows a toast, plays the chime for its type
    (when the type is audible and sound is on), and — only when
    `document.visibilityState === 'hidden'` — raises an OS notification.
@@ -183,7 +230,7 @@ turning a sound off.
 | File | Change |
 |---|---|
 | `apps/api/src/mail/mail.service.ts` | read stored folders before upsert; detect the `/Inbox` unread increase; create `NEW_MAIL` |
-| `apps/api/src/notifications/notifications.service.ts` | `hasRecentNotification(userId, type, withinMs)` for the dedupe guard |
+| `apps/api/src/notifications/notifications.service.ts` | `getLatestNotification(userId, type)` — the newest row of a type, with its `metadata` and `createdAt`, for the dedupe guard. (Originally specified as `hasRecentNotification(userId, type, withinMs)`; a clock-only lookback loses arrivals, so that method was removed in the 09-15 fix wave and does not exist.) |
 | `apps/web/lib/notifications/chime.ts` | new — Web Audio synthesizer and the four tones |
 | `apps/web/lib/notifications/announce.ts` | new — pure logic: which rows are new, which are audible, what the OS notification says |
 | `apps/web/stores/notifications.store.ts` | new — sound on/off, volume, per-type tone, last announced id |

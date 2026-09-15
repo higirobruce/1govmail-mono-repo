@@ -15,7 +15,11 @@ function fakeContext(state: AudioContextState = 'running') {
   return {
     ctx: {
       state, currentTime: 0, destination: {},
-      createOscillator: vi.fn(osc), createGain: vi.fn(gain), resume: vi.fn(),
+      createOscillator: vi.fn(osc), createGain: vi.fn(gain),
+      // Honest fake: the real AudioContext#resume() returns a promise that
+      // can reject (e.g. a closed context) — default to a resolved one so
+      // tests can override it to reject when exercising that path.
+      resume: vi.fn(() => Promise.resolve()),
     } as unknown as AudioContext,
     starts,
   };
@@ -56,5 +60,21 @@ describe('playTone', () => {
   it('never rejects when the audio layer throws', async () => {
     const throwing = { createOscillator: () => { throw new Error('boom'); }, state: 'running', currentTime: 0, destination: {}, createGain: vi.fn() } as unknown as AudioContext;
     await expect(playTone('soft', 1, () => throwing)).resolves.toBe(false);
+  });
+
+  it('plays through a suspended context, resuming it along the way', async () => {
+    const { ctx } = fakeContext('suspended');
+    const played = await playTone('ping', 1, () => ctx);
+
+    expect(played).toBe(true);
+    expect(ctx.resume).toHaveBeenCalled();
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(TONES.ping.length);
+  });
+
+  it('never rejects when resume() itself rejects', async () => {
+    const { ctx } = fakeContext('suspended');
+    (ctx.resume as ReturnType<typeof vi.fn>).mockReturnValue(Promise.reject(new Error('cannot resume')));
+
+    await expect(playTone('ping', 1, () => ctx)).resolves.toBe(true);
   });
 });

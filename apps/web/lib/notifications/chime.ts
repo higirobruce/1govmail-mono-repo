@@ -30,13 +30,36 @@ export const TONES: Record<ToneName, Note[]> = {
 let context: AudioContext | null = null;
 
 /** The shared AudioContext, created lazily. Returns null where Web Audio is
- *  unavailable (older browsers, or a non-browser test environment). */
+ *  unavailable (older browsers, or a non-browser test environment). Also
+ *  rebuilds it when the cached context has been closed — browsers can close a
+ *  shared AudioContext outside this module's control (context limits,
+ *  backgrounding policies), and reusing a closed one throws on every call
+ *  forever. */
 function getContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   const Ctor = window.AudioContext ?? (window as any).webkitAudioContext;
   if (!Ctor) return null;
-  if (!context) context = new Ctor();
+  if (!context || context.state === 'closed') context = new Ctor();
   return context;
+}
+
+/**
+ * Resume `ctx` if the browser suspended it. Fire-and-forget by design — the
+ * caller doesn't block on this — so any rejection (a closed context, some
+ * other invalid state) is caught right here rather than left to become an
+ * unhandled promise rejection. A `void`-ed promise is not covered by a
+ * surrounding try/catch: that only catches synchronous throws and awaited
+ * rejections, never a discarded promise's async rejection.
+ */
+function resumeIfSuspended(ctx: AudioContext): void {
+  if (ctx.state !== 'suspended') return;
+  try {
+    ctx.resume().catch(() => {
+      // Resume failing just means audio stays unavailable; never surface it.
+    });
+  } catch {
+    // Defensive: treat a synchronous throw from resume() the same way.
+  }
 }
 
 /**
@@ -47,7 +70,7 @@ function getContext(): AudioContext | null {
 export function unlockAudio(): void {
   try {
     const ctx = getContext();
-    if (ctx && ctx.state === 'suspended') void ctx.resume();
+    if (ctx) resumeIfSuspended(ctx);
   } catch {
     // Nothing to do: audio simply stays unavailable.
   }
@@ -67,7 +90,7 @@ export async function playTone(
   try {
     const ctx = ctxFactory();
     if (!ctx) return false;
-    if (ctx.state === 'suspended') void ctx.resume();
+    resumeIfSuspended(ctx);
 
     const now = ctx.currentTime;
     for (const note of TONES[tone]) {

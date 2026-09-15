@@ -23,7 +23,13 @@ interface NotificationsState {
    * `createdAt` of the newest notification already announced on this device.
    * A timestamp rather than an id because ids are cuids and are not reliably
    * ordered. Null means "nothing announced yet" — the first poll records the
-   * newest row WITHOUT announcing, so a backlog never plays on login.
+   * newest row WITHOUT announcing, so a device's FIRST poll never replays the
+   * feed it finds.
+   *
+   * Only the first one. A device that already holds a marker announces
+   * everything stamped after it, so a long absence comes back to every row
+   * that arrived meanwhile — up to the fifty the feed carries. That is a
+   * known limit (spec §8), not a protection this field provides.
    *
    * Every COMPLETED poll records one, including a poll that came back empty:
    * that one has no server timestamp to borrow and records the client's own

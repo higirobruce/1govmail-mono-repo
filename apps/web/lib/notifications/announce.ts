@@ -40,6 +40,10 @@ export function isAudible(type: string): type is AudibleType {
  * or its own clock when the feed came back empty — so a null marker cannot
  * survive a poll and this branch only ever suppresses a genuine backlog.
  *
+ * It suppresses ONLY that one. Rows stamped after a device's marker are all
+ * announced, however long it was away and however many there are — see spec
+ * §8. Nothing here dates a row as "too old to be worth saying".
+ *
  * That marker-on-an-empty-poll is what makes a single condition enough here.
  * An earlier build left the marker null on an empty poll and needed an
  * `initialized` flag to tell "never polled" from "polled, nothing to record";

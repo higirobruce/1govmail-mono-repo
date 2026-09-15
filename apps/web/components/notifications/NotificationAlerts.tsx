@@ -139,16 +139,16 @@ export function NotificationAlerts() {
         // fifty toasts plus a chime per audible row on its return. Recording a
         // marker here means a null marker only ever means "never polled".
         //
-        // A backlog is only distinguishable from an arrival by age, and an
-        // empty feed carries no server timestamp to borrow, so the client's own
-        // clock is what there is. The assumption, like the ISO comparison in
-        // announce.ts, is that it roughly agrees with the server's: a clock
-        // running fast swallows arrivals until the server catches up to it, a
-        // slow one announces nothing extra (an empty feed has nothing behind
-        // it). Only the never-marked case takes this path — a device that
-        // already has a server-derived marker keeps it — so the exposure is
-        // one poll on one device, not every poll on every device.
-        setLastAnnouncedAt(new Date().toISOString());
+        // Backdated by a minute, deliberately. An empty feed proves ZERO
+        // notification rows exist for this user (the feed filters on userId
+        // alone), so nothing can predate this marker and it suppresses nothing
+        // real — which makes a minute of slack free, and makes recording `now`
+        // the expensive option. The marker is monotonic and persisted, so a
+        // device whose clock runs fast would otherwise install a suppression
+        // floor in the FUTURE that never rewinds, and hear nothing for the
+        // whole skew. The minute also covers a row created while this response
+        // was in flight, which even a perfect clock would have lost.
+        setLastAnnouncedAt(new Date(Date.now() - 60_000).toISOString());
       }
     }
   }, [feed, isSuccess, soundEnabled, volume, tones, setLastAnnouncedAt]);

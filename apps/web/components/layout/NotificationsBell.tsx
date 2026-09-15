@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { Bell, Mail, Calendar, ListTodo, Clock, X, CheckCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDistanceToNow } from 'date-fns';
 
 const TYPE_ICON: Record<string, React.ElementType> = {
@@ -63,23 +64,28 @@ export function NotificationsBell() {
 
   return (
     <div ref={ref} className="relative">
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={handleOpen}
-        aria-label="Notifications"
-        className="relative text-ink-3 hover:bg-muted hover:text-foreground"
-      >
-        <Bell className="size-4" />
-        {unread > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-micro leading-none font-semibold tabular-nums">
-            {unread > 99 ? '99+' : unread}
-          </span>
-        )}
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleOpen}
+            aria-label="Notifications"
+            className="relative text-ink-3 hover:bg-muted hover:text-foreground"
+          >
+            <Bell className="size-4" />
+            {unread > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-micro leading-none font-semibold tabular-nums">
+                {unread > 99 ? '99+' : unread}
+              </span>
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="left" className="text-xs">Notifications</TooltipContent>
+      </Tooltip>
 
       {open && (
-        <div className="absolute right-full top-0 mr-1 w-80 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden z-50">
+        <div className="absolute bottom-0 right-full mr-2 w-80 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden z-50">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
             <span className="text-[0.8125rem] font-semibold text-foreground">Notifications</span>
             {notifications.length > 0 && (

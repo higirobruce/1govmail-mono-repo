@@ -48,4 +48,16 @@ export class NotificationsService {
   async getUnreadCount(userId: string): Promise<number> {
     return this.prisma.notification.count({ where: { userId, isRead: false } });
   }
+
+  /**
+   * Whether this user already has a notification of `type` inside the last
+   * `withinMs`. Used to keep repeated detection idempotent: several tabs (or
+   * devices) sync folders at once and must not each produce a row.
+   */
+  async hasRecentNotification(userId: string, type: string, withinMs: number): Promise<boolean> {
+    const count = await this.prisma.notification.count({
+      where: { userId, type, createdAt: { gte: new Date(Date.now() - withinMs) } },
+    });
+    return count > 0;
+  }
 }

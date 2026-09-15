@@ -175,6 +175,15 @@ export class MailService {
       throw err;
     }
 
+    // Read the folder rows as they stand BEFORE the upsert below overwrites
+    // them — this is the only moment the server holds both the previous unread
+    // count and the one the provider just reported.
+    const storedFolders = await this.prisma.folder.findMany({
+      where: { userId },
+      select: { zimbraId: true, path: true, unreadCount: true },
+    });
+    await this.notifyNewMail(userId, storedFolders, providerFolders);
+
     // Persist folders to DB for caching; failures here must not prevent the
     // response from reaching the client (don't let a Prisma error become 500).
     const saved: any[] = [];
@@ -213,6 +222,47 @@ export class MailService {
     }
 
     return saved;
+  }
+
+  /** How long one NEW_MAIL notification suppresses the next. The browser syncs
+   *  folders every two minutes, and several tabs may sync at once. */
+  private static readonly NEW_MAIL_DEDUPE_MS = 60_000;
+
+  /**
+   * Raise a NEW_MAIL notification when the Inbox unread count has RISEN since
+   * the last sync. A fall means the user read mail somewhere else, which is
+   * not an arrival.
+   *
+   * Never throws: an alert is worth less than the folder list this runs inside.
+   */
+  private async notifyNewMail(
+    userId: string,
+    stored: Array<{ zimbraId: string; path: string; unreadCount: number }>,
+    fetched: Array<{ id: string; path: string; unreadCount: number }>,
+  ): Promise<void> {
+    try {
+      const previous = stored.find((f) => f.path === '/Inbox');
+      const current = fetched.find((f) => f.path === '/Inbox');
+      if (!previous || !current) return; // first sync ever: nothing to compare
+
+      const delta = current.unreadCount - previous.unreadCount;
+      if (delta <= 0) return;
+
+      if (await this.notifications.hasRecentNotification(userId, 'NEW_MAIL', MailService.NEW_MAIL_DEDUPE_MS)) {
+        return;
+      }
+
+      await this.notifications.createNotification(
+        userId,
+        'NEW_MAIL',
+        `${delta} new message${delta === 1 ? '' : 's'}`,
+        `Inbox now has ${current.unreadCount} unread`,
+        '/mail',
+        { unreadCount: current.unreadCount, delta },
+      );
+    } catch (err: any) {
+      this.logger.warn(`NEW_MAIL notification failed for userId=${userId}: ${err?.message}`);
+    }
   }
 
   // `rules` and `junkFolder` are resolved once per `getMessages` call (see the

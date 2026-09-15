@@ -1856,3 +1856,78 @@ describe('MailService markNotSpam', () => {
     expect(moveMessage).not.toHaveBeenCalled();
   });
 });
+
+describe('MailService new-mail detection', () => {
+  const user = { id: 'u1', authToken: 'tok', tokenExpiry: new Date(Date.now() + 60_000), provider: 'zimbra' };
+  const stored = [{ zimbraId: 'z-inbox', path: '/Inbox', unreadCount: 2 }];
+
+  function makeService(fetchedUnread: number, recent = false) {
+    const createNotification = jest.fn().mockResolvedValue({});
+    const notifications = {
+      createNotification,
+      hasRecentNotification: jest.fn().mockResolvedValue(recent),
+    } as unknown as NotificationsService;
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user), update: jest.fn() },
+      folder: {
+        findMany: jest.fn().mockResolvedValue(stored),
+        upsert: jest.fn().mockResolvedValue({ id: 'f-inbox' }),
+      },
+    } as unknown as PrismaService;
+    const zimbra = {
+      getFolders: jest.fn().mockResolvedValue([
+        { id: 'z-inbox', name: 'Inbox', path: '/Inbox', kind: 'mail', unreadCount: fetchedUnread, totalCount: 10 },
+      ]),
+    } as unknown as ZimbraService;
+    const service = new MailService(
+      prisma, makeResolver(zimbra), notifications, { create: jest.fn() } as unknown as TasksService,
+    );
+    return { service, createNotification, notifications: notifications as any };
+  }
+
+  it('creates one NEW_MAIL notification when the inbox unread count rises', async () => {
+    const { service, createNotification } = makeService(5);
+
+    await service.getFolders('u1');
+
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    const [userId, type, title, , actionUrl, metadata] = createNotification.mock.calls[0];
+    expect(userId).toBe('u1');
+    expect(type).toBe('NEW_MAIL');
+    expect(title).toBe('3 new messages');
+    expect(actionUrl).toBe('/mail');
+    expect(metadata).toEqual({ unreadCount: 5, delta: 3 });
+  });
+
+  it('says "1 new message" for a single arrival', async () => {
+    const { service, createNotification } = makeService(3);
+    await service.getFolders('u1');
+    expect(createNotification.mock.calls[0][2]).toBe('1 new message');
+  });
+
+  it('creates nothing when the count is unchanged', async () => {
+    const { service, createNotification } = makeService(2);
+    await service.getFolders('u1');
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('creates nothing when the count FALLS — mail read elsewhere is not an arrival', async () => {
+    const { service, createNotification } = makeService(1);
+    await service.getFolders('u1');
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('creates nothing when another sync already notified inside the dedupe window', async () => {
+    const { service, createNotification } = makeService(5, true);
+    await service.getFolders('u1');
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('still returns the folder list when creating the notification throws', async () => {
+    // The folder list is the user's mailbox. An alert failure must never cost it.
+    const { service, notifications } = makeService(5);
+    notifications.createNotification.mockRejectedValue(new Error('db down'));
+
+    await expect(service.getFolders('u1')).resolves.toBeDefined();
+  });
+});

@@ -255,7 +255,11 @@ poll at once, so detection must be idempotent without a lock.
 > id> } } })`. Read and write the same row. `orderBy: { syncedAt: 'desc' }`
 > was rejected: it merely picks the freshest duplicate and leaves the
 > ambiguity in place. The claim keys on the `id` that read returns, so it
-> follows the corrected read automatically. One behaviour change to note: on
+> follows the corrected read automatically. (That note also claimed that
+> reading by the unique key left "nothing left to be ambiguous about". It
+> settled which ROW is measured; **which FOLDER is the inbox stayed ambiguous
+> on Exchange**, and the fifth amendment below fixes that upstream, in the EWS
+> mapping.) One behaviour change to note: on
 > the first sync after a provider's folder ids change, no row exists for the
 > new id, so that sync announces nothing and the persist loop creates the row;
 > the sync after it has a baseline and works normally. One missed
@@ -266,9 +270,13 @@ poll at once, so detection must be idempotent without a lock.
 > left the baseline moved with no row to show for it, so the next sync saw no
 > delta and the arrival was gone. (The design this replaced recovered from
 > that, because the baseline only moved later, in the persist loop.) The claim
-> and the insert now share one `prisma.$transaction`, so either both happened
-> or neither did. The notification body is resolved **before** the transaction
-> opens — it is a second query, and holding a transaction open across it on a
+> and the insert now share one `prisma.$transaction`, so ~~either both
+> happened or neither did~~ **— corrected 2026-09-15; see the fifth amendment
+> below. As built in this wave the pair was atomic only against process death:
+> the folder-persist loop that runs afterwards re-advanced the baseline whether
+> or not the transaction had committed, so every IN-PROCESS failure behaved
+> exactly like the pre-transaction code.** The notification body is resolved
+> **before** the transaction opens — it is a second query, and holding a transaction open across it on a
 > per-sync path buys nothing. The whole thing stays inside the existing
 > try/catch and still logs at WARN: a notification failure must never break
 > `getFolders`.
@@ -285,6 +293,102 @@ poll at once, so detection must be idempotent without a lock.
 > never returns. If the winner already took the baseline to or past the
 > measured count, the delta comes out `≤ 0` and the retry returns silently on
 > its next pass.
+
+> **Amended a fifth time 2026-09-15, after a whole-branch re-review.** The
+> compare-and-swap is kept as designed and was not touched. Three defects
+> around it were fixed, one of which made the whole feature silent on Exchange.
+>
+> **On Exchange, a nested folder named "Inbox" killed the feature silently and
+> permanently.** `notifyNewMail` picks the provider's inbox with
+> `fetched.find(f => f.path === '/Inbox')`, and on EWS that match was
+> ambiguous. `ews-envelopes.ts` issues `FindFolder Traversal="Deep"` from
+> `msgfolderroot` — the entire tree, returned flat — and `EwsService`'s mapper
+> decided a folder's type from its `DisplayName` alone, trimmed and lowercased,
+> parentage ignored, then stamped the canonical path for that type. So
+> `Archive/Inbox`, a PST import's `Top of Information Store/Inbox`, or any
+> migration artefact arrived here carrying the path `/Inbox`. When Exchange's
+> enumeration returned an impostor first, every sync read and re-advanced THAT
+> row: the comparison was perfectly self-consistent and self-repairing, the
+> real Inbox was never compared against anything, and there was no delta, no
+> claim, no notification, **no WARN** and no recovery. Zimbra was never
+> affected — `zimbra.mappers.ts` takes `path` from the server's
+> `absFolderPath`, where only the true root can be `/Inbox`.
+>
+> Fixed in the mapping that creates the impostor, not in the notification
+> code: a folder earns a canonical system path only when it is genuinely
+> top-level, and a nested namesake maps to `custom` and keeps its own name as
+> its path, like any other user folder. Top-level is decided by parentage,
+> from the response already in hand — a Deep traversal from `msgfolderroot`
+> returns every descendant of the root but not the root itself, so the root's
+> own id is the one `ParentFolderId` that no returned folder owns, and a
+> folder is top-level exactly when its parent is that id. **No extra EWS round
+> trip**, which matters: a folder sync runs about once a minute per active
+> user against an infra target of 5,000 mailboxes, so resolving the
+> distinguished inbox with a `GetFolder` call — correct, but one more request
+> per sync per mailbox — was rejected. Where the inference has nothing to work
+> with (an empty response, or folders that carry no `ParentFolderId` at all)
+> the previous name-only mapping stands, so a response without parentage
+> cannot cost a mailbox its canonical paths. This also repairs the **sidebar**,
+> which resolves its Inbox item by `f.path === '/Inbox'` and hides every
+> builtin path from Labels: two `/Inbox` rows meant the Inbox badge and click
+> target could land on the namesake, while the namesake itself was invisible.
+>
+> **The persist loop undid the transaction's rollback.** `getFolders` calls
+> `notifyNewMail` and then upserts every provider folder with
+> `unreadCount: f.unreadCount`, unconditionally. So when the claim-and-insert
+> transaction rolled back, the loop advanced the baseline anyway, the next sync
+> measured no delta, and the arrival was announced nowhere — the exact loss the
+> transaction was added to prevent. "Either both happened or neither did" held
+> only for process death, the one case where the loop does not run either; for
+> every in-process failure the behaviour was identical to the pre-transaction
+> code.
+>
+> `notifyNewMail` now reports which provider folder's stored `unreadCount` it
+> owns for the cycle, and the loop skips **that one column on that one row** —
+> every other column of that row, and every other folder, persists exactly as
+> before. It owns the column from the moment it has read a baseline, because
+> it is the only thing that knows whether the stored value is a claim to keep,
+> a rolled-back claim to retry, or a count to lower. A mailbox with no stored
+> Inbox row is not owned at all: the loop must stay free to seed it.
+>
+> The baseline **must still fall** — a baseline that only rises is the
+> high-water mark that made a user who once reached 50 unread hear nothing
+> until they passed 50 again — so the fall moved into `notifyNewMail` with it,
+> as a conditional write on the value that sync actually read
+> (`WHERE id = ? AND unreadCount = <previous>`), which is the same shape as the
+> claim. A zero delta writes nothing at all, by anyone. That is also what
+> closes the residual the fourth amendment documented and left open: a sync
+> holding a fetch that predates an arrival can no longer upsert its older count
+> over a baseline another sync has just claimed, because it either has nothing
+> to write or its write no longer matches. **One half of that residual remains
+> and is not closed by this change**: a stale fetch that OVERSTATES (a slow
+> provider read from before the user read their mail) still claims and chimes
+> spuriously, and the next genuine arrival, measured against that inflated
+> baseline, still comes out negative and silent. That is a property of
+> measuring deltas against a count fetched at an unknown time, not of the
+> bookkeeping around it; fixing it needs a fetch timestamp (or a provider-side
+> change notification) and remains out of scope. Cost unchanged: one spurious
+> chime and one lost arrival, self-repairing after one further sync.
+>
+> One note on load, since it was raised with the transaction and is unchanged
+> here: an interactive `$transaction` holds a dedicated pooled connection for
+> its duration, so at 5,000 mailboxes this path can surface pool timeouts that
+> a single pooled query would not. It is two writes with no queries between
+> them and the body is resolved outside, so the hold is short; it is called out
+> as a thing to watch in the scale plan rather than redesigned.
+>
+> **The transaction tests proved the wrong thing.** The `$transaction` fake
+> handed its callback `prisma` itself and tagged writes by ambient nesting
+> depth, so the assertions established only that both writes happened *during*
+> the transaction window — not that they *ran on* it. Two one-token production
+> changes kept all 812 tests green while deleting the atomicity outright:
+> dropping the trailing `tx` argument to `createNotification`, and swapping
+> `tx.folder.updateMany` for `this.prisma.folder.updateMany`. The fake now
+> hands back a **distinct** `tx` client carrying only what the transaction may
+> touch, tags each write by the client that ran it, and the tests assert that
+> `createNotification` received that same client. Both one-token changes now
+> fail. `NotificationsService` also had no spec file at all, and now has one
+> that pins the contract at the seam: a passed client is the client used.
 
 **Failure is silent.** A notification failure must never break `getFolders` —
 the folder list is the user's mailbox and matters more than an alert. Wrap in
@@ -312,13 +416,14 @@ A new `NotificationAlerts` component mounts once in the `(app)` layout, beside
    nothing any marker could suppress. It also keeps the device clock out of
    this path entirely — the marker is monotonic and persisted, so a
    clock-derived value on a fast device installs a suppression floor in the
-   FUTURE that never rewinds. (An intermediate build recorded
-   `Date.now() - 60_000` and its comment claimed protection against a device
-   "ten minutes fast", which a 60-second backdate does not deliver; backdating
-   only shrinks the skew it survives.) (An intermediate build recorded nothing
-   on an empty poll and carried an `initialized` flag to disambiguate the null;
-   the state where the two disagreed replayed all fifty rows, and the flag was
-   deleted once the empty-poll marker made it redundant.);
+   FUTURE that never rewinds. (Two intermediate builds got this wrong in the
+   same place. One recorded `Date.now() - 60_000`, with a comment claiming
+   protection against a device "ten minutes fast" that a 60-second backdate
+   does not deliver — backdating only shrinks the skew it survives. The other
+   recorded nothing at all on an empty poll and carried an `initialized` flag
+   to disambiguate the null; the state where the two disagreed replayed all
+   fifty rows, and the flag was deleted once the empty-poll marker made it
+   redundant.);
 3. for each newer row, in order: shows a toast, plays the chime for its type
    (when the type is audible and sound is on), and — only when
    `document.visibilityState === 'hidden'` — raises an OS notification.
@@ -369,7 +474,8 @@ turning a sound off.
 
 | File | Change |
 |---|---|
-| `apps/api/src/mail/mail.service.ts` | read the stored Inbox row before the upsert loop, **by `(userId, zimbraId)`** — the key the loop writes by, because `path` is not unique; on an unread increase, claim the transition with a conditional baseline advance and create `NEW_MAIL` only if it matched, both inside one transaction, retrying a lost claim up to `NEW_MAIL_CLAIM_ATTEMPTS` times (§4.1) |
+| `apps/api/src/mail/mail.service.ts` | read the stored Inbox row before the upsert loop, **by `(userId, zimbraId)`** — the key the loop writes by, because `path` is not unique; on an unread increase, claim the transition with a conditional baseline advance and create `NEW_MAIL` only if it matched, both inside one transaction, retrying a lost claim up to `NEW_MAIL_CLAIM_ATTEMPTS` times (§4.1). `notifyNewMail` returns which provider folder's `unreadCount` it owns for the cycle and the persist loop skips that one column on that one row, so a rolled-back claim is not re-advanced behind the transaction; the fall of a baseline moved into `notifyNewMail` with it, as a conditional write (§4.1, fifth amendment) |
+| `apps/api/src/ews/ews.service.ts` | a folder earns a canonical system `path` only when it is genuinely top-level — the mail root's id is inferred from the Deep `FindFolder` result (the one `ParentFolderId` no returned folder owns), with no extra round trip, and a nested namesake maps to `custom` keeping its own name as its path. Without this, any folder merely NAMED "Inbox" carried `/Inbox` and the new-mail baseline could compare an impostor against itself forever (§4.1, fifth amendment) |
 | `apps/api/src/notifications/notifications.service.ts` | `createNotification` takes one optional trailing `client: Prisma.TransactionClient`, defaulting to the shared client, so `notifyNewMail` can put the insert in the same transaction as its claim (§4.1). Nothing else changes, and no dedupe helper lives here: two were specified and both are gone — `hasRecentNotification(userId, type, withinMs)` (a clock-only lookback loses arrivals) and then `getLatestNotification(userId, type)` (comparing rows cannot tell a duplicate from a refill). Dedupe is a compare-and-swap on the folder row. |
 | `apps/web/lib/notifications/chime.ts` | new — Web Audio synthesizer and the four tones |
 | `apps/web/lib/notifications/announce.ts` | new — pure logic: which rows are new, which are audible, what the OS notification says |
@@ -406,7 +512,18 @@ ways nobody notices:
   the baseline is read by `(userId, zimbraId)` and never by `path`; the claim
   and the insert run inside one transaction with the body resolved before it
   opens; and a sync that loses the claim retries with its own larger delta,
-  bounded.
+  bounded. Plus, from the fifth amendment: an Exchange folder list carrying a
+  nested "Inbox" FIRST — mapped by the real `EwsService`, because the impostor
+  is created by that mapping — is measured against the real, top-level Inbox;
+  a nested namesake maps to `custom` with its own path while the top-level one
+  keeps `/Inbox`; the persist loop does not advance the baseline behind a
+  rolled-back claim, nor behind a failed baseline read, and still lowers it
+  when mail is read; it skips one column of one row and nothing else; a
+  concurrent claim is not rewound by a sync that measured no change or a fall;
+  the notification body is resolved once per sync rather than once per
+  attempt; and the claim and the insert are asserted to run ON the transaction
+  client, not merely during it (`NotificationsService` has its own spec for the
+  same contract).
 - **`NotificationAlerts`** — a new row triggers toast and chime; a hidden
   document also raises an OS notification; a visible one does not; a tab that
   sees another tab's claim stays silent.

@@ -29,6 +29,7 @@ import TaskModal, { type Task } from '@/components/tasks/TaskModal';
 import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useInboxSync } from '@/hooks/useInboxSync';
 import { useResizable, clampWidth } from '@/hooks/useResizable';
 import { ResizeHandle } from '@/components/layout/ResizeHandle';
 import { useUIStore } from '@/stores/ui.store';
@@ -466,46 +467,11 @@ export default function MailPage() {
     if (!isAuthenticated) router.replace('/login');
   }, [hydrated, isAuthenticated, router]);
 
-  // Electron: poll the inbox unread count every 2 minutes to keep the dock
-  // badge and sidebar folder counts current. Works whether the window is
-  // visible or hidden in the system tray.
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    // Only enable polling when running inside the Electron desktop app
-    if (!window.electronAPI?.isElectron) return;
-
-    const checkInbox = async () => {
-      try {
-        const data: any[] = await api.mail.getFolders();
-        const inbox = data.find((f) => f.path === '/Inbox');
-        if (!inbox) return;
-
-        const currentUnread: number = inbox.unreadCount ?? 0;
-
-        // New-mail alerting lives in NotificationAlerts (app shell) now, driven
-        // by the server-side NEW_MAIL notification. Announcing here too would
-        // make the desktop build alert twice for one arrival.
-
-        // Update Dock badge on macOS
-        window.electronAPI?.setBadgeCount(currentUnread);
-
-        // Also refresh the sidebar folder list if unread counts shifted
-        setFolders(data);
-      } catch {
-        // Polling is best-effort — silent failure keeps the app stable
-      }
-    };
-
-    // First check 10 s after mount (give the initial folder load time to finish)
-    const initial = setTimeout(checkInbox, 10_000);
-    // Subsequent checks every 2 minutes
-    const interval = setInterval(checkInbox, 2 * 60 * 1000);
-
-    return () => {
-      clearTimeout(initial);
-      clearInterval(interval);
-    };
-  }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Keep folders (and, in Electron, the dock badge) current every 2 minutes.
+  // This poll is also what lets the server SEE new mail: detection happens
+  // during a folder sync, so it must run in a browser too — not only in the
+  // desktop build. See useInboxSync.
+  useInboxSync(isAuthenticated, setFolders);
 
   // Load folders on mount
   useEffect(() => {

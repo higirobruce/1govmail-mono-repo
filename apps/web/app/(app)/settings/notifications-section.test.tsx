@@ -86,4 +86,10 @@ describe('NotificationsSection', () => {
     fireEvent.click(screen.getByLabelText('Play a sound for notifications')); // -> on
     expect(requestPermission).toHaveBeenCalledTimes(1);
   });
+
+  it('leaves no Notification stub behind for the next test', () => {
+    // Canary for the teardown above — the stub is a plain global assignment
+    // that clearAllMocks() does not touch.
+    expect((globalThis as any).Notification).toBeUndefined();
+  });
 });

@@ -23,17 +23,28 @@ export const INBOX_SYNC_INTERVAL_MS = 2 * 60 * 1000;
  * The Electron-only extras stay Electron-only, and stay optional-chained: the
  * dock badge has no browser equivalent, so it simply does not happen there.
  *
+ * The rows are passed straight through to the caller, so only the two fields
+ * this poll reads are described here.
+ *
  * `onFolders` is expected to be a stable setter (a `useState` setter or a store
  * action) — it is in the effect's dependency list, so an inline closure would
  * restart the interval on every render.
  */
-export function useInboxSync(enabled: boolean, onFolders: (folders: any[]) => void): void {
+export interface SyncedFolder {
+  path?: string;
+  unreadCount?: number;
+}
+
+export function useInboxSync(
+  enabled: boolean,
+  onFolders: (folders: SyncedFolder[]) => void,
+): void {
   useEffect(() => {
     if (!enabled) return;
 
     const checkInbox = async () => {
       try {
-        const data: any[] = await api.mail.getFolders();
+        const data: SyncedFolder[] = await api.mail.getFolders();
         const inbox = data.find((f) => f.path === '/Inbox');
         if (!inbox) return;
 

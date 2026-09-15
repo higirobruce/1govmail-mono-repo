@@ -235,4 +235,15 @@ describe('NotificationAlerts', () => {
     await waitFor(() => expect(toast).toHaveBeenCalled());
     expect(sendNotification).not.toHaveBeenCalled();
   });
+
+  it('leaves no hidden document, granted permission or Electron stub behind', () => {
+    // A canary for the teardown above: a spied visibilityState getter and a
+    // global Notification stub both survive clearAllMocks(), so a test added
+    // after the hidden-window cases would silently inherit a hidden document
+    // and announce through a branch it never asked for. Drop the afterEach
+    // restore and this fails.
+    expect(document.visibilityState).toBe('visible');
+    expect(typeof Notification).toBe('undefined');
+    expect((window as any).electronAPI).toBeUndefined();
+  });
 });

@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { NotificationsSection } from './page';
 import { useNotificationsStore } from '@/stores/notifications.store';
-import { playTone } from '@/lib/notifications/chime';
+import { playTone, unlockAudio } from '@/lib/notifications/chime';
 
 // Same reason as the NotificationAlerts spec: an ESM named export cannot be
 // spied on after the fact, so the module is mocked. TONES is kept real so the
@@ -18,8 +18,16 @@ describe('NotificationsSection', () => {
     vi.clearAllMocks();
     useNotificationsStore.setState({
       soundEnabled: true, volume: 0.6,
-      tones: { NEW_MAIL: 'soft', EVENT_SOON: 'double' }, lastAnnouncedAt: null,
+      tones: { NEW_MAIL: 'soft', EVENT_SOON: 'double' }, lastAnnouncedAt: null, initialized: false,
     });
+  });
+
+  // The Notification stub is a plain global assignment: clearAllMocks() does
+  // not remove it, so without this a later test inherits a permission state it
+  // never set up.
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (globalThis as any).Notification;
   });
 
   it('turns sound off and on', () => {
@@ -42,6 +50,29 @@ describe('NotificationsSection', () => {
     fireEvent.click(screen.getByLabelText('Test the new mail sound'));
 
     expect(play).toHaveBeenCalledWith('soft', 0.6);
+    // The unlock is half the point of the Test button: a browser refuses audio
+    // until a real gesture, and this is the only gesture guaranteed to happen
+    // before the first notification. Without this line the assertion above
+    // stays green with unlockAudio() deleted from the component.
+    expect(vi.mocked(unlockAudio)).toHaveBeenCalled();
+  });
+
+  it('names the tones in words, not in store keys', () => {
+    render(<NotificationsSection />);
+    const select = screen.getByLabelText('New mail sound') as HTMLSelectElement;
+
+    expect(Array.from(select.options).map((o) => o.textContent))
+      .toEqual(['Soft chime', 'Ping', 'Double beep', 'Chord']);
+    expect(Array.from(select.options).map((o) => o.value))
+      .toEqual(['soft', 'ping', 'double', 'chord']);
+  });
+
+  it("uses the page's own Switch, not a bare checkbox", () => {
+    render(<NotificationsSection />);
+    const toggle = screen.getByLabelText('Play a sound for notifications');
+
+    expect(toggle.getAttribute('role')).toBe('switch');
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
   });
 
   it('asks for OS-notification permission only when sound is switched ON', () => {

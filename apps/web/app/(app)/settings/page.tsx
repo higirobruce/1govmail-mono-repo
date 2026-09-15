@@ -7,7 +7,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useThemeStore, type FontSize } from '@/stores/theme.store';
 import { useAIStore } from '@/stores/ai.store';
-import { useNotificationsStore, type ToneName } from '@/stores/notifications.store';
+import { useNotificationsStore, type AudibleType, type ToneName } from '@/stores/notifications.store';
 import { TONES, playTone, unlockAudio } from '@/lib/notifications/chime';
 import { AI_LOCKED } from '@/lib/ai/config';
 import { api, type SettingsResponse } from '@/lib/api';
@@ -77,12 +77,17 @@ type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'pref
 
 // ── Toggle Switch ──────────────────────────────────────────────────────────────
 
-function Switch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+function Switch({ checked, onChange, disabled, ariaLabel }: {
+  checked: boolean; onChange: (v: boolean) => void; disabled?: boolean;
+  /** Accessible name, for a switch whose visible label is not its own text. */
+  ariaLabel?: string;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
@@ -103,15 +108,18 @@ function Switch({ checked, onChange, disabled }: { checked: boolean; onChange: (
 
 // ── Select ─────────────────────────────────────────────────────────────────────
 
-function Select({ value, onChange, options }: {
+function Select({ value, onChange, options, ariaLabel }: {
   value: string;
   onChange: (v: string) => void;
   options: Array<{ value: string; label: string }>;
+  /** Accessible name, for a select whose visible label sits in a SettingRow. */
+  ariaLabel?: string;
 }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      aria-label={ariaLabel}
       className="h-8 px-2 text-sm rounded-md border border-border/50 bg-muted/30 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/20 focus:border-primary/30"
     >
       {options.map((o) => (
@@ -1851,6 +1859,23 @@ function SecuritySection({ data, caps }: { data: SettingsData; caps: SettingsCap
   );
 }
 
+/**
+ * Human names for the tones. `soft`, `ping`, `double` and `chord` are store
+ * keys, not English — and the record is keyed by ToneName so a fifth tone
+ * cannot be added to TONES without a label being written here too.
+ */
+const TONE_LABELS: Record<ToneName, string> = {
+  soft:   'Soft chime',
+  ping:   'Ping',
+  double: 'Double beep',
+  chord:  'Chord',
+};
+
+const TONE_OPTIONS = (Object.keys(TONES) as ToneName[]).map((tone) => ({
+  value: tone,
+  label: TONE_LABELS[tone],
+}));
+
 export function NotificationsSection() {
   const { soundEnabled, volume, tones, setSoundEnabled, setVolume, setTone } = useNotificationsStore();
 
@@ -1864,28 +1889,25 @@ export function NotificationsSection() {
     }
   };
 
-  const test = (type: 'NEW_MAIL' | 'EVENT_SOON') => {
+  const test = (type: AudibleType) => {
     unlockAudio();           // this click is a real user gesture
     void playTone(tones[type], volume);
   };
 
-  const toneSelect = (type: 'NEW_MAIL' | 'EVENT_SOON', label: string, testLabel: string) => (
-    <div className="flex items-center gap-2">
-      <label className="flex flex-col gap-1 text-ui text-ink-2 flex-1">
-        {label}
-        <select
-          aria-label={label}
+  const toneRow = (type: AudibleType, label: string, description: string, testLabel: string) => (
+    <SettingRow label={label} description={description}>
+      <div className="flex items-center gap-2">
+        <Select
+          ariaLabel={label}
           value={tones[type]}
-          onChange={(e) => setTone(type, e.target.value as ToneName)}
-          className="w-full rounded border border-border/50 bg-background px-2 py-1 text-ui"
-        >
-          {Object.keys(TONES).map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-      </label>
-      <Button size="sm" variant="outline" aria-label={testLabel} onClick={() => test(type)} className="mt-5">
-        Test
-      </Button>
-    </div>
+          onChange={(v) => setTone(type, v as ToneName)}
+          options={TONE_OPTIONS}
+        />
+        <Button size="sm" variant="outline" aria-label={testLabel} onClick={() => test(type)} className="h-8">
+          Test
+        </Button>
+      </div>
+    </SettingRow>
   );
 
   return (
@@ -1894,30 +1916,32 @@ export function NotificationsSection() {
         title="Notifications"
         description="New mail and calendar reminders can make a sound. Stored on this device."
       />
-      <div className="space-y-4 max-w-sm">
-        <label className="flex items-center gap-2 text-ui">
-          <input
-            type="checkbox"
-            aria-label="Play a sound for notifications"
+      <div className="divide-y divide-border/30">
+        <SettingRow
+          label="Play a sound for notifications"
+          description="A chime for new mail and calendar reminders. Turning this on is also when the app asks to show system notifications."
+        >
+          <Switch
             checked={soundEnabled}
-            onChange={(e) => void toggleSound(e.target.checked)}
+            onChange={(v) => void toggleSound(v)}
+            ariaLabel="Play a sound for notifications"
           />
-          Play a sound for notifications
-        </label>
+        </SettingRow>
 
-        <label className="flex flex-col gap-1 text-ui text-ink-2">
-          Volume
+        <SettingRow label="Volume" description="How loud the chimes are on this device.">
           <input
             type="range" min={0} max={1} step={0.1}
             aria-label="Volume"
             value={volume}
             onChange={(e) => setVolume(Number(e.target.value))}
+            className="w-32 accent-primary"
           />
-        </label>
+        </SettingRow>
 
-        {toneSelect('NEW_MAIL', 'New mail sound', 'Test the new mail sound')}
-        {toneSelect('EVENT_SOON', 'Calendar reminder sound', 'Test the calendar reminder sound')}
+        {toneRow('NEW_MAIL', 'New mail sound', 'Plays when a message arrives.', 'Test the new mail sound')}
+        {toneRow('EVENT_SOON', 'Calendar reminder sound', 'Plays 30 minutes before an event starts.', 'Test the calendar reminder sound')}
       </div>
     </div>
   );
 }
+

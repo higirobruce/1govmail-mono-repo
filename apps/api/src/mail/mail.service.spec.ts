@@ -1,5 +1,9 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { BadRequestException, ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailService } from './mail.service';
+import { EwsService } from '../ews/ews.service';
+import { ProviderFolder } from '../provider/provider-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -1878,6 +1882,12 @@ describe('MailService new-mail detection', () => {
      * the one live Inbox row.
      */
     folderRows?: FolderRow[];
+    /**
+     * The folder list the provider returns, when a test needs one the
+     * `fetchedUnread` shorthand cannot express — e.g. the EWS shape where two
+     * folders are both named "Inbox".
+     */
+    providerFolders?: ProviderFolder[];
     /** Override the baseline read — used to exercise a DB failure, or a
      *  mailbox with no stored Inbox row at all. */
     findUnique?: jest.Mock;
@@ -1899,36 +1909,55 @@ describe('MailService new-mail detection', () => {
   function makeService(fetchedUnread: number, opts: DetectionOpts = {}) {
     const rows: FolderRow[] = opts.folderRows ?? [liveInbox(opts.storedUnread ?? 2)];
 
-    // Which reads and writes ran INSIDE prisma.$transaction, in order. Two
-    // orderings matter and neither is visible from the arguments alone: the
-    // claim and the notification insert must be in ONE transaction (a crash
-    // between them advances the baseline with no row to show for it), and the
-    // body lookup must be OUTSIDE it (no extra query work inside a held
-    // transaction).
+    // What ran, in order, and — for a WRITE — on WHICH CLIENT.
+    //
+    // A write tagged '@tx' is one that ran on the transaction client the fake
+    // handed the callback, which is the only thing that distinguishes "ran on
+    // the transaction" from "ran on the shared pool while a transaction
+    // happened to be open". An earlier version of this fake handed the
+    // callback `prisma` itself and tagged by nesting depth, so it proved only
+    // the latter: dropping the trailing `tx` argument from the
+    // createNotification call, or swapping `tx.folder.updateMany` for
+    // `this.prisma.folder.updateMany`, deleted the atomicity with every test
+    // still green.
+    //
+    // For a READ (the body lookup) the depth is still what matters: it must
+    // run with NO transaction open, because holding one across a second query
+    // on a per-sync path buys nothing.
     const trace: string[] = [];
     let txDepth = 0;
-    const mark = (what: string) => { trace.push(txDepth > 0 ? `${what}@tx` : what); };
+    const markWrite = (what: string, via: 'prisma' | 'tx') => {
+      trace.push(via === 'tx' ? `${what}@tx` : what);
+    };
+    const markRead = (what: string) => { trace.push(txDepth > 0 ? `${what}@tx` : what); };
 
-    const createNotification = jest.fn(async (...__args: any[]) => { mark('createNotification'); return {}; });
+    const createNotification = jest.fn(async (...args: any[]) => {
+      markWrite('createNotification', args[6] === txClient ? 'tx' : 'prisma');
+      return {};
+    });
     const notifications = { createNotification } as unknown as NotificationsService;
 
     const messageFindFirst = opts.messageFindFirst ?? jest.fn(async () => {
-      mark('newMailBody');
+      markRead('newMailBody');
       return opts.newestUnread ?? null;
     });
 
+    // A faithful compare-and-swap, shared by both clients' `updateMany` so a
+    // write lands on the same table whichever client ran it: it matches only
+    // while the row still holds the exact count the calling sync measured
+    // from. `via` is recorded, not acted on.
     let attempt = 0;
-    const updateMany = opts.updateMany ?? jest.fn(async ({ where, data }: any) => {
+    const compareAndSwap = async ({ where, data }: any, via: 'prisma' | 'tx') => {
       opts.onAttempt?.(attempt, rows);
       attempt += 1;
-      mark('claim');
-      // A faithful compare-and-swap: it matches only while the row still holds
-      // the exact count the claiming sync measured from.
+      markWrite(via === 'tx' ? 'claim' : 'baselineWrite', via);
       const row = rows.find((r) => r.id === where.id && r.unreadCount === where.unreadCount);
       if (!row) return { count: 0 };
       row.unreadCount = data.unreadCount;
       return { count: 1 };
-    });
+    };
+    const txUpdateMany = opts.updateMany ?? jest.fn((args: any) => compareAndSwap(args, 'tx'));
+    const prismaUpdateMany = opts.updateMany ?? jest.fn((args: any) => compareAndSwap(args, 'prisma'));
 
     // The baseline read, by the table's ONLY unique key.
     const findUnique = opts.findUnique ?? jest.fn(async ({ where }: any) => {
@@ -1947,29 +1976,66 @@ describe('MailService new-mail detection', () => {
       return row ? { ...row } : null;
     });
 
+    // The persist loop's write, applied to the same table — including the
+    // absence of a column. `unreadCount` is omitted from `update` for the row
+    // whose count the notification path owns, and the tests below read `rows`
+    // to prove the baseline did not move behind a rolled-back claim.
+    const upsert = jest.fn(async ({ where, update, create }: any) => {
+      const { zimbraId } = where.userId_zimbraId;
+      const row = rows.find((r) => r.zimbraId === zimbraId);
+      if (!row) {
+        const created: FolderRow = {
+          id: `f-${zimbraId}`, zimbraId, path: create.path, unreadCount: create.unreadCount,
+        };
+        rows.push(created);
+        return { ...created };
+      }
+      if ('unreadCount' in update) row.unreadCount = update.unreadCount;
+      if (update.path !== undefined) row.path = update.path;
+      return { ...row };
+    });
+
     const prisma: any = {
       user: { findUnique: jest.fn().mockResolvedValue(user), update: jest.fn() },
-      folder: { findUnique, findFirst, updateMany, upsert: jest.fn().mockResolvedValue({ id: 'f-inbox' }) },
+      folder: { findUnique, findFirst, updateMany: prismaUpdateMany, upsert },
       message: { findFirst: messageFindFirst },
     };
+    // A DISTINCT client, carrying only what the transaction is allowed to
+    // touch. Anything else reached through it is a TypeError, not a silent
+    // pass.
+    const txClient: any = {
+      folder: { updateMany: txUpdateMany },
+    };
     prisma.$transaction = jest.fn(async (fn: any) => {
+      // Rollback is emulated, because one of the tests below turns on it: a
+      // failed insert must leave the claimed baseline exactly as it was.
+      const snapshot = rows.map((r) => ({ ...r }));
       txDepth += 1;
       try {
-        return await fn(prisma);
+        return await fn(txClient);
+      } catch (err) {
+        rows.splice(0, rows.length, ...snapshot);
+        throw err;
       } finally {
         txDepth -= 1;
       }
     });
 
     const zimbra = {
-      getFolders: jest.fn().mockResolvedValue([
+      getFolders: jest.fn().mockResolvedValue(opts.providerFolders ?? [
         { id: 'z-inbox', name: 'Inbox', path: '/Inbox', kind: 'mail', unreadCount: fetchedUnread, totalCount: 10 },
+        // A second folder, so a test can prove the persist loop skips one
+        // COLUMN of one ROW and nothing else.
+        { id: 'z-sent', name: 'Sent', path: '/Sent', kind: 'mail', unreadCount: 0, totalCount: 4 },
       ]),
     } as unknown as ZimbraService;
     const service = new MailService(
       prisma as PrismaService, makeResolver(zimbra), notifications,
       { create: jest.fn() } as unknown as TasksService,
     );
+    /** The `update` payload the persist loop sent for one provider folder id. */
+    const upsertUpdateFor = (zimbraId: string) =>
+      upsert.mock.calls.find((c) => c[0].where.userId_zimbraId.zimbraId === zimbraId)?.[0].update;
     return {
       service,
       createNotification,
@@ -1978,7 +2044,14 @@ describe('MailService new-mail detection', () => {
       rows,
       trace,
       messageFindFirst,
-      updateMany,
+      /** The claim: the conditional baseline advance, on the transaction client. */
+      txUpdateMany,
+      /** The same op on the SHARED client — the baseline write that has no
+       *  notification to be atomic with. */
+      prismaUpdateMany,
+      txClient,
+      upsert,
+      upsertUpdateFor,
       findUnique,
       findFirst,
     };
@@ -2007,20 +2080,23 @@ describe('MailService new-mail detection', () => {
   });
 
   it('creates nothing, and writes nothing, when the count is unchanged', async () => {
-    const { service, createNotification, updateMany } = makeService(2);
+    const { service, createNotification, txUpdateMany, prismaUpdateMany } = makeService(2);
     await service.getFolders('u1');
     expect(createNotification).not.toHaveBeenCalled();
-    expect(updateMany).not.toHaveBeenCalled();
+    expect(txUpdateMany).not.toHaveBeenCalled();
+    expect(prismaUpdateMany).not.toHaveBeenCalled();
   });
 
-  it('creates nothing, and writes nothing, when the count FALLS — mail read elsewhere is not an arrival', async () => {
-    // A fall is not an arrival, and it must not move the baseline either: the
-    // upsert loop in getFolders owns that write. notifyNewMail only ever
-    // writes the baseline it is claiming.
-    const { service, createNotification, updateMany } = makeService(1);
+  it('creates nothing when the count FALLS — mail read elsewhere is not an arrival', async () => {
+    const { service, createNotification, rows } = makeService(1);
+
     await service.getFolders('u1');
+
     expect(createNotification).not.toHaveBeenCalled();
-    expect(updateMany).not.toHaveBeenCalled();
+    // And the baseline FELL. This is the guard on the high-water-mark bug an
+    // earlier wave shipped: a baseline that only ever rises leaves a user who
+    // once reached 50 unread hearing nothing until they pass 50 again.
+    expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(1);
   });
 
   it('creates nothing, logs nothing, and does not crash, when there is no stored Inbox row yet', async () => {
@@ -2032,7 +2108,7 @@ describe('MailService new-mail detection', () => {
     // throws straight into notifyNewMail's own try/catch, which also yields no
     // notification and no claim. The absence of a logged warning is the only
     // observable difference between "handled" and "crashed and swallowed".
-    const { service, createNotification, updateMany } = makeService(5, {
+    const { service, createNotification, txUpdateMany } = makeService(5, {
       findUnique: jest.fn().mockResolvedValue(null),
     });
     const warn = jest.spyOn((service as any).logger, 'warn');
@@ -2040,7 +2116,7 @@ describe('MailService new-mail detection', () => {
     await expect(service.getFolders('u1')).resolves.toBeDefined();
 
     expect(createNotification).not.toHaveBeenCalled();
-    expect(updateMany).not.toHaveBeenCalled();
+    expect(txUpdateMany).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -2098,7 +2174,7 @@ describe('MailService new-mail detection', () => {
     const stale: FolderRow = { id: 'f-stale', zimbraId: 'ews-inbox', path: '/Inbox', unreadCount: 37 };
 
     it('measures against the row the PROVIDER still returns, not the stale namesake', async () => {
-      const { service, createNotification, updateMany, rows, messageFindFirst } = makeService(5, {
+      const { service, createNotification, txUpdateMany, rows, messageFindFirst } = makeService(5, {
         // Insertion order: the stale row came first, which is what an
         // unordered findFirst is most likely to return.
         folderRows: [stale, liveInbox(2)],
@@ -2111,7 +2187,7 @@ describe('MailService new-mail detection', () => {
       expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 2, unreadCount: 5, delta: 3 });
       // The claim keys on the id the baseline read returned, so correcting the
       // read moves the claim with it.
-      expect(updateMany).toHaveBeenCalledWith({
+      expect(txUpdateMany).toHaveBeenCalledWith({
         where: { id: 'f-inbox', unreadCount: 2 }, data: { unreadCount: 5 },
       });
       // And the body is read from the live folder, not the stale one.
@@ -2145,11 +2221,11 @@ describe('MailService new-mail detection', () => {
       // The condition is what makes it a claim rather than a plain write, and
       // the ORDER is what makes it a claim rather than an afterthought — an
       // insert that preceded the claim would announce arrivals it did not own.
-      const { service, createNotification, updateMany, trace } = makeService(5);
+      const { service, createNotification, txUpdateMany, trace } = makeService(5);
 
       await service.getFolders('u1');
 
-      expect(updateMany).toHaveBeenCalledWith({
+      expect(txUpdateMany).toHaveBeenCalledWith({
         where: { id: 'f-inbox', unreadCount: 2 },
         data: { unreadCount: 5 },
       });
@@ -2170,7 +2246,38 @@ describe('MailService new-mail detection', () => {
       await service.getFolders('u1');
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // '@tx' on the two writes means they RAN ON the transaction client the
+      // fake handed the callback — not merely that they ran while it was open.
       expect(trace).toEqual(['newMailBody', 'claim@tx', 'createNotification@tx']);
+    });
+
+    it('runs the claim AND the insert on the transaction client, not on the shared one', async () => {
+      // The two one-token deletions this pins: `tx.folder.updateMany` ->
+      // `this.prisma.folder.updateMany`, and dropping the trailing `tx`
+      // argument to createNotification. Either one leaves the pair
+      // non-atomic while the claim and the insert still both happen, so only
+      // the identity of the client can catch it.
+      const { service, createNotification, txUpdateMany, prismaUpdateMany, txClient } = makeService(5);
+
+      await service.getFolders('u1');
+
+      expect(txUpdateMany).toHaveBeenCalledTimes(1);
+      expect(prismaUpdateMany).not.toHaveBeenCalled();
+      expect(createNotification.mock.calls[0][6]).toBe(txClient);
+    });
+
+    it('resolves the notification body once per sync, not once per attempt', async () => {
+      // Both its inputs — the stored row's identity and the count this sync
+      // measured — are the same on every pass, so a retry must not pay for
+      // another indexed query to rebuild the same string.
+      const { service, messageFindFirst, txUpdateMany } = makeService(6, {
+        onAttempt: (attempt, folders) => { if (attempt === 0) folders[0].unreadCount = 5; },
+      });
+
+      await service.getFolders('u1');
+
+      expect(txUpdateMany).toHaveBeenCalledTimes(2);
+      expect(messageFindFirst).toHaveBeenCalledTimes(1);
     });
 
     it('creates nothing when a concurrent sync already announced the count this one measured', async () => {
@@ -2197,7 +2304,7 @@ describe('MailService new-mail detection', () => {
       // sync B measured 6, so B's sixth message would appear in no
       // announcement at all. B re-reads, sees 5 — still below the 6 it
       // measured — and claims 5->6 for the one message A did not cover.
-      const { service, createNotification, updateMany, rows } = makeService(6, {
+      const { service, createNotification, txUpdateMany, rows } = makeService(6, {
         onAttempt: (attempt, folders) => { if (attempt === 0) folders[0].unreadCount = 5; },
       });
 
@@ -2206,7 +2313,7 @@ describe('MailService new-mail detection', () => {
       expect(createNotification).toHaveBeenCalledTimes(1);
       expect(createNotification.mock.calls[0][2]).toBe('1 new message');
       expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 5, unreadCount: 6, delta: 1 });
-      expect(updateMany).toHaveBeenLastCalledWith({
+      expect(txUpdateMany).toHaveBeenLastCalledWith({
         where: { id: 'f-inbox', unreadCount: 5 }, data: { unreadCount: 6 },
       });
       expect(rows[0].unreadCount).toBe(6);
@@ -2217,16 +2324,15 @@ describe('MailService new-mail detection', () => {
       // count would retry forever. Three attempts, then give up: this runs
       // inside every folder sync, and under-announcing one arrival is cheaper
       // than a loop that never returns.
-      const { service, createNotification, updateMany, findUnique } = makeService(20, {
+      const { service, createNotification, txUpdateMany, findUnique } = makeService(20, {
         onAttempt: (_attempt, folders) => { folders[0].unreadCount += 1; },
       });
 
       await service.getFolders('u1');
 
       expect(createNotification).not.toHaveBeenCalled();
-      expect(updateMany).toHaveBeenCalledTimes(3);
+      expect(txUpdateMany).toHaveBeenCalledTimes(3);
       expect(findUnique).toHaveBeenCalledTimes(3);
-      expect((MailService as any).NEW_MAIL_CLAIM_ATTEMPTS).toBe(3);
     });
 
     it('notifies a read-then-refill that repeats a transition announced SECONDS ago', async () => {
@@ -2237,13 +2343,13 @@ describe('MailService new-mail detection', () => {
       // Nothing about the numbers or the clock distinguishes it from a
       // duplicate — only the fact that the baseline genuinely returned to 0,
       // which is exactly what the conditional update tests.
-      const { service, createNotification, updateMany } = makeService(1, { storedUnread: 0 });
+      const { service, createNotification, txUpdateMany } = makeService(1, { storedUnread: 0 });
 
       await service.getFolders('u1');
 
       expect(createNotification).toHaveBeenCalledTimes(1);
       expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 0, unreadCount: 1, delta: 1 });
-      expect(updateMany).toHaveBeenCalledWith({
+      expect(txUpdateMany).toHaveBeenCalledWith({
         where: { id: 'f-inbox', unreadCount: 0 },
         data: { unreadCount: 1 },
       });
@@ -2256,6 +2362,195 @@ describe('MailService new-mail detection', () => {
 
       await expect(service.getFolders('u1')).resolves.toBeDefined();
       expect(createNotification).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('who owns the stored Inbox unreadCount for a cycle', () => {
+    // The persist loop used to write `unreadCount: f.unreadCount` for every
+    // folder unconditionally, AFTER notifyNewMail had returned — so it undid
+    // the transaction it was supposed to be protected by. When the claim and
+    // the insert rolled back together, the loop advanced the baseline anyway
+    // and the next sync saw no delta: the arrival was announced nowhere, which
+    // is the exact failure the transaction was added to prevent. "Either both
+    // happened or neither did" held only for process death — the one case
+    // where the loop does not run either.
+    //
+    // So notifyNewMail now reports which provider folder's `unreadCount` it
+    // owns for this cycle, and the loop leaves THAT column, on THAT row,
+    // alone. Every other column and every other row are untouched.
+
+    it('does not advance the baseline behind a rolled-back claim', async () => {
+      const { service, notifications, rows, upsertUpdateFor } = makeService(5);
+      notifications.createNotification.mockRejectedValue(new Error('db down'));
+
+      await expect(service.getFolders('u1')).resolves.toBeDefined();
+
+      // The claim rolled back with the insert, so the baseline is still 2 and
+      // the next sync measures the same +3 and announces it.
+      expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(2);
+      expect(upsertUpdateFor('z-inbox')).not.toHaveProperty('unreadCount');
+    });
+
+    it('skips one COLUMN of one ROW — every other folder and column still persists', async () => {
+      const { service, upsertUpdateFor, rows } = makeService(5);
+
+      await service.getFolders('u1');
+
+      // The Inbox row keeps everything except the count the claim owns...
+      expect(upsertUpdateFor('z-inbox')).toMatchObject({ name: 'Inbox', path: '/Inbox', type: 'MAIL' });
+      expect(upsertUpdateFor('z-inbox')).not.toHaveProperty('unreadCount');
+      // ...and the claim itself left the count correct, so nothing is lost.
+      expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(5);
+      // Any other folder is written exactly as before.
+      expect(upsertUpdateFor('z-sent')).toMatchObject({ unreadCount: 0, totalCount: 4 });
+    });
+
+    it('lets the loop create the row on a mailbox that has no stored Inbox yet', async () => {
+      // Nothing to own and nothing to protect: the first sync of a mailbox
+      // (or the first after the provider started issuing new folder ids) has
+      // no baseline, and the row must be created with the count just fetched
+      // so the next sync has one.
+      const { service, upsert, rows } = makeService(5, { folderRows: [] });
+
+      await service.getFolders('u1');
+
+      expect(upsert.mock.calls[0][0].create).toMatchObject({ zimbraId: 'z-inbox', unreadCount: 5 });
+      expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(5);
+    });
+
+    it('does not rewind a concurrent claim when this sync measured no change', async () => {
+      // The residual the fourth wave documented and left open: a sync whose
+      // provider fetch predates an arrival upserts the older count and rewinds
+      // a baseline another sync just claimed — costing an extra chime, and in
+      // the traced case one lost arrival. Ownership closes it: the count this
+      // sync measured is the count it read, so it has nothing to write, and
+      // the loop no longer writes on its behalf.
+      const rows: FolderRow[] = [liveInbox(0)];
+      const { service, upsertUpdateFor, createNotification } = makeService(0, {
+        folderRows: rows,
+        findUnique: jest.fn(async () => {
+          const read = { id: 'f-inbox', unreadCount: 0 };
+          // A concurrent sync, holding a fresher fetch, claims 0 -> 3 in the
+          // instant after this read.
+          rows[0].unreadCount = 3;
+          return read;
+        }),
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(rows[0].unreadCount).toBe(3);
+      expect(upsertUpdateFor('z-inbox')).not.toHaveProperty('unreadCount');
+    });
+
+    it('lowers the baseline CONDITIONALLY, so a fall cannot rewind a concurrent claim', async () => {
+      // A fall must still lower the baseline (see the high-water-mark guard
+      // above), but only from the value this sync actually read. If another
+      // sync moved it in between, that sync's count is the fresher one and
+      // this write matches nothing.
+      const rows: FolderRow[] = [liveInbox(5)];
+      const { service, prismaUpdateMany, createNotification } = makeService(1, {
+        folderRows: rows,
+        findUnique: jest.fn(async () => {
+          const read = { id: 'f-inbox', unreadCount: 5 };
+          rows[0].unreadCount = 6; // a concurrent arrival, claimed by its own sync
+          return read;
+        }),
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(prismaUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'f-inbox', unreadCount: 5 }, data: { unreadCount: 1 },
+      });
+      expect(rows[0].unreadCount).toBe(6);
+    });
+
+    it('keeps the folder list when the baseline read throws, and leaves the baseline alone', async () => {
+      // A failure this early cannot tell whether the row holds a baseline that
+      // is about to be announced, so the loop must not move it: advancing it
+      // here is exactly how an arrival gets announced nowhere.
+      const { service, createNotification, rows, upsertUpdateFor } = makeService(5, {
+        findUnique: jest.fn().mockRejectedValue(new Error('connection reset')),
+      });
+
+      await expect(service.getFolders('u1')).resolves.toBeDefined();
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(2);
+      expect(upsertUpdateFor('z-inbox')).not.toHaveProperty('unreadCount');
+    });
+  });
+
+  describe('an Exchange mailbox with a nested folder named "Inbox"', () => {
+    // The provider list here is produced by the REAL EWS mapper from a real
+    // FindFolder response, because the impostor is made BY that mapping: a
+    // hand-written folder list cannot show the bug. Exchange returns the whole
+    // tree flat from one Deep traversal, and the mapper used to read
+    // DisplayName alone — so `Archive/Inbox` and a PST import's
+    // `Top of Information Store/Inbox` both arrived here stamped '/Inbox'.
+    //
+    // When the impostor is returned first, `fetched.find(f => f.path ===
+    // '/Inbox')` picked IT: every sync then compared the impostor's own row
+    // against itself — perfectly self-consistent, perfectly silent — and the
+    // real Inbox was never compared against anything. No delta, no claim, no
+    // notification, no WARN, and no recovery.
+    // EwsService refuses to construct without the credential key (it encrypts
+    // mailbox credentials); the fake transport never uses it.
+    const ORIGINAL_KEY = process.env.MAIL_CRED_KEY;
+    beforeEach(() => { process.env.MAIL_CRED_KEY = 'test-mail-cred-key-0123456789abcdef'; });
+    afterEach(() => {
+      if (ORIGINAL_KEY === undefined) delete process.env.MAIL_CRED_KEY;
+      else process.env.MAIL_CRED_KEY = ORIGINAL_KEY;
+    });
+
+    const ewsFolders = async () => {
+      const xml = readFileSync(
+        join(__dirname, '..', 'ews', '__fixtures__', 'findfolder.nested-inbox.xml'), 'utf8',
+      );
+      const transport = { call: async () => xml };
+      return new EwsService(transport as any).getFolders({
+        host: 'webmail.minaffet.gov.rw',
+        email: 'test-risa1@minaffet.gov.rw',
+        credentials: { username: 'MINAFFET\\test-risa1', password: 'fake-pw' },
+      });
+    };
+
+    it('measures the arrival against the REAL Inbox, not the namesake returned first', async () => {
+      const providerFolders = await ewsFolders();
+      // Sanity: the impostor really is first in what the provider returned.
+      expect(providerFolders[0].id).toBe('AAA-Archive-Inbox=');
+
+      const { service, createNotification, txUpdateMany } = makeService(0, {
+        providerFolders,
+        folderRows: [
+          // The namesake's stored row, frozen at the same count it fetches —
+          // so comparing it against itself yields a delta of zero forever.
+          { id: 'f-archive-inbox', zimbraId: 'AAA-Archive-Inbox=', path: 'Inbox', unreadCount: 5 },
+          { id: 'f-inbox', zimbraId: 'AAA-Inbox=', path: '/Inbox', unreadCount: 2 },
+        ],
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][2]).toBe('3 new messages');
+      expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 2, unreadCount: 5, delta: 3 });
+      expect(txUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'f-inbox', unreadCount: 2 }, data: { unreadCount: 5 },
+      });
+    });
+
+    it('leaves exactly one folder carrying the canonical /Inbox path', async () => {
+      // Which is also what the sidebar needs: it resolves the Inbox item by
+      // `f.path === '/Inbox'` and hides every BUILTIN path from Labels, so two
+      // '/Inbox' rows meant the badge and click target could land on the
+      // namesake while the namesake itself was invisible.
+      const providerFolders = await ewsFolders();
+
+      expect(providerFolders.filter((f) => f.path === '/Inbox').map((f) => f.id)).toEqual(['AAA-Inbox=']);
     });
   });
 

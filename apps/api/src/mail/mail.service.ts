@@ -23,6 +23,24 @@ type CommitmentStatusFilter = (typeof COMMITMENT_STATUS_FILTERS)[number];
 const COMMITMENT_UPDATE_STATUSES = ['done', 'dismissed', 'open'] as const;
 type CommitmentUpdateStatus = (typeof COMMITMENT_UPDATE_STATUSES)[number];
 
+/**
+ * What `notifyNewMail` tells the folder-persist loop that runs after it.
+ *
+ * `inboxUnreadOwnedFor` is the PROVIDER folder id whose stored `unreadCount`
+ * the notification path has taken responsibility for this cycle. The loop must
+ * leave that ONE column on that ONE row alone — every other column of that
+ * row, and every other folder, persists exactly as before.
+ *
+ * It exists because the loop used to write `unreadCount` for every folder
+ * unconditionally, which silently undid the transaction wrapping the claim and
+ * the insert: when those rolled back together, the loop advanced the baseline
+ * anyway, the next sync saw no delta, and the arrival was announced nowhere.
+ * `null` means the loop owns every count, as it always did.
+ */
+interface InboxBaselineOwnership {
+  inboxUnreadOwnedFor: string | null;
+}
+
 export interface CommitmentRow {
   id: string;
   conversationId: string | null;
@@ -175,7 +193,11 @@ export class MailService {
       throw err;
     }
 
-    await this.notifyNewMail(userId, providerFolders);
+    // Which folder's stored unreadCount the notification path owns for this
+    // cycle (see InboxBaselineOwnership). The loop below must not write that
+    // one column on that one row: doing so is what used to undo the claim's
+    // transaction on rollback, advancing the baseline with nothing announced.
+    const { inboxUnreadOwnedFor } = await this.notifyNewMail(userId, providerFolders);
 
     // Persist folders to DB for caching; failures here must not prevent the
     // response from reaching the client (don't let a Prisma error become 500).
@@ -183,13 +205,20 @@ export class MailService {
     for (const f of providerFolders) {
       try {
         const folderType = this.folderKindToType(f.kind);
+        // The Inbox baseline is notifyNewMail's to move when it claimed the
+        // transition (it wrote the same value), declined to (nothing changed),
+        // or failed (the claim rolled back and must be retried next sync).
+        // Everything else about the upsert is unchanged — including the
+        // `create` branch, which always seeds the count, because a row that
+        // does not exist yet holds no baseline to protect.
+        const ownsUnread = f.id === inboxUnreadOwnedFor;
         const folder = await this.prisma.folder.upsert({
           where: { userId_zimbraId: { userId, zimbraId: f.id } },
           update: {
             name: f.name,
             path: f.path,
             type: folderType,
-            unreadCount: f.unreadCount,
+            ...(ownsUnread ? {} : { unreadCount: f.unreadCount }),
             totalCount: f.totalCount,
             syncedAt: new Date(),
           },
@@ -243,16 +272,36 @@ export class MailService {
    * claim degrades to the same outcome as "no previous row" — skip the
    * notification, log at WARN, and let the folder list continue. An alert is
    * worth less than the folder list this runs inside.
+   *
+   * Returns which folder's stored `unreadCount` it owns for this cycle, which
+   * the persist loop then leaves alone (see InboxBaselineOwnership). This path
+   * owns that column from the moment it has read a baseline: it is the only
+   * thing that knows whether the value in the row is a claim to keep, a
+   * rolled-back claim to retry, or a count to lower.
    */
   private async notifyNewMail(
     userId: string,
     fetched: Array<{ id: string; path: string; unreadCount: number }>,
-  ): Promise<void> {
+  ): Promise<InboxBaselineOwnership> {
+    // Held OUTSIDE the try so a FAILURE can report ownership too. A claim that
+    // rolled back has left the baseline where it was on purpose, so the next
+    // sync measures the same delta and announces it; if the persist loop
+    // advanced the baseline anyway, that arrival would be announced nowhere —
+    // the identical loss the transaction was added to prevent, reached through
+    // the loop instead of through a crash.
+    let inboxProviderId: string | null = null;
     try {
       // Resolve the PROVIDER's inbox first, because its id is what identifies
       // the row to read.
       const current = fetched.find((f) => f.path === '/Inbox');
-      if (!current) return;
+      if (!current) return { inboxUnreadOwnedFor: null };
+      inboxProviderId = current.id;
+
+      // Resolved at most ONCE per sync, not once per attempt: both its inputs
+      // — the stored row's identity and the count this sync measured — are the
+      // same on every pass, so a retry that re-ran it would pay for another
+      // indexed query to rebuild a string it already has.
+      let body: string | undefined;
 
       for (let attempt = 0; attempt < MailService.NEW_MAIL_CLAIM_ATTEMPTS; attempt += 1) {
         // Read the baseline by the SAME identity the persist loop writes by.
@@ -270,9 +319,19 @@ export class MailService {
         // being the older row it is the likely result of an unordered
         // `findFirst`. Measuring against it computes a negative delta on every
         // sync forever: no chime, no toast, no row, indefinitely. Reading by
-        // the unique key reads the row that gets written, so there is nothing
-        // left to be ambiguous about. (`orderBy: { syncedAt: 'desc' }` would
-        // only pick the freshest duplicate and leave the ambiguity in place.)
+        // the unique key reads the row that gets written, so which ROW this
+        // measures against is no longer ambiguous. (`orderBy: { syncedAt:
+        // 'desc' }` would only pick the freshest duplicate and leave the
+        // ambiguity in place.)
+        //
+        // Which FOLDER is the inbox was a separate ambiguity, and it lived
+        // upstream of here: on EWS the whole tree arrives flat and any folder
+        // merely NAMED 'Inbox' used to carry the path '/Inbox', so the `find`
+        // above could pick `Archive/Inbox` and then compare that folder's own
+        // row against itself forever. It is fixed where it was created —
+        // EwsService.mapFolder grants a canonical system path only to a
+        // folder whose parent is the mail root — so the `find` resolves one
+        // folder, and this stays a lookup rather than a guess.
         const previous = await this.prisma.folder.findUnique({
           where: { userId_zimbraId: { userId, zimbraId: current.id } },
           select: { id: true, unreadCount: true },
@@ -280,15 +339,36 @@ export class MailService {
         // No row for the provider's inbox yet: the first sync of a mailbox, or
         // the first sync after the provider started issuing new folder ids. The
         // upsert loop below creates it with the count just fetched, so the next
-        // sync has a baseline. Nothing to announce and nothing to claim.
-        if (!previous) return;
+        // sync has a baseline. Nothing to announce, nothing to claim — and
+        // nothing to own: the loop must be free to seed the row.
+        if (!previous) return { inboxUnreadOwnedFor: null };
 
         const delta = current.unreadCount - previous.unreadCount;
-        if (delta <= 0) return;
+        // Nothing changed, so there is nothing for ANYONE to write. This is
+        // also what closes the rewind the fourth wave documented and left
+        // open: a sync holding a fetch that predates an arrival used to upsert
+        // its older count over a baseline another sync had just claimed.
+        if (delta === 0) return { inboxUnreadOwnedFor: inboxProviderId };
+        if (delta < 0) {
+          // The user read mail elsewhere. Not an arrival — but the baseline
+          // must still FALL, or it becomes a high-water mark and a user who
+          // once reached 50 unread hears nothing until they pass 50 again.
+          //
+          // Conditional on the value this sync actually read, for the same
+          // reason the claim is: if another sync moved the baseline in
+          // between, that sync's count is the fresher one and this write must
+          // not rewind it. A no-match needs no retry — the next sync re-reads
+          // and lowers if a fall is still owed.
+          await this.prisma.folder.updateMany({
+            where: { id: previous.id, unreadCount: previous.unreadCount },
+            data: { unreadCount: current.unreadCount },
+          });
+          return { inboxUnreadOwnedFor: inboxProviderId };
+        }
 
         // Resolved BEFORE the transaction opens: it is a second query, and
         // holding a transaction open across it on a per-sync path buys nothing.
-        const body = await this.newMailBody(userId, previous.id, current.unreadCount);
+        body ??= await this.newMailBody(userId, previous.id, current.unreadCount);
 
         // Claim the transition by ADVANCING THE BASELINE CONDITIONALLY.
         //
@@ -343,14 +423,18 @@ export class MailService {
           return true;
         });
 
-        if (claimed) return;
+        if (claimed) return { inboxUnreadOwnedFor: inboxProviderId };
         // Lost the claim. Loop round: re-read the baseline, and retry while it
         // is still below the count THIS sync measured. If the winner already
         // took the baseline to (or past) that count, the delta comes out <= 0
         // and the loop returns on the next pass.
       }
+      // Out of attempts. The baseline is whatever the winning syncs left it
+      // at, which is never this sync's to overwrite.
+      return { inboxUnreadOwnedFor: inboxProviderId };
     } catch (err: any) {
       this.logger.warn(`NEW_MAIL notification failed for userId=${userId}: ${err?.message}`);
+      return { inboxUnreadOwnedFor: inboxProviderId };
     }
   }
 

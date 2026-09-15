@@ -218,6 +218,20 @@ export class MailService {
   }
 
   /**
+   * How many times one sync will re-read the baseline and retry its claim when
+   * a concurrent sync moved the baseline out from under it.
+   *
+   * A zero from the claim means "someone moved that baseline", NOT "someone
+   * announced what I measured" — the winner may have claimed a smaller
+   * transition than this sync measured, leaving its extra messages in no
+   * announcement at all. So a loser re-reads and tries again while the
+   * baseline is still below its own measurement. Bounded, because this runs
+   * inside every folder sync and under-announcing one arrival is far cheaper
+   * than a loop that never returns.
+   */
+  private static readonly NEW_MAIL_CLAIM_ATTEMPTS = 3;
+
+  /**
    * Raise a NEW_MAIL notification when the Inbox unread count has RISEN since
    * the last sync. A fall means the user read mail somewhere else, which is
    * not an arrival.
@@ -235,60 +249,106 @@ export class MailService {
     fetched: Array<{ id: string; path: string; unreadCount: number }>,
   ): Promise<void> {
     try {
-      const previous = await this.prisma.folder.findFirst({
-        where: { userId, path: '/Inbox' },
-        select: { id: true, unreadCount: true },
-      });
+      // Resolve the PROVIDER's inbox first, because its id is what identifies
+      // the row to read.
       const current = fetched.find((f) => f.path === '/Inbox');
-      if (!previous || !current) return; // first sync ever: nothing to compare
+      if (!current) return;
 
-      const delta = current.unreadCount - previous.unreadCount;
-      if (delta <= 0) return;
+      for (let attempt = 0; attempt < MailService.NEW_MAIL_CLAIM_ATTEMPTS; attempt += 1) {
+        // Read the baseline by the SAME identity the persist loop writes by.
+        //
+        // `path` is not unique. (userId, zimbraId) is the folders table's only
+        // unique key, the upsert loop writes by it, and nothing prunes rows the
+        // provider has stopped returning — so one user can hold TWO rows both
+        // stamped '/Inbox'. Flipping an Institution.provider from zimbra to
+        // exchange keeps the same User row (auth upserts on email) while EWS
+        // returns different folder ids that also map to '/Inbox'; so does a
+        // Demo/local login on a real address, a restored mailbox, and
+        // renameFolder, which rewrites `path` to `/${name}` unconditionally.
+        //
+        // The stale row is never upserted again, so its count is FROZEN — and
+        // being the older row it is the likely result of an unordered
+        // `findFirst`. Measuring against it computes a negative delta on every
+        // sync forever: no chime, no toast, no row, indefinitely. Reading by
+        // the unique key reads the row that gets written, so there is nothing
+        // left to be ambiguous about. (`orderBy: { syncedAt: 'desc' }` would
+        // only pick the freshest duplicate and leave the ambiguity in place.)
+        const previous = await this.prisma.folder.findUnique({
+          where: { userId_zimbraId: { userId, zimbraId: current.id } },
+          select: { id: true, unreadCount: true },
+        });
+        // No row for the provider's inbox yet: the first sync of a mailbox, or
+        // the first sync after the provider started issuing new folder ids. The
+        // upsert loop below creates it with the count just fetched, so the next
+        // sync has a baseline. Nothing to announce and nothing to claim.
+        if (!previous) return;
 
-      // Claim the transition by ADVANCING THE BASELINE CONDITIONALLY.
-      //
-      // The decision and the write are one operation: move the stored Inbox
-      // count off the exact value this sync measured from, and announce only
-      // if that update matched a row. Whoever matches owns the arrival;
-      // everyone else finds the baseline already gone and returns silently.
-      //
-      // Three timing-based guards were tried here before this one, and each
-      // lost real mail:
-      //
-      // - A clock window ("did we notify in the last 60s?") suppresses
-      //   whatever lands inside it, and the baseline advances whether or not
-      //   anything was announced, so a suppressed arrival is gone for good.
-      // - The level alone ("is the count higher than the last announced
-      //   one?") turns the announced count into a high-water mark that never
-      //   falls: a user who reaches 50 unread and clears the inbox hears
-      //   nothing until they pass 50 again.
-      // - The transition plus a short window has the same hole as the first,
-      //   only narrower. There is no window that is safe, because there is no
-      //   floor on how fast a baseline can legitimately return: the sidebar
-      //   polls folders every 60s on every non-mail page, the mail page syncs
-      //   on mount, and useInboxSync fires 10s after mount — a complete
-      //   notify -> read -> refill cycle fits inside seconds.
-      //
-      // The database answers the question none of them could: not "does this
-      // look like something we already said?" but "is this sync the one that
-      // moved the mailbox off that baseline?".
-      const claimed = await this.prisma.folder.updateMany({
-        where: { id: previous.id, unreadCount: previous.unreadCount },
-        data: { unreadCount: current.unreadCount },
-      });
-      if (claimed.count === 0) return;
+        const delta = current.unreadCount - previous.unreadCount;
+        if (delta <= 0) return;
 
-      await this.notifications.createNotification(
-        userId,
-        'NEW_MAIL',
-        `${delta} new message${delta === 1 ? '' : 's'}`,
-        await this.newMailBody(userId, previous.id, current.unreadCount),
-        '/mail',
-        // Recorded for debugging only — what the delta was measured from,
-        // what was announced, and the difference. Nothing compares these
-        // across rows any more; the claim above is the whole decision.
-        { baseline: previous.unreadCount, unreadCount: current.unreadCount, delta },
-      );
+        // Resolved BEFORE the transaction opens: it is a second query, and
+        // holding a transaction open across it on a per-sync path buys nothing.
+        const body = await this.newMailBody(userId, previous.id, current.unreadCount);
+
+        // Claim the transition by ADVANCING THE BASELINE CONDITIONALLY.
+        //
+        // The decision and the write are one operation: move the stored Inbox
+        // count off the exact value this sync measured from, and announce only
+        // if that update matched a row. Whoever matches owns the arrival;
+        // everyone else finds the baseline already gone.
+        //
+        // The claim and the insert share ONE transaction. Apart, a crash
+        // between them loses the arrival outright: the baseline has moved, so
+        // the next sync sees no delta, and no row exists to show for it.
+        //
+        // Three timing-based guards were tried here before this one, and each
+        // lost real mail:
+        //
+        // - A clock window ("did we notify in the last 60s?") suppresses
+        //   whatever lands inside it, and the baseline advances whether or not
+        //   anything was announced, so a suppressed arrival is gone for good.
+        // - The level alone ("is the count higher than the last announced
+        //   one?") turns the announced count into a high-water mark that never
+        //   falls: a user who reaches 50 unread and clears the inbox hears
+        //   nothing until they pass 50 again.
+        // - The transition plus a short window has the same hole as the first,
+        //   only narrower. There is no window that is safe, because there is no
+        //   floor on how fast a baseline can legitimately return: the sidebar
+        //   polls folders every 60s on every non-mail page, the mail page syncs
+        //   on mount, and useInboxSync fires 10s after mount — a complete
+        //   notify -> read -> refill cycle fits inside seconds.
+        //
+        // The database answers the question none of them could: not "does this
+        // look like something we already said?" but "is this sync the one that
+        // moved the mailbox off that baseline?".
+        const claimed = await this.prisma.$transaction(async (tx) => {
+          const advanced = await tx.folder.updateMany({
+            where: { id: previous.id, unreadCount: previous.unreadCount },
+            data: { unreadCount: current.unreadCount },
+          });
+          if (advanced.count === 0) return false;
+
+          await this.notifications.createNotification(
+            userId,
+            'NEW_MAIL',
+            `${delta} new message${delta === 1 ? '' : 's'}`,
+            body,
+            '/mail',
+            // Recorded for debugging only — what the delta was measured from,
+            // what was announced, and the difference. Nothing compares these
+            // across rows; the claim above is the whole decision.
+            { baseline: previous.unreadCount, unreadCount: current.unreadCount, delta },
+            tx,
+          );
+          return true;
+        });
+
+        if (claimed) return;
+        // Lost the claim. Loop round: re-read the baseline, and retry while it
+        // is still below the count THIS sync measured. If the winner already
+        // took the baseline to (or past) that count, the delta comes out <= 0
+        // and the loop returns on the next pass.
+      }
     } catch (err: any) {
       this.logger.warn(`NEW_MAIL notification failed for userId=${userId}: ${err?.message}`);
     }

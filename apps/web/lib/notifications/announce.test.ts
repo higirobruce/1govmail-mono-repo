@@ -46,10 +46,10 @@ describe('selectNewNotifications', () => {
   });
 
   it('announces everything once a device that has polled still has no marker', () => {
-    // A device whose FIRST poll came back empty has nothing to suppress: there
-    // was no backlog. Treating its null marker as "stay silent" swallowed the
-    // next genuine arrival too, which is the one thing this feature must never
-    // do. `initialized` separates "never polled" from "nothing to announce".
+    // Only a store persisted by the build that had the empty-poll bug can be in
+    // this state: it marked the device initialized and skipped the marker. An
+    // empty poll records the client's ISO time now, so nothing written by this
+    // build gets here — and for the stores that are, announcing beats silence.
     const picked = selectNewNotifications(feed, null, true);
     expect(picked.map((n) => n.id)).toEqual(['a', 'b', 'c']);
   });

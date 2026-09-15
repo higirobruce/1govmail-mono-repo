@@ -128,9 +128,26 @@ export function NotificationAlerts() {
       // tab claimed everything, or a row threw) so the same rows are never
       // reconsidered and a failure here can never strand it.
       const newest = newestCreatedAt(feed);
-      if (newest) setLastAnnouncedAt(newest);
-      // Recorded even for an empty feed — that is the whole point: from here on
-      // a null marker means "announce what arrives", not "stay silent".
+      if (newest) {
+        setLastAnnouncedAt(newest);
+      } else if (!marker) {
+        // An EMPTY first poll still has to leave a marker behind. Left null it
+        // combined with `initialized` into the state that replays a whole
+        // backlog: the device is closed, rows pile up server-side, and it comes
+        // back to "initialized, no marker" — which meant "announce everything"
+        // — so up to fifty toasts and a chime per audible row arrive at once.
+        //
+        // A backlog is only distinguishable from an arrival by age, and an
+        // empty feed carries no server timestamp to borrow, so the client's own
+        // clock is what there is. The assumption, like the ISO comparison in
+        // announce.ts, is that it roughly agrees with the server's: a clock
+        // running fast swallows arrivals until the server catches up to it, a
+        // slow one announces nothing extra (an empty feed has nothing behind
+        // it). Only the never-marked case takes this path — a device that
+        // already has a server-derived marker keeps it — so the exposure is
+        // one poll on one device, not every poll on every device.
+        setLastAnnouncedAt(new Date().toISOString());
+      }
       markInitialized();
     }
   }, [feed, isSuccess, soundEnabled, volume, tones, setLastAnnouncedAt, markInitialized]);

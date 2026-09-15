@@ -157,22 +157,66 @@ describe('NotificationAlerts', () => {
     // early on an empty feed. The device therefore swallowed its first real
     // alert as well as the backlog it never had.
     useNotificationsStore.setState({ lastAnnouncedAt: null, initialized: false });
-    const getAll = vi.spyOn(api.notifications, 'getAll')
-      .mockResolvedValueOnce([] as any)
-      .mockResolvedValue([mailRow] as any);
+    const getAll = vi.spyOn(api.notifications, 'getAll').mockResolvedValue([] as any);
     const play = vi.mocked(playTone);
 
     renderAlerts();
     await waitFor(() => expect(useNotificationsStore.getState().initialized).toBe(true));
     expect(toast).not.toHaveBeenCalled();
-    expect(useNotificationsStore.getState().lastAnnouncedAt).toBeNull();
+    // The empty poll still records a marker — the client's own clock, there
+    // being no server timestamp to borrow. "Initialized with a null marker" is
+    // the state that replayed whole backlogs, so it has to be unreachable.
+    const marker = useNotificationsStore.getState().lastAnnouncedAt;
+    expect(marker).not.toBeNull();
 
-    // The mail arrives on the next poll.
+    // The mail arrives after that poll, so the server stamps it later than the
+    // marker the poll recorded.
+    const arrival = { ...mailRow, createdAt: new Date(Date.parse(marker!) + 1_000).toISOString() };
+    getAll.mockResolvedValue([arrival] as any);
     await act(async () => { await refetchNotifications(); });
 
     await waitFor(() => expect(toast).toHaveBeenCalledWith('2 new messages', expect.anything()));
     expect(play).toHaveBeenCalledWith('soft', 0.6);
     expect(getAll).toHaveBeenCalledTimes(2);
+  });
+
+  it('never replays the backlog a device missed while it was away', async () => {
+    // The burst spec §4.2 exists to forbid. A device whose first poll came back
+    // EMPTY was marked initialized but recorded no marker, because
+    // newestCreatedAt([]) is null. Close it, let rows pile up server-side,
+    // reopen it: initialized with a null marker meant "announce everything",
+    // so the whole 50-row feed played oldest-first — fifty toasts and a chime
+    // per audible row.
+    const backlog = [0, 1, 2].map((i) => ({
+      ...mailRow,
+      id: `old-${i}`,
+      title: `Backlog ${i}`,
+      createdAt: new Date(Date.now() - (i + 1) * 60_000).toISOString(),
+    }));
+    useNotificationsStore.setState({ lastAnnouncedAt: null, initialized: false });
+    const getAll = vi.spyOn(api.notifications, 'getAll').mockResolvedValue([] as any);
+    const play = vi.mocked(playTone);
+
+    renderAlerts();
+    await waitFor(() => expect(useNotificationsStore.getState().initialized).toBe(true));
+
+    // Back from being closed. One row genuinely arrived after the marker the
+    // empty poll recorded; the three behind it are history, and are here to be
+    // ignored. The fresh row is what makes this assertable — it gives the poll
+    // an observable effect to wait for, so "nothing else was announced" is
+    // measured after the announce pass rather than before it. Its timestamp is
+    // a few seconds ahead of this clock instead of derived from the marker, so
+    // the assertion below reads the same whether or not a marker was recorded.
+    const arrival = {
+      ...mailRow, id: 'fresh', title: 'Just arrived',
+      createdAt: new Date(Date.now() + 5_000).toISOString(),
+    };
+    getAll.mockResolvedValue([arrival, ...backlog] as any);
+    await act(async () => { await refetchNotifications(); });
+
+    await waitFor(() => expect(toast).toHaveBeenCalledWith('Just arrived', expect.anything()));
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(play).toHaveBeenCalledTimes(1);
   });
 
   it('keeps polling while the window is HIDDEN — the whole background tier depends on it', async () => {

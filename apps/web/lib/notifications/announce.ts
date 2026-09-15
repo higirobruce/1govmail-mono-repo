@@ -40,9 +40,14 @@ export function isAudible(type: string): type is AudibleType {
  *   the feed holds is a BACKLOG (up to 50 rows), and replaying it as a burst of
  *   chimes at login is the first thing a user would disable, so nothing is
  *   returned and the caller records the marker instead.
- * - `initialized === true` — this device has polled, and the poll came back
- *   empty, so there was no backlog to suppress and no marker to record.
- *   Everything in the feed now is a genuine arrival and must be announced.
+ * - `initialized === true` — this device polled and recorded no marker, which
+ *   only the build that had the empty-poll bug could leave behind: it marked
+ *   the device initialized and skipped the marker, because
+ *   `newestCreatedAt([])` is null. An empty poll now records the client's own
+ *   ISO time (see NotificationAlerts), so a store written by THIS build never
+ *   reaches here. The branch stays for the stores that build left behind, and
+ *   announces rather than suppresses for the same reason as everywhere else:
+ *   silence is the one failure direction this feature must never take.
  */
 export function selectNewNotifications(
   feed: NotificationRow[],

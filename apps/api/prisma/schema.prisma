@@ -543,7 +543,10 @@ model ContactGroup {
 model Notification {
   id        String   @id @default(cuid())
   userId    String
-  type      String   // MAIL_SNOOZE_EXPIRED | SCHEDULED_SENT | TASK_DUE | EVENT_SOON
+  // A free String, not an enum: producers add types without a migration. Today:
+  // MAIL_SNOOZE_EXPIRED | SCHEDULED_SENT | TASK_DUE | EVENT_SOON | NEW_MAIL
+  // (NEW_MAIL and EVENT_SOON are the two the client announces audibly.)
+  type      String
   title     String
   body      String?
   isRead    Boolean  @default(false)

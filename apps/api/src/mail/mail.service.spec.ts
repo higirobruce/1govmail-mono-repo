@@ -1859,20 +1859,38 @@ describe('MailService markNotSpam', () => {
 
 describe('MailService new-mail detection', () => {
   const user = { id: 'u1', authToken: 'tok', tokenExpiry: new Date(Date.now() + 60_000), provider: 'zimbra' };
-  const stored = [{ zimbraId: 'z-inbox', path: '/Inbox', unreadCount: 2 }];
+  const storedInbox = { id: 'f-inbox', unreadCount: 2 };
 
-  function makeService(fetchedUnread: number, recent = false, findMany = jest.fn().mockResolvedValue(stored)) {
+  interface DetectionOpts {
+    /** `metadata.unreadCount` of the newest NEW_MAIL row this user already has.
+     *  `null` (the default) means they have never had one. */
+    announced?: number | null | Record<string, unknown>;
+    /** Override the stored-Inbox read — used to exercise a DB failure. */
+    findFirst?: jest.Mock;
+    /** The newest unread Inbox message the DB holds, if any. */
+    newestUnread?: { fromName?: string | null; fromEmail: string; subject?: string | null } | null;
+    /** Override the newest-unread-message read — used to exercise a DB failure. */
+    messageFindFirst?: jest.Mock;
+  }
+
+  function makeService(fetchedUnread: number, opts: DetectionOpts = {}) {
+    const announced = opts.announced ?? null;
     const createNotification = jest.fn().mockResolvedValue({});
-    const notifications = {
-      createNotification,
-      hasRecentNotification: jest.fn().mockResolvedValue(recent),
-    } as unknown as NotificationsService;
+    const getLatestNotification = jest.fn().mockResolvedValue(
+      announced === null
+        ? null
+        : { id: 'n-prev', metadata: typeof announced === 'number' ? { unreadCount: announced } : announced },
+    );
+    const notifications = { createNotification, getLatestNotification } as unknown as NotificationsService;
+    const messageFindFirst =
+      opts.messageFindFirst ?? jest.fn().mockResolvedValue(opts.newestUnread ?? null);
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue(user), update: jest.fn() },
       folder: {
-        findMany,
+        findFirst: opts.findFirst ?? jest.fn().mockResolvedValue(storedInbox),
         upsert: jest.fn().mockResolvedValue({ id: 'f-inbox' }),
       },
+      message: { findFirst: messageFindFirst },
     } as unknown as PrismaService;
     const zimbra = {
       getFolders: jest.fn().mockResolvedValue([
@@ -1882,7 +1900,13 @@ describe('MailService new-mail detection', () => {
     const service = new MailService(
       prisma, makeResolver(zimbra), notifications, { create: jest.fn() } as unknown as TasksService,
     );
-    return { service, createNotification, notifications: notifications as any };
+    return {
+      service,
+      createNotification,
+      notifications: notifications as any,
+      prisma: prisma as any,
+      messageFindFirst,
+    };
   }
 
   it('creates one NEW_MAIL notification when the inbox unread count rises', async () => {
@@ -1917,10 +1941,14 @@ describe('MailService new-mail detection', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 
-  it('creates nothing when another sync already notified inside the dedupe window', async () => {
-    const { service, createNotification } = makeService(5, true);
+  it('reads the stored Inbox row directly rather than every folder the user owns', async () => {
+    const { service, prisma } = makeService(5);
+
     await service.getFolders('u1');
-    expect(createNotification).not.toHaveBeenCalled();
+
+    expect(prisma.folder.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'u1', path: '/Inbox' } }),
+    );
   });
 
   it('still returns the folder list when creating the notification throws', async () => {
@@ -1931,17 +1959,99 @@ describe('MailService new-mail detection', () => {
     await expect(service.getFolders('u1')).resolves.toBeDefined();
   });
 
-  it('still returns the folder list, and creates no notification, when reading the stored folders throws', async () => {
-    // The stored-folder read now happens inside notifyNewMail (not getFolders)
+  it('still returns the folder list, and creates no notification, when reading the stored folder throws', async () => {
+    // The stored-folder read happens inside notifyNewMail (not getFolders)
     // precisely so a transient DB failure here degrades to "no previous row"
     // instead of breaking folder sync.
     const { service, createNotification } = makeService(
-      5, false, jest.fn().mockRejectedValue(new Error('connection reset')),
+      5, { findFirst: jest.fn().mockRejectedValue(new Error('connection reset')) },
     );
 
     const result = await service.getFolders('u1');
 
     expect(result).toBeDefined();
     expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  describe('dedupe by unread count, not by clock', () => {
+    it('creates nothing when the level it is about to announce has already been announced', async () => {
+      // A second tab syncing the same arrival sees the same unread count, so
+      // there is nothing new to say.
+      const { service, createNotification } = makeService(5, { announced: 5 });
+      await service.getFolders('u1');
+      expect(createNotification).not.toHaveBeenCalled();
+    });
+
+    it('creates nothing when the last announcement was for a HIGHER level', async () => {
+      const { service, createNotification } = makeService(4, { announced: 6 });
+      await service.getFolders('u1');
+      expect(createNotification).not.toHaveBeenCalled();
+    });
+
+    it('notifies a second arrival that lands within a minute of the first — the old 60s window lost it', async () => {
+      // The timeline that used to lose a message: a sync notified at unread 3,
+      // a second message arrived 40s later, and the next sync fell inside the
+      // 60s window. The folder upsert advanced the baseline regardless, so that
+      // arrival was gone for good: no chime, no toast, no row. Comparing
+      // against the announced COUNT instead of the clock cannot lose it.
+      const { service, createNotification } = makeService(4, { announced: 3 });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][5]).toEqual({ unreadCount: 4, delta: 2 });
+    });
+
+    it('notifies when the previous row carries no usable unreadCount — announcing beats silence', async () => {
+      const { service, createNotification } = makeService(5, { announced: { delta: 1 } });
+      await service.getFolders('u1');
+      expect(createNotification).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('body text', () => {
+    it('names the sender and subject of the newest unread message when the DB holds it', async () => {
+      const { service, createNotification, messageFindFirst } = makeService(5, {
+        newestUnread: { fromName: 'Alice Uwase', fromEmail: 'alice@risa.gov.rw', subject: 'Budget review' },
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification.mock.calls[0][3]).toBe('Alice Uwase — Budget review');
+      // One indexed lookup, scoped to the stored Inbox folder and unread rows.
+      expect(messageFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'u1', folderId: 'f-inbox', isRead: false },
+          orderBy: { receivedAt: 'desc' },
+        }),
+      );
+    });
+
+    it('falls back to the sender address when the message has no display name', async () => {
+      const { service, createNotification } = makeService(5, {
+        newestUnread: { fromName: '  ', fromEmail: 'alice@risa.gov.rw', subject: null },
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification.mock.calls[0][3]).toBe('alice@risa.gov.rw — (no subject)');
+    });
+
+    it('falls back to the unread total when the DB holds no unread Inbox message', async () => {
+      const { service, createNotification } = makeService(5, { newestUnread: null });
+      await service.getFolders('u1');
+      expect(createNotification.mock.calls[0][3]).toBe('Inbox now has 5 unread');
+    });
+
+    it('falls back to the unread total, and still notifies, when the message read throws', async () => {
+      const { service, createNotification } = makeService(5, {
+        messageFindFirst: jest.fn().mockRejectedValue(new Error('connection reset')),
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][3]).toBe('Inbox now has 5 unread');
+    });
   });
 });

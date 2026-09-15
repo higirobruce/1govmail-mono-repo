@@ -1,24 +1,30 @@
 import { NotificationsService } from './notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-describe('NotificationsService.hasRecentNotification', () => {
-  const makeService = (count: number) => {
-    const prisma = { notification: { count: jest.fn().mockResolvedValue(count) } } as unknown as PrismaService;
+describe('NotificationsService.getLatestNotification', () => {
+  const makeService = (row: unknown) => {
+    const prisma = {
+      notification: { findFirst: jest.fn().mockResolvedValue(row) },
+    } as unknown as PrismaService;
     return { service: new NotificationsService(prisma), prisma: prisma as any };
   };
 
-  it('is true when a notification of that type exists inside the window', async () => {
-    const { service } = makeService(1);
-    await expect(service.hasRecentNotification('u1', 'NEW_MAIL', 60_000)).resolves.toBe(true);
+  it('returns the newest row of that type, so a caller can compare it with what it is about to say', async () => {
+    const row = { id: 'n1', metadata: { unreadCount: 3 }, createdAt: new Date() };
+    const { service, prisma } = makeService(row);
+
+    await expect(service.getLatestNotification('u1', 'NEW_MAIL')).resolves.toBe(row);
+
+    const args = prisma.notification.findFirst.mock.calls[0][0];
+    expect(args.where).toEqual({ userId: 'u1', type: 'NEW_MAIL' });
+    // Newest first: an older row would answer the wrong question.
+    expect(args.orderBy).toEqual({ createdAt: 'desc' });
+    // No time window: a clock-based lookback is exactly what loses arrivals.
+    expect(args.where.createdAt).toBeUndefined();
   });
 
-  it('is false when none exists, and only looks back by the window given', async () => {
-    const { service, prisma } = makeService(0);
-    await expect(service.hasRecentNotification('u1', 'NEW_MAIL', 60_000)).resolves.toBe(false);
-
-    const where = prisma.notification.count.mock.calls[0][0].where;
-    expect(where.userId).toBe('u1');
-    expect(where.type).toBe('NEW_MAIL');
-    expect(where.createdAt.gte.getTime()).toBeGreaterThan(Date.now() - 61_000);
+  it('is null when the user has never had a notification of that type', async () => {
+    const { service } = makeService(null);
+    await expect(service.getLatestNotification('u1', 'NEW_MAIL')).resolves.toBeNull();
   });
 });

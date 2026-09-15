@@ -50,14 +50,24 @@ export class NotificationsService {
   }
 
   /**
-   * Whether this user already has a notification of `type` inside the last
-   * `withinMs`. Used to keep repeated detection idempotent: several tabs (or
-   * devices) sync folders at once and must not each produce a row.
+   * The newest notification of `type` for this user, or null when there is
+   * none. Callers use its `metadata` to decide whether what they are about to
+   * say has already been said.
+   *
+   * There is deliberately NO time window. A clock-based guard ("did we notify
+   * in the last 60s?") suppresses whatever happens to land inside the window,
+   * and a suppressed arrival is lost for good once the producer's baseline has
+   * moved on. Dedupe has to be answerable from the row itself — the identity or
+   * the level it reported — which is what this returns.
    */
-  async hasRecentNotification(userId: string, type: string, withinMs: number): Promise<boolean> {
-    const count = await this.prisma.notification.count({
-      where: { userId, type, createdAt: { gte: new Date(Date.now() - withinMs) } },
+  async getLatestNotification(
+    userId: string,
+    type: string,
+  ): Promise<{ id: string; metadata: unknown; createdAt: Date } | null> {
+    return this.prisma.notification.findFirst({
+      where: { userId, type },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, metadata: true, createdAt: true },
     });
-    return count > 0;
   }
 }

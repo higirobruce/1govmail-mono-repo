@@ -217,54 +217,101 @@ export class MailService {
     return saved;
   }
 
-  /** How long one NEW_MAIL notification suppresses the next. The browser syncs
-   *  folders every two minutes, and several tabs may sync at once. */
-  private static readonly NEW_MAIL_DEDUPE_MS = 60_000;
-
   /**
    * Raise a NEW_MAIL notification when the Inbox unread count has RISEN since
    * the last sync. A fall means the user read mail somewhere else, which is
    * not an arrival.
    *
-   * Reads the previously stored folder rows itself (this must happen BEFORE
-   * the upsert loop in getFolders overwrites them — that read used to live in
-   * getFolders, unguarded; it now lives here so its failure is covered by the
-   * same try/catch as the compare-and-create below). Never throws: a failed
-   * read degrades to the same outcome as "no previous row" — skip the
-   * notification, log at WARN, and let the folder list continue. An alert is
-   * worth less than the folder list this runs inside.
+   * Reads the stored Inbox row itself (this must happen BEFORE the upsert loop
+   * in getFolders overwrites it — that read used to live in getFolders,
+   * unguarded; it now lives here so its failure is covered by the same
+   * try/catch as the compare-and-create below). Never throws: a failed read
+   * degrades to the same outcome as "no previous row" — skip the notification,
+   * log at WARN, and let the folder list continue. An alert is worth less than
+   * the folder list this runs inside.
    */
   private async notifyNewMail(
     userId: string,
     fetched: Array<{ id: string; path: string; unreadCount: number }>,
   ): Promise<void> {
     try {
-      const stored = await this.prisma.folder.findMany({
-        where: { userId },
-        select: { zimbraId: true, path: true, unreadCount: true },
+      const previous = await this.prisma.folder.findFirst({
+        where: { userId, path: '/Inbox' },
+        select: { id: true, unreadCount: true },
       });
-
-      const previous = stored.find((f) => f.path === '/Inbox');
       const current = fetched.find((f) => f.path === '/Inbox');
       if (!previous || !current) return; // first sync ever: nothing to compare
 
       const delta = current.unreadCount - previous.unreadCount;
       if (delta <= 0) return;
 
-      if (await this.notifications.hasRecentNotification(userId, 'NEW_MAIL', MailService.NEW_MAIL_DEDUPE_MS)) {
-        return;
-      }
+      // Idempotent against the unread COUNT, never against the clock.
+      //
+      // A time window ("did we notify in the last 60s?") loses real mail: the
+      // upsert loop in getFolders advances the stored count whether or not we
+      // notified, so an arrival suppressed by the window is never seen again —
+      // no chime, no toast, no row, no trace. Comparing against the level we
+      // last announced keeps a repeated sync quiet (several tabs see the same
+      // count) while ANY higher count always gets through, which is the same
+      // property the EVENT_SOON cron gets from deduping on metadata.eventId.
+      const announced = MailService.announcedUnreadCount(
+        await this.notifications.getLatestNotification(userId, 'NEW_MAIL'),
+      );
+      if (announced !== null && announced >= current.unreadCount) return;
 
       await this.notifications.createNotification(
         userId,
         'NEW_MAIL',
         `${delta} new message${delta === 1 ? '' : 's'}`,
-        `Inbox now has ${current.unreadCount} unread`,
+        await this.newMailBody(userId, previous.id, current.unreadCount),
         '/mail',
         { unreadCount: current.unreadCount, delta },
       );
     } catch (err: any) {
       this.logger.warn(`NEW_MAIL notification failed for userId=${userId}: ${err?.message}`);
+    }
+  }
+
+  /**
+   * The unread count a previous NEW_MAIL row reported, or null when there is
+   * no row or its metadata does not carry a usable number. Null means "nothing
+   * has been announced" and therefore notifies: announcing beats silence, and
+   * silence is the one failure direction this feature must never take.
+   */
+  private static announcedUnreadCount(latest: { metadata: unknown } | null): number | null {
+    const metadata = latest?.metadata;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+    const raw = (metadata as Record<string, unknown>).unreadCount;
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+  }
+
+  /**
+   * What the toast and the OS notification actually read: the sender and
+   * subject of the newest unread Inbox message when the DB already holds it,
+   * and the unread total when it does not (a mailbox synced only at folder
+   * level, or a message that has not been pulled yet).
+   *
+   * One indexed lookup on the (userId, folderId) index, on a per-sync path.
+   * Never throws — a body is not worth losing the notification over.
+   */
+  private async newMailBody(userId: string, inboxFolderId: string, unreadCount: number): Promise<string> {
+    const fallback = `Inbox now has ${unreadCount} unread`;
+    try {
+      const newest = await this.prisma.message.findFirst({
+        where: { userId, folderId: inboxFolderId, isRead: false },
+        orderBy: { receivedAt: 'desc' },
+        select: { fromName: true, fromEmail: true, subject: true },
+      });
+      if (!newest) return fallback;
+
+      const sender = newest.fromName?.trim() || newest.fromEmail;
+      const subject = newest.subject?.trim() || '(no subject)';
+      return `${sender} — ${subject}`;
+    } catch (err: any) {
+      this.logger.warn(
+        `Could not read the newest unread Inbox message for userId=${userId}: ${err?.message}`,
+      );
+      return fallback;
     }
   }
 

@@ -12,6 +12,7 @@ import { formatDistanceToNow } from 'date-fns';
 const TYPE_ICON: Record<string, React.ElementType> = {
   MAIL_SNOOZE_EXPIRED: Clock,
   SCHEDULED_SENT:      Mail,
+  NEW_MAIL:            Mail,
   TASK_DUE:            ListTodo,
   EVENT_SOON:          Calendar,
 };

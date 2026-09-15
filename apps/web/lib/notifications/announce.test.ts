@@ -44,6 +44,19 @@ describe('selectNewNotifications', () => {
     const picked = selectNewNotifications(shuffled, '2026-09-15T10:00:00.000Z');
     expect(picked.map((n) => n.id)).toEqual(['b', 'c']);
   });
+
+  it('announces everything once a device that has polled still has no marker', () => {
+    // A device whose FIRST poll came back empty has nothing to suppress: there
+    // was no backlog. Treating its null marker as "stay silent" swallowed the
+    // next genuine arrival too, which is the one thing this feature must never
+    // do. `initialized` separates "never polled" from "nothing to announce".
+    const picked = selectNewNotifications(feed, null, true);
+    expect(picked.map((n) => n.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('still suppresses a real backlog on the very first poll', () => {
+    expect(selectNewNotifications(feed, null, false)).toEqual([]);
+  });
 });
 
 describe('newestCreatedAt', () => {

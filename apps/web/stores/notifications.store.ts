@@ -2,9 +2,14 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { AudibleType } from '@/lib/notifications/announce';
 
 export type ToneName = 'soft' | 'ping' | 'double' | 'chord';
-export type AudibleType = 'NEW_MAIL' | 'EVENT_SOON';
+
+// The audible types and their union are defined once, beside the code that
+// decides what to announce, and re-exported here so the two declarations cannot
+// drift apart — drift between them degrades to silence.
+export type { AudibleType };
 
 interface NotificationsState {
   /** Sound on by default: an audible alert is the feature, not an opt-in. */
@@ -21,10 +26,21 @@ interface NotificationsState {
    * newest row WITHOUT announcing, so a backlog never plays on login.
    */
   lastAnnouncedAt: string | null;
+  /**
+   * Whether this device has ever completed a poll of the feed.
+   *
+   * Without it a null `lastAnnouncedAt` is ambiguous, and the ambiguity cost a
+   * real alert: a device whose first poll came back EMPTY recorded no marker,
+   * and a null marker meant "suppress everything", so the next genuine arrival
+   * was swallowed too. The backlog suppression it was protecting only applies
+   * to a first poll that actually returned rows.
+   */
+  initialized: boolean;
   setSoundEnabled: (v: boolean) => void;
   setVolume: (v: number) => void;
   setTone: (type: AudibleType, tone: ToneName) => void;
   setLastAnnouncedAt: (iso: string) => void;
+  markInitialized: () => void;
 }
 
 export const useNotificationsStore = create<NotificationsState>()(
@@ -34,6 +50,7 @@ export const useNotificationsStore = create<NotificationsState>()(
       volume: 0.6,
       tones: { NEW_MAIL: 'soft', EVENT_SOON: 'double' },
       lastAnnouncedAt: null,
+      initialized: false,
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
       setVolume: (v) => set({ volume: Math.min(1, Math.max(0, v)) }),
       setTone: (type, tone) => set((s) => ({ tones: { ...s.tones, [type]: tone } })),
@@ -41,6 +58,9 @@ export const useNotificationsStore = create<NotificationsState>()(
       // the marker and replay alerts the user already heard.
       setLastAnnouncedAt: (iso) =>
         set((s) => (!s.lastAnnouncedAt || iso > s.lastAnnouncedAt ? { lastAnnouncedAt: iso } : s)),
+      // One-way, and persisted: once this device has seen the feed there is no
+      // backlog left to protect it from.
+      markInitialized: () => set((s) => (s.initialized ? s : { initialized: true })),
     }),
     { name: 'notifications' },
   ),

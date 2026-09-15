@@ -4,7 +4,7 @@ import { useNotificationsStore } from './notifications.store';
 const reset = () => useNotificationsStore.setState({
   soundEnabled: true, volume: 0.6,
   tones: { NEW_MAIL: 'soft', EVENT_SOON: 'double' },
-  lastAnnouncedAt: null,
+  lastAnnouncedAt: null, initialized: false,
 });
 
 describe('useNotificationsStore', () => {
@@ -33,5 +33,16 @@ describe('useNotificationsStore', () => {
     useNotificationsStore.getState().setLastAnnouncedAt('2026-09-15T10:00:00.000Z');
     useNotificationsStore.getState().setLastAnnouncedAt('2026-09-15T09:00:00.000Z');
     expect(useNotificationsStore.getState().lastAnnouncedAt).toBe('2026-09-15T10:00:00.000Z');
+  });
+
+  it('starts uninitialized — this device has not polled the feed yet', () => {
+    expect(useNotificationsStore.getState().initialized).toBe(false);
+  });
+
+  it('stays initialized once a poll has completed, so an empty first feed cannot swallow the next alert', () => {
+    useNotificationsStore.getState().markInitialized();
+    expect(useNotificationsStore.getState().initialized).toBe(true);
+    useNotificationsStore.getState().markInitialized();
+    expect(useNotificationsStore.getState().initialized).toBe(true);
   });
 });

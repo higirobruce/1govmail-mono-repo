@@ -12,6 +12,36 @@ import {
 } from '@/lib/notifications/announce';
 
 /**
+ * Raise ONE operating-system notification for a row.
+ *
+ * Electron first, when it is there: the desktop build shows it from the main
+ * process, which also focuses the window when the user clicks it — something
+ * the web API cannot do from a page that is in the background. That IPC lost
+ * its only caller when the mail page's own alerting was removed, so the
+ * desktop build had quietly given up native notifications altogether.
+ *
+ * Never both: two notifications for one arrival is worse than one. A browser
+ * is unaffected — `window.electronAPI` is undefined there and the web
+ * `Notification` API is used, still only with permission already granted
+ * (permission is requested in Settings, never from here).
+ */
+function raiseOsNotification(row: NotificationRow): void {
+  const electron = typeof window === 'undefined' ? undefined : window.electronAPI;
+  if (electron?.sendNotification) {
+    electron.sendNotification(row.title, row.body ?? '');
+    return;
+  }
+
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  try {
+    new Notification(row.title, { body: row.body ?? undefined, tag: row.id });
+  } catch {
+    // Notification can throw on platforms that require a service worker; the
+    // toast and chime have already done the job.
+  }
+}
+
+/**
  * Turns the notification feed into things a person can notice: a toast, a
  * chime, and — only when the window is hidden — an operating-system
  * notification.
@@ -25,11 +55,26 @@ export function NotificationAlerts() {
   const volume = useNotificationsStore((s) => s.volume);
   const tones = useNotificationsStore((s) => s.tones);
   const setLastAnnouncedAt = useNotificationsStore((s) => s.setLastAnnouncedAt);
+  const markInitialized = useNotificationsStore((s) => s.markInitialized);
 
-  const { data: feed = [] } = useQuery<NotificationRow[]>({
+  const { data: feed = [], isSuccess } = useQuery<NotificationRow[]>({
     queryKey: ['notifications'],
     queryFn: () => api.notifications.getAll(50) as Promise<NotificationRow[]>,
     refetchInterval: 30_000,
+    // react-query gates a refetchInterval on
+    // `refetchIntervalInBackground || focusManager.isFocused()`, and its focus
+    // manager counts a hidden document as unfocused. Without this flag the
+    // poll stops the moment the window goes to the background — which is
+    // exactly when the OS-notification branch below is the only way to reach
+    // the user, so the two conditions would be mutually exclusive and that
+    // whole delivery tier dead code.
+    //
+    // Timers are per-observer in query-core (QueryObserver holds its own
+    // options and its own interval id), so this turns background polling on
+    // for THIS mount only — the bell's identical query keeps its
+    // focus-gated interval and simply reads whatever this fetch put in the
+    // shared cache.
+    refetchIntervalInBackground: true,
     staleTime: 20_000,
   });
 
@@ -47,10 +92,14 @@ export function NotificationAlerts() {
   }, []);
 
   useEffect(() => {
-    if (!feed.length) return;
+    // Gate on a COMPLETED poll rather than on a non-empty feed: an empty feed
+    // is a poll too, and treating it as "nothing happened" left the device
+    // permanently uninitialized — so it swallowed its first real alert as well
+    // as the backlog it never had.
+    if (!isSuccess) return;
 
-    const marker = useNotificationsStore.getState().lastAnnouncedAt;
-    const fresh = selectNewNotifications(feed, marker);
+    const { lastAnnouncedAt: marker, initialized } = useNotificationsStore.getState();
+    const fresh = selectNewNotifications(feed, marker, initialized);
 
     try {
       for (const row of fresh) {
@@ -66,15 +115,7 @@ export function NotificationAlerts() {
 
           // An OS notification is for when the user is looking somewhere else.
           // Raising one over a window they are already reading is just noise.
-          if (document.visibilityState === 'hidden' && typeof Notification !== 'undefined'
-              && Notification.permission === 'granted') {
-            try {
-              new Notification(row.title, { body: row.body ?? undefined, tag: row.id });
-            } catch {
-              // Notification can throw on platforms that require a service worker;
-              // the toast and chime have already done the job.
-            }
-          }
+          if (document.visibilityState === 'hidden') raiseOsNotification(row);
         } catch {
           // One bad row must not stop the rows behind it. The marker still
           // advances past it in the `finally` below, so a row that keeps
@@ -88,8 +129,11 @@ export function NotificationAlerts() {
       // reconsidered and a failure here can never strand it.
       const newest = newestCreatedAt(feed);
       if (newest) setLastAnnouncedAt(newest);
+      // Recorded even for an empty feed — that is the whole point: from here on
+      // a null marker means "announce what arrives", not "stay silent".
+      markInitialized();
     }
-  }, [feed, soundEnabled, volume, tones, setLastAnnouncedAt]);
+  }, [feed, isSuccess, soundEnabled, volume, tones, setLastAnnouncedAt, markInitialized]);
 
   return null;
 }

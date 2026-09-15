@@ -32,12 +32,14 @@ interface NotificationsState {
    * known limit (spec §8), not a protection this field provides.
    *
    * Every COMPLETED poll records one, including a poll that came back empty:
-   * that one has no server timestamp to borrow and records the client's own
-   * ISO time instead (see NotificationAlerts). So null means exactly one
-   * thing — this device has never completed a poll — and there is no second
-   * flag to disambiguate it. An earlier build carried an `initialized` flag
-   * for that job; recording a marker on an empty poll does it instead, and
-   * without the state where the two disagreed and a whole backlog replayed.
+   * that one has no server timestamp to borrow and records the EPOCH instead
+   * (see NotificationAlerts — an empty feed proves there is nothing to
+   * suppress, so the marker suppresses nothing and reads no clock). So null
+   * means exactly one thing — this device has never completed a poll — and
+   * there is no second flag to disambiguate it. An earlier build carried an
+   * `initialized` flag for that job; recording a marker on an empty poll does
+   * it instead, and without the state where the two disagreed and a whole
+   * backlog replayed.
    */
   lastAnnouncedAt: string | null;
   setSoundEnabled: (v: boolean) => void;

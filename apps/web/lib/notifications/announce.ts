@@ -37,8 +37,10 @@ export function isAudible(type: string): type is AudibleType {
  * NOTHING: whatever the feed holds is a BACKLOG (up to 50 rows), and replaying
  * it as a burst of chimes at login is the first thing a user would disable.
  * The caller records a marker in the same pass — the newest row's `createdAt`,
- * or its own clock when the feed came back empty — so a null marker cannot
- * survive a poll and this branch only ever suppresses a genuine backlog.
+ * or the EPOCH when the feed came back empty (an empty feed proves there is
+ * nothing to suppress, so that marker suppresses nothing and takes no reading
+ * from the device clock) — so a null marker cannot survive a poll and this
+ * branch only ever suppresses a genuine backlog.
  *
  * It suppresses ONLY that one. Rows stamped after a device's marker are all
  * announced, however long it was away and however many there are — see spec

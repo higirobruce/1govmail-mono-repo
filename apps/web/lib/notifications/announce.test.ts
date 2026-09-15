@@ -29,9 +29,10 @@ describe('selectNewNotifications', () => {
   it('announces nothing while the marker is null — a backlog must not play on login', () => {
     // A null marker means exactly one thing: this device has never completed a
     // poll, so everything in the feed is history. The caller records a marker
-    // in the same pass — the newest row's createdAt, or its own clock on an
-    // empty feed — so a null marker cannot survive a poll and this can only
-    // ever suppress a genuine backlog.
+    // in the same pass — the newest row's createdAt, or the epoch on an empty
+    // feed (an empty feed proves there is nothing to suppress, so no clock
+    // reading is needed or wanted) — so a null marker cannot survive a poll
+    // and this can only ever suppress a genuine backlog.
     expect(selectNewNotifications(feed, null)).toEqual([]);
     expect(selectNewNotifications([], null)).toEqual([]);
   });

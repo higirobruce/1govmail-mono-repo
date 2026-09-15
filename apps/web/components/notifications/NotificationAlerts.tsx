@@ -12,6 +12,16 @@ import {
 } from '@/lib/notifications/announce';
 
 /**
+ * What an empty poll records: a marker that suppresses NOTHING.
+ *
+ * The marker exists only so that a null one keeps meaning exactly "this device
+ * has never completed a poll". An empty feed proves there is nothing to
+ * suppress, so the marker needs no information from the clock — and must not
+ * take any, because it is monotonic and persisted (see the comment at its use).
+ */
+const EMPTY_POLL_MARKER = new Date(0).toISOString();
+
+/**
  * Raise ONE operating-system notification for a row.
  *
  * Electron first, when it is there: the desktop build shows it from the main
@@ -139,16 +149,18 @@ export function NotificationAlerts() {
         // fifty toasts plus a chime per audible row on its return. Recording a
         // marker here means a null marker only ever means "never polled".
         //
-        // Backdated by a minute, deliberately. An empty feed proves ZERO
-        // notification rows exist for this user (the feed filters on userId
-        // alone), so nothing can predate this marker and it suppresses nothing
-        // real — which makes a minute of slack free, and makes recording `now`
-        // the expensive option. The marker is monotonic and persisted, so a
-        // device whose clock runs fast would otherwise install a suppression
-        // floor in the FUTURE that never rewinds, and hear nothing for the
-        // whole skew. The minute also covers a row created while this response
-        // was in flight, which even a perfect clock would have lost.
-        setLastAnnouncedAt(new Date(Date.now() - 60_000).toISOString());
+        // The EPOCH, not this device's clock. An empty feed proves ZERO
+        // notification rows exist for this user — `getNotifications` filters
+        // on `userId` alone — so there is nothing any marker could suppress,
+        // and a marker meaning "suppress nothing" is exactly right. That also
+        // takes the device clock out of this path entirely: the marker is
+        // monotonic and persisted, so a clock-derived value on a device
+        // running fast installs a suppression floor in the FUTURE that never
+        // rewinds, and the device hears nothing for the whole skew. Backdating
+        // it only shrinks the skew it survives to the size of the backdate; the
+        // epoch removes the clock instead of bargaining with it, and it also
+        // covers a row created while this response was still in flight.
+        setLastAnnouncedAt(EMPTY_POLL_MARKER);
       }
     }
   }, [feed, isSuccess, soundEnabled, volume, tones, setLastAnnouncedAt]);

@@ -5,6 +5,7 @@ import { NotificationAlerts } from './NotificationAlerts';
 import { useNotificationsStore } from '@/stores/notifications.store';
 import { api } from '@/lib/api';
 import { playTone } from '@/lib/notifications/chime';
+import { selectNewNotifications } from '@/lib/notifications/announce';
 import { toast } from 'sonner';
 
 vi.mock('sonner', () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }) }));
@@ -160,16 +161,15 @@ describe('NotificationAlerts', () => {
     const play = vi.mocked(playTone);
 
     renderAlerts();
-    // The empty poll records a marker — the client's own clock, there being no
-    // server timestamp to borrow — and that marker is the only evidence the
-    // poll completed, now that no separate flag records it.
+    // The empty poll records a marker — the epoch, which suppresses nothing,
+    // there being nothing to suppress — and that marker is the only evidence
+    // the poll completed, now that no separate flag records it.
     await waitFor(() => expect(useNotificationsStore.getState().lastAnnouncedAt).not.toBeNull());
     expect(toast).not.toHaveBeenCalled();
-    const marker = useNotificationsStore.getState().lastAnnouncedAt;
 
-    // The mail arrives after that poll, so the server stamps it later than the
-    // marker the poll recorded.
-    const arrival = { ...mailRow, createdAt: new Date(Date.parse(marker!) + 1_000).toISOString() };
+    // The mail arrives after that poll. Any real server timestamp is after the
+    // epoch, so nothing here has to be derived from the marker.
+    const arrival = mailRow;
     getAll.mockResolvedValue([arrival] as any);
     await act(async () => { await refetchNotifications(); });
 
@@ -178,81 +178,89 @@ describe('NotificationAlerts', () => {
     expect(getAll).toHaveBeenCalledTimes(2);
   });
 
-  it('backdates the EMPTY-poll marker, so a fast device clock cannot silence itself', async () => {
-    // An empty feed proves ZERO notification rows exist for this user — the
-    // feed filters on userId alone — so nothing can predate the marker and it
-    // suppresses nothing real. Recording `now` therefore costs nothing when
-    // the clock is right, and costs everything when it is not: the marker is
-    // monotonic and persisted, so a device running ten minutes fast installs a
-    // suppression floor in the future that never rewinds, and stays silent for
-    // the whole skew. A minute back absorbs both the skew and any row created
-    // during the response round-trip, and replays nothing, because there is
-    // nothing to replay.
-    useNotificationsStore.setState({ lastAnnouncedAt: null });
+  it('marks an EMPTY poll with the EPOCH — the feed proved there is nothing to suppress', async () => {
+    // The reason, which is the whole point of this test: GET /notifications
+    // filters on `userId` alone, so a feed that comes back empty is PROOF that
+    // zero rows exist for this user. There is nothing a marker could hide, so
+    // the marker's only job is to stop being null — a null marker has to keep
+    // meaning exactly "this device has never completed a poll".
+    //
+    // That makes the device clock pure liability here. The marker is monotonic
+    // and persisted, so a clock-derived value on a device running fast installs
+    // a suppression floor in the FUTURE that never rewinds, and the device
+    // hears nothing for the whole skew. A fixed backdate does not remove that
+    // — it only shrinks the skew it survives to the size of the backdate,
+    // which is why a 60-second one could never deliver the "ten minutes fast"
+    // protection its comment claimed. The epoch means "suppress nothing", and
+    // takes the clock out of the path instead of bargaining with it.
+    const markerAfterEmptyPoll = async (clockOffsetMs: number) => {
+      useNotificationsStore.setState({ lastAnnouncedAt: null });
+      // Shift the device clock without stopping it, so react-query and
+      // waitFor keep working normally.
+      const realNow = Date.now.bind(Date);
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + clockOffsetMs);
+      const { unmount } = renderAlerts();
+      await waitFor(() => expect(useNotificationsStore.getState().lastAnnouncedAt).not.toBeNull());
+      const marker = useNotificationsStore.getState().lastAnnouncedAt!;
+      unmount();
+      clock.mockRestore();
+      return marker;
+    };
     vi.spyOn(api.notifications, 'getAll').mockResolvedValue([] as any);
 
-    const before = Date.now();
-    renderAlerts();
-    await waitFor(() => expect(useNotificationsStore.getState().lastAnnouncedAt).not.toBeNull());
+    // Two devices ten minutes apart record the SAME marker. Any clock-derived
+    // marker — `now`, or `now` minus a minute — makes these two differ by ten
+    // minutes, which is what this assertion exists to catch.
+    const onTime = await markerAfterEmptyPoll(0);
+    const tenMinutesFast = await markerAfterEmptyPoll(10 * 60_000);
+    expect(tenMinutesFast).toBe(onTime);
 
-    const after = Date.now();
-    const marker = Date.parse(useNotificationsStore.getState().lastAnnouncedAt!);
-    // Exactly one minute behind this device's clock: far enough back to absorb
-    // the skew and the round-trip, and no further — a marker in the distant
-    // past would start announcing genuine history the moment rows appear.
-    expect(marker).toBeGreaterThanOrEqual(before - 60_000);
-    expect(marker).toBeLessThanOrEqual(after - 60_000);
+    // And what the marker MEANS: the epoch, i.e. suppress nothing. Every
+    // timestamp the server can ever stamp is after it, including a row created
+    // during the round-trip this very poll was in.
+    expect(Date.parse(onTime)).toBe(0);
+    expect(selectNewNotifications([mailRow], onTime)).toEqual([mailRow]);
+    expect(toast).not.toHaveBeenCalled();
   });
 
   it('announces only rows stamped AFTER the marker, never the ones behind it', async () => {
-    // What this actually proves, and no more: rows older than the marker are
-    // not announced, however many of them arrive in one feed. It is the fix
-    // for the state that used to replay everything — a device whose first poll
-    // came back EMPTY recorded no marker (newestCreatedAt([]) is null) while
-    // an `initialized` flag said it had polled anyway, and that pair meant
-    // "announce everything", so a 50-row feed played oldest-first. The marker
-    // the empty poll now records is what dates those rows, and the flag is
-    // gone.
+    // What this proves, and no more: rows older than the marker are not
+    // announced, however many of them arrive in one feed.
     //
-    // It is NOT a test that a device announces nothing after an absence, and
-    // this test was named that way for a while. Rows that genuinely arrive
-    // while a device is away are stamped AFTER its marker and ARE announced,
-    // up to all fifty the feed carries. That is pre-existing behaviour and out
-    // of scope here; it is recorded in spec §8 rather than papered over.
-    const backlog = [0, 1, 2].map((i) => ({
+    // It is NOT a test that a device announces nothing after an absence, and it
+    // was named that way for a while. Rows that genuinely arrive while a device
+    // is away are stamped AFTER its marker and ARE announced, up to all fifty
+    // the feed carries. That is pre-existing behaviour and out of scope here;
+    // it is recorded in spec §8 rather than papered over.
+    //
+    // The marker is set explicitly rather than borrowed from an empty poll.
+    // An empty poll records the EPOCH — deliberately, because an empty feed
+    // proves there is nothing to suppress — so it can never date a row as
+    // older than itself, and leaning on it here would only have tested the
+    // clock the epoch was introduced to remove.
+    const backlog = [1, 2, 3].map((i) => ({
       ...mailRow,
       id: `old-${i}`,
       title: `Backlog ${i}`,
-      createdAt: new Date(Date.now() - (i + 1) * 60_000).toISOString(),
+      createdAt: new Date(Date.parse(MARKER) - i * 60_000).toISOString(),
     }));
-    useNotificationsStore.setState({ lastAnnouncedAt: null });
-    const getAll = vi.spyOn(api.notifications, 'getAll').mockResolvedValue([] as any);
+    const arrival = {
+      ...mailRow, id: 'fresh', title: 'Just arrived',
+      createdAt: new Date(Date.parse(MARKER) + 5_000).toISOString(),
+    };
+    useNotificationsStore.setState({ lastAnnouncedAt: MARKER });
+    vi.spyOn(api.notifications, 'getAll').mockResolvedValue([arrival, ...backlog] as any);
     const play = vi.mocked(playTone);
 
     renderAlerts();
-    // Wait on the QUERY, not on anything the fix writes, so this test measures
-    // the announce pass rather than its own setup: the empty poll has landed,
-    // and the flush runs the effect it scheduled.
-    await waitFor(() => expect(queryClient.getQueryData(['notifications'])).toEqual([]));
-    await act(async () => {});
 
-    // Back from being closed. One row genuinely arrived after the marker the
-    // empty poll recorded; the three behind it are history, and are here to be
-    // ignored. The fresh row is what makes this assertable — it gives the poll
-    // an observable effect to wait for, so "nothing else was announced" is
-    // measured after the announce pass rather than before it. Its timestamp is
-    // a few seconds ahead of this clock instead of derived from the marker, so
-    // the assertion below reads the same whether or not a marker was recorded.
-    const arrival = {
-      ...mailRow, id: 'fresh', title: 'Just arrived',
-      createdAt: new Date(Date.now() + 5_000).toISOString(),
-    };
-    getAll.mockResolvedValue([arrival, ...backlog] as any);
-    await act(async () => { await refetchNotifications(); });
-
+    // The fresh row is what makes this assertable: it gives the pass an
+    // observable effect to wait for, so "nothing else was announced" is
+    // measured AFTER the announce pass rather than before it.
     await waitFor(() => expect(toast).toHaveBeenCalledWith('Just arrived', expect.anything()));
     expect(toast).toHaveBeenCalledTimes(1);
     expect(play).toHaveBeenCalledTimes(1);
+    expect(useNotificationsStore.getState().lastAnnouncedAt).toBe(arrival.createdAt);
   });
 
   it('keeps polling while the window is HIDDEN — the whole background tier depends on it', async () => {

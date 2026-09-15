@@ -108,6 +108,22 @@ describe('NotificationAlerts', () => {
     expect(NotificationMock).not.toHaveBeenCalled();
   });
 
+  it('keeps announcing rows behind a throwing one, and still advances the marker', async () => {
+    // The cheapest way to drive a mid-loop throw: make the already-mocked
+    // `toast` blow up on its first call only, then behave normally.
+    const badRow = { id: 'n3', type: 'NEW_MAIL', title: 'Bad row', createdAt: '2026-09-15T10:03:00.000Z' };
+    const goodRow = { id: 'n4', type: 'NEW_MAIL', title: 'Good row', body: 'fine', createdAt: '2026-09-15T10:04:00.000Z' };
+    vi.mocked(toast).mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    vi.spyOn(api.notifications, 'getAll').mockResolvedValue([badRow, goodRow] as any);
+
+    renderAlerts();
+
+    await waitFor(() => expect(toast).toHaveBeenCalledWith('Good row', expect.anything()));
+    expect(useNotificationsStore.getState().lastAnnouncedAt).toBe(goodRow.createdAt);
+  });
+
   it('announces nothing on a first run, but records where the feed had got to', async () => {
     useNotificationsStore.setState({ lastAnnouncedAt: null });
     vi.spyOn(api.notifications, 'getAll').mockResolvedValue([mailRow] as any);

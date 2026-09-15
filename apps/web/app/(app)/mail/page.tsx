@@ -450,11 +450,8 @@ export default function MailPage() {
   }, [composeOpen]);
 
   // ── Electron background polling ────────────────────────────────────────────
-  // Tracks the last known inbox unread count so we can detect new arrivals.
   // The BrowserWindow is never destroyed when minimised to tray, so this
-  // interval keeps running and can fire native notifications even while the
-  // window is hidden.
-  const lastInboxUnreadRef = useRef<number | null>(null);
+  // interval keeps running even while the window is hidden.
 
   // Wait for Zustand persist to hydrate from localStorage before any redirect
   useEffect(() => {
@@ -469,8 +466,8 @@ export default function MailPage() {
     if (!isAuthenticated) router.replace('/login');
   }, [hydrated, isAuthenticated, router]);
 
-  // Electron: poll the inbox unread count every 2 minutes and fire native
-  // notifications when new messages arrive.  Works whether the window is
+  // Electron: poll the inbox unread count every 2 minutes to keep the dock
+  // badge and sidebar folder counts current. Works whether the window is
   // visible or hidden in the system tray.
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -491,8 +488,6 @@ export default function MailPage() {
 
         // Update Dock badge on macOS
         window.electronAPI?.setBadgeCount(currentUnread);
-
-        lastInboxUnreadRef.current = currentUnread;
 
         // Also refresh the sidebar folder list if unread counts shifted
         setFolders(data);

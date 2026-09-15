@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
@@ -25,7 +25,6 @@ export function NotificationAlerts() {
   const volume = useNotificationsStore((s) => s.volume);
   const tones = useNotificationsStore((s) => s.tones);
   const setLastAnnouncedAt = useNotificationsStore((s) => s.setLastAnnouncedAt);
-  const announcing = useRef(false);
 
   const { data: feed = [] } = useQuery<NotificationRow[]>({
     queryKey: ['notifications'],
@@ -48,40 +47,48 @@ export function NotificationAlerts() {
   }, []);
 
   useEffect(() => {
-    if (!feed.length || announcing.current) return;
-    announcing.current = true;
+    if (!feed.length) return;
 
     const marker = useNotificationsStore.getState().lastAnnouncedAt;
     const fresh = selectNewNotifications(feed, marker);
 
-    for (const row of fresh) {
-      // One tab announces; the others see the claim and stay quiet.
-      if (!claimAnnouncement(row.id)) continue;
+    try {
+      for (const row of fresh) {
+        // One tab announces; the others see the claim and stay quiet.
+        if (!claimAnnouncement(row.id)) continue;
 
-      toast(row.title, { description: row.body ?? undefined });
-
-      if (soundEnabled && isAudible(row.type)) {
-        void playTone(tones[row.type], volume);
-      }
-
-      // An OS notification is for when the user is looking somewhere else.
-      // Raising one over a window they are already reading is just noise.
-      if (document.visibilityState === 'hidden' && typeof Notification !== 'undefined'
-          && Notification.permission === 'granted') {
         try {
-          new Notification(row.title, { body: row.body ?? undefined, tag: row.id });
+          toast(row.title, { description: row.body ?? undefined });
+
+          if (soundEnabled && isAudible(row.type)) {
+            void playTone(tones[row.type], volume);
+          }
+
+          // An OS notification is for when the user is looking somewhere else.
+          // Raising one over a window they are already reading is just noise.
+          if (document.visibilityState === 'hidden' && typeof Notification !== 'undefined'
+              && Notification.permission === 'granted') {
+            try {
+              new Notification(row.title, { body: row.body ?? undefined, tag: row.id });
+            } catch {
+              // Notification can throw on platforms that require a service worker;
+              // the toast and chime have already done the job.
+            }
+          }
         } catch {
-          // Notification can throw on platforms that require a service worker;
-          // the toast and chime have already done the job.
+          // One bad row must not stop the rows behind it. The marker still
+          // advances past it in the `finally` below, so a row that keeps
+          // throwing gets skipped forever rather than jamming every row
+          // behind it.
         }
       }
+    } finally {
+      // Move the marker even when nothing was announced (first run, another
+      // tab claimed everything, or a row threw) so the same rows are never
+      // reconsidered and a failure here can never strand it.
+      const newest = newestCreatedAt(feed);
+      if (newest) setLastAnnouncedAt(newest);
     }
-
-    // Move the marker even when nothing was announced (first run, or another
-    // tab claimed everything) so the same rows are never reconsidered.
-    const newest = newestCreatedAt(feed);
-    if (newest) setLastAnnouncedAt(newest);
-    announcing.current = false;
   }, [feed, soundEnabled, volume, tones, setLastAnnouncedAt]);
 
   return null;

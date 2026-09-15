@@ -7,6 +7,8 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useThemeStore, type FontSize } from '@/stores/theme.store';
 import { useAIStore } from '@/stores/ai.store';
+import { useNotificationsStore, type ToneName } from '@/stores/notifications.store';
+import { TONES, playTone, unlockAudio } from '@/lib/notifications/chime';
 import { AI_LOCKED } from '@/lib/ai/config';
 import { api, type SettingsResponse } from '@/lib/api';
 import { AIClient } from '@/lib/ai/client';
@@ -32,7 +34,7 @@ import {
   Check, ChevronRight, ArrowLeft, RotateCcw, FileSignature,
   Palmtree, Settings2, Bot, AlertTriangle, Ban, IdCard, Sparkles,
   Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
-  Monitor, LogOut,
+  Monitor, LogOut, Bell,
 } from 'lucide-react';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -71,7 +73,7 @@ const ZimbraAwareImage = TiptapImage.extend({
 type SettingsData = SettingsResponse;
 type Signature = SettingsResponse['signatures'][number];
 
-type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'ai-profile' | 'security';
+type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'ai-profile' | 'notifications' | 'security';
 
 // ── Toggle Switch ──────────────────────────────────────────────────────────────
 
@@ -481,6 +483,7 @@ export default function SettingsPage() {
         )}
         <NavItem icon={Ban}           label="Blocked Senders" active={section === 'blocked-senders'} onClick={() => setSection('blocked-senders')} />
         <NavItem icon={Settings2}     label="Preferences"   active={section === 'preferences'} onClick={() => setSection('preferences')} />
+        <NavItem icon={Bell}          label="Notifications" active={section === 'notifications'} onClick={() => setSection('notifications')} />
         {!AI_LOCKED && (
           <NavItem icon={Bot}           label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
         )}
@@ -491,7 +494,9 @@ export default function SettingsPage() {
       {/* ── Main content ── */}
       <ScrollArea className="flex-1 min-w-0 min-h-0 md:h-full">
         <div className="max-w-2xl mx-auto px-4 py-6 sm:px-6 md:px-8 md:py-8">
-          {section === 'ai-profile' ? (
+          {section === 'notifications' ? (
+            <NotificationsSection />
+          ) : section === 'ai-profile' ? (
             // AI Profile fetches its own DB-only data (never Zimbra-backed) —
             // it must render even when the Zimbra settings load below fails
             // or is still pending, so it lives OUTSIDE the loading/data guard.
@@ -1842,6 +1847,77 @@ function SecuritySection({ data, caps }: { data: SettingsData; caps: SettingsCap
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+export function NotificationsSection() {
+  const { soundEnabled, volume, tones, setSoundEnabled, setVolume, setTone } = useNotificationsStore();
+
+  const toggleSound = async (next: boolean) => {
+    setSoundEnabled(next);
+    // Ask for OS-notification permission at the moment the user shows they want
+    // to be alerted — never on page load, which is how permission gets denied
+    // permanently.
+    if (next && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      try { await Notification.requestPermission(); } catch { /* denied is fine */ }
+    }
+  };
+
+  const test = (type: 'NEW_MAIL' | 'EVENT_SOON') => {
+    unlockAudio();           // this click is a real user gesture
+    void playTone(tones[type], volume);
+  };
+
+  const toneSelect = (type: 'NEW_MAIL' | 'EVENT_SOON', label: string, testLabel: string) => (
+    <div className="flex items-center gap-2">
+      <label className="flex flex-col gap-1 text-ui text-ink-2 flex-1">
+        {label}
+        <select
+          aria-label={label}
+          value={tones[type]}
+          onChange={(e) => setTone(type, e.target.value as ToneName)}
+          className="w-full rounded border border-border/50 bg-background px-2 py-1 text-ui"
+        >
+          {Object.keys(TONES).map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </label>
+      <Button size="sm" variant="outline" aria-label={testLabel} onClick={() => test(type)} className="mt-5">
+        Test
+      </Button>
+    </div>
+  );
+
+  return (
+    <div>
+      <SectionHeader
+        title="Notifications"
+        description="New mail and calendar reminders can make a sound. Stored on this device."
+      />
+      <div className="space-y-4 max-w-sm">
+        <label className="flex items-center gap-2 text-ui">
+          <input
+            type="checkbox"
+            aria-label="Play a sound for notifications"
+            checked={soundEnabled}
+            onChange={(e) => void toggleSound(e.target.checked)}
+          />
+          Play a sound for notifications
+        </label>
+
+        <label className="flex flex-col gap-1 text-ui text-ink-2">
+          Volume
+          <input
+            type="range" min={0} max={1} step={0.1}
+            aria-label="Volume"
+            value={volume}
+            onChange={(e) => setVolume(Number(e.target.value))}
+          />
+        </label>
+
+        {toneSelect('NEW_MAIL', 'New mail sound', 'Test the new mail sound')}
+        {toneSelect('EVENT_SOON', 'Calendar reminder sound', 'Test the calendar reminder sound')}
+      </div>
     </div>
   );
 }

@@ -14,6 +14,7 @@ const KEY = 'test-mail-cred-key-0123456789abcdef';
 const fixture = (name: string) => readFileSync(join(__dirname, '__fixtures__', name), 'utf8');
 
 const FIND_FOLDER = fixture('findfolder.success.xml');
+const NESTED_INBOX = fixture('findfolder.nested-inbox.xml');
 const FIND_ITEM = fixture('finditem.success.xml');
 const SEARCH_ITEM = fixture('searchitem.success.xml');
 const GET_ITEM = fixture('getitem.success.xml');
@@ -218,6 +219,106 @@ describe('EwsService folders + messages (Task 4)', () => {
         expect(typeof f.totalCount).toBe('number');
         expect(f.kind).toBe('mail');
       }
+    });
+  });
+
+  describe('getFolders with a nested folder named like a system folder', () => {
+    // Exchange returns the whole tree FLAT from one Deep traversal, so a
+    // mapping that reads DisplayName alone cannot tell the real Inbox from
+    // `Archive/Inbox` or a PST import's `Top of Information Store/Inbox`. Both
+    // then carry the canonical path '/Inbox', and everything downstream that
+    // resolves the inbox by that path — the new-mail baseline in
+    // MailService.notifyNewMail, the sidebar's Inbox badge and click target —
+    // picks whichever the enumeration happened to return first.
+    //
+    // Parentage is the only thing that separates them, and it is already in
+    // the response: a Deep traversal from msgfolderroot returns every
+    // descendant but NOT msgfolderroot itself, so the root's own id is the one
+    // ParentFolderId that no returned folder owns.
+
+    /** A response whose folders carry no ParentFolderId at all. */
+    const NO_PARENTS = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>
+  <m:FindFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+    xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+    <m:ResponseMessages><m:FindFolderResponseMessage ResponseClass="Success">
+      <m:ResponseCode>NoError</m:ResponseCode>
+      <m:RootFolder TotalItemsInView="2"><t:Folders>
+        <t:Folder><t:FolderId Id="X-Inbox=" ChangeKey="K"/><t:DisplayName>Inbox</t:DisplayName>
+          <t:TotalCount>7</t:TotalCount><t:UnreadCount>2</t:UnreadCount></t:Folder>
+        <t:Folder><t:FolderId Id="X-Sent=" ChangeKey="K"/><t:DisplayName>Sent Items</t:DisplayName>
+          <t:TotalCount>1</t:TotalCount><t:UnreadCount>0</t:UnreadCount></t:Folder>
+      </t:Folders></m:RootFolder>
+    </m:FindFolderResponseMessage></m:ResponseMessages>
+  </m:FindFolderResponse>
+</s:Body></s:Envelope>`;
+
+    it('gives /Inbox to the top-level Inbox only, even when a namesake is returned first', async () => {
+      const { svc } = svcWith(NESTED_INBOX);
+
+      const folders = await svc.getFolders(SESSION);
+
+      const canonical = folders.filter((f) => f.path === '/Inbox');
+      expect(canonical.map((f) => f.id)).toEqual(['AAA-Inbox=']);
+      expect(canonical[0]).toMatchObject({ type: 'inbox', unreadCount: 5, totalCount: 42 });
+    });
+
+    it('maps a nested namesake to custom, keeping its own name as its path', async () => {
+      const { svc } = svcWith(NESTED_INBOX);
+
+      const folders = await svc.getFolders(SESSION);
+      const byId = Object.fromEntries(folders.map((f) => [f.id, f]));
+
+      // Archive/Inbox — a migration artefact, and a user folder as far as this
+      // app is concerned. It keeps its counts and its own path, so it still
+      // appears (under Labels) instead of masquerading as the Inbox.
+      expect(byId['AAA-Archive-Inbox=']).toMatchObject({
+        name: 'Inbox', type: 'custom', path: 'Inbox', unreadCount: 5, parentId: 'AAA-Archive=',
+      });
+      // Top of Information Store/Inbox — the PST-import shape.
+      expect(byId['AAA-PST-Inbox=']).toMatchObject({ type: 'custom', path: 'Inbox', unreadCount: 1 });
+      // Its top-level parent is a user folder by name, and stays one.
+      expect(byId['AAA-PST=']).toMatchObject({ type: 'custom', path: 'Top of Information Store' });
+      expect(byId['AAA-Archive=']).toMatchObject({ type: 'custom', path: 'Archive' });
+    });
+
+    it('infers the mail root from the response it already has — no extra round trip', async () => {
+      // A folder sync runs about once a minute per active user, and the infra
+      // plan targets 5,000 mailboxes: resolving the distinguished inbox with a
+      // GetFolder call would be one more EWS request on every one of them.
+      const { t, svc } = svcWith(NESTED_INBOX);
+
+      await svc.getFolders(SESSION);
+
+      expect(t.calls).toHaveLength(1);
+      expect(t.calls[0].body).toContain('<m:FindFolder Traversal="Deep">');
+    });
+
+    it('still maps system folders by name when the response carries no parentage', async () => {
+      // Nothing to infer from, so the pre-existing DisplayName mapping stands:
+      // a response that omits ParentFolderId must not cost this mailbox its
+      // canonical folder paths (which is what the web sidebar matches on).
+      const { svc } = svcWith(NO_PARENTS);
+
+      const folders = await svc.getFolders(SESSION);
+
+      expect(folders.map((f) => [f.type, f.path])).toEqual([
+        ['inbox', '/Inbox'],
+        ['sent', '/Sent'],
+      ]);
+    });
+
+    it('maps the ordinary single-Inbox mailbox exactly as before', async () => {
+      // The regression guard for the inference itself: in the six-folder
+      // fixture every system folder is top-level under AAA-Root= and only
+      // Projects is nested, so nothing about the canonical paths may move.
+      const { svc } = svcWith(FIND_FOLDER);
+
+      const folders = await svc.getFolders(SESSION);
+
+      expect(folders.map((f) => f.path)).toEqual([
+        '/Inbox', '/Sent', '/Drafts', '/Trash', '/Junk', 'Projects',
+      ]);
     });
   });
 

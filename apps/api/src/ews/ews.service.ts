@@ -351,6 +351,54 @@ export class EwsService implements MailProvider {
     return doc?.Envelope?.Body?.[responseTag]?.ResponseMessages?.[messageTag];
   }
 
+  /**
+   * The id of the mail root (`msgfolderroot`) itself, inferred from the Deep
+   * FindFolder result — no second request.
+   *
+   * A Deep traversal from `msgfolderroot` returns every descendant of it and
+   * NOT the root, so every returned folder's parent is either another returned
+   * folder or the root. The root's id is therefore the one `ParentFolderId`
+   * that no returned folder owns. (Equivalently: at least one returned folder
+   * is a direct child of the root whenever the set is non-empty, because a
+   * descendant's whole ancestor chain below the root is returned too.)
+   *
+   * Resolving the distinguished inbox with a `GetFolder` call would answer the
+   * same question, but it costs one extra EWS round trip on every folder sync
+   * — about once a minute per active user, against an infra target of 5,000
+   * mailboxes — for information the response already carries.
+   *
+   * `undefined` when nothing can be inferred (an empty response, or one whose
+   * folders carry no parentage at all); callers then fall back to the
+   * name-only mapping. Where several unowned parent ids appear — which takes a
+   * truncated response, since FindFolder here asks for no paged view — the
+   * most frequently referenced one wins: the root parents every top-level
+   * folder, of which a real mailbox has several.
+   */
+  private mailRootIdOf(folders: any[]): string | undefined {
+    const ids = new Set<string>();
+    for (const f of folders) {
+      const id = f?.FolderId?.['@_Id'];
+      if (typeof id === 'string' && id) ids.add(id);
+    }
+
+    const references = new Map<string, number>();
+    for (const f of folders) {
+      const parent = f?.ParentFolderId?.['@_Id'];
+      if (typeof parent !== 'string' || !parent || ids.has(parent)) continue;
+      references.set(parent, (references.get(parent) ?? 0) + 1);
+    }
+
+    let rootId: string | undefined;
+    let best = 0;
+    for (const [id, count] of references) {
+      if (count > best) {
+        rootId = id;
+        best = count;
+      }
+    }
+    return rootId;
+  }
+
   /** Well-known Exchange English display names → the app's folder `type`. Any
    *  other folder is a user folder → 'custom'. */
   private folderTypeOf(displayName: string | undefined): string {
@@ -381,10 +429,31 @@ export class EwsService implements MailProvider {
     junk: '/Junk',
   };
 
-  private mapFolder(f: any): ProviderFolder {
+  /**
+   * One `<t:Folder>` → ProviderFolder.
+   *
+   * `mailRootId` (from `mailRootIdOf`) is what keeps a canonical system path
+   * honest. A Deep traversal returns the tree flat, so DisplayName alone
+   * cannot tell the real Inbox from `Archive/Inbox` or a PST import's
+   * `Top of Information Store/Inbox` — and stamping '/Inbox' on a namesake is
+   * not a cosmetic error: everything that resolves the inbox by that path
+   * (the new-mail baseline in MailService.notifyNewMail, the sidebar's Inbox
+   * badge and click target) then picks whichever folder the enumeration
+   * happened to return first. So a system path is earned by parentage, not by
+   * name: only a folder whose parent IS the mail root can be a system folder,
+   * and a nested namesake is a user folder ('custom') keeping its own name as
+   * its path, exactly like any other user folder.
+   *
+   * When the root could not be inferred, or this folder reports no parentage,
+   * the name-only mapping stands — a response without parentage must not cost
+   * a mailbox its canonical paths.
+   */
+  private mapFolder(f: any, mailRootId?: string): ProviderFolder {
     const name = textOf(f?.DisplayName) ?? '';
     const kind: ProviderFolderKind = 'mail';
-    const type = this.folderTypeOf(name);
+    const parentId = f?.ParentFolderId?.['@_Id'];
+    const nested = mailRootId !== undefined && typeof parentId === 'string' && parentId !== mailRootId;
+    const type = nested ? 'custom' : this.folderTypeOf(name);
     return {
       id: f?.FolderId?.['@_Id'] ?? '',
       name,
@@ -393,7 +462,7 @@ export class EwsService implements MailProvider {
       kind,
       unreadCount: this.numOr(f?.UnreadCount, 0),
       totalCount: this.numOr(f?.TotalCount, 0),
-      parentId: f?.ParentFolderId?.['@_Id'],
+      parentId,
     };
   }
 
@@ -522,7 +591,10 @@ export class EwsService implements MailProvider {
     const doc = parseEws(xml);
     const rm = this.responseMessageNode(doc, 'FindFolderResponse', 'FindFolderResponseMessage');
     const folders = toArray(rm?.RootFolder?.Folders?.Folder);
-    return folders.map((f) => this.mapFolder(f));
+    // The root's id first, from this same response: a folder only earns a
+    // canonical system path when the root is its parent (see mapFolder).
+    const mailRootId = this.mailRootIdOf(folders);
+    return folders.map((f) => this.mapFolder(f, mailRootId));
   }
 
   /** CreateFolder under `parentId` (or `msgfolderroot`) — returns the new,

@@ -19,8 +19,11 @@ describe('NotificationsService.getLatestNotification', () => {
     expect(args.where).toEqual({ userId: 'u1', type: 'NEW_MAIL' });
     // Newest first: an older row would answer the wrong question.
     expect(args.orderBy).toEqual({ createdAt: 'desc' });
-    // No time window: a clock-based lookback is exactly what loses arrivals.
+    // No time window in the query: a clock-based lookback is exactly what
+    // loses arrivals. Callers bound their own comparison by age instead, which
+    // is why createdAt has to come back with the row.
     expect(args.where.createdAt).toBeUndefined();
+    expect(args.select).toEqual({ id: true, metadata: true, createdAt: true });
   });
 
   it('is null when the user has never had a notification of that type', async () => {

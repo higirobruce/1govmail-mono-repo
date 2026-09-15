@@ -1862,9 +1862,15 @@ describe('MailService new-mail detection', () => {
   const storedInbox = { id: 'f-inbox', unreadCount: 2 };
 
   interface DetectionOpts {
-    /** `metadata.unreadCount` of the newest NEW_MAIL row this user already has.
-     *  `null` (the default) means they have never had one. */
-    announced?: number | null | Record<string, unknown>;
+    /** The newest NEW_MAIL row this user already has: the `metadata` it
+     *  recorded, and how long ago it was written. `null` (the default) means
+     *  they have never had one. The age matters because the guard suppresses
+     *  only an identical transition that is still RECENT — an old row
+     *  describing the same transition is a genuine repeat, not a duplicate. */
+    announced?: { metadata: unknown; ageMs?: number } | null;
+    /** The unread count the stored Inbox row holds: the baseline the delta is
+     *  measured from. Defaults to 2. */
+    storedUnread?: number;
     /** Override the stored-Inbox read — used to exercise a DB failure. */
     findFirst?: jest.Mock;
     /** The newest unread Inbox message the DB holds, if any. */
@@ -1879,7 +1885,11 @@ describe('MailService new-mail detection', () => {
     const getLatestNotification = jest.fn().mockResolvedValue(
       announced === null
         ? null
-        : { id: 'n-prev', metadata: typeof announced === 'number' ? { unreadCount: announced } : announced },
+        : {
+            id: 'n-prev',
+            metadata: announced.metadata,
+            createdAt: new Date(Date.now() - (announced.ageMs ?? 0)),
+          },
     );
     const notifications = { createNotification, getLatestNotification } as unknown as NotificationsService;
     const messageFindFirst =
@@ -1887,7 +1897,12 @@ describe('MailService new-mail detection', () => {
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue(user), update: jest.fn() },
       folder: {
-        findFirst: opts.findFirst ?? jest.fn().mockResolvedValue(storedInbox),
+        findFirst:
+          opts.findFirst ??
+          jest.fn().mockResolvedValue({
+            ...storedInbox,
+            unreadCount: opts.storedUnread ?? storedInbox.unreadCount,
+          }),
         upsert: jest.fn().mockResolvedValue({ id: 'f-inbox' }),
       },
       message: { findFirst: messageFindFirst },
@@ -1920,7 +1935,10 @@ describe('MailService new-mail detection', () => {
     expect(type).toBe('NEW_MAIL');
     expect(title).toBe('3 new messages');
     expect(actionUrl).toBe('/mail');
-    expect(metadata).toEqual({ unreadCount: 5, delta: 3 });
+    // The baseline the delta was measured FROM is part of the row, not just the
+    // level it announced: the guard below cannot tell a duplicate from a
+    // read-then-refill without it.
+    expect(metadata).toEqual({ baseline: 2, unreadCount: 5, delta: 3 });
   });
 
   it('says "1 new message" for a single arrival', async () => {
@@ -1973,37 +1991,80 @@ describe('MailService new-mail detection', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 
-  describe('dedupe by unread count, not by clock', () => {
-    it('creates nothing when the level it is about to announce has already been announced', async () => {
-      // A second tab syncing the same arrival sees the same unread count, so
-      // there is nothing new to say.
-      const { service, createNotification } = makeService(5, { announced: 5 });
+  describe('dedupe by the transition, bounded by recency', () => {
+    it('notifies the first arrival this user has ever had', async () => {
+      // No previous row at all: there is nothing this could be a duplicate of.
+      const { service, createNotification } = makeService(5, { announced: null });
       await service.getFolders('u1');
+      expect(createNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates nothing for the SAME transition announced seconds ago — two tabs, one arrival', async () => {
+      // Two tabs sync at once: both read the stored baseline before either
+      // upsert lands, so both compute the identical (0 -> 3) transition within
+      // milliseconds of each other. Only one of them should be heard.
+      const { service, createNotification } = makeService(3, {
+        storedUnread: 0,
+        announced: { metadata: { baseline: 0, unreadCount: 3, delta: 3 }, ageMs: 3_000 },
+      });
+
+      await service.getFolders('u1');
+
       expect(createNotification).not.toHaveBeenCalled();
     });
 
-    it('creates nothing when the last announcement was for a HIGHER level', async () => {
-      const { service, createNotification } = makeService(4, { announced: 6 });
-      await service.getFolders('u1');
-      expect(createNotification).not.toHaveBeenCalled();
-    });
-
-    it('notifies a second arrival that lands within a minute of the first — the old 60s window lost it', async () => {
-      // The timeline that used to lose a message: a sync notified at unread 3,
-      // a second message arrived 40s later, and the next sync fell inside the
-      // 60s window. The folder upsert advanced the baseline regardless, so that
-      // arrival was gone for good: no chime, no toast, no row. Comparing
-      // against the announced COUNT instead of the clock cannot lose it.
-      const { service, createNotification } = makeService(4, { announced: 3 });
+    it('notifies the same transition again once it is OLD — read-then-refill is a real arrival', async () => {
+      // The sequence a count-based guard threw away: (0 -> 3) was announced,
+      // the user read all three so the stored baseline fell back to 0, and
+      // three more messages took the inbox back to 3. The transition looks
+      // identical, but it took at least two sync cycles (the browser polls
+      // every two minutes) with someone reading mail in between — so age, not
+      // the numbers, is what separates a duplicate from a refill.
+      const { service, createNotification } = makeService(3, {
+        storedUnread: 0,
+        announced: { metadata: { baseline: 0, unreadCount: 3, delta: 3 }, ageMs: 5 * 60_000 },
+      });
 
       await service.getFolders('u1');
 
       expect(createNotification).toHaveBeenCalledTimes(1);
-      expect(createNotification.mock.calls[0][5]).toEqual({ unreadCount: 4, delta: 2 });
+      expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 0, unreadCount: 3, delta: 3 });
     });
 
-    it('notifies when the previous row carries no usable unreadCount — announcing beats silence', async () => {
-      const { service, createNotification } = makeService(5, { announced: { delta: 1 } });
+    it('notifies a DIFFERENT transition that lands seconds after the last one', async () => {
+      // A second message arrives right behind the first: same baseline is
+      // impossible (the upsert moved it), and the level is higher. Suppressing
+      // this is what the old 60s clock window did, and the arrival was then
+      // lost for good — the folder upsert advances the baseline whether or not
+      // anything was announced.
+      const { service, createNotification } = makeService(4, {
+        announced: { metadata: { baseline: 0, unreadCount: 2, delta: 2 }, ageMs: 3_000 },
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 2, unreadCount: 4, delta: 2 });
+    });
+
+    it('notifies when a recent row announced a HIGHER level — a high-water mark must not silence anyone', async () => {
+      // The user once reached 50 unread and cleared the inbox. A guard that
+      // compared levels stayed silent until they passed 50 again, with no way
+      // back except deleting that row by hand. The level it announced is
+      // irrelevant: only an identical, recent transition is a duplicate.
+      const { service, createNotification } = makeService(4, {
+        announced: { metadata: { baseline: 44, unreadCount: 50, delta: 6 }, ageMs: 2_000 },
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('notifies when the previous row carries no usable transition — announcing beats silence', async () => {
+      const { service, createNotification } = makeService(5, {
+        announced: { metadata: { delta: 1 }, ageMs: 1_000 },
+      });
       await service.getFolders('u1');
       expect(createNotification).toHaveBeenCalledTimes(1);
     });

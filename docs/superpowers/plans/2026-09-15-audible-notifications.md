@@ -589,7 +589,7 @@ export async function playTone(
 - [ ] **Step 4: Run it and watch it pass**
 
 Run: `cd apps/web && npx vitest run lib/notifications/chime.test.ts`
-Expected: PASS (5 tests).
+Expected: PASS (7 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -910,6 +910,33 @@ describe('NotificationAlerts', () => {
     expect(play).not.toHaveBeenCalled();
   });
 
+  it('raises an OS notification only when the window is hidden', async () => {
+    // An OS notification over a window the user is already reading is noise;
+    // the whole point of it is reaching them when they are looking elsewhere.
+    const NotificationMock = vi.fn();
+    (globalThis as any).Notification = Object.assign(NotificationMock, { permission: 'granted' });
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    vi.spyOn(api.notifications, 'getAll').mockResolvedValue([mailRow] as any);
+
+    renderAlerts();
+
+    await waitFor(() => expect(NotificationMock).toHaveBeenCalledWith(
+      '2 new messages', expect.objectContaining({ body: 'Inbox now has 5 unread', tag: 'n1' }),
+    ));
+  });
+
+  it('raises no OS notification while the window is visible', async () => {
+    const NotificationMock = vi.fn();
+    (globalThis as any).Notification = Object.assign(NotificationMock, { permission: 'granted' });
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    vi.spyOn(api.notifications, 'getAll').mockResolvedValue([mailRow] as any);
+
+    renderAlerts();
+
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    expect(NotificationMock).not.toHaveBeenCalled();
+  });
+
   it('announces nothing on a first run, but records where the feed had got to', async () => {
     useNotificationsStore.setState({ lastAnnouncedAt: null });
     vi.spyOn(api.notifications, 'getAll').mockResolvedValue([mailRow] as any);
@@ -1089,6 +1116,7 @@ badge has no replacement here."
 ```typescript
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { AIRail } from './AIRail';
 
 vi.mock('@/components/layout/NotificationsBell', () => ({
@@ -1102,7 +1130,13 @@ const props = {
 
 describe('AIRail', () => {
   it('carries the notification bell', () => {
-    render(<AIRail {...props} />);
+    // The rail's buttons are Radix Tooltips, which need a provider — the same
+    // wrapper ThreadHeader.test.tsx and Sidebar.test.tsx already use.
+    render(
+      <TooltipProvider>
+        <AIRail {...props} />
+      </TooltipProvider>,
+    );
     expect(screen.getByTestId('bell')).toBeTruthy();
   });
 });
@@ -1157,6 +1191,8 @@ back into the sidebar it was deliberately removed from."
 **Interfaces:**
 - Consumes: `useNotificationsStore`, `playTone`, `unlockAudio`, `TONES`.
 - Produces: `export function NotificationsSection()` — exported from the settings page module so the test can mount it alone.
+
+**Fallback if the test cannot import `./page`:** every other settings section lives inside `page.tsx`, so that is where this one goes. If importing the page module into jsdom proves hostile (a module-scope dependency that will not load), extract ONLY `NotificationsSection` into `app/(app)/settings/NotificationsSection.tsx`, import it from `page.tsx`, and point the test at the new file. Do not restructure the other sections.
 
 - [ ] **Step 1: Write the failing test**
 

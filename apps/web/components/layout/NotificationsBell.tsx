@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Bell, Mail, Calendar, ListTodo, Clock, X, CheckCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { formatDistanceToNow } from 'date-fns';
 
 const TYPE_ICON: Record<string, React.ElementType> = {
@@ -62,25 +63,23 @@ export function NotificationsBell() {
 
   return (
     <div ref={ref} className="relative">
-      <button
+      <Button
+        variant="ghost"
+        size="icon-sm"
         onClick={handleOpen}
-        title="Notifications"
-        className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[0.8125rem] text-foreground/65 hover:bg-muted/50 hover:text-foreground transition-all relative group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0"
+        aria-label="Notifications"
+        className="relative text-ink-3 hover:bg-muted hover:text-foreground"
       >
-        <Bell className="w-3.5 h-3.5 shrink-0" />
-        <span className="flex-1 text-left group-data-[collapsed=true]/sidebar:hidden">Notifications</span>
+        <Bell className="size-4" />
         {unread > 0 && (
-          <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[0.625rem] font-bold flex items-center justify-center shrink-0 group-data-[collapsed=true]/sidebar:hidden">
-            {unread > 9 ? '9+' : unread}
+          <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-micro leading-none font-semibold tabular-nums">
+            {unread > 99 ? '99+' : unread}
           </span>
         )}
-        {unread > 0 && (
-          <span className="hidden group-data-[collapsed=true]/sidebar:block absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" />
-        )}
-      </button>
+      </Button>
 
       {open && (
-        <div className="absolute bottom-full left-0 mb-1 w-80 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden z-50">
+        <div className="absolute right-full top-0 mr-1 w-80 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden z-50">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
             <span className="text-[0.8125rem] font-semibold text-foreground">Notifications</span>
             {notifications.length > 0 && (

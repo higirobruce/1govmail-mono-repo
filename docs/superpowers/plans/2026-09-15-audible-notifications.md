@@ -589,7 +589,7 @@ export async function playTone(
 - [ ] **Step 4: Run it and watch it pass**
 
 Run: `cd apps/web && npx vitest run lib/notifications/chime.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1050,7 +1050,7 @@ export function NotificationAlerts() {
 - [ ] **Step 4: Run it and watch it pass**
 
 Run: `cd apps/web && npx vitest run components/notifications/NotificationAlerts.test.tsx`
-Expected: PASS (5 tests).
+Expected: PASS (7 tests).
 
 - [ ] **Step 5: Mount it in the app shell**
 

@@ -207,9 +207,84 @@ poll at once, so detection must be idempotent without a lock.
 > of `Folder.unreadCount` in the codebase, so no other path can resurrect a
 > baseline. The one residual is pre-existing and unchanged by this fix: a
 > concurrent sync whose provider fetch predates the arrival upserts the older
-> count and rewinds the baseline, after which the next sync announces the same
-> arrival again. Its cost is one extra chime — never a lost message, which is
-> the only failure direction this feature must not take.
+> count and rewinds the baseline.
+>
+> ~~Its cost is one extra chime — never a lost message, which is the only
+> failure direction this feature must not take.~~ **Corrected 2026-09-15.**
+> That was false in one direction and is restated here rather than left
+> standing. The stale upsert usually costs an extra chime, because the rewound
+> baseline makes the next sync re-announce an arrival already announced. But it
+> can also cost a message. Traced: the user has read everything, so the stored
+> baseline is 0; a slow provider fetch that predates the read lands and
+> measures `0 → 5`, claims it, chimes for mail already read, and the upsert
+> loop then writes 5. The next genuine arrival takes the real mailbox to 1
+> unread, which against a stored 5 is a delta of `-4`: silent, with no row
+> written and nothing claimed. Only the sync after that — once the upsert has
+> brought the stored count back to 1 — can announce anything again. So the
+> residual's real cost is **one spurious chime and then one genuinely lost
+> arrival**, self-repairing after one further sync. Fixing it means making the
+> upsert loop refuse to lower `/Inbox` below the value the claim just wrote,
+> and it is out of scope here.
+
+> **Amended a fourth time 2026-09-15, after a third scoped re-review.** The
+> compare-and-swap above is kept as designed. Three defects were found in the
+> code around it, one of them pre-existing rather than introduced by the
+> compare-and-swap.
+>
+> **The baseline was read from a non-unique column.** `notifyNewMail` read it
+> with `findFirst({ where: { userId, path: '/Inbox' } })`, with no `orderBy`,
+> while the folders table's only uniqueness is `@@unique([userId, zimbraId])`
+> and the persist loop writes by that key. Nothing prunes folder rows the
+> provider has stopped returning, so one user can hold **two** rows both
+> stamped `path: '/Inbox'`, by four live routes: flipping an
+> `Institution.provider` from `zimbra` to `exchange` — the MINAFFET rollout —
+> keeps the same `User` row (`auth.service.ts` upserts on email) while EWS
+> returns different folder ids that also map to `/Inbox`
+> (`ews.service.ts`); a Demo/local login on a real address; a restored
+> mailbox; and `renameFolder`, which rewrites `path` to `/${name}`
+> unconditionally. The stale row is never upserted again, so its count is
+> frozen — and being the older row it is the likely `findFirst` result. Every
+> sync then computed `current − frozen ≤ 0` and returned before the claim: no
+> chime, no toast, no row, **indefinitely**. The same permanent silence this
+> feature has had three times, reached through row identity instead of a clock
+> or a count.
+>
+> The baseline is now read by the same identity the persist loop writes by:
+> the provider's inbox is resolved first, then
+> `findUnique({ where: { userId_zimbraId: { userId, zimbraId: <provider inbox
+> id> } } })`. Read and write the same row. `orderBy: { syncedAt: 'desc' }`
+> was rejected: it merely picks the freshest duplicate and leaves the
+> ambiguity in place. The claim keys on the `id` that read returns, so it
+> follows the corrected read automatically. One behaviour change to note: on
+> the first sync after a provider's folder ids change, no row exists for the
+> new id, so that sync announces nothing and the persist loop creates the row;
+> the sync after it has a baseline and works normally. One missed
+> announcement at cutover, instead of silence forever.
+>
+> **A crash between the claim and the insert lost the notification.** The claim
+> advanced the baseline and the insert followed it; a process death in between
+> left the baseline moved with no row to show for it, so the next sync saw no
+> delta and the arrival was gone. (The design this replaced recovered from
+> that, because the baseline only moved later, in the persist loop.) The claim
+> and the insert now share one `prisma.$transaction`, so either both happened
+> or neither did. The notification body is resolved **before** the transaction
+> opens — it is a second query, and holding a transaction open across it on a
+> per-sync path buys nothing. The whole thing stays inside the existing
+> try/catch and still logs at WARN: a notification failure must never break
+> `getFolders`.
+>
+> **The losing sync discarded its own, larger delta.** `count === 0` means
+> "someone moved that baseline", not "someone announced what I measured". With
+> overlapping syncs — routine here; see §8 — sync A can claim `baseline → 5`
+> and announce "3 new" while sync B measured `baseline → 6`, so B's sixth
+> message appeared in no announcement at all. A losing sync now re-reads the
+> baseline and retries while it is still **below** the count that sync
+> measured, announcing the remainder the winner did not cover. Bounded by
+> `MailService.NEW_MAIL_CLAIM_ATTEMPTS` (3), because this runs inside every
+> folder sync and under-announcing one arrival is cheaper than a loop that
+> never returns. If the winner already took the baseline to or past the
+> measured count, the delta comes out `≤ 0` and the retry returns silently on
+> its next pass.
 
 **Failure is silent.** A notification failure must never break `getFolders` —
 the folder list is the user's mailbox and matters more than an alert. Wrap in
@@ -229,9 +304,18 @@ A new `NotificationAlerts` component mounts once in the `(app)` layout, beside
    `notifications` Zustand store rather than a bare `localStorage` key, moving
    forward only. One field, not two: every completed poll records a marker,
    including one that comes back empty — that one has no server timestamp to
-   borrow and records the client's own ISO time — so a null marker means
-   exactly one thing, "this device has never polled", and everything in the
-   feed is then a backlog to suppress. (An intermediate build recorded nothing
+   borrow and records the **epoch**, a marker meaning "suppress nothing" — so a
+   null marker means exactly one thing, "this device has never polled", and
+   everything in the feed is then a backlog to suppress. The epoch is correct
+   because an empty feed is proof: `getNotifications` filters on `userId`
+   alone, so an empty feed means zero rows exist for that user and there is
+   nothing any marker could suppress. It also keeps the device clock out of
+   this path entirely — the marker is monotonic and persisted, so a
+   clock-derived value on a fast device installs a suppression floor in the
+   FUTURE that never rewinds. (An intermediate build recorded
+   `Date.now() - 60_000` and its comment claimed protection against a device
+   "ten minutes fast", which a 60-second backdate does not deliver; backdating
+   only shrinks the skew it survives.) (An intermediate build recorded nothing
    on an empty poll and carried an `initialized` flag to disambiguate the null;
    the state where the two disagreed replayed all fifty rows, and the flag was
    deleted once the empty-poll marker made it redundant.);
@@ -285,11 +369,11 @@ turning a sound off.
 
 | File | Change |
 |---|---|
-| `apps/api/src/mail/mail.service.ts` | read the stored `/Inbox` row before the upsert loop; on an unread increase, claim the transition with a conditional baseline advance and create `NEW_MAIL` only if it matched (§4.1) |
-| `apps/api/src/notifications/notifications.service.ts` | **no change.** Two dedupe helpers were specified here and both are gone: `hasRecentNotification(userId, type, withinMs)` (a clock-only lookback loses arrivals) and then `getLatestNotification(userId, type)` (comparing rows cannot tell a duplicate from a refill). Dedupe is a compare-and-swap on the folder row — see §4.1 — so the notifications service needs nothing new. |
+| `apps/api/src/mail/mail.service.ts` | read the stored Inbox row before the upsert loop, **by `(userId, zimbraId)`** — the key the loop writes by, because `path` is not unique; on an unread increase, claim the transition with a conditional baseline advance and create `NEW_MAIL` only if it matched, both inside one transaction, retrying a lost claim up to `NEW_MAIL_CLAIM_ATTEMPTS` times (§4.1) |
+| `apps/api/src/notifications/notifications.service.ts` | `createNotification` takes one optional trailing `client: Prisma.TransactionClient`, defaulting to the shared client, so `notifyNewMail` can put the insert in the same transaction as its claim (§4.1). Nothing else changes, and no dedupe helper lives here: two were specified and both are gone — `hasRecentNotification(userId, type, withinMs)` (a clock-only lookback loses arrivals) and then `getLatestNotification(userId, type)` (comparing rows cannot tell a duplicate from a refill). Dedupe is a compare-and-swap on the folder row. |
 | `apps/web/lib/notifications/chime.ts` | new — Web Audio synthesizer and the four tones |
 | `apps/web/lib/notifications/announce.ts` | new — pure logic: which rows are new, which are audible, what the OS notification says |
-| `apps/web/stores/notifications.store.ts` | new — sound on/off, volume, per-type tone, and `lastAnnouncedAt`: the `createdAt` of the newest row this device has announced, moving forward only. A timestamp, not an id — ids are cuids and are not ordered. Every completed poll records one, an empty poll included (its own clock, backdated a minute), so a null marker means exactly "this device has never polled" and no second flag is needed |
+| `apps/web/stores/notifications.store.ts` | new — sound on/off, volume, per-type tone, and `lastAnnouncedAt`: the `createdAt` of the newest row this device has announced, moving forward only. A timestamp, not an id — ids are cuids and are not ordered. Every completed poll records one, an empty poll included (the **epoch** — an empty feed proves there is nothing to suppress, so no clock reading is needed or wanted), so a null marker means exactly "this device has never polled" and no second flag is needed |
 | `apps/web/components/notifications/NotificationAlerts.tsx` | new — the shell mount that ties feed → toast → chime → OS notification |
 | `apps/web/components/layout/AIRail.tsx` | add the bell, with its unread badge |
 | `apps/web/app/(app)/layout.tsx` | mount `NotificationAlerts` |
@@ -313,10 +397,16 @@ ways nobody notices:
 - **API** — an `/Inbox` unread increase creates exactly one `NEW_MAIL`; no
   increase creates none, and writes nothing; a decrease (the user read mail
   elsewhere) creates none, and writes nothing; a mailbox with no stored Inbox
-  row yet creates none and does not crash; a read-then-refill repeating a
-  transition announced seconds ago DOES notify; a concurrent sync whose
-  conditional baseline advance matches zero rows creates none; a notification
-  failure does not break `getFolders`.
+  row yet creates none, logs nothing and does not crash; a read-then-refill
+  repeating a transition announced seconds ago DOES notify; a concurrent sync
+  whose conditional baseline advance matches zero rows creates none; a
+  notification failure does not break `getFolders`. Plus, from the fourth
+  amendment: a user holding a stale `/Inbox` row with a frozen high count
+  alongside the live one is measured against the LIVE row and still notifies;
+  the baseline is read by `(userId, zimbraId)` and never by `path`; the claim
+  and the insert run inside one transaction with the body resolved before it
+  opens; and a sync that loses the claim retries with its own larger delta,
+  bounded.
 - **`NotificationAlerts`** — a new row triggers toast and chime; a hidden
   document also raises an OS notification; a visible one does not; a tab that
   sees another tab's claim stays silent.
@@ -331,9 +421,16 @@ ways nobody notices:
 
 ## 8. Known limits, to be stated in the release note
 
-- **Latency.** The server notices new mail only during a folder sync, and the
-  browser syncs every two minutes. A chime can therefore arrive up to two
-  minutes after the mail does.
+- **Latency.** The server notices new mail only during a folder sync. There
+  are **three** sync call sites, not one, and the "every two minutes" figure
+  this bullet used to quote describes only the slowest of them — the same false
+  premise the third amendment in §4.1 disproves: `Sidebar.tsx` polls
+  `getFolders` every 60 seconds on every non-mail page; the mail page syncs on
+  mount; and `useInboxSync` fires 10 seconds after mount and then every two
+  minutes. So the worst case is two minutes (sitting on the mail page), the
+  common case on other pages is one minute, and overlapping syncs from
+  different call sites are routine — which is why the claim in §4.1 has to be
+  concurrency-safe rather than merely cadence-safe.
 - **`10.10.94.154` cannot raise OS notifications.** The `Notification` API
   requires a secure context and that box serves plain HTTP. The chime and the
   on-screen toast still work there. `10.10.94.155` (HTTPS) and production are

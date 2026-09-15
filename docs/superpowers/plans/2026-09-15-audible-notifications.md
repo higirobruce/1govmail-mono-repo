@@ -1492,8 +1492,15 @@ path to lose real mail, and that two claims in the client half were untrue.
     nothing real — but it is monotonic and persisted, so a device whose clock
     ran fast recorded a floor in the FUTURE that never rewound and stayed
     silent for the whole skew, and even a perfect clock lost a row created
-    during the response round-trip. It now records `Date.now() - 60_000`:
-    provably zero replay cost, and it absorbs both.
+    during the response round-trip. ~~It now records `Date.now() - 60_000`:
+    provably zero replay cost, and it absorbs both.~~ **Superseded by 16
+    below.** A 60-second backdate does not absorb either problem: it leaves the
+    device clock in the mechanism and merely shrinks the skew it survives to one
+    minute, while the comment, the test name and this entry all claimed
+    protection against a device "ten minutes fast". The marker is now the
+    **epoch** — "suppress nothing" — which is what the empty-feed proof
+    actually licenses, and which removes the clock from the path rather than
+    bargaining with it.
 12. **A test and three comments claimed a protection that does not exist.** The
     test named "never replays the backlog a device missed while it was away"
     stamps its rows BEFORE the marker, so it proves only that older rows are
@@ -1503,3 +1510,75 @@ path to lose real mail, and that two claims in the client half were untrue.
     the store's `lastAnnouncedAt` comment and to `selectNewNotifications`, and
     the behaviour recorded in spec §8. No behaviour changed: a long-absence
     burst is pre-existing and out of scope.
+
+## Post-review corrections (fourth fix wave, 2026-09-15)
+
+A third scoped re-review found one pre-existing defect in the read the
+compare-and-swap swaps against, two gaps in the code around it, and two
+documentation claims that were false. The compare-and-swap itself is endorsed
+and unchanged.
+
+13. **The baseline was read from a non-unique column** — see the fourth
+    amendment in spec §4.1. `notifyNewMail` read it with
+    `findFirst({ where: { userId, path: '/Inbox' } })`, unordered, while the
+    folders table's only uniqueness is `@@unique([userId, zimbraId])` and the
+    persist loop writes by that key. Nothing prunes rows the provider has
+    stopped returning, so one user can hold two rows both stamped `/Inbox` (a
+    zimbra→exchange provider flip on the same `User`, a Demo/local login on a
+    real address, a restored mailbox, or `renameFolder`, which rewrites `path`
+    unconditionally). The stale row's count is frozen and it is the older —
+    hence likely — `findFirst` result, so every sync computed a negative delta
+    and returned before the claim: permanent silence, the fourth time this
+    feature has reached it. The read is now
+    `findUnique({ where: { userId_zimbraId: { userId, zimbraId: <provider
+    inbox id> } } })`, resolving the provider inbox first;
+    `orderBy: { syncedAt: 'desc' }` was rejected as picking the freshest
+    duplicate rather than removing the ambiguity. The claim keys on the `id`
+    that read returns, so it follows automatically. Pre-existing, not
+    introduced by the third wave.
+14. **A crash between the claim and the insert lost the notification.** The
+    claim advanced the baseline and the insert followed it, so a process death
+    in between left the baseline moved with no row — and the next sync saw no
+    delta. The two now share one `prisma.$transaction`, with the notification
+    body resolved before it opens (no extra query work inside a held
+    transaction) and the whole thing still inside the try/catch that logs at
+    WARN. `NotificationsService.createNotification` takes one optional trailing
+    `Prisma.TransactionClient`, defaulting to the shared client.
+15. **The losing sync discarded its own, larger delta.** `count === 0` means
+    "someone moved that baseline", not "someone announced what I measured": A
+    could claim `baseline → 5` and say "3 new" while B measured 6, leaving B's
+    sixth message in no announcement at all. A loser now re-reads and retries
+    while the baseline is still below its own measurement, bounded by
+    `MailService.NEW_MAIL_CLAIM_ATTEMPTS` (3).
+16. **The empty-poll marker is the epoch, not a backdated clock reading** — see
+    the correction to entry 11 above and spec §4.2. The comment, the test name
+    and entry 11 all cited tolerance of a device "ten minutes fast", which 60
+    seconds cannot provide; the test now asserts the REASON (an empty feed
+    proves emptiness, so the marker suppresses nothing) and fails for any
+    clock-derived marker, by recording the marker on two devices ten minutes
+    apart and requiring them to be identical. Three comments claiming the
+    marker comes from "the client's own clock"
+    (`NotificationAlerts.test.tsx`, `announce.ts`, `notifications.store.ts`,
+    plus one in `announce.test.ts`) are corrected. One collateral test,
+    "announces only rows stamped AFTER the marker", used to borrow the
+    empty-poll marker to date its backlog; it now sets the marker explicitly,
+    because the epoch cannot date anything as older than itself.
+17. **Spec §4.1's residual claim was false in one direction, and §8's latency
+    bullet was wrong.** The stale-upsert residual was documented as costing
+    "one extra chime, never a lost message"; it can lose one (a slow fetch
+    landing after the user read everything measures `0 → 5`, claims, chimes for
+    read mail and upserts 5, so the next genuine arrival computes a negative
+    delta and is silent with no row written, repaired only by the sync after
+    that). §8 still said "the browser syncs every two minutes" — there are
+    three call sites (sidebar 60s on non-mail pages, mail page on mount,
+    `useInboxSync` at 10s then 2min), which is the same premise the third
+    amendment in §4.1 already disproved. Both corrected in place.
+18. **Two test weaknesses closed.** The "no stored Inbox row yet" test could
+    not fail — deleting the `!previous` guard makes `previous.unreadCount`
+    throw into the same try/catch, yielding no notification and no claim
+    either way — so it now spies the logger and asserts NO warning was logged,
+    which is the only observable difference between "handled" and "crashed and
+    swallowed". "Notifies the first arrival this user has ever had" was a
+    strict subset of the test above it and is folded into it. And the
+    conditional-claim test now asserts the claim PRECEDES the insert, not just
+    that it is conditional.

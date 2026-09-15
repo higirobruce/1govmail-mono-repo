@@ -225,10 +225,10 @@ export class MailService {
    * Reads the stored Inbox row itself (this must happen BEFORE the upsert loop
    * in getFolders overwrites it — that read used to live in getFolders,
    * unguarded; it now lives here so its failure is covered by the same
-   * try/catch as the compare-and-create below). Never throws: a failed read
-   * degrades to the same outcome as "no previous row" — skip the notification,
-   * log at WARN, and let the folder list continue. An alert is worth less than
-   * the folder list this runs inside.
+   * try/catch as the claim below). Never throws: a failed read or a failed
+   * claim degrades to the same outcome as "no previous row" — skip the
+   * notification, log at WARN, and let the folder list continue. An alert is
+   * worth less than the folder list this runs inside.
    */
   private async notifyNewMail(
     userId: string,
@@ -245,31 +245,38 @@ export class MailService {
       const delta = current.unreadCount - previous.unreadCount;
       if (delta <= 0) return;
 
-      // Idempotent against the TRANSITION, and only while that transition is
-      // still fresh.
+      // Claim the transition by ADVANCING THE BASELINE CONDITIONALLY.
       //
-      // Neither half works alone:
+      // The decision and the write are one operation: move the stored Inbox
+      // count off the exact value this sync measured from, and announce only
+      // if that update matched a row. Whoever matches owns the arrival;
+      // everyone else finds the baseline already gone and returns silently.
       //
-      // - A clock window on its own ("did we notify in the last 60s?")
-      //   suppresses whatever lands inside it, and the upsert loop in
-      //   getFolders advances the stored count whether or not we notified, so
-      //   a suppressed arrival is gone for good — no chime, no toast, no row.
-      // - The level alone ("is the count we are about to announce higher than
-      //   the last one?") turns metadata.unreadCount into a high-water mark,
-      //   because a row is only ever written when the count EXCEEDS the last
-      //   announced level. A user who reaches 50 unread and clears the inbox
-      //   then hears nothing until they pass 50 again.
-      // - The transition alone (baseline -> current) recurs verbatim, because
-      //   reading mail moves the baseline BACKWARDS: (0 -> 3), read all three,
-      //   three more arrive, (0 -> 3) again — a genuine arrival that looks
-      //   exactly like the announcement that preceded it.
+      // Three timing-based guards were tried here before this one, and each
+      // lost real mail:
       //
-      // Time is the only thing that separates those two: two tabs racing one
-      // arrival compute the same transition within milliseconds, while a
-      // read-then-refill needs at least two sync cycles (the browser polls
-      // folders every two minutes) with a human reading mail in between.
-      const latest = await this.notifications.getLatestNotification(userId, 'NEW_MAIL');
-      if (MailService.isDuplicateTransition(latest, previous.unreadCount, current.unreadCount)) return;
+      // - A clock window ("did we notify in the last 60s?") suppresses
+      //   whatever lands inside it, and the baseline advances whether or not
+      //   anything was announced, so a suppressed arrival is gone for good.
+      // - The level alone ("is the count higher than the last announced
+      //   one?") turns the announced count into a high-water mark that never
+      //   falls: a user who reaches 50 unread and clears the inbox hears
+      //   nothing until they pass 50 again.
+      // - The transition plus a short window has the same hole as the first,
+      //   only narrower. There is no window that is safe, because there is no
+      //   floor on how fast a baseline can legitimately return: the sidebar
+      //   polls folders every 60s on every non-mail page, the mail page syncs
+      //   on mount, and useInboxSync fires 10s after mount — a complete
+      //   notify -> read -> refill cycle fits inside seconds.
+      //
+      // The database answers the question none of them could: not "does this
+      // look like something we already said?" but "is this sync the one that
+      // moved the mailbox off that baseline?".
+      const claimed = await this.prisma.folder.updateMany({
+        where: { id: previous.id, unreadCount: previous.unreadCount },
+        data: { unreadCount: current.unreadCount },
+      });
+      if (claimed.count === 0) return;
 
       await this.notifications.createNotification(
         userId,
@@ -277,49 +284,14 @@ export class MailService {
         `${delta} new message${delta === 1 ? '' : 's'}`,
         await this.newMailBody(userId, previous.id, current.unreadCount),
         '/mail',
-        // The baseline is part of the row, not just the level announced: it is
-        // what makes the guard above able to recognise its own transition.
+        // Recorded for debugging only — what the delta was measured from,
+        // what was announced, and the difference. Nothing compares these
+        // across rows any more; the claim above is the whole decision.
         { baseline: previous.unreadCount, unreadCount: current.unreadCount, delta },
       );
     } catch (err: any) {
       this.logger.warn(`NEW_MAIL notification failed for userId=${userId}: ${err?.message}`);
     }
-  }
-
-  /**
-   * How long one announced Inbox transition is treated as already-said.
-   *
-   * Long enough to cover several tabs (or devices) reacting to one arrival —
-   * they compute the identical transition within milliseconds. Far shorter
-   * than the two-minute folder poll, so the earliest a repeat of the same
-   * transition could legitimately occur is well outside it.
-   */
-  private static readonly NEW_MAIL_DUPLICATE_MS = 15_000;
-
-  /**
-   * Whether `latest` is this very announcement, already made: the same
-   * `baseline -> unreadCount` transition, written inside
-   * NEW_MAIL_DUPLICATE_MS.
-   *
-   * False whenever it cannot tell — no row, unreadable metadata, a row that
-   * predates the `baseline` field — because announcing beats silence, and
-   * silence is the one failure direction this feature must never take.
-   */
-  private static isDuplicateTransition(
-    latest: { metadata: unknown; createdAt: Date } | null,
-    baseline: number,
-    unreadCount: number,
-  ): boolean {
-    const metadata = latest?.metadata;
-    if (!latest || !metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false;
-
-    const announced = metadata as Record<string, unknown>;
-    if (announced.baseline !== baseline || announced.unreadCount !== unreadCount) return false;
-
-    // A row from the immediate future (the DB clock a shade ahead of ours) is
-    // a duplicate too, so only the upper bound is checked.
-    const ageMs = Date.now() - new Date(latest.createdAt).getTime();
-    return Number.isFinite(ageMs) && ageMs <= MailService.NEW_MAIL_DUPLICATE_MS;
   }
 
   /**

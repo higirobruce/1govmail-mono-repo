@@ -175,14 +175,7 @@ export class MailService {
       throw err;
     }
 
-    // Read the folder rows as they stand BEFORE the upsert below overwrites
-    // them — this is the only moment the server holds both the previous unread
-    // count and the one the provider just reported.
-    const storedFolders = await this.prisma.folder.findMany({
-      where: { userId },
-      select: { zimbraId: true, path: true, unreadCount: true },
-    });
-    await this.notifyNewMail(userId, storedFolders, providerFolders);
+    await this.notifyNewMail(userId, providerFolders);
 
     // Persist folders to DB for caching; failures here must not prevent the
     // response from reaching the client (don't let a Prisma error become 500).
@@ -233,14 +226,24 @@ export class MailService {
    * the last sync. A fall means the user read mail somewhere else, which is
    * not an arrival.
    *
-   * Never throws: an alert is worth less than the folder list this runs inside.
+   * Reads the previously stored folder rows itself (this must happen BEFORE
+   * the upsert loop in getFolders overwrites them — that read used to live in
+   * getFolders, unguarded; it now lives here so its failure is covered by the
+   * same try/catch as the compare-and-create below). Never throws: a failed
+   * read degrades to the same outcome as "no previous row" — skip the
+   * notification, log at WARN, and let the folder list continue. An alert is
+   * worth less than the folder list this runs inside.
    */
   private async notifyNewMail(
     userId: string,
-    stored: Array<{ zimbraId: string; path: string; unreadCount: number }>,
     fetched: Array<{ id: string; path: string; unreadCount: number }>,
   ): Promise<void> {
     try {
+      const stored = await this.prisma.folder.findMany({
+        where: { userId },
+        select: { zimbraId: true, path: true, unreadCount: true },
+      });
+
       const previous = stored.find((f) => f.path === '/Inbox');
       const current = fetched.find((f) => f.path === '/Inbox');
       if (!previous || !current) return; // first sync ever: nothing to compare

@@ -1861,7 +1861,7 @@ describe('MailService new-mail detection', () => {
   const user = { id: 'u1', authToken: 'tok', tokenExpiry: new Date(Date.now() + 60_000), provider: 'zimbra' };
   const stored = [{ zimbraId: 'z-inbox', path: '/Inbox', unreadCount: 2 }];
 
-  function makeService(fetchedUnread: number, recent = false) {
+  function makeService(fetchedUnread: number, recent = false, findMany = jest.fn().mockResolvedValue(stored)) {
     const createNotification = jest.fn().mockResolvedValue({});
     const notifications = {
       createNotification,
@@ -1870,7 +1870,7 @@ describe('MailService new-mail detection', () => {
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue(user), update: jest.fn() },
       folder: {
-        findMany: jest.fn().mockResolvedValue(stored),
+        findMany,
         upsert: jest.fn().mockResolvedValue({ id: 'f-inbox' }),
       },
     } as unknown as PrismaService;
@@ -1929,5 +1929,19 @@ describe('MailService new-mail detection', () => {
     notifications.createNotification.mockRejectedValue(new Error('db down'));
 
     await expect(service.getFolders('u1')).resolves.toBeDefined();
+  });
+
+  it('still returns the folder list, and creates no notification, when reading the stored folders throws', async () => {
+    // The stored-folder read now happens inside notifyNewMail (not getFolders)
+    // precisely so a transient DB failure here degrades to "no previous row"
+    // instead of breaking folder sync.
+    const { service, createNotification } = makeService(
+      5, false, jest.fn().mockRejectedValue(new Error('connection reset')),
+    );
+
+    const result = await service.getFolders('u1');
+
+    expect(result).toBeDefined();
+    expect(createNotification).not.toHaveBeenCalled();
   });
 });

@@ -1394,3 +1394,35 @@ permission — asking on page load is how permission gets refused forever."
 - [ ] Live check on `.155` (HTTPS): send yourself mail, wait for a folder sync, confirm the chime, the toast, and — with the window hidden — the OS notification.
 - [ ] Live check on `.154` (HTTP): confirm the chime and toast still work and that NO OS notification is attempted. This is the documented secure-context limit, not a bug.
 - [ ] Release note: a chime can lag the mail by up to two minutes; `.154` cannot raise OS notifications; nothing is heard while the app is closed.
+
+---
+
+## Post-review corrections (fix wave, 2026-09-15)
+
+The whole-branch review found three blockers in the seams between the tasks
+above. What the plan got wrong, and what the code now does:
+
+1. **Task 1's dedupe guard was time-based** (`hasRecentNotification`), which
+   silently discarded real arrivals — see the amendment in spec §4.1. Dedupe is
+   now by `metadata.unreadCount`, via
+   `NotificationsService.getLatestNotification`. `hasRecentNotification` had no
+   other caller and is gone.
+2. **Task 1 dropped spec §4.1's body text** (sender and subject of the newest
+   unread message) without recording it as a deviation. It is implemented, with
+   the unread total as the fallback.
+3. **Task 5's `refetchInterval` needed `refetchIntervalInBackground`.** Without
+   it react-query stops polling while the window is hidden, which is precisely
+   when the component's OS-notification branch is the only delivery left — the
+   background tier was dead code.
+4. **Task 5's marker was recorded inside an effect gated on a non-empty feed**,
+   so a device whose first poll came back empty swallowed its first real alert
+   too. The store now carries an `initialized` flag and
+   `selectNewNotifications` takes it.
+5. **Task 5's step 6 removed the mail page's `sendNotification`** and left the
+   desktop `notify` IPC with no caller, costing the desktop build its native
+   notifications and click-to-focus-window. `NotificationAlerts` now prefers
+   that IPC when it exists.
+6. **The mail page's 2-minute poll was Electron-only** (it always had been), so
+   a browser user never triggered the folder sync that detection depends on. It
+   now runs in `useInboxSync` for every environment; the dock badge stays
+   Electron-only.

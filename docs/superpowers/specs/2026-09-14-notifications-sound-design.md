@@ -105,9 +105,19 @@ Create one notification:
 - `metadata: { unreadCount, delta }`
 
 **Dedupe.** The browser polls every two minutes, and several tabs or devices may
-poll at once. Suppress a new row when a `NEW_MAIL` notification for this user
-already exists within the last 60 seconds. This mirrors the guard the
-`EVENT_SOON` cron already uses, and keeps detection idempotent without a lock.
+poll at once, so detection must be idempotent without a lock.
+
+> **Amended 2026-09-15, after the whole-branch review.** This paragraph
+> originally said "suppress a new row when a `NEW_MAIL` notification for this
+> user already exists within the last 60 seconds", and claimed that mirrored
+> the `EVENT_SOON` cron. It does not: that cron dedupes on *identity*
+> (`metadata.eventId`) and therefore cannot lose an event, whereas a time
+> window loses whatever lands inside it — `getFolders` advances the stored
+> unread count whether or not it notified, so a suppressed arrival is never
+> seen again. Dedupe is now by **count**: suppress only when the most recent
+> `NEW_MAIL` row's `metadata.unreadCount` is already greater than or equal to
+> the count about to be announced. A repeated sync at the same level stays
+> quiet; any higher level always notifies.
 
 **Failure is silent.** A notification failure must never break `getFolders` —
 the folder list is the user's mailbox and matters more than an alert. Wrap in

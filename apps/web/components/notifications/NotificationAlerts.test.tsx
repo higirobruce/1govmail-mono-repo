@@ -39,7 +39,7 @@ describe('NotificationAlerts', () => {
     useNotificationsStore.setState({
       soundEnabled: true, volume: 0.6,
       tones: { NEW_MAIL: 'soft', EVENT_SOON: 'double' },
-      lastAnnouncedAt: MARKER, initialized: true,
+      lastAnnouncedAt: MARKER,
     });
   });
 
@@ -140,14 +140,13 @@ describe('NotificationAlerts', () => {
   });
 
   it('announces nothing on a first run, but records where the feed had got to', async () => {
-    useNotificationsStore.setState({ lastAnnouncedAt: null, initialized: false });
+    useNotificationsStore.setState({ lastAnnouncedAt: null });
     vi.spyOn(api.notifications, 'getAll').mockResolvedValue([mailRow] as any);
 
     renderAlerts();
 
     await waitFor(() => expect(useNotificationsStore.getState().lastAnnouncedAt).toBe(mailRow.createdAt));
     expect(toast).not.toHaveBeenCalled();
-    expect(useNotificationsStore.getState().initialized).toBe(true);
   });
 
   it('announces the first arrival on a device whose first poll was EMPTY', async () => {
@@ -156,18 +155,17 @@ describe('NotificationAlerts', () => {
     // regardless, and the marker was recorded inside an effect that returned
     // early on an empty feed. The device therefore swallowed its first real
     // alert as well as the backlog it never had.
-    useNotificationsStore.setState({ lastAnnouncedAt: null, initialized: false });
+    useNotificationsStore.setState({ lastAnnouncedAt: null });
     const getAll = vi.spyOn(api.notifications, 'getAll').mockResolvedValue([] as any);
     const play = vi.mocked(playTone);
 
     renderAlerts();
-    await waitFor(() => expect(useNotificationsStore.getState().initialized).toBe(true));
+    // The empty poll records a marker — the client's own clock, there being no
+    // server timestamp to borrow — and that marker is the only evidence the
+    // poll completed, now that no separate flag records it.
+    await waitFor(() => expect(useNotificationsStore.getState().lastAnnouncedAt).not.toBeNull());
     expect(toast).not.toHaveBeenCalled();
-    // The empty poll still records a marker — the client's own clock, there
-    // being no server timestamp to borrow. "Initialized with a null marker" is
-    // the state that replayed whole backlogs, so it has to be unreachable.
     const marker = useNotificationsStore.getState().lastAnnouncedAt;
-    expect(marker).not.toBeNull();
 
     // The mail arrives after that poll, so the server stamps it later than the
     // marker the poll recorded.
@@ -182,23 +180,28 @@ describe('NotificationAlerts', () => {
 
   it('never replays the backlog a device missed while it was away', async () => {
     // The burst spec §4.2 exists to forbid. A device whose first poll came back
-    // EMPTY was marked initialized but recorded no marker, because
-    // newestCreatedAt([]) is null. Close it, let rows pile up server-side,
-    // reopen it: initialized with a null marker meant "announce everything",
-    // so the whole 50-row feed played oldest-first — fifty toasts and a chime
-    // per audible row.
+    // EMPTY recorded no marker, because newestCreatedAt([]) is null, and an
+    // `initialized` flag said it had polled anyway. Close it, let rows pile up
+    // server-side, reopen it: that pair meant "announce everything", so the
+    // whole 50-row feed played oldest-first — fifty toasts and a chime per
+    // audible row. The marker the empty poll now records is what dates the
+    // backlog, and the flag is gone.
     const backlog = [0, 1, 2].map((i) => ({
       ...mailRow,
       id: `old-${i}`,
       title: `Backlog ${i}`,
       createdAt: new Date(Date.now() - (i + 1) * 60_000).toISOString(),
     }));
-    useNotificationsStore.setState({ lastAnnouncedAt: null, initialized: false });
+    useNotificationsStore.setState({ lastAnnouncedAt: null });
     const getAll = vi.spyOn(api.notifications, 'getAll').mockResolvedValue([] as any);
     const play = vi.mocked(playTone);
 
     renderAlerts();
-    await waitFor(() => expect(useNotificationsStore.getState().initialized).toBe(true));
+    // Wait on the QUERY, not on anything the fix writes, so this test measures
+    // the announce pass rather than its own setup: the empty poll has landed,
+    // and the flush runs the effect it scheduled.
+    await waitFor(() => expect(queryClient.getQueryData(['notifications'])).toEqual([]));
+    await act(async () => {});
 
     // Back from being closed. One row genuinely arrived after the marker the
     // empty poll recorded; the three behind it are history, and are here to be

@@ -27,32 +27,17 @@ interface NotificationsState {
    *
    * Every COMPLETED poll records one, including a poll that came back empty:
    * that one has no server timestamp to borrow and records the client's own
-   * ISO time instead (see NotificationAlerts). So after any poll this is
-   * non-null, and `initialized` with a null marker — the state that replayed a
-   * whole backlog — cannot be written by this build.
+   * ISO time instead (see NotificationAlerts). So null means exactly one
+   * thing — this device has never completed a poll — and there is no second
+   * flag to disambiguate it. An earlier build carried an `initialized` flag
+   * for that job; recording a marker on an empty poll does it instead, and
+   * without the state where the two disagreed and a whole backlog replayed.
    */
   lastAnnouncedAt: string | null;
-  /**
-   * Whether this device has ever completed a poll of the feed.
-   *
-   * Without it a null `lastAnnouncedAt` was ambiguous, and the ambiguity cost a
-   * real alert: a device whose first poll came back EMPTY recorded no marker,
-   * and a null marker meant "suppress everything", so the next genuine arrival
-   * was swallowed too. The backlog suppression it was protecting only applies
-   * to a first poll that actually returned rows.
-   *
-   * An empty poll now records a marker of its own, which is the primary fix —
-   * the flag no longer has to carry that distinction for any store this build
-   * writes. It is kept because it is the only thing that can read a store
-   * PERSISTED by the build that had the bug (initialized, no marker); see
-   * `selectNewNotifications`.
-   */
-  initialized: boolean;
   setSoundEnabled: (v: boolean) => void;
   setVolume: (v: number) => void;
   setTone: (type: AudibleType, tone: ToneName) => void;
   setLastAnnouncedAt: (iso: string) => void;
-  markInitialized: () => void;
 }
 
 export const useNotificationsStore = create<NotificationsState>()(
@@ -62,7 +47,6 @@ export const useNotificationsStore = create<NotificationsState>()(
       volume: 0.6,
       tones: { NEW_MAIL: 'soft', EVENT_SOON: 'double' },
       lastAnnouncedAt: null,
-      initialized: false,
       setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
       setVolume: (v) => set({ volume: Math.min(1, Math.max(0, v)) }),
       setTone: (type, tone) => set((s) => ({ tones: { ...s.tones, [type]: tone } })),
@@ -70,9 +54,6 @@ export const useNotificationsStore = create<NotificationsState>()(
       // the marker and replay alerts the user already heard.
       setLastAnnouncedAt: (iso) =>
         set((s) => (!s.lastAnnouncedAt || iso > s.lastAnnouncedAt ? { lastAnnouncedAt: iso } : s)),
-      // One-way, and persisted: once this device has seen the feed there is no
-      // backlog left to protect it from.
-      markInitialized: () => set((s) => (s.initialized ? s : { initialized: true })),
     }),
     { name: 'notifications' },
   ),

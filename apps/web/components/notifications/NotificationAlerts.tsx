@@ -55,7 +55,6 @@ export function NotificationAlerts() {
   const volume = useNotificationsStore((s) => s.volume);
   const tones = useNotificationsStore((s) => s.tones);
   const setLastAnnouncedAt = useNotificationsStore((s) => s.setLastAnnouncedAt);
-  const markInitialized = useNotificationsStore((s) => s.markInitialized);
 
   const { data: feed = [], isSuccess } = useQuery<NotificationRow[]>({
     queryKey: ['notifications'],
@@ -93,13 +92,14 @@ export function NotificationAlerts() {
 
   useEffect(() => {
     // Gate on a COMPLETED poll rather than on a non-empty feed: an empty feed
-    // is a poll too, and treating it as "nothing happened" left the device
-    // permanently uninitialized — so it swallowed its first real alert as well
-    // as the backlog it never had.
+    // is a poll too, and it still has to leave a marker behind (see the
+    // `finally` below). Treating it as "nothing happened" is what left a
+    // device with no marker at all, and it then swallowed its first real alert
+    // as well as the backlog it never had.
     if (!isSuccess) return;
 
-    const { lastAnnouncedAt: marker, initialized } = useNotificationsStore.getState();
-    const fresh = selectNewNotifications(feed, marker, initialized);
+    const marker = useNotificationsStore.getState().lastAnnouncedAt;
+    const fresh = selectNewNotifications(feed, marker);
 
     try {
       for (const row of fresh) {
@@ -132,10 +132,12 @@ export function NotificationAlerts() {
         setLastAnnouncedAt(newest);
       } else if (!marker) {
         // An EMPTY first poll still has to leave a marker behind. Left null it
-        // combined with `initialized` into the state that replays a whole
-        // backlog: the device is closed, rows pile up server-side, and it comes
-        // back to "initialized, no marker" — which meant "announce everything"
-        // — so up to fifty toasts and a chime per audible row arrive at once.
+        // meant one of two things and the code could not tell which: "never
+        // polled, suppress the backlog" or "polled, nothing was there". The
+        // flag that used to disambiguate it replayed whole backlogs of its own
+        // — a device closed on an empty poll, rows piling up server-side, and
+        // fifty toasts plus a chime per audible row on its return. Recording a
+        // marker here means a null marker only ever means "never polled".
         //
         // A backlog is only distinguishable from an arrival by age, and an
         // empty feed carries no server timestamp to borrow, so the client's own
@@ -148,9 +150,8 @@ export function NotificationAlerts() {
         // one poll on one device, not every poll on every device.
         setLastAnnouncedAt(new Date().toISOString());
       }
-      markInitialized();
     }
-  }, [feed, isSuccess, soundEnabled, volume, tones, setLastAnnouncedAt, markInitialized]);
+  }, [feed, isSuccess, soundEnabled, volume, tones, setLastAnnouncedAt]);
 
   return null;
 }

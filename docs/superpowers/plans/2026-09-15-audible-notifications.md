@@ -1450,5 +1450,11 @@ themselves introduced.
    device whose first poll was empty came back as "initialized, no marker" —
    which meant "announce everything" — and replayed up to fifty rows. An empty
    poll now records the client's own ISO time, making that state unwritable.
-   The `initialized` branch is kept only for stores the previous build already
-   persisted.
+9. **`initialized` is deleted.** With a marker recorded on every completed poll
+   — an empty one included — a null marker can only mean "this device has never
+   polled", so `selectNewNotifications` suppresses on a null marker full stop
+   and the flag was dead state. Deleting it also removes a migration hazard: a
+   store persisted by the intermediate build (`initialized: true`, no marker)
+   would otherwise have replayed its whole feed once. Gone from the store, its
+   actions, the persisted shape, `selectNewNotifications`' signature and the
+   announce effect.

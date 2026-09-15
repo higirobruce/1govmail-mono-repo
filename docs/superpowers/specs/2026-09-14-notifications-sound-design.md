@@ -171,14 +171,16 @@ A new `NotificationAlerts` component mounts once in the `(app)` layout, beside
 2. keeps a marker of what it has already announced, so a reload does not
    replay the backlog. **As built** this is the `createdAt` of the newest row
    announced, not "the highest notification id" — ids are cuids and are not
-   reliably ordered — and it lives in the persisted `notifications` Zustand
-   store rather than a bare `localStorage` key. Two fields carry it:
-   `lastAnnouncedAt` (the timestamp, moving forward only) and `initialized`
-   (whether this device has ever completed a poll). Every completed poll
-   records a marker, including one that comes back empty — that one has no
-   server timestamp to borrow and records the client's own ISO time, because
-   otherwise "initialized with no marker" means "announce everything" and a
-   device that returns to a full feed replays all fifty rows;
+   reliably ordered — and it lives as `lastAnnouncedAt` in the persisted
+   `notifications` Zustand store rather than a bare `localStorage` key, moving
+   forward only. One field, not two: every completed poll records a marker,
+   including one that comes back empty — that one has no server timestamp to
+   borrow and records the client's own ISO time — so a null marker means
+   exactly one thing, "this device has never polled", and everything in the
+   feed is then a backlog to suppress. (An intermediate build recorded nothing
+   on an empty poll and carried an `initialized` flag to disambiguate the null;
+   the state where the two disagreed replayed all fifty rows, and the flag was
+   deleted once the empty-poll marker made it redundant.);
 3. for each newer row, in order: shows a toast, plays the chime for its type
    (when the type is audible and sound is on), and — only when
    `document.visibilityState === 'hidden'` — raises an OS notification.

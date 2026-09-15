@@ -4,7 +4,7 @@ import { useNotificationsStore } from './notifications.store';
 const reset = () => useNotificationsStore.setState({
   soundEnabled: true, volume: 0.6,
   tones: { NEW_MAIL: 'soft', EVENT_SOON: 'double' },
-  lastAnnouncedAt: null, initialized: false,
+  lastAnnouncedAt: null,
 });
 
 describe('useNotificationsStore', () => {
@@ -35,14 +35,12 @@ describe('useNotificationsStore', () => {
     expect(useNotificationsStore.getState().lastAnnouncedAt).toBe('2026-09-15T10:00:00.000Z');
   });
 
-  it('starts uninitialized — this device has not polled the feed yet', () => {
-    expect(useNotificationsStore.getState().initialized).toBe(false);
-  });
-
-  it('stays initialized once a poll has completed, so an empty first feed cannot swallow the next alert', () => {
-    useNotificationsStore.getState().markInitialized();
-    expect(useNotificationsStore.getState().initialized).toBe(true);
-    useNotificationsStore.getState().markInitialized();
-    expect(useNotificationsStore.getState().initialized).toBe(true);
+  it('starts with no marker — this device has never polled the feed', () => {
+    // The ONE meaning of a null marker, now that every completed poll records
+    // one (an empty poll records the client's own clock). There used to be a
+    // second `initialized` flag here to tell "never polled" from "polled,
+    // nothing to record", and the state where the two disagreed replayed a
+    // whole backlog.
+    expect(useNotificationsStore.getState().lastAnnouncedAt).toBeNull();
   });
 });

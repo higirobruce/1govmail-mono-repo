@@ -18,7 +18,7 @@ describe('NotificationsSection', () => {
     vi.clearAllMocks();
     useNotificationsStore.setState({
       soundEnabled: true, volume: 0.6,
-      tones: { NEW_MAIL: 'soft', EVENT_SOON: 'double' }, lastAnnouncedAt: null, initialized: false,
+      tones: { NEW_MAIL: 'soft', EVENT_SOON: 'double' }, lastAnnouncedAt: null,
     });
   });
 

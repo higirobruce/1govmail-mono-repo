@@ -26,8 +26,14 @@ describe('selectNewNotifications', () => {
     row('a', '2026-09-15T10:00:00.000Z'),
   ];
 
-  it('announces nothing on the first run — a backlog must not play on login', () => {
+  it('announces nothing while the marker is null — a backlog must not play on login', () => {
+    // A null marker means exactly one thing: this device has never completed a
+    // poll, so everything in the feed is history. The caller records a marker
+    // in the same pass — the newest row's createdAt, or its own clock on an
+    // empty feed — so a null marker cannot survive a poll and this can only
+    // ever suppress a genuine backlog.
     expect(selectNewNotifications(feed, null)).toEqual([]);
+    expect(selectNewNotifications([], null)).toEqual([]);
   });
 
   it('returns only rows newer than the marker, oldest first', () => {
@@ -43,19 +49,6 @@ describe('selectNewNotifications', () => {
     const shuffled = [feed[1], feed[2], feed[0]];
     const picked = selectNewNotifications(shuffled, '2026-09-15T10:00:00.000Z');
     expect(picked.map((n) => n.id)).toEqual(['b', 'c']);
-  });
-
-  it('announces everything once a device that has polled still has no marker', () => {
-    // Only a store persisted by the build that had the empty-poll bug can be in
-    // this state: it marked the device initialized and skipped the marker. An
-    // empty poll records the client's ISO time now, so nothing written by this
-    // build gets here — and for the stores that are, announcing beats silence.
-    const picked = selectNewNotifications(feed, null, true);
-    expect(picked.map((n) => n.id)).toEqual(['a', 'b', 'c']);
-  });
-
-  it('still suppresses a real backlog on the very first poll', () => {
-    expect(selectNewNotifications(feed, null, false)).toEqual([]);
   });
 });
 

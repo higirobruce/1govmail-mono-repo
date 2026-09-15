@@ -33,31 +33,24 @@ export function isAudible(type: string): type is AudibleType {
 /**
  * The rows this device has not announced yet, oldest first.
  *
- * With no marker there are two different situations, and conflating them cost
- * a real alert:
+ * A null marker means this device has never completed a poll, and returns
+ * NOTHING: whatever the feed holds is a BACKLOG (up to 50 rows), and replaying
+ * it as a burst of chimes at login is the first thing a user would disable.
+ * The caller records a marker in the same pass — the newest row's `createdAt`,
+ * or its own clock when the feed came back empty — so a null marker cannot
+ * survive a poll and this branch only ever suppresses a genuine backlog.
  *
- * - `initialized === false` — this device has never completed a poll. Whatever
- *   the feed holds is a BACKLOG (up to 50 rows), and replaying it as a burst of
- *   chimes at login is the first thing a user would disable, so nothing is
- *   returned and the caller records the marker instead.
- * - `initialized === true` — this device polled and recorded no marker, which
- *   only the build that had the empty-poll bug could leave behind: it marked
- *   the device initialized and skipped the marker, because
- *   `newestCreatedAt([])` is null. An empty poll now records the client's own
- *   ISO time (see NotificationAlerts), so a store written by THIS build never
- *   reaches here. The branch stays for the stores that build left behind, and
- *   announces rather than suppresses for the same reason as everywhere else:
- *   silence is the one failure direction this feature must never take.
+ * That marker-on-an-empty-poll is what makes a single condition enough here.
+ * An earlier build left the marker null on an empty poll and needed an
+ * `initialized` flag to tell "never polled" from "polled, nothing to record";
+ * the two then disagreed on a device that came back to a full feed and it
+ * announced all fifty rows.
  */
 export function selectNewNotifications(
   feed: NotificationRow[],
   lastAnnouncedAt: string | null,
-  initialized = false,
 ): NotificationRow[] {
-  if (!lastAnnouncedAt) {
-    if (!initialized) return [];
-    return [...feed].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  }
+  if (!lastAnnouncedAt) return [];
   return feed
     // Lexicographic comparison is only correct because createdAt is always the
     // API's JSON serialization of a Prisma DateTime: ISO-8601, UTC, constant

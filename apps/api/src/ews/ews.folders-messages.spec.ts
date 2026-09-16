@@ -370,6 +370,32 @@ describe('EwsService folders + messages (Task 4)', () => {
       expect(m2.to).toHaveLength(2);
     });
 
+    // FindItem hardcoded `cc: []`/`bcc: []`, so every EWS row was persisted
+    // with no CC even though the parser and the DB column were both ready for
+    // it — a user copied on a MINAFFET thread could not tell they were on CC.
+    it('asks FindItem for CcRecipients alongside ToRecipients', async () => {
+      const { t, svc } = svcWith(FIND_ITEM);
+      await svc.getMessages(SESSION, 'AAA-Inbox=');
+      expect(t.calls[0].body).toContain('<t:FieldURI FieldURI="message:CcRecipients"/>');
+    });
+
+    it('maps CcRecipients when Exchange returns them on a listed item', async () => {
+      const withCc = FIND_ITEM.replace(
+        '<t:IsRead>false</t:IsRead>',
+        '<t:CcRecipients><t:Mailbox><t:Name>Carol Uwase</t:Name>' +
+        '<t:EmailAddress>carol.uwase@minaffet.gov.rw</t:EmailAddress>' +
+        '<t:RoutingType>SMTP</t:RoutingType></t:Mailbox></t:CcRecipients>' +
+        '<t:IsRead>false</t:IsRead>',
+      );
+      const { svc } = svcWith(withCc);
+
+      const page = await svc.getMessages(SESSION, 'AAA-Inbox=');
+
+      expect(page.messages[0].cc).toEqual([
+        { email: 'carol.uwase@minaffet.gov.rw', name: 'Carol Uwase' },
+      ]);
+    });
+
     it('requests the ConversationTopic extended property (Exchange FindItem never returns ConversationId)', async () => {
       const { t, svc } = svcWith(FIND_ITEM);
       await svc.getMessages(SESSION, 'AAA-Inbox=');

@@ -23,7 +23,8 @@ import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { prepareEmailHtml } from '@/lib/emailRender';
-import { buildEmailFrameCss } from '@/lib/emailFrameCss';
+import { buildEmailFrameCss, emailFrameColors } from '@/lib/emailFrameCss';
+import { repairEmailContrast } from '@/lib/emailContrastRepair';
 import { useIsDark } from '@/hooks/useIsDark';
 import { downloadAll } from '@/lib/downloadAll';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -31,6 +32,7 @@ import { Button } from '@/components/ui/button';
 import { MailAvatar, getInitials } from './MailAvatar';
 import { AttachmentTile } from './AttachmentTile';
 import { AttachmentLightbox } from './AttachmentLightbox';
+import RecipientDetails from './RecipientDetails';
 
 /** Files we can render inline rather than force-download — one shared
  *  classification with the lightbox and inline previewer (image / pdf / csv /
@@ -205,6 +207,13 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
     });
   }, []);
 
+  // Raw dark mode only: with normalize ON, normalizeCss already forces its own
+  // palette over every inline style, leaving nothing to repair. Always run
+  // AFTER quote-stripping so the element budget isn't spent on removed nodes.
+  const repairIfNeeded = useCallback((doc: Document) => {
+    if (isDark && !normalizeStyles) repairEmailContrast(doc, emailFrameColors(true));
+  }, [isDark, normalizeStyles]);
+
   // handleLoad for the main iframe.
   // When stripQuotes=false the body was already split before render, so just resize.
   // When stripQuotes=true run the full JS + CSS quote-stripping pass.
@@ -213,6 +222,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
     if (!doc) return;
 
     if (!stripQuotes) {
+      repairIfNeeded(doc);
       resizeMain();
       doc.querySelectorAll('img').forEach((img) => {
         if (!img.complete) {
@@ -247,6 +257,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
       }
     }
 
+    repairIfNeeded(doc);
     resizeMain();
     doc.querySelectorAll('img').forEach((img) => {
       if (!img.complete) {
@@ -254,11 +265,12 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
         img.addEventListener('error', resizeMain, { once: true });
       }
     });
-  }, [resizeMain, stripQuotes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resizeMain, stripQuotes, repairIfNeeded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleQuotedLoad = useCallback(() => {
     const doc = quotedRef.current?.contentDocument;
     if (!doc) return;
+    repairIfNeeded(doc);
     resizeQuoted();
     doc.querySelectorAll('img').forEach((img) => {
       if (!img.complete) {
@@ -266,7 +278,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
         img.addEventListener('error', resizeQuoted, { once: true });
       }
     });
-  }, [resizeQuoted]);
+  }, [resizeQuoted, repairIfNeeded]);
 
   // Preprocess once per body (memoized here and in prepareEmailHtml): fix
   // Zimbra deferred images and malformed data URIs, sanitize (defense-in-depth
@@ -383,6 +395,10 @@ export interface ThreadMessageMeta {
   fromName: string | null;
   toRecipients: Array<{ email: string; name?: string | null }>;
   ccRecipients: Array<{ email: string; name?: string | null }>;
+  /** Own sent/draft items only — the provider never discloses another
+   *  sender's Bcc. Absent on rows synced before recipients were persisted. */
+  bccRecipients?: Array<{ email: string; name?: string | null }> | null;
+  replyTo?: string | null;
   snippet: string | null;
   isRead: boolean;
   isStarred: boolean;
@@ -431,6 +447,7 @@ export default function ThreadMessage({
   const [lightboxSelectedId, setLightboxSelectedId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const [showRecipients, setShowRecipients] = useState(false);
   const currentUserEmail = useAuthStore((s) => s.user?.email);
   const isSelf = !!currentUserEmail && message.fromEmail.toLowerCase() === currentUserEmail.toLowerCase();
 
@@ -518,6 +535,15 @@ export default function ThreadMessage({
   const initials = getInitials(message.fromName, message.fromEmail);
   const displayName = message.fromName ?? message.fromEmail;
   const timeStr = formatMessageTime(message.receivedAt);
+  // The header time is relative ("Yesterday 14:03"); the details panel states
+  // the unambiguous timestamp, which is what matters on a forwarded record.
+  const fullTimeStr = useMemo(() => {
+    try {
+      return format(parseISO(message.receivedAt), 'EEE, dd MMM yyyy HH:mm');
+    } catch {
+      return '';
+    }
+  }, [message.receivedAt]);
   const detail = fullMessage ?? message;
 
   // ── Collapsed row ─────────────────────────────────────────────────────────
@@ -663,7 +689,7 @@ export default function ThreadMessage({
               </div>
             </div>
             {/* Recipient summary */}
-            <div className="flex flex-wrap gap-x-3 text-micro text-ink-3 mt-0.5">
+            <div className="flex flex-wrap items-center gap-x-3 text-micro text-ink-3 mt-0.5">
               <span className="text-ink-3">{`<${message.fromEmail}>`}</span>
               {message.toRecipients.length > 0 && (
                 <span>
@@ -685,7 +711,35 @@ export default function ThreadMessage({
                   {message.ccRecipients.length > 2 && ` +${message.ccRecipients.length - 2}`}
                 </span>
               )}
+              {/* The summary above truncates; this opens the authoritative list.
+                  stopPropagation because the whole header is the collapse
+                  control — without it, reading the addresses closes the message. */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowRecipients((v) => !v); }}
+                aria-expanded={showRecipients}
+                aria-label={showRecipients ? 'Hide recipient details' : 'Show recipient details'}
+                className="inline-flex items-center gap-0.5 rounded text-ink-3 hover:text-foreground hover:underline"
+              >
+                Details
+                <ChevronDown
+                  className={cn('w-3 h-3 transition-transform', showRecipients && 'rotate-180')}
+                />
+              </button>
             </div>
+
+            {showRecipients && (
+              <div onClick={(e) => e.stopPropagation()}>
+                <RecipientDetails
+                  from={{ email: message.fromEmail, name: message.fromName }}
+                  replyTo={message.replyTo}
+                  to={message.toRecipients}
+                  cc={message.ccRecipients}
+                  bcc={message.bccRecipients ?? []}
+                  dateLabel={fullTimeStr}
+                />
+              </div>
+            )}
           </div>
         </div>
 

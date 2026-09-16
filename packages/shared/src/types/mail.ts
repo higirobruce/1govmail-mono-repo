@@ -87,3 +87,17 @@ export const SPAM_FOLDER_PATHS = ['/Junk', '/Spam'] as const;
 export function isSpamFolderPath(path?: string | null): boolean {
   return !!path && (SPAM_FOLDER_PATHS as readonly string[]).includes(path);
 }
+
+/**
+ * Folders holding mail the user sent (or is about to). The sender is the user
+ * in every row, so listing "From" there is wasted column — the addressee takes
+ * its place, which is what Zimbra does and the only way to scan own mail.
+ */
+export const SENT_LIKE_FOLDER_PATHS = ['/Sent', '/Drafts', '/Outbox'] as const;
+
+/** Whether rows in `path` should name the addressee instead of the sender.
+ *  Exact match only: "/Sent items 2024" is somebody's own archive of RECEIVED
+ *  mail, and a prefix match would silently relabel every row in it. */
+export function isSentLikeFolderPath(path?: string | null): boolean {
+  return !!path && (SENT_LIKE_FOLDER_PATHS as readonly string[]).includes(path);
+}

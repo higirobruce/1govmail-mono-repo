@@ -10,3 +10,4 @@ release
 *.db
 .superpowers
 .build-out/
+.claude/worktrees/

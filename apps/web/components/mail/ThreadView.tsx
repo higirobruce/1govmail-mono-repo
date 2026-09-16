@@ -587,6 +587,9 @@ export default function ThreadView({
         onReply={() => { setActiveTab('messages'); setInlineReply({ mode: 'reply', target: lastMessage }); }}
         onReplyAll={() => { setActiveTab('messages'); setInlineReply({ mode: 'replyAll', target: lastMessage }); }}
         onForward={() => onComposeWith('forward', lastMessage)}
+        // On a phone the overflow is the only route to Delete: there is no
+        // right-click, and the per-message action bar sits below the fold.
+        onDelete={onDelete}
         onSummarize={aiEnabled ? handleSummarize : undefined}
         summarizing={summarizing}
         onDraftDoc={aiEnabled ? handleDraftDoc : undefined}

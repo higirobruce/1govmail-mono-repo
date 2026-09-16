@@ -116,6 +116,34 @@ const MESSAGE_LIST_SELECT = {
   updatedAt: true,
 } as const;
 
+/** Provider addresses → the `{email, name}` JSON shape the DB columns hold. */
+function mapAddresses(
+  list: { email: string; name?: string | null }[] | undefined,
+): { email: string; name: string | null }[] {
+  return (list ?? []).map((a) => ({ email: a.email, name: a.name ?? null }));
+}
+
+/**
+ * Recipient fields for an upsert's `update` half.
+ *
+ * Recipients are refreshed on update (not written once on insert) so a row
+ * first synced without them — a pre-`recip=2` Zimbra sync, or an EWS FindItem
+ * that returns no recipient properties — heals on the next folder load instead
+ * of showing no "To" forever.
+ *
+ * The refresh is deliberately one-directional: a field is emitted ONLY when the
+ * provider actually returned addresses for it. A payload carrying no recipient
+ * roles must never blank out a full list that a message open already stored —
+ * the same erase-on-resync trap that cost icalUid its value in 630d28e.
+ */
+function recipientRefresh(m: ProviderMessage): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (m.to?.length)  out.toRecipients  = mapAddresses(m.to);
+  if (m.cc?.length)  out.ccRecipients  = mapAddresses(m.cc);
+  if (m.bcc?.length) out.bccRecipients = mapAddresses(m.bcc);
+  return out;
+}
+
 // Browsers cannot load cid: URLs — replace with src="" so the image is skipped
 // silently instead of rendering a broken-image icon. Applied to embedPending
 // responses only; the DB keeps the raw cid-bearing body until the embed lands.
@@ -533,6 +561,7 @@ export class MailService {
             isStarred: m.isFlagged,
             isDraft:   m.isDraft,
             syncedAt:  new Date(),
+            ...recipientRefresh(m),
           },
           create: {
             userId,
@@ -543,7 +572,9 @@ export class MailService {
             snippet:        m.snippet,
             fromEmail:      m.from.email,
             fromName:       m.from.name ?? null,
-            toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+            toRecipients:   mapAddresses(m.to),
+            ccRecipients:   mapAddresses(m.cc),
+            bccRecipients:  mapAddresses(m.bcc),
             isRead:         m.isRead,
             isStarred:      m.isFlagged,
             isDraft:        m.isDraft,
@@ -676,7 +707,13 @@ export class MailService {
     if (cached) {
       result = await this.prisma.message.update({
         where: { id: cached.id },
-        data: { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients, bccRecipients },
+        // GetMsg is the authoritative fetch, so it heals recipients a
+        // metadata-only list sync could not populate — To included.
+        data: {
+          bodyHtml, bodyText, attachments, inlineImages,
+          hasAttachments: attachments.length > 0,
+          toRecipients: mapAddresses(m.to), ccRecipients, bccRecipients,
+        },
       });
     } else {
       // Message is not in DB yet (e.g. opened from search results before the folder
@@ -695,7 +732,7 @@ export class MailService {
             snippet:        null,
             fromEmail:      m.from.email,
             fromName:       m.from.name ?? null,
-            toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+            toRecipients:   mapAddresses(m.to),
             ccRecipients,
             bccRecipients,
             isRead:         m.isRead,
@@ -813,8 +850,9 @@ export class MailService {
             snippet:        m.snippet,
             fromEmail:      m.from.email,
             fromName:       m.from.name ?? null,
-            toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name ?? null })),
-            ccRecipients:   m.cc.map((a) => ({ email: a.email, name: a.name ?? null })),
+            toRecipients:   mapAddresses(m.to),
+            ccRecipients:   mapAddresses(m.cc),
+            bccRecipients:  mapAddresses(m.bcc),
             isRead:         m.isRead,
             isStarred:      m.isFlagged,
             isDraft:        m.isDraft,
@@ -942,7 +980,9 @@ export class MailService {
       snippet:        m.snippet,
       fromEmail:      m.from.email,
       fromName:       m.from.name ?? null,
-      toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+      toRecipients:   mapAddresses(m.to),
+      ccRecipients:   mapAddresses(m.cc),
+      bccRecipients:  mapAddresses(m.bcc),
       isRead:         m.isRead,
       isStarred:      m.isFlagged,
       hasAttachments: m.hasAttachments,
@@ -955,7 +995,12 @@ export class MailService {
 
     const upsertArgs = (m: ProviderMessage, folderId: string) => ({
       where:  { userId_zimbraId: { userId, zimbraId: m.id } },
-      update: { isRead: m.isRead, isStarred: m.isFlagged, syncedAt: new Date() },
+      update: {
+        isRead: m.isRead,
+        isStarred: m.isFlagged,
+        syncedAt: new Date(),
+        ...recipientRefresh(m),
+      },
       create: {
         userId,
         folderId,
@@ -965,7 +1010,9 @@ export class MailService {
         snippet:        m.snippet,
         fromEmail:      m.from.email,
         fromName:       m.from.name ?? null,
-        toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+        toRecipients:   mapAddresses(m.to),
+        ccRecipients:   mapAddresses(m.cc),
+        bccRecipients:  mapAddresses(m.bcc),
         isRead:         m.isRead,
         isStarred:      m.isFlagged,
         hasAttachments: m.hasAttachments,

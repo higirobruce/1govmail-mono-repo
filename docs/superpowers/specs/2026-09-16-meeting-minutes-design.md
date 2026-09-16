@@ -1,7 +1,7 @@
 # Minutes of meeting, from a calendar event — design
 
 **Date:** 2026-09-16
-**Status:** approved in chat, awaiting spec review
+**Status:** implemented; §5.1 and §8 corrected 2026-09-16 after the whole-branch review
 **Branch:** ft-hyperscale
 
 ## 1. Why
@@ -91,11 +91,31 @@ event detail response  ◄── minutesDocumentId ───┘
 - **`CalendarEvent.icalUid String?`** — the cross-user meeting identity.
 - **`MeetingMinutes`** — the link table:
   - `icalUid String`
-  - `occurrenceStartAt DateTime` — **always the event row's own `startAt`.**
-    Both providers expand a recurring series into one row per instance, so an
-    instance's `startAt` *is* its occurrence, and a non-recurring event is
-    simply the degenerate case of one occurrence. No separate recurrence-id
-    handling is needed.
+  - `occurrenceStartAt DateTime` — **always the event row's own `startAt`,
+    as observed when the minutes were created.**
+
+    ⚠ **Corrected after implementation review.** This section originally
+    claimed that both providers expand a recurring series into one row per
+    instance, so an instance's `startAt` *is* its occurrence. That is true of
+    **EWS only**, and the consequences are recorded in §8:
+
+    - **EWS** uses `CalendarView`, which expands recurrences server-side into
+      distinct occurrences with distinct item ids and distinct starts, each
+      carrying the series UID. The compound key differentiates occurrences
+      exactly as intended.
+    - **Zimbra** returns one `appt` node per appointment with an `inst[]`
+      array, and `mapZimbraAppointment` keeps only `inst[0]`. A recurring
+      series is therefore **one row per mailbox**, whose `startAt` is the
+      first instance falling in whatever window the calendar last requested.
+      The §3 correction — the reason the key is the occurrence rather than the
+      series — does not take effect on Zimbra.
+    - On **both** providers the link row is written once and never updated, so
+      any later change to the event's `startAt` moves the lookup key away from
+      it. See §5.5.
+
+    Fixing this properly means making Zimbra emit one row per instance, which
+    changes what `/calendar/events` returns for every consumer. That is its
+    own piece of work with its own spec, not a patch to this one.
   - `documentId String` → `Document`, `onDelete: Cascade`
   - `createdBy String` → `User`
   - `createdAt DateTime @default(now())`
@@ -213,3 +233,24 @@ already works.
 - An event with no iCalendar UID falls back to per-user minutes.
 - Attendees added after creation are not invited automatically.
 - Deleting a meeting leaves its minutes behind.
+- **Recurring meetings get per-occurrence minutes on Exchange only.** On
+  Zimbra a recurring series is a single calendar row per mailbox, so its
+  minutes key to whichever occurrence the calendar was last showing. Found in
+  the implementation review; see §5.1.
+- **Rescheduling a meeting detaches minutes that already exist.** The link is
+  keyed on the meeting's UID and its start time, and the start time is what
+  changes. After a reschedule — whether edited in 1Gov Mail, changed by the
+  organizer upstream, or moved as a single occurrence of a series — the event
+  offers to create minutes again, and doing so creates a second, empty
+  document. The original is not lost: it stays in its owner's Docs and in
+  every attendee's "Shared with me", and its share link keeps working. It is
+  only no longer reachable from the meeting it records.
+
+  Two attendees can also disagree across the gap: until a mailbox syncs the
+  change, one still sees "Open minutes" on the original while the other has
+  already moved on. They converge once both have synced.
+
+  A UID-only fallback read was considered and rejected: on Exchange, where
+  occurrences are genuinely separate rows, it would surface last week's
+  minutes on this week's meeting — worse than offering to create. Doing it
+  precisely needs the per-occurrence expansion work in §5.1.

@@ -347,6 +347,14 @@ export default function AskPanel() {
   if (!sessionRef.current) sessionRef.current = createConversationSession();
   const session = sessionRef.current;
   const turnIdRef = useRef<string | null>(null);
+  // Set the instant ask() is called (not once it completes) — the ONLY
+  // signal the mount-time resume effect has for "the user already started
+  // their own turn while my fetch was still in flight," since the composer
+  // is disabled by `streaming` alone, not by that fetch. See the resume
+  // effect below for why this matters and why it is not testable in
+  // conversationSession.ts's pure unit tests (it lives entirely in this
+  // component, not in the session module).
+  const hasAskedRef = useRef(false);
   const [pendingSources, setPendingSources] = useState<AskSource[]>([]);
   const [pendingDegraded, setPendingDegraded] = useState<AskDegraded>({ vector: false, keyword: false, docs: false, calendar: false });
   const [error, setError] = useState<string | null>(null);
@@ -395,14 +403,36 @@ export default function AskPanel() {
   // elsewhere) left one pending. Read once via takeResumeId — it clears the
   // flag in the same call — before any other data loading, so a resumed
   // conversation's turns are what the panel first renders.
+  //
+  // The `api.aiHistory.get(id)` fetch below can take long enough for the
+  // user to ask — and fully receive an answer to — a turn of their own
+  // before it resolves: the composer is disabled only by `streaming`
+  // (see the textarea and Send button below), never by this fetch being in
+  // flight. Applying the restore over that would erase the question and
+  // answer the user just watched arrive, and silently overwrite the fresh
+  // conversation id that turn's own persist already wrote. Decision: the
+  // user's own live turn wins outright — abandon the resume rather than
+  // clobber it, with no visible sign that a resume was even attempted
+  // (the toast below is reserved for a genuinely failed fetch, not this).
+  //
+  // Two independent signs something happened while this was in flight:
+  // `hasAskedRef.current` (the user asked something — the composer never
+  // blocked them) and the generation moving on (they clicked "New
+  // conversation" without necessarily asking anything). Either is enough
+  // to abandon. Both checks — and the eventual write — happen in that
+  // order, BEFORE any state changes, so there is no window where the
+  // restore is partially applied (turns replaced but the id not written,
+  // or vice versa).
   useEffect(() => {
     const id = takeResumeId();
     if (!id) return;
+    const generationAtResumeStart = session.generation();
     let alive = true;
     (async () => {
       try {
         const t = await api.aiHistory.get(id);
         if (!alive || !t) return;
+        if (hasAskedRef.current || session.generation() !== generationAtResumeStart) return;
         // Pair the flat turn rows back into the panel's Turn shape. Proposals
         // are restored for display only — a proposal from an earlier session
         // is rendered inert (see the fromHistory branch below) rather than
@@ -417,7 +447,15 @@ export default function AskPanel() {
           fromHistory: true,
         }));
         setTurns(restored);
-        session.set(id);
+        // Goes through the exact same guarded write every other id-setter
+        // uses, rather than a bespoke unconditional one just for this path.
+        // Nothing between the check above and this line can yield to other
+        // JS (no `await` in between), so there is no actual gap for "New
+        // conversation" to land in between them — this call is provably
+        // redundant with that check today. It stays anyway: it costs
+        // nothing, and it is the one thing standing between a future edit
+        // that adds an await in between and a real reopened hole.
+        session.setIfCurrent(id, generationAtResumeStart);
       } catch {
         toast.error('That conversation is no longer available');
       }
@@ -499,15 +537,19 @@ export default function AskPanel() {
    * hands them in, so a queued persist always ships the id that belongs to
    * it, and its create() result is only accepted if nothing superseded it.
    *
-   * Reads `session.id()` live (not a value captured in this function's own
-   * closure) for the same class of reason: the chain may run this well
-   * after the render that defined it, once an earlier queued persist has
-   * already resolved and recorded a conversation. That's what makes the
-   * "already have a conversation" check correct at execution time instead
-   * of at enqueue time — the fix for the double-create race. `setIfCurrent`
-   * is the matching fix for the second race: a create() that resolves after
-   * "New conversation" has cleared and moved the generation on must not
-   * resurrect the conversation the user walked away from.
+   * Reads `session.id(generation)` live (not a value captured in this
+   * function's own closure) for the same class of reason: the chain may
+   * run this well after the render that defined it, once an earlier queued
+   * persist has already resolved and recorded a conversation UNDER THIS
+   * SAME generation. That's what makes the "already have a conversation"
+   * check correct at execution time instead of at enqueue time — the fix
+   * for the double-create race — while staying scoped to `generation`
+   * rather than "whatever generation is current right now" is what lets a
+   * turn queued before "New conversation" still find its own conversation
+   * even if it doesn't run until after that click. `setIfCurrent` is the
+   * matching guard on the write side: a create() that resolves after
+   * "New conversation" has moved the generation on must not resurrect the
+   * conversation the user walked away from.
    */
   const persistTurnPair = async (
     question: string, answer: AnswerTurn, turnId: string | null, generation: number,
@@ -526,8 +568,9 @@ export default function AskPanel() {
       ],
     };
     try {
-      if (session.id()) {
-        await api.aiHistory.append(session.id()!, body);
+      const existingId = session.id(generation);
+      if (existingId) {
+        await api.aiHistory.append(existingId, body);
       } else {
         const { id } = await api.aiHistory.create({
           ...body,
@@ -550,6 +593,9 @@ export default function AskPanel() {
   async function ask(question: string) {
     const q = question.trim();
     if (!q || streaming) return;
+    // The user has now definitively started their own turn — see hasAskedRef's
+    // declaration above for why the mount-time resume effect needs this.
+    hasAskedRef.current = true;
     setError(null);
     setInput('');
     // A clarify turn's question lives in the card, not the bubble text — fold

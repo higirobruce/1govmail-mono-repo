@@ -321,11 +321,13 @@ export interface ZimbraAppointment {
   inst?: ZimbraAppointmentInstance[];
   or?: ZimbraCalUser;
   at?: ZimbraCalUser[];
+  uid?: string;                // iCalendar UID — not on every Zimbra version's search hit
 }
 
 export interface ZimbraInviteComponent {
   at?: ZimbraCalUser[];
   or?: ZimbraCalUser;
+  uid?: string;                // iCalendar UID — always present on the invite component
 }
 
 export interface ZimbraInvite {
@@ -400,6 +402,10 @@ export function mapZimbraAppointment(raw: ZimbraAppointment): ProviderEvent | nu
     attendees: Array.isArray(raw.at)
       ? raw.at.map((a) => ({ email: a.a as string, name: a.d ?? undefined }))
       : [],
+    // Zimbra puts uid on the appointment in most versions and always on the
+    // invite component of a GetAppointment detail. Either is the same string
+    // in every attendee's mailbox.
+    icalUid: raw.uid ?? null,
   };
 }
 
@@ -445,6 +451,7 @@ export function mapZimbraAppointmentDetail(raw: ZimbraAppointmentDetail): Provid
     inviteMessageId: invMsgId != null ? String(invMsgId) : null,
     modifiedSequence: raw.ms != null ? Number(raw.ms) : undefined,
     rev: raw.rev != null ? Number(raw.rev) : undefined,
+    icalUid: comp?.uid ?? null,
   };
 }
 

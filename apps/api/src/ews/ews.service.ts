@@ -1223,6 +1223,9 @@ export class EwsService implements MailProvider {
       attendees: [],
       inviteId: null,
       isRecurring: toBool(item?.IsRecurring),
+      // The one identity that is the same string in every attendee's copy of
+      // this meeting — see the meeting-minutes spec §3.
+      icalUid: textOf(item?.UID) ?? null,
     };
   }
 
@@ -1281,6 +1284,9 @@ export class EwsService implements MailProvider {
       // EWS addresses an appointment update by its own ItemId + a fresh
       // ChangeKey — there is no separate invite-message id to join on.
       inviteMessageId: null,
+      // The one identity that is the same string in every attendee's copy of
+      // this meeting — see the meeting-minutes spec §3.
+      icalUid: textOf(item?.UID) ?? null,
     };
   }
 

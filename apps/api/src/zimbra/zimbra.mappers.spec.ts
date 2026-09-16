@@ -407,6 +407,34 @@ describe('mapZimbraAppointmentDetail', () => {
   });
 });
 
+describe('Zimbra appointment UID', () => {
+  it('reads uid off a search hit when Zimbra sends one', () => {
+    const ev = mapZimbraAppointment({
+      id: '520', name: 'Cabinet briefing', uid: 'cabinet-2026-09-17@zimbra',
+      inst: [{ s: Date.parse('2026-09-17T09:00:00Z') }], dur: 3600000,
+    } as any);
+    expect(ev?.icalUid).toBe('cabinet-2026-09-17@zimbra');
+  });
+
+  it('leaves icalUid null when the search hit has no uid', () => {
+    // Not every Zimbra version puts uid on the search response; the detail
+    // fetch is the fallback, so a missing uid must be null and not a crash.
+    const ev = mapZimbraAppointment({
+      id: '520', name: 'Cabinet briefing',
+      inst: [{ s: Date.parse('2026-09-17T09:00:00Z') }], dur: 3600000,
+    } as any);
+    expect(ev?.icalUid ?? null).toBeNull();
+  });
+
+  it('reads uid out of the appointment detail invite component', () => {
+    const detail = mapZimbraAppointmentDetail({
+      id: '520',
+      inv: [{ comp: [{ uid: 'cabinet-2026-09-17@zimbra', at: [], or: { a: 'chair@risa.gov.rw' } }] }],
+    } as any);
+    expect(detail.icalUid).toBe('cabinet-2026-09-17@zimbra');
+  });
+});
+
 describe('mapZimbraFreeBusy', () => {
   it('normalises the busy/tentative/unavailable slot arrays to numeric {s,e} pairs', () => {
     expect(mapZimbraFreeBusy({

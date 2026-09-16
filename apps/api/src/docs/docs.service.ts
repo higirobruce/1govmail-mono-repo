@@ -8,6 +8,15 @@ function shortToken(): string {
   const bytes = randomBytes(16);
   return Array.from(bytes, (b) => CHARS[b % CHARS.length]).join('');
 }
+
+// `DocumentInvite.invitedEmail` is written lowercased, while `User.email` is
+// stored exactly as the client sent it at login (nothing normalises it and the
+// column is plain, not citext). Every lookup that joins the two through an
+// address has to normalise, or the match silently fails for any user whose
+// stored address carries uppercase or stray whitespace.
+function normaliseEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
 import {
   ConflictException,
   ForbiddenException,
@@ -68,7 +77,10 @@ export class DocsService {
     if (!user) return [];
 
     const invites = await this.prisma.documentInvite.findMany({
-      where: { invitedEmail: user.email },
+      // Invites are stored lowercased but `User.email` is kept exactly as the
+      // client sent it, so the lookup must normalise or a mixed-case user
+      // silently sees none of the documents shared with them.
+      where: { invitedEmail: normaliseEmail(user.email) },
       include: {
         document: {
           select: {
@@ -922,7 +934,12 @@ export class DocsService {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
     if (!user) return null;
     return this.prisma.documentInvite.findUnique({
-      where: { documentId_invitedEmail: { documentId: docId, invitedEmail: user.email } },
+      // Normalised for the same reason as findSharedWithMe: the write side
+      // lowercases, `User.email` is un-normalised, and a case mismatch here
+      // reads as "no invite" and throws ForbiddenException.
+      where: {
+        documentId_invitedEmail: { documentId: docId, invitedEmail: normaliseEmail(user.email) },
+      },
     });
   }
 

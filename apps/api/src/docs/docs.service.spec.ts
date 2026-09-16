@@ -126,3 +126,46 @@ describe('DocsService.createMinutesDocument', () => {
     await expect(service.createMinutesDocument('u1', INPUT)).rejects.toThrow('connection reset');
   });
 });
+
+describe('DocsService invite lookups vs. a mixed-case User.email', () => {
+  // Invites are written lowercased (both on the minutes path and, in effect,
+  // wherever an address is normalised), but `User.email` is stored exactly as
+  // the client sent it — nothing normalises it at login. A user whose stored
+  // address carries uppercase must still match their lowercased invite, or the
+  // document is silently invisible to them: no "Shared with me" row and a
+  // ForbiddenException on opening it.
+  const STORED = 'Bruce.Higiro@RISA.gov.rw';
+  const NORMALISED = 'bruce.higiro@risa.gov.rw';
+
+  function makeService() {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ email: ` ${STORED} ` }) },
+      documentInvite: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue({ id: 'inv-1', role: 'EDITOR' }),
+      },
+    } as any;
+    return { service: new DocsService(prisma, {} as any), prisma };
+  }
+
+  it('findSharedWithMe matches the lowercased invite address', async () => {
+    const { service, prisma } = makeService();
+
+    await service.findSharedWithMe('u1');
+
+    expect(prisma.documentInvite.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { invitedEmail: NORMALISED } }),
+    );
+  });
+
+  it('getInviteForUser matches the lowercased invite address', async () => {
+    const { service, prisma } = makeService();
+
+    const invite = await service.getInviteForUser('u1', 'doc-1');
+
+    expect(invite).toEqual({ id: 'inv-1', role: 'EDITOR' });
+    expect(prisma.documentInvite.findUnique).toHaveBeenCalledWith({
+      where: { documentId_invitedEmail: { documentId: 'doc-1', invitedEmail: NORMALISED } },
+    });
+  });
+});

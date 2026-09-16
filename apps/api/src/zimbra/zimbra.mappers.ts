@@ -340,6 +340,7 @@ export interface ZimbraAppointmentDetail {
   id?: string | number;
   ms?: string | number;       // modifiedSequence
   rev?: string | number;
+  uid?: string;               // iCalendar UID — the `appt` node generally carries it too
   // The JSON bridge collapses single-item arrays into plain objects, so this
   // arrives either way.
   inv?: ZimbraInvite | ZimbraInvite[];
@@ -451,7 +452,14 @@ export function mapZimbraAppointmentDetail(raw: ZimbraAppointmentDetail): Provid
     inviteMessageId: invMsgId != null ? String(invMsgId) : null,
     modifiedSequence: raw.ms != null ? Number(raw.ms) : undefined,
     rev: raw.rev != null ? Number(raw.rev) : undefined,
-    icalUid: comp?.uid ?? null,
+    // NOT read through `comp` above: that accessor is deliberately array-only
+    // so an object `inv` falls through to the top-level attendee/organizer
+    // legs, and unifying it would change the REST payload. icalUid is a new
+    // field with no behaviour to preserve, so it resolves an object `inv` via
+    // firstOf() — the detail path is the authoritative UID source, and an
+    // array-only read here silently disables cross-attendee minutes for every
+    // bridge-collapsed Zimbra response.
+    icalUid: firstOf(raw.inv)?.comp?.[0]?.uid ?? raw.uid ?? null,
   };
 }
 

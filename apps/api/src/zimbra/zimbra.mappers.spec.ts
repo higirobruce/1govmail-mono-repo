@@ -433,6 +433,31 @@ describe('Zimbra appointment UID', () => {
     } as any);
     expect(detail.icalUid).toBe('cabinet-2026-09-17@zimbra');
   });
+
+  it('reads uid out of a bridge-collapsed OBJECT inv on the detail response', () => {
+    // Zimbra's JSON bridge collapses single-item arrays into plain objects, so
+    // a one-invite appointment arrives as `inv: {...}`, not `inv: [{...}]`.
+    // The detail path is the authoritative UID source, so an array-only
+    // accessor here silently disables cross-attendee minutes for every Zimbra
+    // meeting: no error, just "this meeting has no shared id".
+    const detail = mapZimbraAppointmentDetail({
+      id: '520',
+      inv: { comp: [{ uid: 'cabinet-2026-09-17@zimbra', at: [], or: { a: 'chair@risa.gov.rw' } }] },
+    } as any);
+    expect(detail.icalUid).toBe('cabinet-2026-09-17@zimbra');
+  });
+
+  it('falls back to a top-level uid on the detail response', () => {
+    const detail = mapZimbraAppointmentDetail({
+      id: '520', uid: 'cabinet-2026-09-17@zimbra', inv: { id: '512' },
+    } as any);
+    expect(detail.icalUid).toBe('cabinet-2026-09-17@zimbra');
+  });
+
+  it('leaves the detail icalUid null when neither the invite nor the appointment carries one', () => {
+    const detail = mapZimbraAppointmentDetail({ id: '520', inv: { id: '512' } } as any);
+    expect(detail.icalUid).toBeNull();
+  });
 });
 
 describe('mapZimbraFreeBusy', () => {

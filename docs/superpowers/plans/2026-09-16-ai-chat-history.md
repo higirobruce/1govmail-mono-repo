@@ -1270,8 +1270,6 @@ export class ConversationsController {
 }
 ```
 
-**Route order matters:** `@Delete()` must be declared after `@Delete(':id')` is fine either way in Nest, but `@Get(':id')` must come after `@Get()` — keep the order above.
-
 - [ ] **Step 5: Wire the module**
 
 Replace `apps/api/src/ai/ai.module.ts` with:
@@ -1377,7 +1375,13 @@ Create `apps/web/lib/ai/history.test.ts`:
 import { describe, it, expect } from 'vitest';
 import { groupByRecency, resumeTarget, scopeChipLabel, type HistoryItem } from './history';
 
+// Fixtures are offset from NOW, never absolute UTC instants: groupByRecency
+// buckets against local midnight (`setHours(0,0,0,0)`), so a fixed "09:00Z"
+// fixture lands in a different bucket depending on the runner's timezone.
 const NOW = new Date('2026-09-16T12:00:00.000Z');
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
 
 const item = (id: string, iso: string): HistoryItem => ({
   id, title: id, scopeKind: 'app', scopeId: null, scopeLabel: null,
@@ -1387,10 +1391,10 @@ const item = (id: string, iso: string): HistoryItem => ({
 describe('groupByRecency', () => {
   it('buckets by how recent the last turn was', () => {
     const groups = groupByRecency([
-      item('today', '2026-09-16T09:00:00.000Z'),
-      item('yesterday', '2026-09-15T09:00:00.000Z'),
-      item('thisweek', '2026-09-11T09:00:00.000Z'),
-      item('older', '2026-08-01T09:00:00.000Z'),
+      item('today', ago(1 * HOUR)),
+      item('yesterday', ago(28 * HOUR)),
+      item('thisweek', ago(4 * DAY)),
+      item('older', ago(40 * DAY)),
     ], NOW);
 
     expect(groups.map((g) => g.bucket)).toEqual(['Today', 'Yesterday', 'Earlier this week', 'Older']);
@@ -1399,14 +1403,14 @@ describe('groupByRecency', () => {
   });
 
   it('omits a bucket that has nothing in it', () => {
-    const groups = groupByRecency([item('older', '2026-08-01T09:00:00.000Z')], NOW);
+    const groups = groupByRecency([item('older', ago(40 * DAY))], NOW);
     expect(groups.map((g) => g.bucket)).toEqual(['Older']);
   });
 
   it('keeps the order it was given within a bucket', () => {
     const groups = groupByRecency([
-      item('a', '2026-09-16T11:00:00.000Z'),
-      item('b', '2026-09-16T08:00:00.000Z'),
+      item('a', ago(1 * HOUR)),
+      item('b', ago(3 * HOUR)),
     ], NOW);
     expect(groups[0].items.map((i) => i.id)).toEqual(['a', 'b']);
   });

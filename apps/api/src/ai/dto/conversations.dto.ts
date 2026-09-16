@@ -14,14 +14,17 @@ export class TurnDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(50)
   sources?: unknown[];
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(50)
   steps?: unknown[];
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(50)
   proposals?: unknown[];
 }
 

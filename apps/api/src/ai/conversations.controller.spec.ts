@@ -27,11 +27,31 @@ describe('ConversationsController', () => {
     expect(service.getTranscript).toHaveBeenCalledWith('u1', 'c1');
   });
 
-  it('creates with the caller own id', async () => {
+  it('creates with the caller own id and forwards the full payload unchanged', async () => {
     const { controller, service } = makeController();
-    const body: any = { scopeKind: 'app', model: 'qwen3', turns: [] };
+    const body: any = {
+      scopeKind: 'app',
+      scopeId: 's1',
+      scopeLabel: 'Label',
+      model: 'qwen3',
+      turnId: 't1',
+      turns: [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'a' },
+      ],
+    };
     await controller.create(REQ, body);
-    expect(service.create.mock.calls[0][0]).toBe('u1');
+    expect(service.create).toHaveBeenCalledWith('u1', {
+      scopeKind: 'app',
+      scopeId: 's1',
+      scopeLabel: 'Label',
+      model: 'qwen3',
+      turnId: 't1',
+      turns: [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'a' },
+      ],
+    });
   });
 
   it('normalises absent scope fields to null rather than undefined', async () => {
@@ -42,11 +62,21 @@ describe('ConversationsController', () => {
     expect(input.scopeLabel).toBeNull();
   });
 
-  it('appends with the caller own id', async () => {
+  it('appends with the caller own id and forwards the full payload, including turns', async () => {
     const { controller, service } = makeController();
-    await controller.append(REQ, 'c1', { turns: [] } as any);
-    expect(service.appendTurns.mock.calls[0][0]).toBe('u1');
-    expect(service.appendTurns.mock.calls[0][1]).toBe('c1');
+    await controller.append(REQ, 'c1', {
+      turns: [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'a' },
+      ],
+    } as any);
+    expect(service.appendTurns).toHaveBeenCalledWith('u1', 'c1', {
+      turns: [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'a' },
+      ],
+      turnId: null,
+    });
   });
 
   it('deletes one, and deletes all, with the caller own id', async () => {

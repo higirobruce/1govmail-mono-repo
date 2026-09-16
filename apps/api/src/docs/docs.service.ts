@@ -324,55 +324,87 @@ export class DocsService {
         .filter((e) => e.length > 0 && e !== mine),
     )];
 
-    return this.prisma.$transaction(async (tx) => {
-      const last = await tx.document.findFirst({
-        where: { userId, parentId: null },
-        orderBy: { position: 'desc' },
-        select: { position: true },
-      });
-
-      const doc = await tx.document.create({
-        data: {
-          userId,
-          title: input.title,
-          content: input.content,
-          emoji: '📝',
-          parentId: null,
-          position: (last?.position ?? -1) + 1,
-          // Sharing is on from the start: being sent the minutes is the whole
-          // point, and VIEW keeps a forwarded link from rewriting the record.
-          isShared: true,
-          shareToken: shortToken(),
-          sharePermission: 'VIEW',
-        },
-        select: { id: true },
-      });
-
-      if (invitees.length) {
-        await tx.documentInvite.createMany({
-          data: invitees.map((invitedEmail) => ({
-            documentId: doc.id,
-            invitedEmail,
-            invitedBy: userId,
-            role: 'EDITOR' as const,
-          })),
-          skipDuplicates: true,
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const last = await tx.document.findFirst({
+          where: { userId, parentId: null },
+          orderBy: { position: 'desc' },
+          select: { position: true },
         });
-      }
 
-      if (input.icalUid) {
-        await tx.meetingMinutes.create({
+        const doc = await tx.document.create({
           data: {
-            icalUid: input.icalUid,
-            occurrenceStartAt: input.occurrenceStartAt,
-            documentId: doc.id,
-            createdBy: userId,
+            userId,
+            title: input.title,
+            content: input.content,
+            emoji: '📝',
+            parentId: null,
+            position: (last?.position ?? -1) + 1,
+            // Sharing is on from the start: being sent the minutes is the whole
+            // point, and VIEW keeps a forwarded link from rewriting the record.
+            isShared: true,
+            shareToken: shortToken(),
+            sharePermission: 'VIEW',
           },
+          select: { id: true },
         });
-      }
 
-      return { documentId: doc.id, linked: !!input.icalUid };
-    });
+        if (invitees.length) {
+          await tx.documentInvite.createMany({
+            data: invitees.map((invitedEmail) => ({
+              documentId: doc.id,
+              invitedEmail,
+              invitedBy: userId,
+              role: 'EDITOR' as const,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        if (input.icalUid) {
+          await tx.meetingMinutes.create({
+            data: {
+              icalUid: input.icalUid,
+              occurrenceStartAt: input.occurrenceStartAt,
+              documentId: doc.id,
+              createdBy: userId,
+            },
+          });
+        }
+
+        return { documentId: doc.id, linked: !!input.icalUid };
+      });
+    } catch (err) {
+      // Two attendees clicking at the same moment can both miss the
+      // pre-transaction existence check above and both enter the
+      // transaction; only one `meetingMinutes.create` can win
+      // @@unique([icalUid, occurrenceStartAt]) — the other violates it with
+      // P2002 and its whole transaction rolls back (no orphaned document or
+      // invites survive that rollback). Treat that as "someone else already
+      // created it" rather than failing the loser's request: re-fetch the
+      // winner's row and hand back its documentId. Any other error code (a
+      // bad foreign key, a dead connection, ...) must still propagate.
+      const isRaceLoss =
+        input.icalUid != null &&
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002';
+      if (!isRaceLoss) throw err;
+
+      const winner = await this.prisma.meetingMinutes.findUnique({
+        where: {
+          icalUid_occurrenceStartAt: {
+            icalUid: input.icalUid as string,
+            occurrenceStartAt: input.occurrenceStartAt,
+          },
+        },
+        select: { documentId: true },
+      });
+      // A P2002 on this constraint with no row behind it afterward means
+      // something other than this race happened — don't invent a result.
+      if (!winner) throw err;
+
+      return { documentId: winner.documentId, linked: true };
+    }
   }
 
   // ── Share link ────────────────────────────────────────────────────────────

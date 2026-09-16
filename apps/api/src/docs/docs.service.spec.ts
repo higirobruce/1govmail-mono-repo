@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { DocsService } from './docs.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -92,5 +93,36 @@ describe('DocsService.createMinutesDocument', () => {
     expect(tx.document.create).toHaveBeenCalled();
     expect(tx.documentInvite.createMany).toHaveBeenCalled();
     expect(tx.meetingMinutes.create).toHaveBeenCalled();
+  });
+
+  it("resolves to the winner's document when two attendees race on the same occurrence", async () => {
+    // Both callers miss the pre-transaction existence check above and both
+    // enter the transaction; only one `meetingMinutes.create` can win
+    // @@unique([icalUid, occurrenceStartAt]) — the other gets P2002 and its
+    // whole transaction rolls back. The loser must still land on the
+    // winner's document rather than surfacing a 500.
+    const { service, prisma, tx } = makeService();
+    tx.meetingMinutes.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint failed on the fields: (`icalUid`,`occurrenceStartAt`)',
+        { code: 'P2002', clientVersion: 'test' },
+      ),
+    );
+    prisma.meetingMinutes.findUnique
+      .mockResolvedValueOnce(null) // the pre-check: this caller doesn't see it yet
+      .mockResolvedValueOnce({ documentId: 'doc-winner' }); // post-P2002 re-fetch: the winner's row
+
+    const result = await service.createMinutesDocument('u1', INPUT);
+
+    expect(result).toEqual({ documentId: 'doc-winner', linked: true });
+  });
+
+  it('does not swallow a non-P2002 failure as if it were the race', async () => {
+    // A too-wide catch here would let a real failure (bad FK, dead
+    // connection, ...) masquerade as a successful race loss.
+    const { service, tx } = makeService();
+    tx.meetingMinutes.create.mockRejectedValue(new Error('connection reset'));
+
+    await expect(service.createMinutesDocument('u1', INPUT)).rejects.toThrow('connection reset');
   });
 });

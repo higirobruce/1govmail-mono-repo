@@ -162,7 +162,12 @@ describe('CalendarService.getEvent minutes link', () => {
       startAt: new Date('2026-09-17T09:00:00Z'), attendees: [],
     });
     zimbraStub.getAppointment.mockResolvedValue({ id: 'z-1', attendees: [], organizer: null });
-    prisma.calendarEvent.update.mockResolvedValue({ id: 'e1', startAt: new Date('2026-09-17T09:00:00Z') });
+    // Prisma's update() without a `select` returns the complete row, so the
+    // fake must carry icalUid too — a mock that omits a field the production
+    // code reads is a wrong mock, not a smaller one.
+    prisma.calendarEvent.update.mockResolvedValue({
+      id: 'e1', icalUid: 'cabinet@zimbra', startAt: new Date('2026-09-17T09:00:00Z'),
+    });
     prisma.meetingMinutes.findUnique.mockResolvedValue({ documentId: 'doc-1' });
 
     const event: any = await service.getEvent('u1', 'e1');
@@ -178,7 +183,9 @@ describe('CalendarService.getEvent minutes link', () => {
       startAt: new Date('2026-09-17T09:00:00Z'), attendees: [],
     });
     zimbraStub.getAppointment.mockResolvedValue({ id: 'z-1', attendees: [], organizer: null });
-    prisma.calendarEvent.update.mockResolvedValue({ id: 'e1', startAt: new Date('2026-09-17T09:00:00Z') });
+    prisma.calendarEvent.update.mockResolvedValue({
+      id: 'e1', icalUid: 'cabinet@zimbra', startAt: new Date('2026-09-17T09:00:00Z'),
+    });
     prisma.meetingMinutes.findUnique.mockResolvedValue(null);
 
     const event: any = await service.getEvent('u1', 'e1');
@@ -194,7 +201,43 @@ describe('CalendarService.getEvent minutes link', () => {
       startAt: new Date('2026-09-17T09:00:00Z'), attendees: [],
     });
     zimbraStub.getAppointment.mockResolvedValue({ id: 'z-1', attendees: [], organizer: null });
-    prisma.calendarEvent.update.mockResolvedValue({ id: 'e1', startAt: new Date('2026-09-17T09:00:00Z') });
+    prisma.calendarEvent.update.mockResolvedValue({
+      id: 'e1', icalUid: null, startAt: new Date('2026-09-17T09:00:00Z'),
+    });
+
+    const event: any = await service.getEvent('u1', 'e1');
+
+    expect(event.minutesDocumentId).toBeNull();
+    expect(prisma.meetingMinutes.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('reports the minutes document even when the provider detail fetch returns nothing', async () => {
+    // The `!detail` early return must carry the same minutesDocumentId
+    // resolution as the refreshed-row path — the response shape can't depend
+    // on whether the upstream fetch happened to succeed.
+    const { service, prisma } = makeService();
+    prisma.user.findUnique.mockResolvedValue(USER);
+    prisma.calendarEvent.findFirst.mockResolvedValue({
+      id: 'e1', zimbraId: 'z-1', icalUid: 'cabinet@zimbra',
+      startAt: new Date('2026-09-17T09:00:00Z'), attendees: [],
+    });
+    zimbraStub.getAppointment.mockResolvedValue(null);
+    prisma.meetingMinutes.findUnique.mockResolvedValue({ documentId: 'doc-1' });
+
+    const event: any = await service.getEvent('u1', 'e1');
+
+    expect(event.minutesDocumentId).toBe('doc-1');
+    expect(prisma.calendarEvent.update).not.toHaveBeenCalled();
+  });
+
+  it('reports null without querying on the early-return path when the event has no UID', async () => {
+    const { service, prisma } = makeService();
+    prisma.user.findUnique.mockResolvedValue(USER);
+    prisma.calendarEvent.findFirst.mockResolvedValue({
+      id: 'e1', zimbraId: 'z-1', icalUid: null,
+      startAt: new Date('2026-09-17T09:00:00Z'), attendees: [],
+    });
+    zimbraStub.getAppointment.mockResolvedValue(null);
 
     const event: any = await service.getEvent('u1', 'e1');
 

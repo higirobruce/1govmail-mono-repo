@@ -113,7 +113,9 @@ export class CalendarService {
 
     const detail = await this.resolver.forUser(user).getAppointment(buildMailSession(user), event.zimbraId);
 
-    if (!detail) return event;
+    if (!detail) {
+      return { ...event, minutesDocumentId: await this.resolveMinutesDocumentId(event) };
+    }
 
     // A null attendee list means the response carried none at all — keep the
     // cached one rather than blanking it.
@@ -135,23 +137,24 @@ export class CalendarService {
 
     // The drawer needs this to choose between "Create minutes" and "Open
     // minutes", so it rides the detail response rather than costing a request.
-    // Prefer the refreshed row's icalUid (the Zimbra fallback path can fill it
-    // in during this very call) but fall back to the pre-refresh value so a
-    // provider/test double that returns a partial updated row doesn't lose it.
-    const icalUid = updated.icalUid ?? event.icalUid;
-    const minutesDocumentId = icalUid
-      ? (await this.prisma.meetingMinutes.findUnique({
-          where: {
-            icalUid_occurrenceStartAt: {
-              icalUid,
-              occurrenceStartAt: updated.startAt,
-            },
-          },
-          select: { documentId: true },
-        }))?.documentId ?? null
-      : null;
+    return { ...updated, minutesDocumentId: await this.resolveMinutesDocumentId(updated) };
+  }
 
-    return { ...updated, minutesDocumentId };
+  /**
+   * Resolve the MeetingMinutes link for one occurrence. `row` must be the row
+   * about to be returned to the caller — never a stale pre-refresh copy — so
+   * its `icalUid` and `startAt` are always from the same generation of the
+   * event. No UID means no query and a null answer.
+   */
+  private async resolveMinutesDocumentId(row: { icalUid: string | null; startAt: Date }): Promise<string | null> {
+    if (!row.icalUid) return null;
+    const link = await this.prisma.meetingMinutes.findUnique({
+      where: {
+        icalUid_occurrenceStartAt: { icalUid: row.icalUid, occurrenceStartAt: row.startAt },
+      },
+      select: { documentId: true },
+    });
+    return link?.documentId ?? null;
   }
 
   // ── Create event ──────────────────────────────────────────────────────────

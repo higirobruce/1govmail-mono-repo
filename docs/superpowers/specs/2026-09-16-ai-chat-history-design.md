@@ -314,8 +314,24 @@ hand while diagnosing the agent. Nothing in the product breaks when a row goes.
   and an agent turn that produced no completed answer never creates one (§6.1),
   so its tool calls legitimately have none either.
 - The same 90-day sweep in §7 also deletes logs whose `createdAt` passed the
-  horizon. That is the backstop for the null rows, and it is what bounds the
-  table for good.
+  horizon **and which have no conversation** (`conversationId: null`). That is
+  the backstop for exactly two populations: rows written before this link
+  existed, and turns that never produced a completed answer so never created a
+  conversation to hang off.
+
+  An earlier draft of this bullet said the sweep was "the backstop for the null
+  rows, and what bounds the table for good" — two contradictory jobs in one
+  clause, since bounding the whole table means deleting linked rows too. The
+  Task 2 review caught the implementation following the second half. Scoping to
+  orphans is correct: a linked log must die **with its conversation**, which is
+  the option chosen over plain age-out, and an unscoped age sweep quietly
+  reinstates the rejected one — a conversation still readable would have lost
+  the record of what the agent did in its early turns.
+
+  What bounds the linked rows is therefore the conversation's own expiry, not
+  this sweep. A conversation appended to continuously for more than ninety days
+  keeps tool logs older than the horizon; that needs sustained use to arise and
+  is still bounded by that conversation's inactivity.
 
 ### 8.2 Why not age-only
 

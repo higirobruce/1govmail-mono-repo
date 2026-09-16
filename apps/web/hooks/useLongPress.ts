@@ -30,8 +30,12 @@ export function useLongPress(onLongPress: (x: number, y: number) => void) {
   // finger lifts can be swallowed — otherwise a hold opens the menu AND the
   // thread behind it.
   const fired = useRef(false);
+  // Held in a ref so the handlers below stay stable across renders while the
+  // pending timer still fires the latest callback. Synced in an effect, not
+  // during render — callers pass an inline arrow, so this reassigns every
+  // render, and a render-phase ref write is not safe under concurrent React.
   const callback = useRef(onLongPress);
-  callback.current = onLongPress;
+  useEffect(() => { callback.current = onLongPress; }, [onLongPress]);
 
   const cancel = useCallback(() => {
     if (timer.current) {

@@ -198,6 +198,17 @@ export class ConversationsService {
     };
   }
 
+  /** Turns cascade, and so do the tool logs linked to this conversation. */
+  async remove(userId: string, id: string): Promise<void> {
+    await this.own(userId, id);
+    await this.prisma.aiConversation.delete({ where: { id } });
+  }
+
+  async removeAll(userId: string): Promise<{ deleted: number }> {
+    const { count } = await this.prisma.aiConversation.deleteMany({ where: { userId } });
+    return { deleted: count };
+  }
+
   /** Throws NotFoundException unless the conversation belongs to the caller. */
   private async own(userId: string, id: string) {
     const conv = await this.prisma.aiConversation.findFirst({ where: { id, userId } });

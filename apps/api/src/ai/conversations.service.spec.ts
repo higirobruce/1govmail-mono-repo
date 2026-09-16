@@ -237,3 +237,34 @@ describe('ConversationsService.list', () => {
       .toEqual({ select: { turns: true } });
   });
 });
+
+describe('ConversationsService deletion', () => {
+  it('deletes one conversation the caller owns', async () => {
+    const { service, prisma } = makeService();
+    prisma.aiConversation.findFirst.mockResolvedValue({ id: 'c1' });
+    prisma.aiConversation.delete = jest.fn().mockResolvedValue({});
+
+    await service.remove(USER, 'c1');
+
+    expect(prisma.aiConversation.delete).toHaveBeenCalledWith({ where: { id: 'c1' } });
+  });
+
+  it('refuses to delete another user conversation', async () => {
+    const { service, prisma } = makeService();
+    prisma.aiConversation.findFirst.mockResolvedValue(null);
+    prisma.aiConversation.delete = jest.fn();
+
+    await expect(service.remove(USER, 'c9')).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.aiConversation.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes all of the caller own history and nobody else', async () => {
+    const { service, prisma } = makeService();
+    prisma.aiConversation.deleteMany = jest.fn().mockResolvedValue({ count: 7 });
+
+    const res = await service.removeAll(USER);
+
+    expect(prisma.aiConversation.deleteMany).toHaveBeenCalledWith({ where: { userId: USER } });
+    expect(res).toEqual({ deleted: 7 });
+  });
+});

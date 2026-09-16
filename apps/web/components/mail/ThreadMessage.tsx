@@ -23,7 +23,8 @@ import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
 import { prepareEmailHtml } from '@/lib/emailRender';
-import { buildEmailFrameCss } from '@/lib/emailFrameCss';
+import { buildEmailFrameCss, emailFrameColors } from '@/lib/emailFrameCss';
+import { repairEmailContrast } from '@/lib/emailContrastRepair';
 import { useIsDark } from '@/hooks/useIsDark';
 import { downloadAll } from '@/lib/downloadAll';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -206,6 +207,13 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
     });
   }, []);
 
+  // Raw dark mode only: with normalize ON, normalizeCss already forces its own
+  // palette over every inline style, leaving nothing to repair. Always run
+  // AFTER quote-stripping so the element budget isn't spent on removed nodes.
+  const repairIfNeeded = useCallback((doc: Document) => {
+    if (isDark && !normalizeStyles) repairEmailContrast(doc, emailFrameColors(true));
+  }, [isDark, normalizeStyles]);
+
   // handleLoad for the main iframe.
   // When stripQuotes=false the body was already split before render, so just resize.
   // When stripQuotes=true run the full JS + CSS quote-stripping pass.
@@ -214,6 +222,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
     if (!doc) return;
 
     if (!stripQuotes) {
+      repairIfNeeded(doc);
       resizeMain();
       doc.querySelectorAll('img').forEach((img) => {
         if (!img.complete) {
@@ -248,6 +257,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
       }
     }
 
+    repairIfNeeded(doc);
     resizeMain();
     doc.querySelectorAll('img').forEach((img) => {
       if (!img.complete) {
@@ -255,11 +265,12 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
         img.addEventListener('error', resizeMain, { once: true });
       }
     });
-  }, [resizeMain, stripQuotes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resizeMain, stripQuotes, repairIfNeeded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleQuotedLoad = useCallback(() => {
     const doc = quotedRef.current?.contentDocument;
     if (!doc) return;
+    repairIfNeeded(doc);
     resizeQuoted();
     doc.querySelectorAll('img').forEach((img) => {
       if (!img.complete) {
@@ -267,7 +278,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
         img.addEventListener('error', resizeQuoted, { once: true });
       }
     });
-  }, [resizeQuoted]);
+  }, [resizeQuoted, repairIfNeeded]);
 
   // Preprocess once per body (memoized here and in prepareEmailHtml): fix
   // Zimbra deferred images and malformed data URIs, sanitize (defense-in-depth

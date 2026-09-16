@@ -14,7 +14,8 @@ import { Button } from '@/components/ui/button';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
 import { prepareEmailHtml } from '@/lib/emailRender';
-import { buildEmailFrameCss } from '@/lib/emailFrameCss';
+import { buildEmailFrameCss, emailFrameColors } from '@/lib/emailFrameCss';
+import { repairEmailContrast } from '@/lib/emailContrastRepair';
 import { useIsDark } from '@/hooks/useIsDark';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { downloadAll } from '@/lib/downloadAll';
@@ -172,6 +173,11 @@ function EmailBody({
     resizeFrame();
     const doc = iframeRef.current?.contentDocument;
     if (!doc) return;
+    // Raw dark mode only: normalizeCss already forces its own palette over
+    // every inline style, so there is nothing left to repair when it is on.
+    if (isDark && !normalizeStyles) {
+      repairEmailContrast(doc, emailFrameColors(true));
+    }
     // Attach one-shot listeners to every image that hasn't loaded yet so the
     // iframe grows correctly after lazy / external images finish downloading.
     doc.querySelectorAll('img').forEach((img) => {
@@ -180,7 +186,7 @@ function EmailBody({
         img.addEventListener('error', resizeFrame, { once: true });
       }
     });
-  }, [resizeFrame]);
+  }, [resizeFrame, isDark, normalizeStyles]);
 
   // Prepare (dfsrc fix, data-URI fix, sanitize — memoized in prepareEmailHtml)
   // and build the srcDoc once per body; the hook runs before the no-html early

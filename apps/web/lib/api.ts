@@ -943,6 +943,40 @@ export const api = {
     update: (token: string, data: Partial<{ title: string; content: string }>) =>
       request<Doc>(`/docs/shared/${token}`, { method: 'PATCH', body: JSON.stringify(data) }),
   },
+
+  aiHistory: {
+    /** Saved Ask 1Gov conversations, newest first. `q` searches titles and turn text. */
+    list: (opts?: { q?: string; cursor?: string }) => {
+      if (USE_MOCK) return delay<{ items: any[]; nextCursor: string | null }>({ items: [], nextCursor: null });
+      const p = new URLSearchParams();
+      if (opts?.q) p.set('q', opts.q);
+      if (opts?.cursor) p.set('cursor', opts.cursor);
+      const qs = p.toString();
+      return request<{ items: any[]; nextCursor: string | null }>(
+        `/ai/conversations${qs ? `?${qs}` : ''}`,
+      );
+    },
+    get: (id: string) => {
+      if (USE_MOCK) return delay<any>(null);
+      return request<any>(`/ai/conversations/${id}`);
+    },
+    create: (body: any) => {
+      if (USE_MOCK) return delay<{ id: string }>({ id: 'mock' });
+      return request<{ id: string }>('/ai/conversations', { method: 'POST', body: JSON.stringify(body) });
+    },
+    append: (id: string, body: any) => {
+      if (USE_MOCK) return delay<void>(undefined as any);
+      return request<void>(`/ai/conversations/${id}/turns`, { method: 'POST', body: JSON.stringify(body) });
+    },
+    remove: (id: string) => {
+      if (USE_MOCK) return delay<void>(undefined as any);
+      return request<void>(`/ai/conversations/${id}`, { method: 'DELETE' });
+    },
+    removeAll: () => {
+      if (USE_MOCK) return delay<{ deleted: number }>({ deleted: 0 });
+      return request<{ deleted: number }>('/ai/conversations', { method: 'DELETE' });
+    },
+  },
 };
 
 export interface PersonDossier {

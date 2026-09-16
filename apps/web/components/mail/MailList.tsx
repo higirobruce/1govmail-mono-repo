@@ -8,6 +8,7 @@ import { MailAvatar } from './MailAvatar';
 import { ClassificationChip } from './ClassificationChip';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
+import { useLongPress } from '@/hooks/useLongPress';
 
 interface Message {
   id: string;
@@ -185,26 +186,41 @@ function ContextMenu({
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [showFolders, setShowFolders] = useState(false);
+  const [menuHeight, setMenuHeight] = useState(0);
 
-  // Close on click-outside or Escape
+  // Close on outside press or Escape. `touchstart` is listed alongside
+  // `mousedown` because a phone fires no mousedown — without it the menu could
+  // be opened by a hold and then never dismissed.
   useEffect(() => {
     const down = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    const click = (e: MouseEvent) => {
+    const outside = (e: Event) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
     };
     document.addEventListener('keydown', down);
-    document.addEventListener('mousedown', click);
+    document.addEventListener('mousedown', outside);
+    document.addEventListener('touchstart', outside);
     return () => {
       document.removeEventListener('keydown', down);
-      document.removeEventListener('mousedown', click);
+      document.removeEventListener('mousedown', outside);
+      document.removeEventListener('touchstart', outside);
     };
   }, [onClose]);
 
-  // Adjust position so menu stays within viewport
+  // Measure rather than assume: the menu's height varies with how many rows it
+  // carries (AI row, "Not spam", label folders), and a hardcoded 280px guess
+  // pushed the bottom of a long menu off a short phone viewport.
+  useEffect(() => {
+    if (menuRef.current) setMenuHeight(menuRef.current.offsetHeight);
+  }, [showFolders]);
+
+  const viewportH = typeof window === 'undefined' ? 0 : window.innerHeight;
+  const viewportW = typeof window === 'undefined' ? 0 : window.innerWidth;
   const style: React.CSSProperties = {
     position: 'fixed',
-    top: Math.min(state.y, window.innerHeight - 280),
-    left: Math.min(state.x, window.innerWidth - 200),
+    // Clamp to >= 8 so a press near the top of the screen can't produce a
+    // negative offset and hide the first rows above the viewport.
+    top: Math.max(8, Math.min(state.y, viewportH - (menuHeight || 280) - 8)),
+    left: Math.max(8, Math.min(state.x, viewportW - 200)),
     zIndex: 9999,
   };
 
@@ -222,7 +238,7 @@ function ContextMenu({
     return (
       <button
         key={type}
-        onMouseDown={(e) => { e.preventDefault(); onAction({ type, messageId: state.message.id }); onClose(); }}
+        onPointerDown={(e) => { e.preventDefault(); onAction({ type, messageId: state.message.id }); onClose(); }}
         className={cn(
           'w-full flex items-center gap-2.5 px-3 py-2 text-ui rounded-md transition-colors',
           danger
@@ -264,7 +280,7 @@ function ContextMenu({
         <>
           <div className="my-1 h-px bg-border-faint" />
           <button
-            onMouseDown={(e) => { e.preventDefault(); setShowFolders((v) => !v); }}
+            onPointerDown={(e) => { e.preventDefault(); setShowFolders((v) => !v); }}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-ui rounded-md transition-colors text-ink-2 hover:bg-muted hover:text-foreground"
           >
             <FolderOpen className="w-3.5 h-3.5 shrink-0" />
@@ -276,7 +292,7 @@ function ContextMenu({
               {labelFolders.map((folder) => (
                 <button
                   key={folder.id}
-                  onMouseDown={(e) => {
+                  onPointerDown={(e) => {
                     e.preventDefault();
                     onAction({ type: 'moveToFolder', messageId: state.message.id, targetFolderId: folder.id });
                     onClose();
@@ -305,6 +321,7 @@ export function MailRow({
   onClick,
   onHover,
   onContextMenu,
+  onLongPress,
   selected,
   onSelect,
   card,
@@ -316,6 +333,8 @@ export function MailRow({
   onClick: () => void;
   onHover?: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  /** Touch equivalent of onContextMenu — a phone fires no `contextmenu`. */
+  onLongPress?: (x: number, y: number) => void;
   selected?: boolean;
   onSelect?: () => void;
   card?: TriageCard;
@@ -327,6 +346,9 @@ export function MailRow({
 }) {
   const classification = useMemo(() => pickClassificationFromTags(message.tags), [message.tags]);
   const labelMeta = card ? TRIAGE_LABEL_META[card.label] : undefined;
+
+  const noop = useCallback(() => {}, []);
+  const { handlers: touchHandlers, consumeClick } = useLongPress(onLongPress ?? noop);
 
   // Who this row is "about". In sent-like folders that's the addressee — with a
   // CC fallback for undisclosed-recipient circulars, and a sender fallback so a
@@ -386,8 +408,11 @@ export function MailRow({
 
           {/* Avatar */}
           <button
-            onClick={onClick}
+            // A hold both opens the menu and leaves a synthesised click behind
+            // it; without consumeClick the thread opens under the menu.
+            onClick={() => { if (!consumeClick()) onClick(); }}
             onContextMenu={onContextMenu}
+            {...touchHandlers}
             className="flex-1 min-w-0 flex items-start gap-2.5 text-left"
           >
             <MailAvatar
@@ -572,6 +597,12 @@ export default function MailList({
     setCtxMenu({ x: e.clientX, y: e.clientY, message });
   }, [onContextAction]);
 
+  /** Touch route to the same menu — see useLongPress. */
+  const handleLongPress = useCallback((x: number, y: number, message: Message) => {
+    if (!onContextAction) return;
+    setCtxMenu({ x, y, message });
+  }, [onContextAction]);
+
   const handleContextAction = useCallback((action: ContextAction) => {
     onContextAction?.(action);
     setCtxMenu(null);
@@ -696,6 +727,7 @@ export default function MailList({
                   onClick={() => onSelect(msg.id)}
                   onHover={onPrefetch ? () => onPrefetch(msg.id) : undefined}
                   onContextMenu={(e) => handleContextMenu(e, msg)}
+                  onLongPress={(x, y) => handleLongPress(x, y, msg)}
                   selected={selectedIds.has(msg.id)}
                   onSelect={() => toggleSelect(msg.id)}
                   selectionActive={selectedIds.size > 0}

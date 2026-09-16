@@ -62,9 +62,10 @@ describe('MailList "Not spam" row', () => {
       />,
     );
     openContextMenu();
-    // The menu commits on mousedown (it fires before blur closes the menu),
-    // so a click event alone never reaches the handler.
-    fireEvent.mouseDown(screen.getByText('Not spam'));
+    // The menu commits on pointerdown — it fires before blur closes the menu,
+    // so a click event alone never reaches the handler, and unlike mousedown it
+    // also arrives from a finger (the only way to use the menu on a phone).
+    fireEvent.pointerDown(screen.getByText('Not spam'));
 
     expect(actions).toEqual([{ type: 'notSpam', messageId: 'm1' }]);
   });

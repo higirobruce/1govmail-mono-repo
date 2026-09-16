@@ -1623,6 +1623,7 @@ function EventDetailPanel({
   onDelete,
   onEdit,
   onRsvp,
+  onMinutesCreated,
   deleting,
   attendeesLoading,
 }: {
@@ -1632,6 +1633,7 @@ function EventDetailPanel({
   onDelete: (e: CalEvent) => void;
   onEdit: (e: CalEvent) => void;
   onRsvp: (e: CalEvent, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => void;
+  onMinutesCreated: (eventId: string, documentId: string) => void;
   deleting: boolean;
   attendeesLoading?: boolean;
 }) {
@@ -1648,6 +1650,7 @@ function EventDetailPanel({
   const resize = useResizable({ key: 'calendarDetail', defaultWidth: 320, min: 280, max: 560, edge: 'left' });
 
   const [rsvping, setRsvping] = useState<'ACCEPT' | 'DECLINE' | 'TENTATIVE' | null>(null);
+  const [creatingMinutes, setCreatingMinutes] = useState(false);
 
   const handleRsvp = async (verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => {
     setRsvping(verb);
@@ -1911,6 +1914,7 @@ function EventDetailPanel({
         ) : (
           <button
             onClick={async () => {
+              setCreatingMinutes(true);
               try {
                 const { documentId, linked } = await api.calendar.createMinutes(
                   event.id,
@@ -1922,6 +1926,7 @@ function EventDetailPanel({
                     attendees: (event.attendees ?? []).map((a: any) => a?.email ?? a),
                   }),
                 );
+                onMinutesCreated(event.id, documentId);
                 toast.success(
                   linked
                     ? 'Minutes created and shared with the attendees'
@@ -1930,11 +1935,16 @@ function EventDetailPanel({
                 router.push(`/docs?doc=${documentId}`);
               } catch (err: any) {
                 toast.error('Could not create the minutes', { description: err?.message });
+              } finally {
+                setCreatingMinutes(false);
               }
             }}
-            className="flex items-center gap-1.5 text-ui text-ink-2 hover:text-foreground"
+            disabled={creatingMinutes}
+            className="flex items-center gap-1.5 text-ui text-ink-2 hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <ScrollText className="w-3.5 h-3.5" />
+            {creatingMinutes
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <ScrollText className="w-3.5 h-3.5" />}
             Create minutes
           </button>
         )}
@@ -2414,6 +2424,15 @@ export default function CalendarPage() {
               onDelete={handleDelete}
               onEdit={(e) => { setEditingEvent(e); setSelectedEvent(null); }}
               onRsvp={handleRsvp}
+              onMinutesCreated={(eventId, documentId) =>
+                // Guard by id: the request that created this document may
+                // resolve after the drawer has moved on to a different
+                // event, and patching whatever is selected by then would
+                // attach this document to the wrong meeting.
+                setSelectedEvent((prev) =>
+                  prev?.id === eventId ? { ...prev, minutesDocumentId: documentId } : prev,
+                )
+              }
               deleting={deleting}
               attendeesLoading={selectedEventLoading}
             />

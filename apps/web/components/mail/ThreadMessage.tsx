@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button';
 import { MailAvatar, getInitials } from './MailAvatar';
 import { AttachmentTile } from './AttachmentTile';
 import { AttachmentLightbox } from './AttachmentLightbox';
+import RecipientDetails from './RecipientDetails';
 
 /** Files we can render inline rather than force-download — one shared
  *  classification with the lightbox and inline previewer (image / pdf / csv /
@@ -383,6 +384,10 @@ export interface ThreadMessageMeta {
   fromName: string | null;
   toRecipients: Array<{ email: string; name?: string | null }>;
   ccRecipients: Array<{ email: string; name?: string | null }>;
+  /** Own sent/draft items only — the provider never discloses another
+   *  sender's Bcc. Absent on rows synced before recipients were persisted. */
+  bccRecipients?: Array<{ email: string; name?: string | null }> | null;
+  replyTo?: string | null;
   snippet: string | null;
   isRead: boolean;
   isStarred: boolean;
@@ -431,6 +436,7 @@ export default function ThreadMessage({
   const [lightboxSelectedId, setLightboxSelectedId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const [showRecipients, setShowRecipients] = useState(false);
   const currentUserEmail = useAuthStore((s) => s.user?.email);
   const isSelf = !!currentUserEmail && message.fromEmail.toLowerCase() === currentUserEmail.toLowerCase();
 
@@ -518,6 +524,15 @@ export default function ThreadMessage({
   const initials = getInitials(message.fromName, message.fromEmail);
   const displayName = message.fromName ?? message.fromEmail;
   const timeStr = formatMessageTime(message.receivedAt);
+  // The header time is relative ("Yesterday 14:03"); the details panel states
+  // the unambiguous timestamp, which is what matters on a forwarded record.
+  const fullTimeStr = useMemo(() => {
+    try {
+      return format(parseISO(message.receivedAt), 'EEE, dd MMM yyyy HH:mm');
+    } catch {
+      return '';
+    }
+  }, [message.receivedAt]);
   const detail = fullMessage ?? message;
 
   // ── Collapsed row ─────────────────────────────────────────────────────────
@@ -663,7 +678,7 @@ export default function ThreadMessage({
               </div>
             </div>
             {/* Recipient summary */}
-            <div className="flex flex-wrap gap-x-3 text-micro text-ink-3 mt-0.5">
+            <div className="flex flex-wrap items-center gap-x-3 text-micro text-ink-3 mt-0.5">
               <span className="text-ink-3">{`<${message.fromEmail}>`}</span>
               {message.toRecipients.length > 0 && (
                 <span>
@@ -685,7 +700,35 @@ export default function ThreadMessage({
                   {message.ccRecipients.length > 2 && ` +${message.ccRecipients.length - 2}`}
                 </span>
               )}
+              {/* The summary above truncates; this opens the authoritative list.
+                  stopPropagation because the whole header is the collapse
+                  control — without it, reading the addresses closes the message. */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowRecipients((v) => !v); }}
+                aria-expanded={showRecipients}
+                aria-label={showRecipients ? 'Hide recipient details' : 'Show recipient details'}
+                className="inline-flex items-center gap-0.5 rounded text-ink-3 hover:text-foreground hover:underline"
+              >
+                Details
+                <ChevronDown
+                  className={cn('w-3 h-3 transition-transform', showRecipients && 'rotate-180')}
+                />
+              </button>
             </div>
+
+            {showRecipients && (
+              <div onClick={(e) => e.stopPropagation()}>
+                <RecipientDetails
+                  from={{ email: message.fromEmail, name: message.fromName }}
+                  replyTo={message.replyTo}
+                  to={message.toRecipients}
+                  cc={message.ccRecipients}
+                  bcc={message.bccRecipients ?? []}
+                  dateLabel={fullTimeStr}
+                />
+              </div>
+            )}
           </div>
         </div>
 

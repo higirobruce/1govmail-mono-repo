@@ -20,6 +20,10 @@ interface Message {
   hasAttachments: boolean;
   tags: string[];
   receivedAt: string;
+  /** Optional: rows synced before recipients were persisted carry neither.
+   *  Only read when the folder is sent-like (see MailRow's `showRecipients`). */
+  toRecipients?: Array<{ email: string; name?: string | null }> | null;
+  ccRecipients?: Array<{ email: string; name?: string | null }> | null;
 }
 
 interface FolderItem {
@@ -78,6 +82,9 @@ interface MailListProps {
   /** True when the list is showing the spam folder, which is the only place
    *  "Not spam" makes sense. */
   inSpamFolder?: boolean;
+  /** True in Sent / Drafts / Outbox, where rows name the addressee rather than
+   *  the sender (which is always the user). */
+  showRecipients?: boolean;
 }
 
 type Tab = 'all' | 'unread' | 'starred';
@@ -302,6 +309,7 @@ export function MailRow({
   onSelect,
   card,
   selectionActive,
+  showRecipients = false,
 }: {
   message: Message;
   active: boolean;
@@ -313,9 +321,23 @@ export function MailRow({
   card?: TriageCard;
   /** True while any row is checkbox-selected — keeps all checkboxes visible. */
   selectionActive?: boolean;
+  /** Sent / Drafts / Outbox: name the addressee, not the sender (always the
+   *  user there). Mirrors Zimbra, which is the only way to scan own mail. */
+  showRecipients?: boolean;
 }) {
   const classification = useMemo(() => pickClassificationFromTags(message.tags), [message.tags]);
   const labelMeta = card ? TRIAGE_LABEL_META[card.label] : undefined;
+
+  // Who this row is "about". In sent-like folders that's the addressee — with a
+  // CC fallback for undisclosed-recipient circulars, and a sender fallback so a
+  // row synced before recipients existed never renders a blank name.
+  const principal = useMemo(() => {
+    if (!showRecipients) return { name: message.fromName, email: message.fromEmail, extra: 0 };
+    const list = message.toRecipients?.length ? message.toRecipients : message.ccRecipients;
+    const first = list?.[0];
+    if (!first) return { name: message.fromName, email: message.fromEmail, extra: 0 };
+    return { name: first.name ?? null, email: first.email, extra: (list?.length ?? 1) - 1 };
+  }, [showRecipients, message.fromName, message.fromEmail, message.toRecipients, message.ccRecipients]);
 
   return (
     <div className="px-2 pt-1 first:pt-2 last:pb-2">
@@ -369,8 +391,8 @@ export function MailRow({
             className="flex-1 min-w-0 flex items-start gap-2.5 text-left"
           >
             <MailAvatar
-              name={message.fromName}
-              email={message.fromEmail}
+              name={principal.name}
+              email={principal.email}
               size="sm"
             />
 
@@ -381,7 +403,11 @@ export function MailRow({
                   // Weight is the primary read/unread cue; color is secondary.
                   message.isRead ? 'font-normal text-foreground' : 'font-semibold text-primary',
                 )}>
-                  {message.fromName ?? message.fromEmail}
+                  {showRecipients && <span className="text-ink-3 font-normal">To: </span>}
+                  {principal.name ?? principal.email}
+                  {principal.extra > 0 && (
+                    <span className="text-ink-3 font-normal">{` +${principal.extra}`}</span>
+                  )}
                 </span>
                 <span className={cn(
                   'shrink-0 inline-flex items-center gap-1 tabular-nums',
@@ -471,6 +497,7 @@ export default function MailList({
   cardsById,
   aiEnabled = false,
   inSpamFolder = false,
+  showRecipients = false,
 }: MailListProps) {
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
@@ -673,6 +700,7 @@ export default function MailList({
                   onSelect={() => toggleSelect(msg.id)}
                   selectionActive={selectedIds.size > 0}
                   card={cardsById?.[msg.id]}
+                  showRecipients={showRecipients}
                 />
               ))}
             </div>

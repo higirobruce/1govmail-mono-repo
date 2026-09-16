@@ -239,6 +239,16 @@ export const api = {
         `/calendar/freebusy?email=${encodeURIComponent(email)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
       );
     },
+    /** Create (or open) the minutes document for this event's occurrence.
+     *  `linked: false` means the meeting had no iCalendar UID, so this
+     *  document is not the canonical record for other attendees. */
+    createMinutes: (eventId: string, body: { title: string; content: string }) => {
+      if (USE_MOCK) return delay({ documentId: 'mock-doc', linked: true });
+      return request<{ documentId: string; linked: boolean }>(
+        `/calendar/events/${eventId}/minutes`,
+        { method: 'POST', body: JSON.stringify(body) },
+      );
+    },
   },
 
   auth: {

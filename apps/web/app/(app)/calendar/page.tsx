@@ -14,6 +14,7 @@ import { AIClient } from '@/lib/ai/client';
 import { parseEventFromEmail } from '@/lib/ai/eventParse';
 import { mergeParsedEvent, sameAttendees, toFormDateTime } from '@/lib/calendar/eventPrefill';
 import { quickAddEventPrefill } from '@/lib/calendar/quickAddEvent';
+import { minutesPrefill } from '@/lib/calendar/minutesPrefill';
 import type { EventFormValues, EventFieldKey } from '@/lib/calendar/eventPrefill';
 import { parseMailDragPayload, dropPrefillFromPayload } from '@/lib/calendar/dropPrefill';
 import { PHONE_MEDIA_QUERY, defaultCalView, type CalView as CalViewType } from '@/lib/calendar/defaultView';
@@ -32,7 +33,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
   Clock, MapPin, Calendar as CalendarIcon, Trash2, Users,
   Video, Repeat, ExternalLink, Pencil, CheckCircle2,
-  HelpCircle, XCircle, Menu, Mail, CalendarSearch,
+  HelpCircle, XCircle, Menu, Mail, CalendarSearch, ScrollText,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth,
@@ -68,6 +69,7 @@ interface CalEvent {
   attendees: Array<{ email: string; name?: string; ptst?: string }>;
   linkedMessageId?: string | null;
   linkedSubject?: string | null;
+  minutesDocumentId?: string | null;
 }
 
 type CalView = CalViewType;
@@ -1633,6 +1635,7 @@ function EventDetailPanel({
   deleting: boolean;
   attendeesLoading?: boolean;
 }) {
+  const router = useRouter();
   const meetingLink = isOnlineMeetingLink(event.location) ? event.location : null;
   const isOrganizer = event.organizer && currentUserEmail
     ? event.organizer.toLowerCase() === currentUserEmail.toLowerCase()
@@ -1896,7 +1899,45 @@ function EventDetailPanel({
       </ScrollArea>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-border/40 shrink-0">
+      <div className="px-4 py-3 border-t border-border/40 shrink-0 space-y-2">
+        {event.minutesDocumentId ? (
+          <button
+            onClick={() => router.push(`/docs?doc=${event.minutesDocumentId}`)}
+            className="flex items-center gap-1.5 text-ui text-primary hover:underline"
+          >
+            <ScrollText className="w-3.5 h-3.5" />
+            Open minutes
+          </button>
+        ) : (
+          <button
+            onClick={async () => {
+              try {
+                const { documentId, linked } = await api.calendar.createMinutes(
+                  event.id,
+                  minutesPrefill({
+                    title: event.title,
+                    startAt: event.startAt,
+                    location: event.location,
+                    organizer: event.organizer ?? null,
+                    attendees: (event.attendees ?? []).map((a: any) => a?.email ?? a),
+                  }),
+                );
+                toast.success(
+                  linked
+                    ? 'Minutes created and shared with the attendees'
+                    : 'Minutes created — this meeting has no shared id, so attendees will need the link',
+                );
+                router.push(`/docs?doc=${documentId}`);
+              } catch (err: any) {
+                toast.error('Could not create the minutes', { description: err?.message });
+              }
+            }}
+            className="flex items-center gap-1.5 text-ui text-ink-2 hover:text-foreground"
+          >
+            <ScrollText className="w-3.5 h-3.5" />
+            Create minutes
+          </button>
+        )}
         <Button variant="destructive-ghost" size="sm" onClick={() => onDelete(event)} disabled={deleting}
           className="w-full h-8 gap-1.5 text-xs">
           {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}

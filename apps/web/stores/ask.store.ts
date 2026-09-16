@@ -73,15 +73,20 @@ interface AskState {
   setOpenTarget: (target: AskOpenTarget) => void;
   /** Consumes the signal — called by the page that acted on it. */
   clearOpenTarget: () => void;
+  /** Set by the history page; read once by AskPanel on mount, then cleared. */
+  resumeId: string | null;
+  resumeConversation: (id: string) => void;
+  takeResumeId: () => string | null;
 }
 
-export const useAskStore = create<AskState>((set) => ({
+export const useAskStore = create<AskState>((set, get) => ({
   open: false,
   collapsed: false,
   prefill: null,
   scope: null,
   handlers: null,
   openTarget: null,
+  resumeId: null,
   openAsk: (opts) => set((s) => ({
     open: true,
     collapsed: false,
@@ -97,4 +102,10 @@ export const useAskStore = create<AskState>((set) => ({
   setHandlers: (handlers) => set({ handlers }),
   setOpenTarget: (target) => set({ openTarget: target }),
   clearOpenTarget: () => set({ openTarget: null }),
+  resumeConversation: (id) => set({ resumeId: id, open: true, collapsed: false }),
+  takeResumeId: () => {
+    const id = get().resumeId;
+    if (id) set({ resumeId: null });
+    return id;
+  },
 }));

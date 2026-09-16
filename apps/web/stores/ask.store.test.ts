@@ -14,7 +14,7 @@ const THREAD_SCOPE = {
 
 describe('useAskStore', () => {
   beforeEach(() => {
-    useAskStore.setState({ open: false, collapsed: false, prefill: null, scope: null, handlers: null, openTarget: null });
+    useAskStore.setState({ open: false, collapsed: false, prefill: null, scope: null, handlers: null, openTarget: null, resumeId: null });
   });
 
   it('starts closed, expanded, unscoped, unprefilled', () => {
@@ -142,6 +142,32 @@ describe('useAskStore', () => {
     expect(useAskStore.getState().handlers).toBe(handlers);
     useAskStore.getState().setHandlers(null);
     expect(useAskStore.getState().handlers).toBeNull();
+  });
+
+  describe('resumeId — the history page\'s handoff to AskPanel', () => {
+    it('starts null', () => {
+      expect(useAskStore.getState().resumeId).toBeNull();
+    });
+
+    it('resumeConversation() sets resumeId and opens + un-collapses the panel', () => {
+      useAskStore.setState({ collapsed: true });
+      useAskStore.getState().resumeConversation('conv-1');
+      const s = useAskStore.getState();
+      expect(s.resumeId).toBe('conv-1');
+      expect(s.open).toBe(true);
+      expect(s.collapsed).toBe(false);
+    });
+
+    it('takeResumeId() reads and clears the pending id', () => {
+      useAskStore.getState().resumeConversation('conv-2');
+      expect(useAskStore.getState().takeResumeId()).toBe('conv-2');
+      expect(useAskStore.getState().resumeId).toBeNull();
+    });
+
+    it('takeResumeId() returns null and is a no-op when nothing is pending', () => {
+      expect(useAskStore.getState().takeResumeId()).toBeNull();
+      expect(useAskStore.getState().resumeId).toBeNull();
+    });
   });
 });
 

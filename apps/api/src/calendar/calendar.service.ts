@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { buildMailSession } from '../provider/mail-session';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
+import { DocsService } from '../docs/docs.service';
 
 export interface CalendarEventData {
   title: string;
@@ -24,6 +25,8 @@ export class CalendarService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly resolver: MailProviderResolver,
+    // Unused for now — Task 3 (offer/create minutes) is the first consumer.
+    private readonly docs: DocsService,
   ) {}
 
   private async getUser(userId: string) {
@@ -42,12 +45,12 @@ export class CalendarService {
    * zimbra.mappers.mapZimbraAppointment. This method only caches what the
    * provider returned.
    */
-  async getEvents(userId: string, start: Date, end: Date): Promise<any[]> {
+  async getEvents(userId: string, start: Date | number, end: Date | number): Promise<any[]> {
     const user = await this.getUser(userId);
     const events = await this.resolver.forUser(user).getCalendarEvents(
       buildMailSession(user),
-      start.getTime(),
-      end.getTime(),
+      start instanceof Date ? start.getTime() : start,
+      end instanceof Date ? end.getTime() : end,
     );
 
     const results: any[] = [];
@@ -66,6 +69,7 @@ export class CalendarService {
         isRecurring:    ev.isRecurring,
         organizer:      ev.organizer?.email ?? null,
         attendees:      ev.attendees as any,
+        icalUid:        ev.icalUid ?? null,
         syncedAt:       new Date(),
       };
 
@@ -105,7 +109,14 @@ export class CalendarService {
     // Persist the enriched attendees so the event list is also up to date
     return this.prisma.calendarEvent.update({
       where: { id: eventId },
-      data: { attendees: attendees as any, organizer, syncedAt: new Date() },
+      data: {
+        attendees: attendees as any,
+        organizer,
+        // `undefined` means "leave unchanged" in Prisma; null would erase a UID
+        // the list sync had already stored.
+        ...(detail.icalUid ? { icalUid: detail.icalUid } : {}),
+        syncedAt: new Date(),
+      },
     });
   }
 

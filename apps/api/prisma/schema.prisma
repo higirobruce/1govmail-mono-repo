@@ -56,6 +56,7 @@ model User {
   agentToolLogs          AgentToolLog[]
   attachmentEmbeddings   AttachmentEmbedding[]
   aiProfile              UserAiProfile?
+  meetingMinutes         MeetingMinutes[]
 
   @@map("users")
 }
@@ -592,6 +593,7 @@ model Document {
   versions  DocVersion[]
   activity  DocActivity[]
   embeddings DocumentEmbedding[]
+  meetingMinutes MeetingMinutes[]
 
   @@index([userId])
   @@index([userId, isFavorite])
@@ -760,12 +762,35 @@ model CalendarEvent {
   syncedAt        DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  /// iCalendar UID — the same string in every attendee's copy of this meeting.
+  /// Null when the provider did not supply one (see the meeting-minutes spec).
+  icalUid         String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, zimbraId])
   @@index([userId, startAt])
   @@map("calendar_events")
+}
+
+/// Links one meeting OCCURRENCE to the single document that is its minutes.
+/// Keyed by the iCalendar UID plus the occurrence's start, because a UID is
+/// shared by every occurrence of a recurring series and weekly meetings have
+/// weekly minutes.
+model MeetingMinutes {
+  id                String   @id @default(cuid())
+  icalUid           String
+  occurrenceStartAt DateTime
+  documentId        String
+  createdBy         String
+  createdAt         DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  creator  User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@unique([icalUid, occurrenceStartAt])
+  @@index([documentId])
+  @@map("meeting_minutes")
 }
 
 // ─── AI profile ──────────────────────────────────────────────────────────────

@@ -232,7 +232,53 @@ provider types, so the memory provider simply leaves it unset."
 - Modify: `apps/api/prisma/schema.prisma`
 - Create: `apps/api/prisma/migrations/<timestamp>_add_meeting_minutes/migration.sql`
 - Modify: `apps/api/src/calendar/calendar.service.ts` (list sync + detail sync)
-- Test: `apps/api/src/calendar/calendar.service.spec.ts`
+- **Create: `apps/api/src/calendar/calendar.service.spec.ts`** — this file does NOT exist yet. `CalendarService` has no tests at all today, so this task stands the spec file up and Tasks 3 and 4 extend it. Use the harness in Step 0 verbatim; it is the shared fixture those tasks rely on.
+
+- [ ] **Step 0: Create the spec file and its harness**
+
+`CalendarService`'s constructor is `(prisma: PrismaService, resolver: MailProviderResolver)` today; Task 3 adds `DocsService` as a third argument, so the harness takes it now and Task 3 only has to use it. Follow the `as unknown as PrismaService` fake pattern the mail specs use (`mail.service.spec.ts:25`).
+
+```typescript
+import { NotFoundException } from '@nestjs/common';
+import { CalendarService } from './calendar.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { ZimbraService } from '../zimbra/zimbra.service';
+import { MailProviderResolver } from '../provider/mail-provider.resolver';
+import { DocsService } from '../docs/docs.service';
+
+/** `provider` is what MailProviderResolver.forUser reads — the DB always
+ *  carries it, so the fixture must too or the resolver rejects the user. */
+export const USER = {
+  id: 'u1', email: 'me@risa.gov.rw', authToken: 'tok',
+  tokenExpiry: new Date(Date.now() + 60_000), provider: 'zimbra',
+};
+
+export const zimbraStub = {
+  getCalendarEvents: jest.fn(),
+  getAppointment: jest.fn(),
+};
+
+export function makeService() {
+  jest.clearAllMocks();
+  const prisma = {
+    user: { findUnique: jest.fn() },
+    calendarEvent: {
+      findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn().mockResolvedValue({ id: 'e1' }), update: jest.fn(),
+    },
+    meetingMinutes: { findUnique: jest.fn().mockResolvedValue(null) },
+  } as unknown as PrismaService;
+  const docs = { createMinutesDocument: jest.fn() } as unknown as DocsService;
+  const service = new CalendarService(
+    prisma,
+    new MailProviderResolver(zimbraStub as unknown as ZimbraService),
+    docs,
+  );
+  return { service, prisma: prisma as any, docs: docs as any };
+}
+```
+
+Run `cd apps/api && npx jest src/calendar/calendar.service.spec.ts` — it passes with no tests in it yet, which confirms the harness compiles before any behaviour depends on it.
 
 **Interfaces:**
 - Consumes: `ProviderEvent.icalUid`, `ProviderEventDetail.icalUid` (Task 1).
@@ -386,8 +432,8 @@ returns the event to offering creation rather than leaving a dead button."
 - Modify: `apps/api/src/calendar/calendar.service.ts` (resolve + delegate)
 - Modify: `apps/api/src/calendar/calendar.controller.ts` (the route)
 - Modify: `apps/api/src/calendar/calendar.module.ts` (import `DocsModule`)
-- Test: `apps/api/src/docs/docs.service.spec.ts`
-- Test: `apps/api/src/calendar/calendar.service.spec.ts`
+- **Create: `apps/api/src/docs/docs.service.spec.ts`** — this file does NOT exist yet; `DocsService` has no tests today. The `makeService` helper in Step 1 is self-contained, so create the file with it. Import `DocsService` from `./docs.service` and `PrismaService` from `../prisma/prisma.service`.
+- Modify: `apps/api/src/calendar/calendar.service.spec.ts` (created in Task 2 — reuse its exported `makeService`, `USER` and `zimbraStub`)
 
 **Interfaces:**
 - Consumes: `MeetingMinutes` and `CalendarEvent.icalUid` (Task 2).
@@ -654,7 +700,7 @@ describe('CalendarService.createMinutes', () => {
 });
 ```
 
-Add to `apps/api/src/calendar/calendar.controller.spec.ts` (create the file if absent):
+Create `apps/api/src/calendar/calendar.controller.spec.ts` — it does not exist. `CalendarController`'s constructor takes only `(calendarService: CalendarService)`, so the harness is one fake:
 
 ```typescript
 describe('CalendarController.createMinutes', () => {
@@ -699,7 +745,7 @@ export class CreateMinutesDto {
 }
 ```
 
-In `calendar.service.ts`, inject `DocsService` and add:
+In `calendar.service.ts`, add `DocsService` as the **third** constructor argument (`private readonly docs: DocsService`) — Task 2's test harness already passes it — and add:
 
 ```typescript
   /**
@@ -771,7 +817,7 @@ content arrives composed, no provider calls inside, invites in one createMany."
 
 **Files:**
 - Modify: `apps/api/src/calendar/calendar.service.ts` (`getEvent`)
-- Test: `apps/api/src/calendar/calendar.service.spec.ts`
+- Modify: `apps/api/src/calendar/calendar.service.spec.ts` (reuse Task 2's exported `makeService`, `USER` and `zimbraStub`; its prisma fake already carries a `meetingMinutes.findUnique` mock)
 
 **Interfaces:**
 - Produces: `minutesDocumentId: string | null` on the event-detail response, which Task 5's drawer reads.
@@ -940,7 +986,7 @@ Expected: FAIL — cannot resolve `./minutesPrefill`.
 - [ ] **Step 3: Implement the prefill**
 
 ```typescript
-import { DOC_TEMPLATES } from '@/lib/docs/templates';
+import { TEMPLATES } from '@/lib/docs/templates';
 
 export interface MinutesPrefillEvent {
   title: string;
@@ -958,7 +1004,7 @@ export interface MinutesPrefillEvent {
  * API never has to know about TipTap — it stores what it is given.
  */
 export function minutesPrefill(event: MinutesPrefillEvent): { title: string; content: string } {
-  const template = DOC_TEMPLATES.find((t) => t.id === 'minutes');
+  const template = TEMPLATES.find((t) => t.id === 'minutes');
   if (!template) throw new Error('The Meeting Minutes template is missing');
 
   const when = new Date(event.startAt).toLocaleString('en-GB', {

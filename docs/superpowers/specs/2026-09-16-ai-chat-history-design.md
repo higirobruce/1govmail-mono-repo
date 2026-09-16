@@ -281,9 +281,35 @@ hand while diagnosing the agent. Nothing in the product breaks when a row goes.
   record of what the agent did inside it.
 - **An index on `conversationId`.** The cascade and the per-conversation delete
   both look rows up by it, and Prisma does not index a relation scalar by default.
-- The single write site sets it from the conversation the turn belongs to. The
-  agent's `ctx` already flows to `dispatch`, so the id rides along rather than
-  needing a new channel.
+- **The link is back-filled, not written inline.** An earlier draft of this spec
+  said the write site would set `conversationId` from the conversation the turn
+  belongs to. It cannot: tool logs are written server-side *while* the answer
+  streams, and the conversation is created by the client only *after* the answer
+  completes (§6.1). At tool-call time there is nothing to reference.
+
+  The `turnId` already solves this. `agent.service.ts:71` mints one per agent turn
+  and every tool log for that turn already carries it — it just never reaches the
+  client. So:
+
+  1. The agent emits one new frame at the start of a run, `emit('turn', { turnId })`,
+     alongside the `tool_start` / `tool_result` / `proposal` / `clarify` frames it
+     already sends.
+  2. The client keeps that `turnId` and includes it when it persists the turn pair.
+  3. The API back-fills the link:
+
+  ```ts
+  await tx.agentToolLog.updateMany({
+    where: { turnId, userId, conversationId: null },
+    data: { conversationId },
+  });
+  ```
+
+  **The `userId` in that `where` is load-bearing, not decoration.** `turnId` is a
+  UUID supplied by the client on this path, so without the owner check a caller
+  could attach another user's tool logs to their own conversation and then read
+  them by deleting it — or simply learn that a given turn existed. Scoping by
+  `userId` makes an unowned `turnId` match zero rows. `conversationId: null` keeps
+  a replayed request from re-pointing logs that are already linked.
 - **Nullable on purpose.** Rows written before this change have no conversation,
   and an agent turn that produced no completed answer never creates one (§6.1),
   so its tool calls legitimately have none either.

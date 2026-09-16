@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Clock, Search, Trash2, Loader2, MessageSquare } from 'lucide-react';
+import { Clock, Search, Trash2, Loader2, MessageSquare, Menu } from 'lucide-react';
 import { api } from '@/lib/api';
 import { groupByRecency, resumeTarget, scopeChipLabel, type HistoryItem } from '@/lib/ai/history';
 import { useAskStore } from '@/stores/ask.store';
@@ -126,6 +126,13 @@ export default function AiHistoryPage() {
         <div className="max-w-3xl mx-auto px-6 pt-8 pb-16">
         <div className="flex items-baseline justify-between gap-4 mb-1">
           <h1 className="text-display flex items-center gap-2">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden p-1 -ml-0.5 rounded-md text-muted-foreground/60 hover:bg-muted/50 hover:text-foreground transition-colors"
+              aria-label="Open navigation"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
             <Clock className="w-5 h-5 text-ink-2" />
             Chat history
           </h1>

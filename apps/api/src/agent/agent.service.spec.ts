@@ -676,16 +676,17 @@ describe('AgentService.run', () => {
     });
 
     it('emits it before the first tool frame', async () => {
-      const { svc, frames, emit } = makeService([
-        { choices: [{ message: { role: 'assistant', content: 'done' } }] },
-      ]);
+      const { svc, frames, emit } = makeService(
+        [jsonToolCall('echo', '{"message":"hi"}'), sseResponse([text('Done')])],
+        [echoTool],
+      );
 
       await svc.run('u1', [{ role: 'user', content: 'hi' }], emit, new AbortController().signal);
 
       const turnAt = frames.findIndex((f) => f.event === 'turn');
       const toolAt = frames.findIndex((f) => f.event === 'tool_start');
-      expect(turnAt).toBeGreaterThanOrEqual(0);
-      if (toolAt >= 0) expect(turnAt).toBeLessThan(toolAt);
+      expect(toolAt).toBeGreaterThanOrEqual(0);  // the fixture must really call a tool
+      expect(turnAt).toBeLessThan(toolAt);
     });
   });
 });

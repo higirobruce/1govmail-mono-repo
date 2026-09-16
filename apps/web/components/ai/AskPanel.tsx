@@ -17,6 +17,7 @@ import { usesRetrievalPath, historyLimitFor, buildPinned, type PinnedPayload } f
 import { gatherThreadContent, PINNED_THREAD_CHAR_BUDGET } from '@/lib/ai/threadContent';
 import { sourceHref } from '@/lib/ai/sourceNav';
 import { scrubOutput } from '@/lib/ai/prompt';
+import { createConversationSession } from '@/lib/ai/conversationSession';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { AIHttpError } from '@/lib/ai/client';
 import { cn } from '@/lib/utils';
@@ -335,21 +336,17 @@ export default function AskPanel() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  // The saved conversation this session is writing to. Null until the first
-  // completed pair creates one; `takeResumeId` can also set it on mount.
-  // A ref, not state: persistTurnPair reads this through a serializing chain
-  // (persistChain below), possibly well after the render that enqueued it —
-  // a state value captured in that render's closure would still read null
-  // even after an earlier queued persist had already resolved and set it,
-  // and would create a second conversation instead of appending to the
-  // first. Nothing in this panel renders the id, so no state is needed.
-  const conversationIdRef = useRef<string | null>(null);
-  const setConvId = (id: string | null) => { conversationIdRef.current = id; };
+  // The saved conversation this session is writing to, and the two hazards
+  // around writing it (a rapid double-turn racing two create()s; "New
+  // conversation" clearing the id while an older create() is still in
+  // flight) — pulled into lib/ai/conversationSession.ts because it's
+  // testable there, unlike this component (see the header comment). Lazy
+  // init: createConversationSession() must run exactly once per mounted
+  // panel, not once per render.
+  const sessionRef = useRef<ReturnType<typeof createConversationSession> | null>(null);
+  if (!sessionRef.current) sessionRef.current = createConversationSession();
+  const session = sessionRef.current;
   const turnIdRef = useRef<string | null>(null);
-  // Persists run one at a time. Without this, a second turn finishing before
-  // the first turn's create() resolves would see conversationIdRef still
-  // null and create a second conversation instead of appending to the first.
-  const persistChain = useRef<Promise<void>>(Promise.resolve());
   const [pendingSources, setPendingSources] = useState<AskSource[]>([]);
   const [pendingDegraded, setPendingDegraded] = useState<AskDegraded>({ vector: false, keyword: false, docs: false, calendar: false });
   const [error, setError] = useState<string | null>(null);
@@ -420,7 +417,7 @@ export default function AskPanel() {
           fromHistory: true,
         }));
         setTurns(restored);
-        setConvId(id);
+        session.set(id);
       } catch {
         toast.error('That conversation is no longer available');
       }
@@ -493,22 +490,28 @@ export default function AskPanel() {
    * and never allowed to throw outward: a failed history write must leave the
    * answer on screen untouched.
    *
-   * `turnId` is a parameter, not a read of `turnIdRef.current` — this runs
-   * queued behind `persistChain` (see the call site), so by the time it
-   * actually executes, turnIdRef may already hold a LATER turn's id (or have
-   * been reset to null by a new `ask()` call). The caller captures the id
-   * synchronously at the moment ITS OWN turn completes and hands it in, so a
-   * queued persist always ships the id that belongs to it.
+   * `turnId` and `generation` are parameters, not live reads of `turnIdRef`
+   * / `session.generation()` — this runs queued behind `session.enqueue`
+   * (see the call site), so by the time it actually executes, turnIdRef may
+   * already hold a LATER turn's id (or have been reset to null by a new
+   * `ask()` call), and the generation may already have moved on. The caller
+   * captures both synchronously at the moment ITS OWN turn completes and
+   * hands them in, so a queued persist always ships the id that belongs to
+   * it, and its create() result is only accepted if nothing superseded it.
    *
-   * Reads/writes `conversationIdRef` (via setConvId) directly, rather than
-   * anything captured in a render's closure, for the same reason: this
-   * function's own closure is fixed at the render where it was defined, but
-   * the chain may run it well after that render, once an earlier queued
-   * persist has resolved and updated the ref. Reading the ref is what makes
-   * the "already have a conversation" check correct at execution time
-   * instead of at enqueue time — which is the whole fix for the race.
+   * Reads `session.id()` live (not a value captured in this function's own
+   * closure) for the same class of reason: the chain may run this well
+   * after the render that defined it, once an earlier queued persist has
+   * already resolved and recorded a conversation. That's what makes the
+   * "already have a conversation" check correct at execution time instead
+   * of at enqueue time — the fix for the double-create race. `setIfCurrent`
+   * is the matching fix for the second race: a create() that resolves after
+   * "New conversation" has cleared and moved the generation on must not
+   * resurrect the conversation the user walked away from.
    */
-  const persistTurnPair = async (question: string, answer: AnswerTurn, turnId: string | null) => {
+  const persistTurnPair = async (
+    question: string, answer: AnswerTurn, turnId: string | null, generation: number,
+  ) => {
     const body = {
       turnId,
       turns: [
@@ -523,8 +526,8 @@ export default function AskPanel() {
       ],
     };
     try {
-      if (conversationIdRef.current) {
-        await api.aiHistory.append(conversationIdRef.current, body);
+      if (session.id()) {
+        await api.aiHistory.append(session.id()!, body);
       } else {
         const { id } = await api.aiHistory.create({
           ...body,
@@ -533,7 +536,11 @@ export default function AskPanel() {
           scopeLabel: scope?.kind === 'thread' ? scope.subject : scope?.kind === 'doc' ? scope.docTitle : null,
           model: aiModel,
         });
-        setConvId(id);
+        // The created row is kept either way (losing it would break the
+        // "never breaks an answer" rule) — but only wire it up as THIS
+        // session's active conversation if nothing superseded it while the
+        // request was in flight. A superseded create() lands nowhere.
+        session.setIfCurrent(id, generation);
       }
     } catch {
       // History is a convenience. Losing a write must not cost the answer.
@@ -684,15 +691,17 @@ export default function AskPanel() {
       };
       setTurns((prev) => [...prev, answerTurn]);
       // Reached only on completion — never in the catch/abort path below — so
-      // a Stop-ped turn is never saved half-finished. Capture the turn id
-      // NOW, synchronously — turnIdRef can move on (a later ask() resets or
-      // overwrites it) before this persist actually runs — and queue onto
-      // persistChain rather than firing free, so two turns completing close
-      // together still persist in order instead of racing to create() twice.
+      // a Stop-ped turn is never saved half-finished. Capture the turn id and
+      // the generation NOW, synchronously — turnIdRef can move on (a later
+      // ask() resets or overwrites it) and the generation can move on too
+      // (if "New conversation" is clicked) before this persist actually
+      // runs — and enqueue rather than firing free, so two turns completing
+      // close together still persist in order instead of racing to
+      // create() twice, and a create() that resolves after this
+      // conversation was abandoned can't resurrect it.
       const turnIdForThisTurn = turnIdRef.current;
-      persistChain.current = persistChain.current.then(
-        () => persistTurnPair(q, answerTurn, turnIdForThisTurn),
-      );
+      const generationForThisTurn = session.generation();
+      void session.enqueue(() => persistTurnPair(q, answerTurn, turnIdForThisTurn, generationForThisTurn));
     } catch (err) {
       if (!ac.signal.aborted) {
         setError(err instanceof AIHttpError && err.status === 429
@@ -735,7 +744,11 @@ export default function AskPanel() {
     // CACHE stays: re-gathering ten bodies to produce identical text is waste,
     // and the gathered messageCount is a property of the thread, not the chat.
     setPinnedAck(null);
-    setConvId(null);
+    // clear() bumps the generation, not just nulls the id — a create() from
+    // a turn asked just before this click may still be in flight; if it
+    // resolves afterwards, its captured generation no longer matches, so it
+    // cannot write itself back in and silently undo this "start fresh".
+    session.clear();
     turnIdRef.current = null;
   }
 

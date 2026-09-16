@@ -330,7 +330,7 @@ ninety more days. The cascade is what makes the promise true.
 | Case | Behaviour |
 |---|---|
 | A history write fails | The answer is unaffected and a warning is logged. History is a convenience and must never block an answer. |
-| A stored source points at a purged message | The chip degrades to plain text with a tooltip. `AiGeneration`'s snapshots already live with this. |
+| A stored source points at a purged message | The chip stays rendered and clickable — the snapshot cannot know the target is gone without a liveness check per source, which is not worth a query per chip — and the destination shows its own not-found. This is exactly how `AiGeneration`'s snapshots already behave, so it is existing behaviour rather than new work, and it is named in §12 as a limit. |
 | Two tabs append to one conversation | `seq` is unique per conversation, so the loser raises P2002 — re-read `max(seq)` and retry once. The same shape as the meeting-minutes idempotency fix. |
 | Resume target is gone (thread purged, doc deleted) | The panel opens app-wide with a line naming what the conversation was about and saying the source is unavailable. The turns stay readable; only dead chips degrade. |
 | Retention removes a conversation open in another tab | Resume gets a 404 and reports that the conversation is no longer available, rather than erroring. |

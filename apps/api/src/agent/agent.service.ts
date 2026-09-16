@@ -69,6 +69,10 @@ export class AgentService {
       },
     });
     const turnId = randomUUID();
+    // The client needs this to link the tool logs of this turn to the
+    // conversation it will create once the answer completes — the conversation
+    // does not exist yet, so the log rows cannot carry its id at write time.
+    emit('turn', { turnId });
     const startedAt = Date.now();
     let aliasCount = 0;
     const aliasByKey = new Map<string, string>();

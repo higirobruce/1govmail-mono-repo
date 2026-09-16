@@ -121,7 +121,7 @@ export class CalendarService {
     const organizer: string | null = detail.organizer?.email ?? event.organizer;
 
     // Persist the enriched attendees so the event list is also up to date
-    return this.prisma.calendarEvent.update({
+    const updated = await this.prisma.calendarEvent.update({
       where: { id: eventId },
       data: {
         attendees: attendees as any,
@@ -132,6 +132,26 @@ export class CalendarService {
         syncedAt: new Date(),
       },
     });
+
+    // The drawer needs this to choose between "Create minutes" and "Open
+    // minutes", so it rides the detail response rather than costing a request.
+    // Prefer the refreshed row's icalUid (the Zimbra fallback path can fill it
+    // in during this very call) but fall back to the pre-refresh value so a
+    // provider/test double that returns a partial updated row doesn't lose it.
+    const icalUid = updated.icalUid ?? event.icalUid;
+    const minutesDocumentId = icalUid
+      ? (await this.prisma.meetingMinutes.findUnique({
+          where: {
+            icalUid_occurrenceStartAt: {
+              icalUid,
+              occurrenceStartAt: updated.startAt,
+            },
+          },
+          select: { documentId: true },
+        }))?.documentId ?? null
+      : null;
+
+    return { ...updated, minutesDocumentId };
   }
 
   // ── Create event ──────────────────────────────────────────────────────────

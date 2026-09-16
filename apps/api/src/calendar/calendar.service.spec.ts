@@ -66,6 +66,11 @@ describe('CalendarService icalUid persistence', () => {
       id: 'z-1', attendees: [{ email: 'a@risa.gov.rw' }],
       organizer: { email: 'chair@risa.gov.rw' }, icalUid: 'cabinet@zimbra',
     });
+    // getEvent now reads the refreshed row's icalUid/startAt to resolve the
+    // minutes link, so the update mock must resolve to a row, not undefined.
+    prisma.calendarEvent.update.mockResolvedValue({
+      id: 'e1', icalUid: 'cabinet@zimbra', startAt: new Date('2026-09-17T09:00:00Z'),
+    });
 
     await service.getEvent('u1', 'e1');
 
@@ -79,6 +84,11 @@ describe('CalendarService icalUid persistence', () => {
     prisma.user.findUnique.mockResolvedValue(USER);
     prisma.calendarEvent.findFirst.mockResolvedValue({ id: 'e1', zimbraId: 'z-1', icalUid: 'kept@zimbra' });
     zimbraStub.getAppointment.mockResolvedValue({ id: 'z-1', attendees: [], organizer: null });
+    // getEvent now reads the refreshed row's icalUid/startAt to resolve the
+    // minutes link, so the update mock must resolve to a row, not undefined.
+    prisma.calendarEvent.update.mockResolvedValue({
+      id: 'e1', icalUid: 'kept@zimbra', startAt: new Date('2026-09-17T09:00:00Z'),
+    });
 
     await service.getEvent('u1', 'e1');
 
@@ -140,5 +150,55 @@ describe('CalendarService.createMinutes', () => {
     expect(docs.createMinutesDocument).toHaveBeenCalledWith('u1', expect.objectContaining({
       attendeeEmails: ['a@risa.gov.rw', 'b@risa.gov.rw'],
     }));
+  });
+});
+
+describe('CalendarService.getEvent minutes link', () => {
+  it('reports the minutes document for this occurrence', async () => {
+    const { service, prisma } = makeService();
+    prisma.user.findUnique.mockResolvedValue(USER);
+    prisma.calendarEvent.findFirst.mockResolvedValue({
+      id: 'e1', zimbraId: 'z-1', icalUid: 'cabinet@zimbra',
+      startAt: new Date('2026-09-17T09:00:00Z'), attendees: [],
+    });
+    zimbraStub.getAppointment.mockResolvedValue({ id: 'z-1', attendees: [], organizer: null });
+    prisma.calendarEvent.update.mockResolvedValue({ id: 'e1', startAt: new Date('2026-09-17T09:00:00Z') });
+    prisma.meetingMinutes.findUnique.mockResolvedValue({ documentId: 'doc-1' });
+
+    const event: any = await service.getEvent('u1', 'e1');
+
+    expect(event.minutesDocumentId).toBe('doc-1');
+  });
+
+  it('reports null when this occurrence has no minutes', async () => {
+    const { service, prisma } = makeService();
+    prisma.user.findUnique.mockResolvedValue(USER);
+    prisma.calendarEvent.findFirst.mockResolvedValue({
+      id: 'e1', zimbraId: 'z-1', icalUid: 'cabinet@zimbra',
+      startAt: new Date('2026-09-17T09:00:00Z'), attendees: [],
+    });
+    zimbraStub.getAppointment.mockResolvedValue({ id: 'z-1', attendees: [], organizer: null });
+    prisma.calendarEvent.update.mockResolvedValue({ id: 'e1', startAt: new Date('2026-09-17T09:00:00Z') });
+    prisma.meetingMinutes.findUnique.mockResolvedValue(null);
+
+    const event: any = await service.getEvent('u1', 'e1');
+
+    expect(event.minutesDocumentId).toBeNull();
+  });
+
+  it('reports null without querying when the event has no UID', async () => {
+    const { service, prisma } = makeService();
+    prisma.user.findUnique.mockResolvedValue(USER);
+    prisma.calendarEvent.findFirst.mockResolvedValue({
+      id: 'e1', zimbraId: 'z-1', icalUid: null,
+      startAt: new Date('2026-09-17T09:00:00Z'), attendees: [],
+    });
+    zimbraStub.getAppointment.mockResolvedValue({ id: 'z-1', attendees: [], organizer: null });
+    prisma.calendarEvent.update.mockResolvedValue({ id: 'e1', startAt: new Date('2026-09-17T09:00:00Z') });
+
+    const event: any = await service.getEvent('u1', 'e1');
+
+    expect(event.minutesDocumentId).toBeNull();
+    expect(prisma.meetingMinutes.findUnique).not.toHaveBeenCalled();
   });
 });

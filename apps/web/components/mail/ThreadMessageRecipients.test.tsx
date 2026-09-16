@@ -1,8 +1,10 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { render, screen, cleanup, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ThreadMessage, { type ThreadMessageMeta } from './ThreadMessage';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { api } from '@/lib/api';
+import { clearBodyCache } from '@/lib/mailBodyCache';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -76,7 +78,61 @@ const openDetails = async () => {
   return screen.getByTestId('recipient-details');
 };
 
+// Thread metadata can carry an empty To while the full fetch has the real one:
+// before the API fix, getMessage refreshed cc/bcc on a cached row but never
+// toRecipients, so rows healed their CC long ago and kept an empty To. Reading
+// recipients off the metadata instead of the fetched message meant the panel
+// showed CC and silently omitted To — observed live on .154.
+describe('ThreadMessage recipient details prefer the fetched message', () => {
+  // The body cache is module-level and would serve a previous test's body,
+  // skipping the getMessage call these assertions depend on.
+  beforeEach(() => clearBodyCache());
+  afterEach(() => cleanup());
+
+  it('shows the To list from the full fetch when the thread metadata has none', async () => {
+    vi.mocked(api.mail.getMessage).mockResolvedValue({
+      id: 'm1',
+      bodyHtml: null,
+      bodyText: 'body',
+      toRecipients: [{ email: 'fred@risa.gov.rw', name: 'Fred' }],
+      ccRecipients: [{ email: 'idc@aos.rw', name: 'idc' }],
+    } as never);
+
+    renderMessage({ toRecipients: [], ccRecipients: [{ email: 'idc@aos.rw', name: 'idc' }] });
+
+    await waitFor(() => expect(screen.getByText('body')).toBeInTheDocument());
+    const details = await openDetails();
+
+    expect(within(details).getByText(/fred@risa\.gov\.rw/)).toBeInTheDocument();
+  });
+
+  it('shows a To summary from the full fetch too, not just inside the panel', async () => {
+    vi.mocked(api.mail.getMessage).mockResolvedValue({
+      id: 'm1',
+      bodyHtml: null,
+      bodyText: 'body',
+      toRecipients: [{ email: 'fred@risa.gov.rw', name: 'Fred' }],
+      ccRecipients: [],
+    } as never);
+
+    renderMessage({ toRecipients: [], ccRecipients: [] });
+
+    await waitFor(() => expect(screen.getByText('body')).toBeInTheDocument());
+
+    // The collapsed-summary line above the disclosure must agree with it.
+    expect(screen.getByText(/^To:/)).toBeInTheDocument();
+  });
+});
+
 describe('ThreadMessage recipient details', () => {
+  // mockResolvedValue persists across tests, so the override in the describe
+  // above would leak its recipients in here and mask what these assert.
+  beforeEach(() => {
+    clearBodyCache();
+    vi.mocked(api.mail.getMessage).mockResolvedValue({
+      id: 'm1', bodyHtml: null, bodyText: 'body',
+    } as never);
+  });
   afterEach(() => cleanup());
 
   it('keeps the full address list closed until asked', () => {

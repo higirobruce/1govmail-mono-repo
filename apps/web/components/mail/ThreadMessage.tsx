@@ -546,6 +546,22 @@ export default function ThreadMessage({
   }, [message.receivedAt]);
   const detail = fullMessage ?? message;
 
+  // Recipients come from the FETCHED message when we have it, falling back to
+  // the thread metadata. The metadata can legitimately carry an empty To while
+  // the real one exists: before the API fix, getMessage refreshed cc/bcc on an
+  // already-cached row but never toRecipients, so rows healed their CC long ago
+  // and kept an empty To. Reading the metadata here showed CC and silently
+  // omitted To — seen live on .154. Derived once so the summary line and the
+  // details panel can never disagree with each other.
+  const pickList = (
+    fetched: Array<{ email: string; name?: string | null }> | null | undefined,
+    meta: Array<{ email: string; name?: string | null }> | null | undefined,
+  ) => (fetched?.length ? fetched : meta ?? []);
+
+  const toList  = pickList((detail as any).toRecipients,  message.toRecipients);
+  const ccList  = pickList((detail as any).ccRecipients,  message.ccRecipients);
+  const bccList = pickList((detail as any).bccRecipients, message.bccRecipients);
+
   // ── Collapsed row ─────────────────────────────────────────────────────────
 
   if (!isExpanded) {
@@ -691,24 +707,24 @@ export default function ThreadMessage({
             {/* Recipient summary */}
             <div className="flex flex-wrap items-center gap-x-3 text-micro text-ink-3 mt-0.5">
               <span className="text-ink-3">{`<${message.fromEmail}>`}</span>
-              {message.toRecipients.length > 0 && (
+              {toList.length > 0 && (
                 <span>
                   To:{' '}
-                  {message.toRecipients
+                  {toList
                     .slice(0, 3)
                     .map((r) => r.name ?? r.email)
                     .join(', ')}
-                  {message.toRecipients.length > 3 && ` +${message.toRecipients.length - 3}`}
+                  {toList.length > 3 && ` +${toList.length - 3}`}
                 </span>
               )}
-              {message.ccRecipients.length > 0 && (
+              {ccList.length > 0 && (
                 <span>
                   CC:{' '}
-                  {message.ccRecipients
+                  {ccList
                     .slice(0, 2)
                     .map((r) => r.name ?? r.email)
                     .join(', ')}
-                  {message.ccRecipients.length > 2 && ` +${message.ccRecipients.length - 2}`}
+                  {ccList.length > 2 && ` +${ccList.length - 2}`}
                 </span>
               )}
               {/* The summary above truncates; this opens the authoritative list.
@@ -732,10 +748,10 @@ export default function ThreadMessage({
               <div onClick={(e) => e.stopPropagation()}>
                 <RecipientDetails
                   from={{ email: message.fromEmail, name: message.fromName }}
-                  replyTo={message.replyTo}
-                  to={message.toRecipients}
-                  cc={message.ccRecipients}
-                  bcc={message.bccRecipients ?? []}
+                  replyTo={detail.replyTo ?? message.replyTo}
+                  to={toList}
+                  cc={ccList}
+                  bcc={bccList}
                   dateLabel={fullTimeStr}
                 />
               </div>

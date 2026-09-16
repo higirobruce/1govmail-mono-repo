@@ -1,13 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { groupByRecency, resumeTarget, scopeChipLabel, type HistoryItem } from './history';
 
-// Fixtures are offset from NOW, never absolute UTC instants: groupByRecency
-// buckets against local midnight (`setHours(0,0,0,0)`), so a fixed "09:00Z"
-// fixture lands in a different bucket depending on the runner's timezone.
+// Local midnight, computed exactly as groupByRecency computes it. Fixtures are
+// placed relative to THIS, not to NOW: local midnight can fall as late as NOW
+// itself (UTC+12), so an offset from NOW buckets differently by timezone while
+// an offset from t0 does not.
 const NOW = new Date('2026-09-16T12:00:00.000Z');
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
-const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
+const t0 = (() => { const d = new Date(NOW); d.setHours(0, 0, 0, 0); return d.getTime(); })();
+const at = (ms: number) => new Date(t0 + ms).toISOString();
 
 const item = (id: string, iso: string): HistoryItem => ({
   id, title: id, scopeKind: 'app', scopeId: null, scopeLabel: null,
@@ -17,10 +19,10 @@ const item = (id: string, iso: string): HistoryItem => ({
 describe('groupByRecency', () => {
   it('buckets by how recent the last turn was', () => {
     const groups = groupByRecency([
-      item('today', ago(1 * HOUR)),
-      item('yesterday', ago(28 * HOUR)),
-      item('thisweek', ago(4 * DAY)),
-      item('older', ago(40 * DAY)),
+      item('today', at(1 * HOUR)),
+      item('yesterday', at(-1 * HOUR)),
+      item('thisweek', at(-3 * DAY)),
+      item('older', at(-40 * DAY)),
     ], NOW);
 
     expect(groups.map((g) => g.bucket)).toEqual(['Today', 'Yesterday', 'Earlier this week', 'Older']);
@@ -29,16 +31,21 @@ describe('groupByRecency', () => {
   });
 
   it('omits a bucket that has nothing in it', () => {
-    const groups = groupByRecency([item('older', ago(40 * DAY))], NOW);
+    const groups = groupByRecency([item('older', at(-40 * DAY))], NOW);
     expect(groups.map((g) => g.bucket)).toEqual(['Older']);
   });
 
   it('keeps the order it was given within a bucket', () => {
     const groups = groupByRecency([
-      item('a', ago(1 * HOUR)),
-      item('b', ago(3 * HOUR)),
+      item('a', at(1 * HOUR)),
+      item('b', at(3 * HOUR)),
     ], NOW);
     expect(groups[0].items.map((i) => i.id)).toEqual(['a', 'b']);
+  });
+
+  it('puts an item exactly at local midnight in Today, not Yesterday', () => {
+    const groups = groupByRecency([item('boundary', at(0))], NOW);
+    expect(groups[0].bucket).toBe('Today');
   });
 });
 

@@ -19,6 +19,9 @@ describe('DocsService.createMinutesDocument', () => {
     };
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue({ id: 'u1', email: 'me@risa.gov.rw' }) },
+      // Only `findFirst` — the advisory position read. No `document.create`
+      // here, so moving any WRITE off the transaction client still throws.
+      document: { findFirst: jest.fn().mockResolvedValue({ position: 3 }) },
       meetingMinutes: { findUnique: jest.fn().mockResolvedValue(existingLink) },
       $transaction: jest.fn(async (fn: any) => fn(tx)),
     } as unknown as PrismaService;
@@ -95,6 +98,24 @@ describe('DocsService.createMinutesDocument', () => {
     expect(tx.meetingMinutes.create).toHaveBeenCalled();
   });
 
+  it('reads the sidebar position OUTSIDE the transaction', async () => {
+    // The transaction holds a pooled connection, so it must contain no
+    // avoidable work. This read is advisory sidebar ordering, not correctness,
+    // and it is the one query in the block whose cost grows with the user's
+    // document count. createDoc already does findFirst-then-create with no
+    // transaction at all, so hoisting adds no raciness.
+    const { service, prisma, tx } = makeService();
+
+    await service.createMinutesDocument('u1', INPUT);
+
+    expect(prisma.document.findFirst).toHaveBeenCalled();
+    expect(tx.document.findFirst).not.toHaveBeenCalled();
+    // ...and the hoisted read still feeds the document it orders.
+    expect(tx.document.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ position: 4 }) }),
+    );
+  });
+
   it("resolves to the winner's document when two attendees race on the same occurrence", async () => {
     // Both callers miss the pre-transaction existence check above and both
     // enter the transaction; only one `meetingMinutes.create` can win
@@ -124,6 +145,29 @@ describe('DocsService.createMinutesDocument', () => {
     tx.meetingMinutes.create.mockRejectedValue(new Error('connection reset'));
 
     await expect(service.createMinutesDocument('u1', INPUT)).rejects.toThrow('connection reset');
+  });
+
+  it('does not swallow a NON-P2002 Prisma error as if it were the race', async () => {
+    // The plain-Error case above stops at the `instanceof` guard, so it never
+    // exercises `err.code === 'P2002'` — it would stay green if someone
+    // widened the catch to every PrismaClientKnownRequestError. P2003 is a
+    // foreign-key violation: what a genuinely bad documentId/createdBy raises,
+    // and never a race. It must reach the caller, not be reported as success.
+    const { service, prisma, tx } = makeService();
+    tx.meetingMinutes.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError(
+        'Foreign key constraint failed on the field: `createdBy`',
+        { code: 'P2003', clientVersion: 'test' },
+      ),
+    );
+    prisma.meetingMinutes.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ documentId: 'doc-should-not-be-returned' });
+
+    await expect(service.createMinutesDocument('u1', INPUT))
+      .rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    // The re-fetch belongs to the P2002 path only.
+    expect(prisma.meetingMinutes.findUnique).toHaveBeenCalledTimes(1);
   });
 });
 

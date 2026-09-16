@@ -56,6 +56,30 @@ describe('CalendarService icalUid persistence', () => {
     );
   });
 
+  it('does not erase a stored UID on a list sync whose provider event carries none', async () => {
+    // The mirror of the detail path's protection. On a Zimbra deployment whose
+    // search hits omit `uid`, an unconditional `icalUid: null` on the UPDATE
+    // branch wipes the UID the detail fetch had just stored — and on the
+    // provider-detail-unavailable early return that stale null is what the
+    // drawer sees, offering "Create minutes" over minutes that already exist.
+    const { service, prisma } = makeService();
+    prisma.user.findUnique.mockResolvedValue(USER);
+    zimbraStub.getCalendarEvents.mockResolvedValue([
+      { id: 'z-1', title: 'Cabinet briefing', startAt: new Date('2026-09-17T09:00:00Z'),
+        endAt: new Date('2026-09-17T10:00:00Z'), allDay: false, attendees: [],
+        inviteId: null, isRecurring: false },
+    ]);
+
+    await service.getEvents('u1', new Date('2026-09-01'), new Date('2026-09-30'));
+
+    const arg = prisma.calendarEvent.upsert.mock.calls[0][0];
+    // `undefined` is Prisma's "leave unchanged"; the key must not be present
+    // with a null, which would clear the column.
+    expect(arg.update.icalUid).toBeUndefined();
+    // A brand-new row still records the absence explicitly.
+    expect(arg.create).toEqual(expect.objectContaining({ icalUid: null }));
+  });
+
   it('fills the UID from the detail fetch when the list did not carry one', async () => {
     // This is the Zimbra fallback path: some versions omit uid on search but
     // always carry it on the appointment detail.

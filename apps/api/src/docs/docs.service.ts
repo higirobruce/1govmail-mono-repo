@@ -336,14 +336,20 @@ export class DocsService {
         .filter((e) => e.length > 0 && e !== mine),
     )];
 
+    // Deliberately OUTSIDE the transaction: this is advisory sidebar ordering,
+    // not correctness, and it is the one query here whose cost grows with the
+    // user's document count. An interactive transaction holds a pooled
+    // connection, so nothing avoidable belongs inside it. createDoc already
+    // does findFirst-then-create with no transaction at all, so document
+    // position is best-effort in this codebase either way.
+    const last = await this.prisma.document.findFirst({
+      where: { userId, parentId: null },
+      orderBy: { position: 'desc' },
+      select: { position: true },
+    });
+
     try {
       return await this.prisma.$transaction(async (tx) => {
-        const last = await tx.document.findFirst({
-          where: { userId, parentId: null },
-          orderBy: { position: 'desc' },
-          select: { position: true },
-        });
-
         const doc = await tx.document.create({
           data: {
             userId,
@@ -356,7 +362,7 @@ export class DocsService {
             // point, and VIEW keeps a forwarded link from rewriting the record.
             isShared: true,
             shareToken: shortToken(),
-            sharePermission: 'VIEW',
+            sharePermission: SharePermission.VIEW,
           },
           select: { id: true },
         });
@@ -367,7 +373,7 @@ export class DocsService {
               documentId: doc.id,
               invitedEmail,
               invitedBy: userId,
-              role: 'EDITOR' as const,
+              role: InviteRole.EDITOR,
             })),
             skipDuplicates: true,
           });

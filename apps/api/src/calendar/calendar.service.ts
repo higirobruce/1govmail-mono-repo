@@ -83,14 +83,17 @@ export class CalendarService {
         isRecurring:    ev.isRecurring,
         organizer:      ev.organizer?.email ?? null,
         attendees:      ev.attendees as any,
-        icalUid:        ev.icalUid ?? null,
         syncedAt:       new Date(),
       };
 
+      // icalUid is the one field NOT written unconditionally on update: a UID
+      // never legitimately changes or clears, and a search response that omits
+      // it (Zimbra does on some versions — see getEvent's detail fallback)
+      // would otherwise erase the UID the detail fetch had just stored.
       const cached = await this.prisma.calendarEvent.upsert({
         where: { userId_zimbraId: { userId, zimbraId: ev.id } },
-        create: { userId, zimbraId: ev.id, ...row },
-        update: row,
+        create: { userId, zimbraId: ev.id, ...row, icalUid: ev.icalUid ?? null },
+        update: { ...row, ...(ev.icalUid ? { icalUid: ev.icalUid } : {}) },
       });
       results.push(cached);
     }

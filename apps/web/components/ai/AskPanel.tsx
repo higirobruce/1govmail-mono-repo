@@ -337,8 +337,19 @@ export default function AskPanel() {
   const [streaming, setStreaming] = useState(false);
   // The saved conversation this session is writing to. Null until the first
   // completed pair creates one; `takeResumeId` can also set it on mount.
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  // A ref, not state: persistTurnPair reads this through a serializing chain
+  // (persistChain below), possibly well after the render that enqueued it —
+  // a state value captured in that render's closure would still read null
+  // even after an earlier queued persist had already resolved and set it,
+  // and would create a second conversation instead of appending to the
+  // first. Nothing in this panel renders the id, so no state is needed.
+  const conversationIdRef = useRef<string | null>(null);
+  const setConvId = (id: string | null) => { conversationIdRef.current = id; };
   const turnIdRef = useRef<string | null>(null);
+  // Persists run one at a time. Without this, a second turn finishing before
+  // the first turn's create() resolves would see conversationIdRef still
+  // null and create a second conversation instead of appending to the first.
+  const persistChain = useRef<Promise<void>>(Promise.resolve());
   const [pendingSources, setPendingSources] = useState<AskSource[]>([]);
   const [pendingDegraded, setPendingDegraded] = useState<AskDegraded>({ vector: false, keyword: false, docs: false, calendar: false });
   const [error, setError] = useState<string | null>(null);
@@ -409,7 +420,7 @@ export default function AskPanel() {
           fromHistory: true,
         }));
         setTurns(restored);
-        setConversationId(id);
+        setConvId(id);
       } catch {
         toast.error('That conversation is no longer available');
       }
@@ -481,10 +492,25 @@ export default function AskPanel() {
    * Write the finished exchange to history. Never awaited by the render path
    * and never allowed to throw outward: a failed history write must leave the
    * answer on screen untouched.
+   *
+   * `turnId` is a parameter, not a read of `turnIdRef.current` — this runs
+   * queued behind `persistChain` (see the call site), so by the time it
+   * actually executes, turnIdRef may already hold a LATER turn's id (or have
+   * been reset to null by a new `ask()` call). The caller captures the id
+   * synchronously at the moment ITS OWN turn completes and hands it in, so a
+   * queued persist always ships the id that belongs to it.
+   *
+   * Reads/writes `conversationIdRef` (via setConvId) directly, rather than
+   * anything captured in a render's closure, for the same reason: this
+   * function's own closure is fixed at the render where it was defined, but
+   * the chain may run it well after that render, once an earlier queued
+   * persist has resolved and updated the ref. Reading the ref is what makes
+   * the "already have a conversation" check correct at execution time
+   * instead of at enqueue time — which is the whole fix for the race.
    */
-  const persistTurnPair = async (question: string, answer: AnswerTurn) => {
+  const persistTurnPair = async (question: string, answer: AnswerTurn, turnId: string | null) => {
     const body = {
-      turnId: turnIdRef.current,
+      turnId,
       turns: [
         { role: 'user' as const, content: question },
         {
@@ -497,8 +523,8 @@ export default function AskPanel() {
       ],
     };
     try {
-      if (conversationId) {
-        await api.aiHistory.append(conversationId, body);
+      if (conversationIdRef.current) {
+        await api.aiHistory.append(conversationIdRef.current, body);
       } else {
         const { id } = await api.aiHistory.create({
           ...body,
@@ -507,7 +533,7 @@ export default function AskPanel() {
           scopeLabel: scope?.kind === 'thread' ? scope.subject : scope?.kind === 'doc' ? scope.docTitle : null,
           model: aiModel,
         });
-        setConversationId(id);
+        setConvId(id);
       }
     } catch {
       // History is a convenience. Losing a write must not cost the answer.
@@ -658,8 +684,15 @@ export default function AskPanel() {
       };
       setTurns((prev) => [...prev, answerTurn]);
       // Reached only on completion — never in the catch/abort path below — so
-      // a Stop-ped turn is never saved half-finished.
-      void persistTurnPair(q, answerTurn);
+      // a Stop-ped turn is never saved half-finished. Capture the turn id
+      // NOW, synchronously — turnIdRef can move on (a later ask() resets or
+      // overwrites it) before this persist actually runs — and queue onto
+      // persistChain rather than firing free, so two turns completing close
+      // together still persist in order instead of racing to create() twice.
+      const turnIdForThisTurn = turnIdRef.current;
+      persistChain.current = persistChain.current.then(
+        () => persistTurnPair(q, answerTurn, turnIdForThisTurn),
+      );
     } catch (err) {
       if (!ac.signal.aborted) {
         setError(err instanceof AIHttpError && err.status === 429
@@ -702,7 +735,7 @@ export default function AskPanel() {
     // CACHE stays: re-gathering ten bodies to produce identical text is waste,
     // and the gathered messageCount is a property of the thread, not the chat.
     setPinnedAck(null);
-    setConversationId(null);
+    setConvId(null);
     turnIdRef.current = null;
   }
 

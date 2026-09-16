@@ -19,8 +19,10 @@ const DOCS_PAGE = read('app/(app)/docs/page.tsx');
 
 describe('the minutes deep link into /docs', () => {
   it('routes both drawer navigations through sourceHref, never a hand-written /docs URL', () => {
-    expect(CALENDAR_PAGE).toContain("sourceHref({ type: 'doc', id: minutesId })");
-    expect(CALENDAR_PAGE).toContain("sourceHref({ type: 'doc', id: documentId })");
+    // Match the call shape rather than its exact text: pinning the argument
+    // names would make a rename look like a broken deep link.
+    const routed = CALENDAR_PAGE.match(/sourceHref\(\{\s*type:\s*'doc'/g) ?? [];
+    expect(routed.length).toBe(2);
     expect(CALENDAR_PAGE).not.toMatch(/\/docs\?/);
   });
 

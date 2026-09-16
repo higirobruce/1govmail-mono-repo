@@ -91,6 +91,7 @@ export async function streamAgent(
     onClarify: (c: AgentClarify) => void;
     onChunk: (delta: string) => void;
     onPinned?: (p: PinnedAck) => void;
+    onTurnId?: (turnId: string) => void;
     pinned?: PinnedPayload | null;
     signal?: AbortSignal;
   },
@@ -117,6 +118,7 @@ export async function streamAgent(
       else if (name === 'chart') opts.onChart(data as AgentChartSpec);
       else if (name === 'clarify') opts.onClarify(data as AgentClarify);
       else if (name === 'pinned') opts.onPinned?.(data as PinnedAck);
+      else if (name === 'turn') opts.onTurnId?.((data as { turnId: string }).turnId);
     },
   });
 }

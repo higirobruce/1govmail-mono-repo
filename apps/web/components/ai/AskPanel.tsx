@@ -6,8 +6,9 @@ import { useAIStore } from '@/stores/ai.store';
 import { AiProfileNudge } from './AiProfileNudge';
 import {
   MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square,
-  Mail, FileText, Calendar, SquarePen, ChevronDown, ChevronUp,
+  Mail, FileText, Calendar, SquarePen, ChevronDown, ChevronUp, Clock,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
 import { renderInline, splitBlocks } from './answerFormat';
 import { streamAsk, type AskSource, type AskSourceType, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
@@ -41,8 +42,10 @@ interface AnswerTurn {
   proposals?: AgentProposal[];
   charts?: AgentChartSpec[];
   clarify?: AgentClarify;
+  /** Restored from saved history rather than freshly streamed — gates proposal approval (see ProposalCard rendering below). */
+  fromHistory?: boolean;
 }
-interface QuestionTurn { role: 'user'; content: string }
+interface QuestionTurn { role: 'user'; content: string; fromHistory?: boolean }
 type Turn = QuestionTurn | AnswerTurn;
 
 // The turn budgets and the routing rule live in lib/ai/threadPin.ts — one
@@ -311,6 +314,7 @@ export default function AskPanel() {
   const profileCard = useAIStore((s) => s.profileCard);
   const customInstructions = useAIStore((s) => s.customInstructions);
   const profileSyncedFor = useAIStore((s) => s.profileSyncedFor);
+  const aiModel = useAIStore((s) => s.model);
   const nudgeProfile = profileSyncedFor
     ? { ...profileCard, instructions: customInstructions }
     : undefined;
@@ -326,10 +330,15 @@ export default function AskPanel() {
   const clearScope = useAskStore((s) => s.clearScope);
   const toggleScopeLock = useAskStore((s) => s.toggleScopeLock);
   const setOpenTarget = useAskStore((s) => s.setOpenTarget);
+  const takeResumeId = useAskStore((s) => s.takeResumeId);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  // The saved conversation this session is writing to. Null until the first
+  // completed pair creates one; `takeResumeId` can also set it on mount.
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const turnIdRef = useRef<string | null>(null);
   const [pendingSources, setPendingSources] = useState<AskSource[]>([]);
   const [pendingDegraded, setPendingDegraded] = useState<AskDegraded>({ vector: false, keyword: false, docs: false, calendar: false });
   const [error, setError] = useState<string | null>(null);
@@ -373,6 +382,41 @@ export default function AskPanel() {
 
   useEffect(() => { if (open && prefill) setInput(prefill); }, [open, prefill]);
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Resume a saved conversation, if the history page (or a "resume" action
+  // elsewhere) left one pending. Read once via takeResumeId — it clears the
+  // flag in the same call — before any other data loading, so a resumed
+  // conversation's turns are what the panel first renders.
+  useEffect(() => {
+    const id = takeResumeId();
+    if (!id) return;
+    let alive = true;
+    (async () => {
+      try {
+        const t = await api.aiHistory.get(id);
+        if (!alive || !t) return;
+        // Pair the flat turn rows back into the panel's Turn shape. Proposals
+        // are restored for display only — a proposal from an earlier session
+        // is rendered inert (see the fromHistory branch below) rather than
+        // offered for approval, since the mail, calendar and drafts it was
+        // built against have all moved on since.
+        const restored: Turn[] = (t.turns ?? []).map((row: any) => ({
+          role: row.role,
+          content: row.content,
+          sources: row.sources ?? [],
+          steps: row.steps ?? undefined,
+          proposals: row.proposals ?? undefined,
+          fromHistory: true,
+        }));
+        setTurns(restored);
+        setConversationId(id);
+      } catch {
+        toast.error('That conversation is no longer available');
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // A different thread (or no thread at all) invalidates both the gathered
   // text and the server's ack about it.
@@ -433,6 +477,43 @@ export default function AskPanel() {
     router.push(sourceHref({ type: 'mail', id: messageId }));
   }
 
+  /**
+   * Write the finished exchange to history. Never awaited by the render path
+   * and never allowed to throw outward: a failed history write must leave the
+   * answer on screen untouched.
+   */
+  const persistTurnPair = async (question: string, answer: AnswerTurn) => {
+    const body = {
+      turnId: turnIdRef.current,
+      turns: [
+        { role: 'user' as const, content: question },
+        {
+          role: 'assistant' as const,
+          content: answer.content,
+          sources: answer.sources ?? [],
+          steps: answer.steps ?? undefined,
+          proposals: answer.proposals ?? undefined,
+        },
+      ],
+    };
+    try {
+      if (conversationId) {
+        await api.aiHistory.append(conversationId, body);
+      } else {
+        const { id } = await api.aiHistory.create({
+          ...body,
+          scopeKind: scope?.kind === 'thread' ? 'thread' : scope?.kind === 'doc' ? 'doc' : 'app',
+          scopeId: scope?.kind === 'thread' ? scope.seedMessageId : scope?.kind === 'doc' ? scope.docId : null,
+          scopeLabel: scope?.kind === 'thread' ? scope.subject : scope?.kind === 'doc' ? scope.docTitle : null,
+          model: aiModel,
+        });
+        setConversationId(id);
+      }
+    } catch {
+      // History is a convenience. Losing a write must not cost the answer.
+    }
+  };
+
   async function ask(question: string) {
     const q = question.trim();
     if (!q || streaming) return;
@@ -464,6 +545,10 @@ export default function AskPanel() {
     liveClarifyRef.current = null;
     setLiveSteps([]);
     setLiveProposals([]);
+    // A doc-scoped (streamAsk) turn never gets a `turn` frame, so a stale id
+    // from a previous agent turn must not carry over and misattribute this
+    // turn's (nonexistent) tool logs on persist.
+    turnIdRef.current = null;
     stream.reset();
     // Text streamed since the last tool_start. Iteration narration ("Let me
     // search…") belongs to the step that follows it, not the answer: on each
@@ -512,6 +597,7 @@ export default function AskPanel() {
         : await streamAgent(history, {
             pinned,
             onPinned: setPinnedAck,
+            onTurnId: (id) => { turnIdRef.current = id; },
             signal: ac.signal,
             onChunk: (delta) => {
               segRef.current += delta;
@@ -560,7 +646,7 @@ export default function AskPanel() {
       // so segRef never resets and this is a no-op there (raw === segment).
       const clean = scrubOutput(usesRetrievalPath(scope) ? raw : (segRef.current.trim() || raw));
       stream.replace(clean);
-      setTurns((prev) => [...prev, {
+      const answerTurn: AnswerTurn = {
         role: 'assistant',
         content: clean,
         sources: pendingSourcesRef.current,
@@ -569,7 +655,11 @@ export default function AskPanel() {
         proposals: liveProposalsRef.current,
         charts: liveChartsRef.current,
         clarify: liveClarifyRef.current ?? undefined,
-      }]);
+      };
+      setTurns((prev) => [...prev, answerTurn]);
+      // Reached only on completion — never in the catch/abort path below — so
+      // a Stop-ped turn is never saved half-finished.
+      void persistTurnPair(q, answerTurn);
     } catch (err) {
       if (!ac.signal.aborted) {
         setError(err instanceof AIHttpError && err.status === 429
@@ -587,6 +677,11 @@ export default function AskPanel() {
    * A failed turn poisons follow-ups (the model repeats "couldn't find" from
    * history without re-searching) and long histories push the model into
    * fabricating tool results — this is the escape hatch.
+   *
+   * This no longer discards anything: each completed pair is already written
+   * to history as it happens, so the conversation just had is already saved.
+   * All this needs to do is forget its id so the next question starts a new
+   * saved conversation instead of appending to this one.
    */
   function startNewConversation() {
     setTurns([]);
@@ -607,6 +702,8 @@ export default function AskPanel() {
     // CACHE stays: re-gathering ten bodies to produce identical text is waste,
     // and the gathered messageCount is a property of the thread, not the chat.
     setPinnedAck(null);
+    setConversationId(null);
+    turnIdRef.current = null;
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -657,9 +754,18 @@ export default function AskPanel() {
           disabled={streaming}
           className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40"
           aria-label="New conversation"
-          title="New conversation — clears this chat's history"
+          title="New conversation — this one stays in your history"
         >
           <SquarePen className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push('/ai/history')}
+          aria-label="Chat history"
+          title="Chat history"
+          className="text-ink-3 hover:text-foreground"
+        >
+          <Clock className="w-3.5 h-3.5" />
         </button>
         <button
           type="button"
@@ -758,7 +864,15 @@ export default function AskPanel() {
               <AgentSteps steps={t.steps ?? []} />
               <AnswerBody content={t.content} sources={t.sources} onOpenSource={onOpenSource} />
               {t.charts?.map((c, ci) => <AgentChart key={ci} spec={c} />)}
-              {t.proposals?.map((p) => <ProposalCard key={p.proposalId} proposal={p} />)}
+              {t.proposals?.map((p) => (
+                t.fromHistory ? (
+                  <p key={p.proposalId} className="text-xs text-ink-3 italic">
+                    This was proposed in an earlier session. Ask again to get a fresh proposal.
+                  </p>
+                ) : (
+                  <ProposalCard key={p.proposalId} proposal={p} />
+                )
+              ))}
               {t.clarify && (
                 <ClarifyCard
                   clarify={t.clarify}

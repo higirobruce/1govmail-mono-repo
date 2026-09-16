@@ -12,6 +12,7 @@ import { usePeopleStore } from '@/stores/people.store';
 import { MeetingPrepView } from '@/components/calendar/MeetingPrepView';
 import { AIClient } from '@/lib/ai/client';
 import { parseEventFromEmail } from '@/lib/ai/eventParse';
+import { sourceHref } from '@/lib/ai/sourceNav';
 import { mergeParsedEvent, sameAttendees, toFormDateTime } from '@/lib/calendar/eventPrefill';
 import { quickAddEventPrefill } from '@/lib/calendar/quickAddEvent';
 import { minutesPrefill } from '@/lib/calendar/minutesPrefill';
@@ -1905,7 +1906,7 @@ function EventDetailPanel({
       <div className="px-4 py-3 border-t border-border/40 shrink-0 space-y-2">
         {event.minutesDocumentId ? (
           <button
-            onClick={() => router.push(`/docs?doc=${event.minutesDocumentId}`)}
+            onClick={() => router.push(sourceHref({ type: 'doc', id: event.minutesDocumentId }))}
             className="flex items-center gap-1.5 text-ui text-primary hover:underline"
           >
             <ScrollText className="w-3.5 h-3.5" />
@@ -1932,7 +1933,7 @@ function EventDetailPanel({
                     ? 'Minutes created and shared with the attendees'
                     : 'Minutes created — this meeting has no shared id, so attendees will need the link',
                 );
-                router.push(`/docs?doc=${documentId}`);
+                router.push(sourceHref({ type: 'doc', id: documentId }));
               } catch (err: any) {
                 toast.error('Could not create the minutes', { description: err?.message });
               } finally {

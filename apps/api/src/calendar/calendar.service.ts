@@ -45,12 +45,12 @@ export class CalendarService {
    * zimbra.mappers.mapZimbraAppointment. This method only caches what the
    * provider returned.
    */
-  async getEvents(userId: string, start: Date | number, end: Date | number): Promise<any[]> {
+  async getEvents(userId: string, start: Date, end: Date): Promise<any[]> {
     const user = await this.getUser(userId);
     const events = await this.resolver.forUser(user).getCalendarEvents(
       buildMailSession(user),
-      start instanceof Date ? start.getTime() : start,
-      end instanceof Date ? end.getTime() : end,
+      start.getTime(),
+      end.getTime(),
     );
 
     const results: any[] = [];

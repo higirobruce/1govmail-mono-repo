@@ -46,7 +46,7 @@ describe('CalendarService icalUid persistence', () => {
         inviteId: null, isRecurring: false, icalUid: 'cabinet@zimbra' },
     ]);
 
-    await service.getEvents('u1', Date.parse('2026-09-01'), Date.parse('2026-09-30'));
+    await service.getEvents('u1', new Date('2026-09-01'), new Date('2026-09-30'));
 
     expect(prisma.calendarEvent.upsert).toHaveBeenCalledWith(
       expect.objectContaining({

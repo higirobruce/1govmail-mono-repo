@@ -7,6 +7,21 @@ import { PrismaService } from '../prisma/prisma.service';
 import { buildMailSession } from '../provider/mail-session';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { DocsService } from '../docs/docs.service';
+import { CreateMinutesDto } from './dto/create-minutes.dto';
+
+/**
+ * `CalendarEvent.attendees` is a JSON column, and both providers persist it as
+ * `{email, name}[]` (see zimbra.mappers.ts mapZimbraAppointment and
+ * ews.service.ts mapAttendeeContainer) — never bare strings. Accept either
+ * shape so a naive `string[]` assumption elsewhere can't silently hand a raw
+ * attendee object downstream.
+ */
+function attendeeEmails(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((a) => (typeof a === 'string' ? a : (a as { email?: string } | null)?.email ?? ''))
+    .filter((e): e is string => e.length > 0);
+}
 
 export interface CalendarEventData {
   title: string;
@@ -25,7 +40,6 @@ export class CalendarService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly resolver: MailProviderResolver,
-    // Unused for now — Task 3 (offer/create minutes) is the first consumer.
     private readonly docs: DocsService,
   ) {}
 
@@ -250,6 +264,29 @@ export class CalendarService {
     const replyId = event.zimbraInviteId ?? event.zimbraId;
     await this.resolver.forUser(user).sendInviteReply(buildMailSession(user), replyId, verb);
     return { success: true };
+  }
+
+  // ── Minutes ──────────────────────────────────────────────────────────────
+
+  /**
+   * Create the minutes for one event. The caller must own the event row; the
+   * occurrence is the row's own `startAt`, because both providers expand a
+   * recurring series into one row per instance.
+   */
+  async createMinutes(userId: string, eventId: string, dto: CreateMinutesDto) {
+    const event = await this.prisma.calendarEvent.findFirst({
+      where: { id: eventId, userId },
+      select: { icalUid: true, startAt: true, attendees: true },
+    });
+    if (!event) throw new NotFoundException('Event not found');
+
+    return this.docs.createMinutesDocument(userId, {
+      title: dto.title,
+      content: dto.content,
+      attendeeEmails: attendeeEmails(event.attendees),
+      icalUid: event.icalUid,
+      occurrenceStartAt: event.startAt,
+    });
   }
 
   // ── Free / Busy ───────────────────────────────────────────────────────────

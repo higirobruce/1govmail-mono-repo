@@ -86,3 +86,59 @@ describe('CalendarService icalUid persistence', () => {
     expect(data.icalUid).toBeUndefined();   // undefined means "leave unchanged" in Prisma
   });
 });
+
+describe('CalendarService.createMinutes', () => {
+  const DTO = { title: 'Minutes — Cabinet briefing', content: '{"type":"doc","content":[]}' };
+
+  it('delegates with the event\'s attendees, UID and its own start as the occurrence', async () => {
+    const { service, prisma, docs } = makeService();
+    prisma.user.findUnique.mockResolvedValue(USER);
+    prisma.calendarEvent.findFirst.mockResolvedValue({
+      id: 'e1', userId: 'u1', icalUid: 'cabinet@zimbra',
+      startAt: new Date('2026-09-17T09:00:00Z'),
+      attendees: ['a@risa.gov.rw', 'b@risa.gov.rw'],
+    });
+    docs.createMinutesDocument.mockResolvedValue({ documentId: 'doc-1', linked: true });
+
+    const result = await service.createMinutes('u1', 'e1', DTO);
+
+    expect(result).toEqual({ documentId: 'doc-1', linked: true });
+    expect(docs.createMinutesDocument).toHaveBeenCalledWith('u1', {
+      title: DTO.title,
+      content: DTO.content,
+      attendeeEmails: ['a@risa.gov.rw', 'b@risa.gov.rw'],
+      icalUid: 'cabinet@zimbra',
+      occurrenceStartAt: new Date('2026-09-17T09:00:00Z'),
+    });
+  });
+
+  it('refuses an event that is not the caller\'s', async () => {
+    const { service, prisma, docs } = makeService();
+    prisma.user.findUnique.mockResolvedValue(USER);
+    prisma.calendarEvent.findFirst.mockResolvedValue(null);
+
+    await expect(service.createMinutes('u1', 'someone-elses', DTO)).rejects.toBeInstanceOf(NotFoundException);
+    expect(docs.createMinutesDocument).not.toHaveBeenCalled();
+  });
+
+  it('extracts emails from object-shaped attendees — the shape both providers actually persist', async () => {
+    // CalendarEvent.attendees is stored as `{email, name}[]` by both Zimbra
+    // (zimbra.mappers.ts mapZimbraAppointment) and EWS (mapAttendeeContainer),
+    // and that's the shape the web app's own event type expects back. A plain
+    // `as string[]` cast on this column would hand DocsService raw objects.
+    const { service, prisma, docs } = makeService();
+    prisma.user.findUnique.mockResolvedValue(USER);
+    prisma.calendarEvent.findFirst.mockResolvedValue({
+      id: 'e1', userId: 'u1', icalUid: 'cabinet@zimbra',
+      startAt: new Date('2026-09-17T09:00:00Z'),
+      attendees: [{ email: 'a@risa.gov.rw', name: 'A' }, { email: 'b@risa.gov.rw' }],
+    });
+    docs.createMinutesDocument.mockResolvedValue({ documentId: 'doc-1', linked: true });
+
+    await service.createMinutes('u1', 'e1', DTO);
+
+    expect(docs.createMinutesDocument).toHaveBeenCalledWith('u1', expect.objectContaining({
+      attendeeEmails: ['a@risa.gov.rw', 'b@risa.gov.rw'],
+    }));
+  });
+});

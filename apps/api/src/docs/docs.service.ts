@@ -274,6 +274,107 @@ export class DocsService {
     });
   }
 
+  /**
+   * Create the minutes document for one meeting occurrence: the document, an
+   * EDITOR invite per attendee, the read-only share link, and the link row —
+   * all in ONE transaction, so a failure leaves nothing half-made.
+   *
+   * Idempotent by the link table's unique key rather than by checking first:
+   * two attendees clicking at the same moment must land on the same document.
+   *
+   * The transaction is deliberately small. Content arrives already composed by
+   * the caller, nothing inside it talks to a mail provider, and the invites go
+   * in as one `createMany` — an interactive transaction holds a pooled
+   * connection, and at 5,000 mailboxes that is a load-correlated failure.
+   */
+  async createMinutesDocument(
+    userId: string,
+    input: {
+      title: string;
+      content: string;
+      attendeeEmails: string[];
+      icalUid: string | null;
+      occurrenceStartAt: Date;
+    },
+  ): Promise<{ documentId: string; linked: boolean }> {
+    if (input.icalUid) {
+      const existing = await this.prisma.meetingMinutes.findUnique({
+        where: {
+          icalUid_occurrenceStartAt: {
+            icalUid: input.icalUid,
+            occurrenceStartAt: input.occurrenceStartAt,
+          },
+        },
+        select: { documentId: true },
+      });
+      if (existing) return { documentId: existing.documentId, linked: true };
+    }
+
+    const me = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    const mine = (me?.email ?? '').trim().toLowerCase();
+
+    // Lowercase, drop blanks, drop the caller (they own it), and dedupe while
+    // preserving the order the organizer listed people in.
+    const invitees = [...new Set(
+      input.attendeeEmails
+        .map((e) => (e ?? '').trim().toLowerCase())
+        .filter((e) => e.length > 0 && e !== mine),
+    )];
+
+    return this.prisma.$transaction(async (tx) => {
+      const last = await tx.document.findFirst({
+        where: { userId, parentId: null },
+        orderBy: { position: 'desc' },
+        select: { position: true },
+      });
+
+      const doc = await tx.document.create({
+        data: {
+          userId,
+          title: input.title,
+          content: input.content,
+          emoji: '📝',
+          parentId: null,
+          position: (last?.position ?? -1) + 1,
+          // Sharing is on from the start: being sent the minutes is the whole
+          // point, and VIEW keeps a forwarded link from rewriting the record.
+          isShared: true,
+          shareToken: shortToken(),
+          sharePermission: 'VIEW',
+        },
+        select: { id: true },
+      });
+
+      if (invitees.length) {
+        await tx.documentInvite.createMany({
+          data: invitees.map((invitedEmail) => ({
+            documentId: doc.id,
+            invitedEmail,
+            invitedBy: userId,
+            role: 'EDITOR' as const,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      if (input.icalUid) {
+        await tx.meetingMinutes.create({
+          data: {
+            icalUid: input.icalUid,
+            occurrenceStartAt: input.occurrenceStartAt,
+            documentId: doc.id,
+            createdBy: userId,
+          },
+        });
+      }
+
+      return { documentId: doc.id, linked: !!input.icalUid };
+    });
+  }
+
   // ── Share link ────────────────────────────────────────────────────────────
 
   async enableSharing(userId: string, id: string, dto: ShareDocDto) {

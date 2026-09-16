@@ -96,16 +96,34 @@ export function pickReadableColor(background: string, lightText: string): string
     : DARK_INK;
 }
 
-/** First opaque background colour at or above `el`, falling back to the canvas.
- *  Translucent layers are skipped rather than composited — see the file note. */
-function effectiveBackground(el: Element, canvasBg: string, win: Window): string {
-  let node: Element | null = el;
-  while (node) {
-    const bg = parseCssColor(win.getComputedStyle(node).backgroundColor);
-    if (bg && bg.a === 1) return `rgb(${bg.r}, ${bg.g}, ${bg.b})`;
-    node = node.parentElement;
-  }
-  return canvasBg;
+/**
+ * First opaque background colour at or above `el`, falling back to the canvas.
+ * Translucent layers are skipped rather than composited — see the file note.
+ *
+ * Memoized through `cache`. Walking to the root per element is O(elements x
+ * depth), and email HTML nests tables 20+ deep — on a large newsletter that is
+ * tens of thousands of blocking style resolutions. Callers walk in document
+ * order (parents first), so each ancestor's answer is already cached and this
+ * collapses to one resolution per element.
+ */
+function effectiveBackground(
+  el: Element,
+  canvasBg: string,
+  win: Window,
+  cache: Map<Element, string>,
+): string {
+  const hit = cache.get(el);
+  if (hit !== undefined) return hit;
+
+  const own = parseCssColor(win.getComputedStyle(el).backgroundColor);
+  const resolved = own && own.a === 1
+    ? `rgb(${own.r}, ${own.g}, ${own.b})`
+    : el.parentElement
+      ? effectiveBackground(el.parentElement, canvasBg, win, cache)
+      : canvasBg;
+
+  cache.set(el, resolved);
+  return resolved;
 }
 
 /** True when the element renders text of its own. A wrapper div's colour is
@@ -136,6 +154,9 @@ export function repairEmailContrast(
 
   let inspected = 0;
   let repaired = 0;
+  // Document-order walk means an element's ancestors are always resolved
+  // before it, so this stays one style resolution per element.
+  const bgCache = new Map<Element, string>();
 
   const walker = doc.createTreeWalker(body, 1 /* NodeFilter.SHOW_ELEMENT */);
   let el = walker.nextNode() as Element | null;
@@ -144,7 +165,7 @@ export function repairEmailContrast(
 
     if (hasOwnText(el)) {
       const color = win.getComputedStyle(el).color;
-      const background = effectiveBackground(el, opts.bg, win);
+      const background = effectiveBackground(el, opts.bg, win, bgCache);
       if (contrastRatio(color, background) < minRatio) {
         (el as HTMLElement).style.setProperty(
           'color',

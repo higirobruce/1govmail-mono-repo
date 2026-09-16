@@ -151,6 +151,39 @@ describe('repairEmailContrast', () => {
     expect(() => repairEmailContrast(empty, { text: LIGHT_TEXT, bg: DARK_BG })).not.toThrow();
   });
 
+  it('resolves each ancestor background once instead of re-walking per element', () => {
+    // Email HTML nests tables 20+ deep. Re-walking to the root for every
+    // element makes this O(elements x depth) getComputedStyle calls — hundreds
+    // of milliseconds of blocking style resolution on a large newsletter.
+    // The TreeWalker visits parents before children, so each background is
+    // knowable from the one already computed for the parent.
+    // Every level carries its own text, which is what a nested table-layout
+    // newsletter actually looks like — so every level triggers a resolution.
+    const DEPTH = 30;
+    let html = '';
+    for (let i = 0; i < DEPTH; i++) html += `<div id="d${i}" style="color: rgb(51,51,51)">row ${i}`;
+    html += '<p id="leaf" style="color: rgb(51,51,51)">deep</p>';
+    for (let i = 0; i < DEPTH; i++) html += '</div>';
+
+    document.body.innerHTML = html;
+    document.body.style.backgroundColor = DARK_BG;
+    document.body.style.color = LIGHT_TEXT;
+
+    const real = window.getComputedStyle.bind(window);
+    let calls = 0;
+    const spy = (el: Element) => { calls++; return real(el as HTMLElement); };
+    (window as unknown as { getComputedStyle: unknown }).getComputedStyle = spy;
+    try {
+      repairEmailContrast(document, { text: LIGHT_TEXT, bg: DARK_BG });
+    } finally {
+      (window as unknown as { getComputedStyle: unknown }).getComputedStyle = real;
+    }
+
+    // Two resolutions per element (its colour and its own background) is the
+    // linear budget; a per-element walk to the root would be many times this.
+    expect(calls).toBeLessThanOrEqual((DEPTH + 2) * 2);
+  });
+
   it('ignores a semi-transparent background rather than mis-measuring it', () => {
     // Compositing a translucent layer is guesswork; the honest move is to fall
     // through to the nearest opaque ancestor, which here is the dark canvas.

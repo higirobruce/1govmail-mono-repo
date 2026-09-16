@@ -23,7 +23,7 @@ interface TouchLike {
   touches: ArrayLike<{ clientX: number; clientY: number }>;
 }
 
-export function useLongPress(onLongPress: (x: number, y: number) => void) {
+export function useLongPress(onLongPress?: (x: number, y: number) => void) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const origin = useRef<{ x: number; y: number } | null>(null);
   // Set when a press fires, so the click the browser synthesises after the
@@ -50,6 +50,10 @@ export function useLongPress(onLongPress: (x: number, y: number) => void) {
   useEffect(() => cancel, [cancel]);
 
   const onTouchStart = useCallback((e: TouchLike) => {
+    // No handler → stay completely inert. Arming the timer anyway would mark a
+    // press as fired, and consumeClick would then eat the click on a row that
+    // has no menu to show for it.
+    if (!callback.current) return;
     const t = e.touches?.[0];
     if (!t) return;
     const { clientX: x, clientY: y } = t;
@@ -59,7 +63,7 @@ export function useLongPress(onLongPress: (x: number, y: number) => void) {
     timer.current = setTimeout(() => {
       timer.current = null;
       fired.current = true;
-      callback.current(x, y);
+      callback.current?.(x, y);
     }, LONG_PRESS_MS);
   }, []);
 

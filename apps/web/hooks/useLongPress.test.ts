@@ -99,6 +99,18 @@ describe('useLongPress', () => {
     expect(onLongPress).not.toHaveBeenCalled();
   });
 
+  it('stays inert with no handler, so a hold cannot swallow the tap that follows', () => {
+    // MailRow is exported and rendered without onLongPress in other contexts.
+    // Arming the timer anyway marked a press as "fired" and consumeClick then
+    // ate the click — the row silently stopped opening after a long press.
+    const { result } = renderHook(() => useLongPress(undefined));
+
+    act(() => result.current.handlers.onTouchStart(touch(10, 10)));
+    act(() => { vi.advanceTimersByTime(LONG_PRESS_MS); });
+
+    expect(result.current.consumeClick()).toBe(false);
+  });
+
   it('drops a pending timer on unmount instead of firing into a dead component', () => {
     const onLongPress = vi.fn();
     const { result, unmount } = renderHook(() => useLongPress(onLongPress));

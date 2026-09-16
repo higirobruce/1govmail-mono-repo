@@ -347,18 +347,26 @@ export function MailRow({
   const classification = useMemo(() => pickClassificationFromTags(message.tags), [message.tags]);
   const labelMeta = card ? TRIAGE_LABEL_META[card.label] : undefined;
 
-  const noop = useCallback(() => {}, []);
-  const { handlers: touchHandlers, consumeClick } = useLongPress(onLongPress ?? noop);
+  const { handlers: touchHandlers, consumeClick } = useLongPress(onLongPress);
 
   // Who this row is "about". In sent-like folders that's the addressee — with a
   // CC fallback for undisclosed-recipient circulars, and a sender fallback so a
-  // row synced before recipients existed never renders a blank name.
+  // row synced before recipients existed never renders a blank name. `label` is
+  // carried alongside so a CC fallback is not announced as "To" — misstating
+  // that is the one thing this column exists to get right.
   const principal = useMemo(() => {
-    if (!showRecipients) return { name: message.fromName, email: message.fromEmail, extra: 0 };
-    const list = message.toRecipients?.length ? message.toRecipients : message.ccRecipients;
+    const sender = { name: message.fromName, email: message.fromEmail, extra: 0, label: null };
+    if (!showRecipients) return sender;
+    const onTo = !!message.toRecipients?.length;
+    const list = onTo ? message.toRecipients : message.ccRecipients;
     const first = list?.[0];
-    if (!first) return { name: message.fromName, email: message.fromEmail, extra: 0 };
-    return { name: first.name ?? null, email: first.email, extra: (list?.length ?? 1) - 1 };
+    if (!first) return sender;
+    return {
+      name: first.name ?? null,
+      email: first.email,
+      extra: (list?.length ?? 1) - 1,
+      label: onTo ? 'To:' : 'Cc:',
+    };
   }, [showRecipients, message.fromName, message.fromEmail, message.toRecipients, message.ccRecipients]);
 
   return (
@@ -428,7 +436,9 @@ export function MailRow({
                   // Weight is the primary read/unread cue; color is secondary.
                   message.isRead ? 'font-normal text-foreground' : 'font-semibold text-primary',
                 )}>
-                  {showRecipients && <span className="text-ink-3 font-normal">To: </span>}
+                  {principal.label && (
+                    <span className="text-ink-3 font-normal">{principal.label}{' '}</span>
+                  )}
                   {principal.name ?? principal.email}
                   {principal.extra > 0 && (
                     <span className="text-ink-3 font-normal">{` +${principal.extra}`}</span>

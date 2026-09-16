@@ -75,6 +75,18 @@ describe('MailRow recipient column in sent-like folders', () => {
     expect(screen.getByText(/All Staff/)).toBeInTheDocument();
   });
 
+  it('labels a CC fallback as CC, not as To', () => {
+    // Calling a CC-only circular "To:" misstates the one thing this column
+    // exists to convey.
+    renderRow(
+      { toRecipients: [], ccRecipients: [{ email: 'all@risa.gov.rw', name: 'All Staff' }] },
+      true,
+    );
+
+    expect(screen.getByText('Cc:')).toBeInTheDocument();
+    expect(screen.queryByText('To:')).not.toBeInTheDocument();
+  });
+
   it('degrades to the sender when no recipients were synced', () => {
     // A row synced before recipients were persisted must not render a blank
     // name column — it shows what it does know.

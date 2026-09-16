@@ -2006,6 +2006,11 @@ git commit -m "feat(web): save each completed exchange, and resume one from hist
 ## After the plan
 
 - [ ] Run the whole suite in both apps and both typechecks one last time.
+- [ ] Deploy note from the Task 1 review: the migration's `CREATE INDEX` on the
+  **existing** `agent_tool_logs` table has no `CONCURRENTLY`, so it takes a brief
+  write lock on that table. Every migration in this repo is written this way and the
+  table is small, so this is a thing to know during the window rather than a change to
+  make — but know it.
 - [ ] Deploy: **this release has a migration.** `migrate deploy` must run on both VMs before the new API starts, and both halves changed so web needs rebuilding too (`.155`'s bundle bakes its own domain).
 - [ ] Verify the served chunk over HTTP, not the file on disk — a Next standalone bundle nests under `apps/web/.next/`.
 - [ ] Live check: ask something, refresh, confirm it is in `/ai/history`; resume it and ask a follow-up; delete it and confirm it is gone.

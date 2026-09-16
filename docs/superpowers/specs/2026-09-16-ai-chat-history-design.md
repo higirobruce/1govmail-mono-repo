@@ -1,7 +1,7 @@
 # AI chat history — design
 
 **Date:** 2026-09-16
-**Status:** approved in chat, awaiting spec review
+**Status:** approved in chat; amended 2026-09-16 after review (90 days confirmed, tool-log expiry added)
 **Branch:** ft-hyperscale
 
 ## 1. Why
@@ -46,6 +46,7 @@ table, a page, and a retention job.
 | Where it lives | **A page at `/ai/history`** with a nav entry, plus a clock icon in the Ask panel header. Bruce chose the page over an in-panel list, for search and for hunting through months. |
 | Titles | **The first user question, trimmed** — not generated. §5.1. |
 | Storage shape | **Two tables**, conversation and turns. §4. |
+| Tool logs | **They expire too, and they die with their conversation.** Confirmed 2026-09-16. `agent_tool_logs` gains a nullable `conversationId` with `onDelete: Cascade`, plus the same 90-day age sweep as a backstop. §8. |
 
 ## 4. Storage shape, and why not the alternatives
 
@@ -89,8 +90,9 @@ model AiConversation {
   createdAt  DateTime @default(now())
   lastTurnAt DateTime // what retention measures from
 
-  turns AiConversationTurn[]
-  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  turns    AiConversationTurn[]
+  toolLogs AgentToolLog[]        // back-relation for the §8 cascade
+  user     User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, lastTurnAt])
   @@map("ai_conversations")
@@ -233,8 +235,14 @@ history.
 ## 7. Retention
 
 A daily `@Cron` worker shaped like `DocEmbedWorkerService` (`waitForCompletion:
-true`) deletes conversations past the horizon; turns cascade. The horizon is read
-from `AI_HISTORY_RETENTION_DAYS`, default 90, so it is tunable without a deploy.
+true`) deletes conversations past the horizon; turns cascade, and so do the tool
+logs linked to them (§8). The same run also deletes tool logs whose own
+`createdAt` passed the horizon, which is what bounds the rows that have no
+conversation. The horizon is read from `AI_HISTORY_RETENTION_DAYS`, default 90,
+so it is tunable without a deploy.
+
+**90 days is confirmed** as the right horizon, not merely inherited from the
+cache anchor (Bruce, 2026-09-16).
 
 Two details carry the job:
 
@@ -248,19 +256,48 @@ Two details carry the job:
 It logs a count per run, as the embed worker does, so "is eviction running" is
 answerable from the journal rather than from faith.
 
-## 8. A pre-existing gap this design does not close
+## 8. Tool logs expire with their conversation
 
-`agent_tool_logs` already retains, per user and with no expiry, every tool the
-agent called and the arguments it was called with. A record of what people asked
-the assistant to do therefore partly exists today, unbounded, and predates this
-feature.
+`agent_tool_logs` records, per user, every tool the agent called and the
+arguments it was called with. Until now it had no expiry, so a record of what
+people asked the assistant to *do* has been accumulating unbounded since the
+phase-4 agent work — predating this feature.
 
-This design deliberately does not change it: a retention policy for that table is
-its own decision, it affects the agent's own debugging story, and bundling it here
-would widen a user-facing feature into an infrastructure change. It is recorded
-so the decision is explicit rather than overlooked — and because it is odd for
-conversations to expire at 90 days while the log of actions taken in them does
-not.
+Bruce confirmed on 2026-09-16 that it should expire, and that a tool log should
+die with the conversation it belongs to rather than merely ageing out.
+
+**It is safe to expire.** The table is write-only: there is exactly one write site
+(`agent.service.ts:503`, inside a `try/catch` whose comment reads "the audit log
+must never break the stream") and nothing in the API or the web ever reads it
+back — no `findMany`, no `count`, no `groupBy`. Its only use is being queried by
+hand while diagnosing the agent. Nothing in the product breaks when a row goes.
+
+### 8.1 Changes
+
+- **`AgentToolLog.conversationId String?`** with a relation to `AiConversation`,
+  `onDelete: Cascade`, and the matching `toolLogs AgentToolLog[]` back-relation on
+  `AiConversation` (§5) — Prisma will not validate the schema without both sides.
+  Deleting a conversation — by the user, or by the eviction worker — removes the
+  record of what the agent did inside it.
+- **An index on `conversationId`.** The cascade and the per-conversation delete
+  both look rows up by it, and Prisma does not index a relation scalar by default.
+- The single write site sets it from the conversation the turn belongs to. The
+  agent's `ctx` already flows to `dispatch`, so the id rides along rather than
+  needing a new channel.
+- **Nullable on purpose.** Rows written before this change have no conversation,
+  and an agent turn that produced no completed answer never creates one (§6.1),
+  so its tool calls legitimately have none either.
+- The same 90-day sweep in §7 also deletes logs whose `createdAt` passed the
+  horizon. That is the backstop for the null rows, and it is what bounds the
+  table for good.
+
+### 8.2 Why not age-only
+
+An age-only sweep would fix unbounded growth and nothing else. §3 promises that
+nothing is retained which the user did not choose to keep, and age-only expiry
+would contradict that sentence directly: a person could delete a conversation
+and the log would still record that they had the agent send an email, for up to
+ninety more days. The cascade is what makes the promise true.
 
 ## 9. Failure and edge behaviour
 
@@ -288,6 +325,10 @@ not.
   than surfacing a 500.
 - **Write failure does not break the answer** — the assertion that a rejected
   persist still leaves the turn rendered.
+- **Deleting a conversation removes its tool logs** — the cascade in §8, asserted
+  directly rather than inferred from the schema.
+- **Tool logs with no conversation still age out** — the null-row backstop, which
+  is the half a cascade test would silently miss.
 - **Page behaviour** — grouping buckets and the delete-confirm wiring.
 
 ## 11. What this deliberately does not do
@@ -299,7 +340,6 @@ not.
 - **No sharing a conversation with a colleague.** It is a personal notebook. The
   existing docs-sharing machinery is there if a conversation needs to become a
   shared artefact.
-- **No retention policy for `agent_tool_logs`.** §8.
 - **No editing a past turn or branching a conversation.** Resume appends; it does
   not rewrite.
 - **No export.** Copy out of the page works; a file export is a separate ask.
@@ -311,3 +351,5 @@ not.
   ask again to get a fresh proposal.
 - A citation chip stops working if the mail or document it pointed at is gone.
 - Search matches the words as typed; it is not semantic.
+- Deleting a conversation also deletes the record of any action the agent took
+  inside it.

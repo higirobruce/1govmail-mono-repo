@@ -19,7 +19,7 @@ const DOCS_PAGE = read('app/(app)/docs/page.tsx');
 
 describe('the minutes deep link into /docs', () => {
   it('routes both drawer navigations through sourceHref, never a hand-written /docs URL', () => {
-    expect(CALENDAR_PAGE).toContain("sourceHref({ type: 'doc', id: event.minutesDocumentId })");
+    expect(CALENDAR_PAGE).toContain("sourceHref({ type: 'doc', id: minutesId })");
     expect(CALENDAR_PAGE).toContain("sourceHref({ type: 'doc', id: documentId })");
     expect(CALENDAR_PAGE).not.toMatch(/\/docs\?/);
   });

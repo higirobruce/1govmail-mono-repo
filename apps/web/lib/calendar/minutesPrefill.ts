@@ -61,17 +61,39 @@ export function minutesPrefill(event: MinutesPrefillEvent): { title: string; con
 
   // The attendee bullet list is the one place the template's two sample
   // bullets are replaced wholesale rather than patched.
-  if (attendees.length) {
-    const list = doc.content?.find(
-      (n: any) => n.type === 'bulletList',
-    );
-    if (list) {
-      list.content = attendees.map((email) => ({
-        type: 'listItem',
-        content: [{ type: 'paragraph', content: [{ type: 'text', text: email }] }],
-      }));
-    }
-  }
+  if (attendees.length) replaceAttendeeList(doc, attendees);
 
   return { title: `Minutes — ${event.title}`, content: JSON.stringify(doc) };
+}
+
+/**
+ * Replace the Attendees bullet list of a TipTap document in place.
+ *
+ * The list is identified by the `Attendees` heading it belongs to — the first
+ * bullet list between that heading and the next one — rather than as "the
+ * first bulletList in the document". The positional form is correct only
+ * because today's Meeting Minutes template happens to contain exactly one
+ * bullet list; adding another anywhere above Attendees would silently clobber
+ * the wrong list, and no assertion on "the emails appear somewhere in the
+ * content" would notice. No-op when the heading or its list is absent.
+ *
+ * Exported for the test: the heading-to-list association is the thing worth
+ * pinning, and it cannot be observed from the serialised output alone.
+ */
+export function replaceAttendeeList(doc: any, attendees: string[]): void {
+  const nodes: any[] = Array.isArray(doc?.content) ? doc.content : [];
+  const headingAt = nodes.findIndex(
+    (n: any) => n?.type === 'heading' && n.content?.[0]?.text?.trim() === 'Attendees',
+  );
+  if (headingAt === -1) return;
+
+  for (let i = headingAt + 1; i < nodes.length; i++) {
+    if (nodes[i]?.type === 'heading') return;   // the section ended
+    if (nodes[i]?.type !== 'bulletList') continue;
+    nodes[i].content = attendees.map((email) => ({
+      type: 'listItem',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: email }] }],
+    }));
+    return;
+  }
 }

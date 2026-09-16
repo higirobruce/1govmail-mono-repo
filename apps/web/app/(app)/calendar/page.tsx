@@ -1647,6 +1647,8 @@ function EventDetailPanel({
     (a) => a.email.toLowerCase() === currentUserEmail?.toLowerCase(),
   );
   const showRsvp = !isOrganizer && (isAttendee || event.attendees.length === 0);
+  // A local const so the narrowing survives into the click handler's closure.
+  const minutesId: string | null = event.minutesDocumentId ?? null;
   const aiEnabled = useAIStore((s) => s.enabled);
   const resize = useResizable({ key: 'calendarDetail', defaultWidth: 320, min: 280, max: 560, edge: 'left' });
 
@@ -1904,9 +1906,9 @@ function EventDetailPanel({
 
       {/* Footer */}
       <div className="px-4 py-3 border-t border-border/40 shrink-0 space-y-2">
-        {event.minutesDocumentId ? (
+        {minutesId ? (
           <button
-            onClick={() => router.push(sourceHref({ type: 'doc', id: event.minutesDocumentId }))}
+            onClick={() => router.push(sourceHref({ type: 'doc', id: minutesId }))}
             className="flex items-center gap-1.5 text-ui text-primary hover:underline"
           >
             <ScrollText className="w-3.5 h-3.5" />
@@ -2425,15 +2427,21 @@ export default function CalendarPage() {
               onDelete={handleDelete}
               onEdit={(e) => { setEditingEvent(e); setSelectedEvent(null); }}
               onRsvp={handleRsvp}
-              onMinutesCreated={(eventId, documentId) =>
+              onMinutesCreated={(eventId, documentId) => {
                 // Guard by id: the request that created this document may
                 // resolve after the drawer has moved on to a different
                 // event, and patching whatever is selected by then would
                 // attach this document to the wrong meeting.
                 setSelectedEvent((prev) =>
                   prev?.id === eventId ? { ...prev, minutesDocumentId: documentId } : prev,
-                )
-              }
+                );
+                // Patch the list row too, as the detail fetch above does —
+                // otherwise reopening the drawer from the list shows "Create
+                // minutes" again until the detail request resolves.
+                setEvents((prev) => prev.map((e) =>
+                  e.id === eventId ? { ...e, minutesDocumentId: documentId } : e,
+                ));
+              }}
               deleting={deleting}
               attendeesLoading={selectedEventLoading}
             />

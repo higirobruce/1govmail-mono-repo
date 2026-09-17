@@ -1227,7 +1227,34 @@ git commit -m "feat(api): backfill embedded images into the cache, and drop the 
       `sudo install -d -o risa1 -g risa1 -m 700 /opt/govmail/imgcache` (user `test` on `.155`).
 - [ ] Deploy api + web to both VMs. **No migration in this release** — unlike the last two.
 - [ ] **Re-run the mapping check per box before its backfill** (spec §6.1) — it is cheap and the answer could differ on a box synced since.
+- [ ] **Size the two caps before the backfill — they are not code changes, they are per-box
+      decisions the final review flagged (C3, C4).**
+      - Measure the per-image size distribution on `.155` first. `INLINE_IMAGE_MAX_BYTES`
+        defaults to 5 MB, and the tail this feature exists for — 648 bodies holding 13 GB,
+        one of them 133 MB — is exactly where single images exceed it. Images over the cap
+        stay embedded. Raise the env var **for the backfill run only** if the distribution
+        says so; the run report now names why each image was left behind, so check it.
+      - `INLINE_IMAGE_MAX_TOTAL_BYTES` defaults to 2 GB and neither box sets it. The backfill
+        will write roughly 10 GB on `.155` and 4 GB on `.154`. Left at the default, the first
+        04:00 tick evicts ~80% of what was just written at 5,000 removals a day, and every
+        evicted image becomes a provider refetch. Set the ceiling deliberately per box against
+        actual free space — `.155` is at 68%.
+      - Check free space against the expected cache size on both boxes. Disk holds the old
+        bodies *and* the new cache until `VACUUM FULL` runs.
 - [ ] Run the backfill, then `VACUUM FULL messages` in a chosen window. It takes an exclusive lock; the API is down for minutes.
+- [ ] **Capture the backfill's `ambiguous:` lines before `VACUUM FULL`.** A body whose data
+      URIs cannot be proved to match its `inlineImages` is skipped whole and left embedded —
+      that list is the only record of which rows need reclaiming by hand, and the originals
+      are gone once the vacuum runs.
+- [ ] **First open of an already-cached message pays one provider fetch.** Cache filenames are
+      now the sha256 of the part id; anything written by a box running an earlier build misses
+      and is refetched and rewritten once. Harmless, but do not read it as a cache failure.
+- [ ] **Confirm the cache actually stores bytes on the Exchange box (`.155`).** An EWS
+      `AttachmentId` runs 150-400 characters, which is why the filename is hashed; verify
+      against one real Exchange message that files land under `/opt/govmail/imgcache` rather
+      than the write silently failing.
+- [ ] **Check the mount is not `noatime`** (`findmnt -no OPTIONS /opt`). With it, eviction
+      degrades from LRU to FIFO with no signal — accepted, but worth knowing which one is running.
 - [ ] Confirm the table collapsed: `.155` from 15 GB and `.154` from 6.3 GB.
 - [ ] Exclude `/opt/govmail/imgcache` from any backup — the cache is authoritative for nothing.
 - [ ] Live check: open a message with inline images, confirm they render; reopen and confirm the second open does not hit the provider (`journalctl -u govmail-api | grep inline`).

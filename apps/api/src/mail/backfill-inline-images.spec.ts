@@ -178,4 +178,110 @@ describe('backfillMessage', () => {
     expect(c.write).toHaveBeenCalledWith('u1', 'm1', '1.2', expect.any(Buffer));
     expect(r.html).toBe('<img src="cid:img0&#64;host"><img src="cid:img1@host">');
   });
+
+  // ── C1: the two ambiguity guards ─────────────────────────────────────────
+  // At the pre-branch commit, `embedInlineImages` ran three passes and only the
+  // first produced cid-derived data URIs. Pass 2 (embedZimbraHostedImages) also
+  // base64'd any Zimbra-hosted `src` — Briefcase signature logos, /service/proxy/
+  // images — and those have NO inlineImages entry at all. Pass 3 blanked cids
+  // whose download failed, leaving a mapping with no data URI. Either shape
+  // desynchronises "data URIs in document order" from "mappings in array order",
+  // and the resulting write puts one image's bytes under another's partId —
+  // permanently, once VACUUM FULL has reclaimed the original base64.
+
+  it('converts nothing when a body holds more data URIs than mappings (the Briefcase-logo shape)', async () => {
+    // The exact corrupting case: a Zimbra-hosted signature logo (pass 2, no
+    // mapping) sits ABOVE the one genuine cid image (pass 1, mapping 1.2).
+    // Positional pairing hands the logo's bytes to the real image's partId.
+    const c = cache();
+    const LOGO = Buffer.from('briefcase-logo').toString('base64');
+    const REAL = Buffer.from('the-real-inline-image').toString('base64');
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/jpeg;base64,${LOGO}"><img src="data:image/png;base64,${REAL}">`,
+      inlineImages: [{ cid: 'real@host', partId: '1.2', mimeType: 'image/png' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).not.toHaveBeenCalled();
+    expect(r.html).toBe(row.bodyHtml);
+    expect(r.written).toBe(0);
+    expect(r.ambiguousBody).toBe(true);
+    expect(r.skippedAmbiguous).toBe(2);
+  });
+
+  it('converts nothing when a body holds fewer data URIs than mappings (pass 3 blanked one)', async () => {
+    // An image whose download failed was rewritten to src="" by pass 3, so its
+    // mapping survives in inlineImages with no data URI behind it. Pairing in
+    // array order then shifts every later image by one.
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src=""><img src="data:image/gif;base64,${PNG}">`,
+      inlineImages: [
+        { cid: 'failed@host', partId: '1.1', mimeType: 'image/png' },
+        { cid: 'ok@host', partId: '1.2', mimeType: 'image/gif' },
+      ],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).not.toHaveBeenCalled();
+    expect(r.html).toBe(row.bodyHtml);
+    expect(r.ambiguousBody).toBe(true);
+  });
+
+  it('converts nothing when the counts agree but a declared MIME type does not match its pair', async () => {
+    // Counts alone cannot catch a re-ordering: two images, two mappings, but
+    // document order is gif-then-png while the MIME part order is png-then-gif.
+    // The MIME check is the only evidence left that the sequences disagree.
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/gif;base64,${PNG}"><img src="data:image/png;base64,${PNG}">`,
+      inlineImages: [
+        { cid: 'a@host', partId: '1.1', mimeType: 'image/png' },
+        { cid: 'b@host', partId: '1.2', mimeType: 'image/gif' },
+      ],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).not.toHaveBeenCalled();
+    expect(r.html).toBe(row.bodyHtml);
+    expect(r.ambiguousBody).toBe(true);
+  });
+
+  it('compares MIME types case-insensitively and ignores parameters', async () => {
+    // `image/PNG` from the provider's Content-Type header and `image/png` on
+    // the mapping are the same type; refusing that pair would strand a body
+    // for no reason.
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/PNG;base64,${PNG}">`,
+      inlineImages: [{ cid: 'a@host', partId: '1.1', mimeType: 'image/png; name="x.png"' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(r.html).toBe('<img src="cid:a@host">');
+    expect(r.written).toBe(1);
+    expect(r.ambiguousBody).toBe(false);
+  });
+
+  it('converts nothing when a mapping carries no MIME type to check against', async () => {
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/png;base64,${PNG}">`,
+      inlineImages: [{ cid: 'a@host', partId: '1.1' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).not.toHaveBeenCalled();
+    expect(r.ambiguousBody).toBe(true);
+  });
 });

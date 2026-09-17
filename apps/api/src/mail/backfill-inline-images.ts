@@ -207,7 +207,7 @@ export async function backfillMessage(
 
 /** The subset of PrismaClient this pass uses, so the walk can be tested without a database. */
 export interface BackfillDb {
-  $queryRawUnsafe(sql: string): Promise<Array<{ id: string }>>;
+  $queryRaw(query: TemplateStringsArray, ...values: unknown[]): Promise<Array<{ id: string }>>;
   message: {
     findUnique(args: { where: { id: string }; select: Record<string, boolean> }): Promise<any>;
     update(args: { where: { id: string }; data: { bodyHtml: string } }): Promise<any>;
@@ -251,11 +251,17 @@ export async function runBackfill(
 
   let cursor: string | undefined;
   for (;;) {
-    const page = await prisma.$queryRawUnsafe(
-      `select id from messages
-        where "bodyHtml" like '%data:image%' ${cursor ? `and id > '${cursor}'` : ''}
-        order by id limit ${ID_PAGE}`,
-    );
+    // Parameterised, not spliced. The cursor is a cuid read back out of this
+    // same table, so it is not attacker-controlled — but this script runs
+    // against production, and a raw string splice here is the shape that gets
+    // copied into the next script that does take input.
+    const page = cursor
+      ? await prisma.$queryRaw`select id from messages
+          where "bodyHtml" like '%data:image%' and id > ${cursor}
+          order by id limit ${ID_PAGE}`
+      : await prisma.$queryRaw`select id from messages
+          where "bodyHtml" like '%data:image%'
+          order by id limit ${ID_PAGE}`;
     if (page.length === 0) break;
 
     for (const { id } of page) {

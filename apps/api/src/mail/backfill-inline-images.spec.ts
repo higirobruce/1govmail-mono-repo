@@ -451,4 +451,19 @@ describe('runBackfill', () => {
     expect(totals.rewritten).toBe(1);
     expect(db.state.updates.map((u) => u.id)).toEqual(['m2']);
   });
+
+  it('passes the paging cursor as a query parameter, never spliced into the SQL', async () => {
+    // A DB-sourced cuid is not attacker-controlled today, but this script runs
+    // against production and the shape is what gets copied next time.
+    const db = fakeDb([convertible('m1'), convertible('m2')]);
+
+    await runBackfill(db as any, cache(), () => {});
+
+    const cursored = db.state.idQueries.filter((q) => q.values.some((v) => v === 'm2'));
+    expect(cursored.length).toBeGreaterThan(0);
+    for (const q of db.state.idQueries) {
+      expect(q.sql).not.toContain("'m2'");
+      expect(q.sql).not.toContain('m2');
+    }
+  });
 });

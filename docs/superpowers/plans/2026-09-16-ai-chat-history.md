@@ -2019,4 +2019,14 @@ git commit -m "feat(web): save each completed exchange, and resume one from hist
 - [ ] Live check: ask something, refresh, confirm it is in `/ai/history`; resume it and ask a follow-up; delete it and confirm it is gone.
 - [ ] Live check the scope cases: ask something pinned to a mail thread, then resume it from the page and confirm it lands on that thread with the panel pinned.
 - [ ] Confirm eviction is wired: `journalctl -u govmail-api | grep "ai history eviction"` after 03:00, or call `processTick()` once by hand.
+- [ ] **First eviction run:** raise `AI_HISTORY_EVICT_MAX_BATCHES` for the first tick
+  on each VM. `agent_tool_logs` has been accumulating unbounded since the phase-4
+  agent work, so the first drain is the big one; the steady-state ceiling is sized
+  for daily volume, not for a backlog.
+- [ ] Post-ship, queued rather than blocking (from the fix-wave re-review): the
+  history page does not refresh `nextCursor` after a delete, so deleting the row
+  that *is* the current cursor makes "Load more" return an empty page and hide
+  itself until a reload; "Delete all" leaves the button rendered over an empty list
+  until clicked; and a failed search leaves the previous query's cursor in state.
+  All cosmetic, none lose data.
 - [ ] Release note: history is personal and expires after 90 days of inactivity; agent proposals cannot be approved from history; a citation chip stops working if its mail or document is gone; search matches words as typed; deleting a conversation also deletes the record of what the agent did in it.

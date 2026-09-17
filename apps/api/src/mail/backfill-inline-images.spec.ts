@@ -1,4 +1,4 @@
-import { backfillMessage } from './backfill-inline-images';
+import { backfillMessage, runBackfill } from './backfill-inline-images';
 
 const cache = () => ({ write: jest.fn().mockResolvedValue(true) } as any);
 
@@ -327,5 +327,128 @@ describe('backfillMessage', () => {
 
     expect(c.write).toHaveBeenCalledTimes(1);
     expect(c.write).toHaveBeenCalledWith('u1', 'm1', '1.2', expect.any(Buffer));
+  });
+});
+
+// ── C2/C6: how main() walks the table ───────────────────────────────────────
+// The body column is the whole problem this backfill exists for: on .155, 648
+// bodies average 20 MB and one is 133 MB. A page of 50 whole rows is therefore
+// a gigabyte of JS strings before the base64 buffers, and an OOM re-selects the
+// SAME page next run — a deterministic stall, not a resumable one. So the pass
+// pages IDS, and pulls one body at a time.
+
+interface FakeRow { id: string; userId: string; bodyHtml: string; inlineImages: any }
+
+function fakeDb(rows: FakeRow[]) {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const state = {
+    idQueries: [] as Array<{ sql: string; values: unknown[] }>,
+    bodyFetches: [] as string[],
+    updates: [] as Array<{ id: string; bodyHtml: string }>,
+    peakBodiesInFlight: 0,
+    inFlight: 0,
+  };
+
+  const page = (cursor: string | undefined, take: number) =>
+    rows
+      .map((r) => r.id)
+      .sort()
+      .filter((id) => (cursor ? id > cursor : true))
+      .slice(0, take)
+      .map((id) => ({ id }));
+
+  const db = {
+    state,
+    // The parameterised form (C6).
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = strings.join('?');
+      state.idQueries.push({ sql, values });
+      const cursor = values.find((v) => typeof v === 'string') as string | undefined;
+      const take = (values.find((v) => typeof v === 'number') as number | undefined) ?? 500;
+      return page(cursor, take);
+    },
+    // The spliced form, so this fake works either side of the C6 change.
+    $queryRawUnsafe: async (sql: string) => {
+      state.idQueries.push({ sql, values: [] });
+      const cursor = /id > '([^']+)'/.exec(sql)?.[1];
+      const take = Number(/limit (\d+)/.exec(sql)?.[1] ?? 500);
+      return page(cursor, take);
+    },
+    message: {
+      findUnique: async ({ where }: any) => {
+        state.bodyFetches.push(where.id);
+        state.inFlight++;
+        state.peakBodiesInFlight = Math.max(state.peakBodiesInFlight, state.inFlight);
+        const row = byId.get(where.id) ?? null;
+        state.inFlight--;
+        return row;
+      },
+      update: async ({ where, data }: any) => {
+        state.updates.push({ id: where.id, bodyHtml: data.bodyHtml });
+        byId.get(where.id)!.bodyHtml = data.bodyHtml;
+      },
+    },
+  };
+  return db;
+}
+
+const convertible = (id: string): FakeRow => ({
+  id, userId: 'u1',
+  bodyHtml: `<img src="data:image/png;base64,${PNG}">`,
+  inlineImages: [{ cid: `${id}@host`, partId: '1.1', mimeType: 'image/png' }],
+});
+
+describe('runBackfill', () => {
+  it('pages ids only — the body column never appears in the page query', async () => {
+    const db = fakeDb([convertible('m1'), convertible('m2')]);
+
+    await runBackfill(db as any, cache(), () => {});
+
+    expect(db.state.idQueries.length).toBeGreaterThan(0);
+    for (const q of db.state.idQueries) {
+      expect(q.sql).toMatch(/select\s+id\s+from\s+messages/i);
+      // `"bodyHtml" like` in the WHERE is fine; selecting it is not.
+      expect(q.sql).not.toMatch(/select[\s\S]*"bodyHtml"[\s\S]*from/i);
+    }
+  });
+
+  it('fetches one body at a time, never a page of them', async () => {
+    const db = fakeDb([convertible('m1'), convertible('m2'), convertible('m3')]);
+
+    await runBackfill(db as any, cache(), () => {});
+
+    expect(db.state.bodyFetches).toEqual(['m1', 'm2', 'm3']);
+    expect(db.state.peakBodiesInFlight).toBe(1);
+  });
+
+  it('converts every row and writes each rewritten body back', async () => {
+    const db = fakeDb([convertible('m1'), convertible('m2')]);
+
+    const totals = await runBackfill(db as any, cache(), () => {});
+
+    expect(totals.scanned).toBe(2);
+    expect(totals.rewritten).toBe(2);
+    expect(totals.images).toBe(2);
+    expect(db.state.updates.map((u) => u.bodyHtml)).toEqual([
+      '<img src="cid:m1@host">',
+      '<img src="cid:m2@host">',
+    ]);
+  });
+
+  it('advances past a row it did not rewrite instead of looping on it', async () => {
+    // An ambiguous body is never updated, so it still matches the WHERE clause.
+    // Only the cursor moves it out of the way — without that the run never ends.
+    const ambiguous: FakeRow = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/png;base64,${PNG}">`,
+      inlineImages: [],
+    };
+    const db = fakeDb([ambiguous, convertible('m2')]);
+
+    const totals = await runBackfill(db as any, cache(), () => {});
+
+    expect(totals.scanned).toBe(2);
+    expect(totals.rewritten).toBe(1);
+    expect(db.state.updates.map((u) => u.id)).toEqual(['m2']);
   });
 });

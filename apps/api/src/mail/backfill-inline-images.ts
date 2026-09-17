@@ -205,52 +205,101 @@ export async function backfillMessage(
   };
 }
 
+/** The subset of PrismaClient this pass uses, so the walk can be tested without a database. */
+export interface BackfillDb {
+  $queryRawUnsafe(sql: string): Promise<Array<{ id: string }>>;
+  message: {
+    findUnique(args: { where: { id: string }; select: Record<string, boolean> }): Promise<any>;
+    update(args: { where: { id: string }; data: { bodyHtml: string } }): Promise<any>;
+  };
+}
+
+/** Ids per page. Ids are ~25 bytes; bodies are up to 133 MB. Only ids are paged. */
+const ID_PAGE = 500;
+
+export interface BackfillTotals {
+  scanned: number;
+  rewritten: number;
+  images: number;
+  skipped: number;
+  ambiguousIds: string[];
+}
+
+/**
+ * Walk every message that still holds a `data:image` URI and convert what can
+ * be converted safely.
+ *
+ * Pages IDS, not rows, and pulls one body at a time. A page of 50 whole rows
+ * would be a gigabyte of JS strings on the box this exists for (648 bodies
+ * averaging 20 MB, one of them 133 MB) before the base64 buffers on top — and
+ * an OOM there re-selects the same page on the next run, because rows only
+ * drop out of the WHERE clause once they have been rewritten. That is a
+ * deterministic stall, not a resumable one.
+ *
+ * Re-running after an interruption is correct for the same reason: the WHERE
+ * clause re-selects only rows that still contain a data: URI, so finished rows
+ * disappear from every later scan regardless of where the cursor was. The
+ * cursor only avoids re-reading rows within one run — and it is what lets the
+ * run finish at all when a row is deliberately left unconverted.
+ */
+export async function runBackfill(
+  prisma: BackfillDb,
+  cache: Pick<InlineImageCacheService, 'write'>,
+  log: (line: string) => void = console.log,
+): Promise<BackfillTotals> {
+  const totals: BackfillTotals = { scanned: 0, rewritten: 0, images: 0, skipped: 0, ambiguousIds: [] };
+
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await prisma.$queryRawUnsafe(
+      `select id from messages
+        where "bodyHtml" like '%data:image%' ${cursor ? `and id > '${cursor}'` : ''}
+        order by id limit ${ID_PAGE}`,
+    );
+    if (page.length === 0) break;
+
+    for (const { id } of page) {
+      cursor = id;
+      const row = await prisma.message.findUnique({
+        where: { id },
+        select: { id: true, userId: true, bodyHtml: true, inlineImages: true },
+      });
+      if (!row) continue;
+
+      totals.scanned++;
+      const r = await backfillMessage(row, cache);
+      totals.images += r.written;
+      totals.skipped += r.skipped + r.skippedAmbiguous;
+      if (r.ambiguousBody) totals.ambiguousIds.push(row.id);
+      if (r.written > 0) {
+        await prisma.message.update({ where: { id: row.id }, data: { bodyHtml: r.html } });
+        totals.rewritten++;
+      }
+    }
+    log(`  scanned ${totals.scanned}, rewritten ${totals.rewritten}, images ${totals.images}, skipped ${totals.skipped}`);
+  }
+
+  return totals;
+}
+
 /** Entry point: `pnpm --filter api backfill:inline-images`. */
 export async function main(): Promise<void> {
   const prisma = new PrismaClient();
   const cache = new InlineImageCacheService();
-  let scanned = 0, rewritten = 0, images = 0, skipped = 0;
-  // Bodies the pairing guards refused to touch. They are listed, not just
-  // counted: each one still holds its base64 and can be reclaimed by hand, and
-  // a human needs the ids to do that. A body here is intact, never corrupted.
-  const ambiguousIds: string[] = [];
 
-  // Paged by id, 50 at a time. What actually makes a re-run after an
-  // interruption correct is the WHERE clause below: it re-selects only rows
-  // that still contain a data: URI, so already-finished rows drop out of
-  // every subsequent scan regardless of where the in-memory cursor was when
-  // the process stopped. The cursor only avoids re-reading rows within one run.
-  let cursor: string | undefined;
-  for (;;) {
-    const rows: Row[] = await prisma.$queryRawUnsafe(
-      `select id, "userId", "bodyHtml", "inlineImages" from messages
-        where "bodyHtml" like '%data:image%' ${cursor ? `and id > '${cursor}'` : ''}
-        order by id limit 50`,
-    );
-    if (rows.length === 0) break;
+  const totals = await runBackfill(prisma as unknown as BackfillDb, cache);
 
-    for (const row of rows) {
-      scanned++;
-      const r = await backfillMessage(row, cache);
-      images += r.written; skipped += r.skipped + r.skippedAmbiguous;
-      if (r.ambiguousBody) ambiguousIds.push(row.id);
-      if (r.written > 0) {
-        await prisma.message.update({ where: { id: row.id }, data: { bodyHtml: r.html } });
-        rewritten++;
-      }
-      cursor = row.id;
-    }
-    console.log(`  scanned ${scanned}, rewritten ${rewritten}, images ${images}, skipped ${skipped}`);
-  }
-
-  console.log(`done: ${rewritten}/${scanned} bodies rewritten, ${images} images cached, ${skipped} left as data URIs`);
-  if (ambiguousIds.length) {
+  console.log(
+    `done: ${totals.rewritten}/${totals.scanned} bodies rewritten, ` +
+    `${totals.images} images cached, ${totals.skipped} left as data URIs`,
+  );
+  if (totals.ambiguousIds.length) {
     console.log(
-      `${ambiguousIds.length} bodies skipped wholesale — data URIs and mappings did not line up, ` +
+      `${totals.ambiguousIds.length} bodies skipped wholesale — data URIs and mappings did not line up, ` +
       'so converting them could have written one image under another image\'s part id. ' +
       'They keep their base64 and can be reclaimed by hand:',
     );
-    for (const id of ambiguousIds) console.log(`  ambiguous: ${id}`);
+    for (const id of totals.ambiguousIds) console.log(`  ambiguous: ${id}`);
   }
   console.log('now run:  VACUUM FULL messages;   -- required to return the space to the OS');
   await prisma.$disconnect();

@@ -110,3 +110,38 @@ describe('AskPanel — resuming a saved conversation', () => {
     expect(screen.getByText('my own live turn')).toBeTruthy();
   });
 });
+
+describe('AskPanel — saving a turn to history', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAskStore.setState({
+      open: true, collapsed: false, prefill: null, scope: null,
+      handlers: null, openTarget: null, resumeId: null,
+    });
+    vi.spyOn(api.aiHistory, 'append').mockResolvedValue(undefined as any);
+  });
+  afterEach(() => { vi.clearAllMocks(); });
+
+  /**
+   * F3. The persist's catch swallowed everything with no log, no toast and no
+   * console warning. On the Exchange VM a thread scopeId (a 200+ char EWS
+   * ItemId) 400'd against the DTO cap, so thread-scoped history silently
+   * never saved while app-scoped history looked perfect — the worst
+   * diagnostic shape this feature could have on a live server. The write
+   * still must not cost the answer; it must just leave a trace.
+   */
+  it('warns instead of failing silently when the history write is rejected', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(api.aiHistory, 'create').mockRejectedValue(new Error('Request failed'));
+    render(<AskPanel />);
+
+    await ask('who is waiting on me?');
+
+    await waitFor(() => expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('history'), expect.anything(),
+    ));
+    // ...and the answer the user is reading is untouched.
+    expect(screen.getByText('agent answer')).toBeTruthy();
+    warn.mockRestore();
+  });
+});

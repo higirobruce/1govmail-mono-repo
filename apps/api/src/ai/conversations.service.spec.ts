@@ -56,6 +56,55 @@ describe('ConversationsService.create', () => {
     expect(written[1].sources[0].snippet).toHaveLength(300);
   });
 
+  /** F3: a long subject must cost the label, not the whole history write. */
+  it('truncates scopeLabel to 300 characters rather than rejecting the write', async () => {
+    const { service, prisma } = makeService();
+    prisma.aiConversation.create.mockResolvedValue({ id: 'c1' });
+
+    await service.create(USER, {
+      scopeKind: 'thread', scopeId: 'm1', scopeLabel: 'S'.repeat(900), model: 'qwen3',
+      turns: [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'a', sources: [] },
+      ],
+    });
+
+    expect(prisma.aiConversation.create.mock.calls[0][0].data.scopeLabel).toHaveLength(300);
+  });
+
+  it('keeps a scopeId of any real length — an EWS ItemId is not a 200-char field', async () => {
+    const { service, prisma } = makeService();
+    prisma.aiConversation.create.mockResolvedValue({ id: 'c1' });
+    const ewsItemId = `AAMkAG${'Qw9/+Ab'.repeat(40)}=`;
+
+    await service.create(USER, {
+      scopeKind: 'thread', scopeId: ewsItemId, scopeLabel: 'subject', model: 'qwen3',
+      turns: [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'a', sources: [] },
+      ],
+    });
+
+    expect(prisma.aiConversation.create.mock.calls[0][0].data.scopeId).toBe(ewsItemId);
+  });
+
+  /** F5: a row is bounded, but an over-long answer still saves. */
+  it('truncates turn content to 32k rather than storing an unbounded row', async () => {
+    const { service, prisma } = makeService();
+    prisma.aiConversation.create.mockResolvedValue({ id: 'c1' });
+
+    await service.create(USER, {
+      scopeKind: 'app', scopeId: null, scopeLabel: null, model: 'qwen3',
+      turns: [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'a'.repeat(50_000), sources: [] },
+      ],
+    });
+
+    const written = prisma.aiConversation.create.mock.calls[0][0].data.turns.create;
+    expect(written[1].content).toHaveLength(32_000);
+  });
+
   it('numbers the pair seq 1 and 2', async () => {
     const { service, prisma } = makeService();
     prisma.aiConversation.create.mockResolvedValue({ id: 'c1' });
@@ -227,6 +276,39 @@ describe('ConversationsService.list', () => {
     prisma.aiConversation.findMany.mockResolvedValue([row]);
     const partial = await service.list(USER, { limit: 25 });
     expect(partial.nextCursor).toBeNull();
+  });
+
+  /**
+   * The cursor comes from the client. Now that the page actually sends one
+   * (F4), "delete the newest row, then Load more" can hand back a cursor
+   * that no longer exists — Prisma's `cursor: { id }` throws on that, which
+   * is a 500 for an ordinary interaction. Resolving it against the caller's
+   * own rows first turns that into an empty page, and scopes the cursor to
+   * the caller while it is at it.
+   */
+  it('returns an empty page for a cursor that is gone or is not the caller own', async () => {
+    const { service, prisma } = makeService();
+    prisma.aiConversation.findFirst.mockResolvedValue(null);
+
+    const res = await service.list(USER, { cursor: 'someone-elses-id' });
+
+    expect(res).toEqual({ items: [], nextCursor: null });
+    expect(prisma.aiConversation.findFirst.mock.calls[0][0].where).toEqual({
+      id: 'someone-elses-id', userId: USER,
+    });
+    expect(prisma.aiConversation.findMany).not.toHaveBeenCalled();
+  });
+
+  it('pages on from a cursor the caller owns', async () => {
+    const { service, prisma } = makeService();
+    prisma.aiConversation.findFirst.mockResolvedValue({ id: 'c9' });
+    prisma.aiConversation.findMany.mockResolvedValue([]);
+
+    await service.list(USER, { cursor: 'c9' });
+
+    const args = prisma.aiConversation.findMany.mock.calls[0][0];
+    expect(args.cursor).toEqual({ id: 'c9' });
+    expect(args.skip).toBe(1);
   });
 
   it('counts turns through _count rather than a counter column', async () => {

@@ -614,8 +614,14 @@ export default function AskPanel() {
         // cannot be resurrected by this write.
         session.setForGeneration(id, generation);
       }
-    } catch {
-      // History is a convenience. Losing a write must not cost the answer.
+    } catch (err) {
+      // History is a convenience. Losing a write must not cost the answer —
+      // but it must not be INVISIBLE either. Swallowed silently, a rejected
+      // write (a validation cap the server disagrees with, an expired
+      // session) looks exactly like a feature that works: the answer is on
+      // screen and nothing ever appears in history. §9 promises a warning
+      // here; this is it, and it is the only trace such a failure leaves.
+      console.warn('Ask 1Gov: saving this turn to history failed', err);
     }
   };
 

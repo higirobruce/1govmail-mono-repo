@@ -4,6 +4,9 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const TITLE_MAX = 120;
 const SNIPPET_MAX = 300;
+const LABEL_MAX = 300;
+/** ~8k tokens. Truncating beats rejecting: the client swallows a 4xx. */
+const CONTENT_MAX = 32_000;
 const PAGE_DEFAULT = 25;
 
 export interface TurnInput {
@@ -82,7 +85,7 @@ export class ConversationsService {
           title,
           scopeKind: input.scopeKind,
           scopeId: input.scopeId,
-          scopeLabel: input.scopeLabel,
+          scopeLabel: input.scopeLabel?.slice(0, LABEL_MAX) ?? null,
           model: input.model,
           lastTurnAt: now,
           turns: { create: this.rows(userId, input.turns, 0) },
@@ -156,8 +159,12 @@ export class ConversationsService {
     const limit = opts.limit ?? PAGE_DEFAULT;
     const q = opts.q?.trim();
 
-    // Both legs of the OR carry userId. Without it on the turn leg, a match in
-    // another user's turn could pull their conversation into this result.
+    // The outer `userId` is the security gate — Prisma ANDs siblings, so it
+    // applies to both legs of the OR on its own. The `userId` repeated inside
+    // the turn leg is a PERFORMANCE narrowing: it lets the `some()` subquery
+    // use @@index([userId]) on ai_conversation_turns instead of scanning
+    // every user's turns for the ILIKE. Keep it for that reason; do not
+    // mistake it for what stops another user's turn leaking a conversation.
     const where: Prisma.AiConversationWhereInput = {
       userId,
       ...(q
@@ -169,6 +176,19 @@ export class ConversationsService {
           }
         : {}),
     };
+
+    if (opts.cursor) {
+      // Resolve the cursor against the caller's own rows before handing it to
+      // Prisma. It arrives from the client, and `cursor: { id }` on a row that
+      // does not exist throws — which "delete the last visible row, then Load
+      // more" would otherwise turn into a 500. Missing (or not theirs) means
+      // there is nothing after it to show.
+      const anchor = await this.prisma.aiConversation.findFirst({
+        where: { id: opts.cursor, userId },
+        select: { id: true },
+      });
+      if (!anchor) return { items: [], nextCursor: null };
+    }
 
     const rows = await this.prisma.aiConversation.findMany({
       where,
@@ -221,7 +241,7 @@ export class ConversationsService {
       userId,
       seq: from + i + 1,
       role: t.role,
-      content: t.content,
+      content: t.content.slice(0, CONTENT_MAX),
       sources: this.capSnippets(t.sources ?? []) as any,
       steps: (t.steps ?? null) as any,
       proposals: (t.proposals ?? null) as any,

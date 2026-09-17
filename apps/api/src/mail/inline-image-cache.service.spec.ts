@@ -74,27 +74,16 @@ describe('InlineImageCacheService', () => {
   });
 
   it('cleans up the temp file after a successful write', async () => {
-    // Atomic write uses a temp file: after write completes, the temp should be gone.
+    // Atomic write uses a temp file: after write completes, the temp should be gone
+    // (rename moves it, so this also guards against a copy-and-forget regression).
     const data = Buffer.from('atomic');
     const path = svc.pathFor('u1', 'm1', '1.1');
     expect(await svc.write('u1', 'm1', '1.1', data)).toBe(true);
     // The target file should exist.
     expect(existsSync(path)).toBe(true);
-    // The temp file should not exist.
-    expect(existsSync(path + '.tmp')).toBe(false);
-  });
-
-  it('cleans up the temp file after a failed write', async () => {
-    // Even on failure, the temp file must not be left behind.
-    const badRoot = join(tmpdir(), 'imgcache-file-' + Date.now());
-    writeFileSync(badRoot, 'a file');
-    const badSvc = new InlineImageCacheService(badRoot);
-    const targetPath = badSvc.pathFor('u1', 'm1', '1.1');
-    await badSvc.write('u1', 'm1', '1.1', Buffer.from('data'));
-    // The write failed, so the temp should be cleaned up and target should not exist.
-    expect(existsSync(targetPath)).toBe(false);
-    expect(existsSync(targetPath + '.tmp')).toBe(false);
-    rmSync(badRoot, { force: true });
+    // No temp file (`<partId>.tmp-<pid>-<random>`) should remain in the directory.
+    const leftover = readdirSync(dirname(path)).filter(f => f.includes('.tmp-'));
+    expect(leftover).toEqual([]);
   });
 
   it('round-trips idempotently: second write of different content replaces old', async () => {
@@ -129,30 +118,43 @@ describe('InlineImageCacheService', () => {
     expect(result).toBe(false);
     // The target directory still exists (we created it), but no temp file should be left
     const files = readdirSync(dir);
-    const tmpFiles = files.filter(f => f.startsWith('.tmp-'));
+    // Temp files are named `<partId>.tmp-<pid>-<random>` — the marker is a
+    // suffix on a name that begins with the part id, not a prefix.
+    const tmpFiles = files.filter(f => f.includes('.tmp-'));
     expect(tmpFiles).toEqual([]);
   });
 
-  it('cleans up temp file when mkdir succeeds but writeFile fails', async () => {
-    // The write() method creates the directory, then writes to temp, then renames.
-    // If we can make writeFile fail after mkdir succeeds (e.g., by making the dir
-    // read-only after mkdir but before writeFile), the unlink-in-catch path executes.
-    // However, on some systems this is tricky. Instead, verify that temp files are
-    // distinguishable from real part IDs and get cleaned up after any error.
-    const data = Buffer.from('test');
-    const path = svc.pathFor('u1', 'm1', '1.1');
-    const dir = join(path, '..');
+  it('does not corrupt the previously cached file when writeFile fails partway through', async () => {
+    // mkdir succeeds here (the parent directory is untouched); only the write
+    // to the temp file fails, mid-write. This both exercises the unlink-in-catch
+    // path for real (a temp file genuinely exists on disk when the error hits)
+    // and behaviourally proves atomicity: the failing write's bytes land on the
+    // temp path, not on the target, so the last good file must survive intact.
+    // A regression to writing straight to the target would corrupt it instead.
+    const original = Buffer.from('original-good-cached-bytes');
+    expect(await svc.write('u1', 'm1', '1.1', original)).toBe(true);
 
-    // Make a directory where writeFile would write - this causes writeFile to fail
-    mkdirSync(join(path), { recursive: true });
+    const realWriteFile = fs.writeFile.bind(fs);
+    const writeFileSpy = jest
+      .spyOn(fs, 'writeFile')
+      .mockImplementationOnce((async (path: any, data: any) => {
+        const buf = data as Buffer;
+        const half = buf.subarray(0, Math.floor(buf.length / 2));
+        await realWriteFile(path, half);
+        throw new Error('simulated failure mid-write');
+      }) as any);
 
-    const result = await svc.write('u1', 'm1', '1.1', data);
+    const corrupting = Buffer.from('a-completely-different-and-longer-payload');
+    const result = await svc.write('u1', 'm1', '1.1', corrupting);
+    writeFileSpy.mockRestore();
+
     expect(result).toBe(false);
-    // No .tmp-* temp files should be left behind in the message directory
-    const messageDir = join(root, 'u1', 'm1');
-    const files = readdirSync(messageDir);
-    const tmpFiles = files.filter(f => f.startsWith('.tmp-'));
-    expect(tmpFiles).toEqual([]);
+    // The cache must still serve the last good file, untouched.
+    expect(await svc.read('u1', 'm1', '1.1')).toEqual(original);
+    // And the half-written temp file from the failed attempt must not survive.
+    const dir = dirname(svc.pathFor('u1', 'm1', '1.1'));
+    const leftover = readdirSync(dir).filter(f => f.includes('.tmp-'));
+    expect(leftover).toEqual([]);
   });
 
   it('uses unique temp file names per write call', async () => {
@@ -170,7 +172,9 @@ describe('InlineImageCacheService', () => {
 
     // After both writes, only the target file exists, no .tmp-* files left behind
     const files = readdirSync(dirname(path));
-    const tmpFiles = files.filter(f => f.startsWith('.tmp-'));
+    // Temp files are named `<partId>.tmp-<pid>-<random>` — the marker is a
+    // suffix on a name that begins with the part id, not a prefix.
+    const tmpFiles = files.filter(f => f.includes('.tmp-'));
     expect(tmpFiles).toEqual([]);
 
     // The final content is the second write

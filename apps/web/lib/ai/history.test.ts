@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groupByRecency, resumeTarget, scopeChipLabel, type HistoryItem } from './history';
+import { appendPage, groupByRecency, resumeTarget, scopeChipLabel, type HistoryItem } from './history';
 
 // Local midnight, computed exactly as groupByRecency computes it. Fixtures are
 // placed relative to THIS, not to NOW: local midnight can fall as late as NOW
@@ -86,5 +86,36 @@ describe('scopeChipLabel', () => {
 
   it('calls an app-wide conversation what it is', () => {
     expect(scopeChipLabel({ scopeKind: 'app', scopeLabel: null })).toBe('Anywhere');
+  });
+});
+
+describe('appendPage', () => {
+  const at = (id: string): HistoryItem => ({
+    id, title: id, scopeKind: 'app', scopeId: null, scopeLabel: null,
+    lastTurnAt: '2026-09-17T08:00:00Z', turnCount: 2,
+  });
+
+  it('appends the next page after what is already on screen', () => {
+    expect(appendPage([at('a'), at('b')], [at('c')]).map((i) => i.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  /**
+   * Cursor pagination is not a snapshot: a conversation that gets a new turn
+   * between page 1 and page 2 moves to the top of the `lastTurnAt desc`
+   * ordering and can come back in a later page as well. Rendering it twice
+   * would also duplicate a React key. The row already on screen wins — it is
+   * the one the user may already be interacting with.
+   */
+  it('drops a row that a later page repeats, keeping the copy already shown', () => {
+    const shown = [at('a'), at('b')];
+    const merged = appendPage(shown, [at('b'), at('c')]);
+    expect(merged.map((i) => i.id)).toEqual(['a', 'b', 'c']);
+    expect(merged[1]).toBe(shown[1]); // the row on screen, not the later copy
+  });
+
+  it('is a no-op for an empty page and does not mutate what it was given', () => {
+    const first = [at('a')];
+    expect(appendPage(first, []).map((i) => i.id)).toEqual(['a']);
+    expect(first.map((i) => i.id)).toEqual(['a']);
   });
 });

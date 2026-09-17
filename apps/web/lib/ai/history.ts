@@ -43,6 +43,21 @@ export function groupByRecency(
 }
 
 /**
+ * Add the next cursor page to what is already on screen.
+ *
+ * De-duplicates by id: cursor pagination is not a snapshot, so a conversation
+ * that receives a new turn between two page fetches moves to the top of the
+ * `lastTurnAt desc` ordering and can be returned again in a later page. Left
+ * alone that renders the row twice — and duplicates a React key. The copy
+ * already on screen wins; it is the one the user may already be acting on.
+ */
+export function appendPage(shown: HistoryItem[], next: HistoryItem[]): HistoryItem[] {
+  if (!next.length) return shown;
+  const seen = new Set(shown.map((i) => i.id));
+  return [...shown, ...next.filter((i) => !seen.has(i.id))];
+}
+
+/**
  * Where Resume should navigate, or null to open the panel where the user
  * already is.
  *

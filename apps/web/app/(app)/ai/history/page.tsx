@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Clock, Search, Trash2, Loader2, MessageSquare, Menu } from 'lucide-react';
 import { api } from '@/lib/api';
-import { groupByRecency, resumeTarget, scopeChipLabel, type HistoryItem } from '@/lib/ai/history';
+import { appendPage, groupByRecency, resumeTarget, scopeChipLabel, type HistoryItem } from '@/lib/ai/history';
 import { useAskStore } from '@/stores/ask.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useAuthStore } from '@/stores/auth.store';
@@ -23,6 +23,16 @@ export default function AiHistoryPage() {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
+  // The server pages at 25. Without this the page showed the newest 25 rows
+  // and the newest 25 search hits and nothing else — the Older bucket was
+  // unreachable, which is the opposite of the "hunting through months" this
+  // page exists for.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Which search a response belongs to. A page-2 fetch started under one
+  // query must not append its rows after the query has moved on — that would
+  // mix unfiltered rows into a filtered list, silently.
+  const searchSeqRef = useRef(0);
   const [hydrated, setHydrated] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -39,15 +49,21 @@ export default function AiHistoryPage() {
     if (!isAuthenticated) router.replace('/login');
   }, [hydrated, isAuthenticated, router]);
 
-  // Debounced so typing does not fire a request per keystroke.
+  // Debounced so typing does not fire a request per keystroke. Each run is a
+  // fresh first page: a new query resets the cursor rather than paging on
+  // from where the previous one had got to.
   useEffect(() => {
     if (!hydrated || !isAuthenticated) return;
     let alive = true;
+    const seq = ++searchSeqRef.current;
     const t = setTimeout(async () => {
       setLoading(true);
       try {
         const res = await api.aiHistory.list(q ? { q } : undefined);
-        if (alive) setItems(res.items ?? []);
+        if (alive && searchSeqRef.current === seq) {
+          setItems(res.items ?? []);
+          setNextCursor(res.nextCursor ?? null);
+        }
       } catch {
         if (alive) toast.error('Could not load your history');
       } finally {
@@ -56,6 +72,24 @@ export default function AiHistoryPage() {
     }, 250);
     return () => { alive = false; clearTimeout(t); };
   }, [q, isAuthenticated, hydrated]);
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    const seq = searchSeqRef.current;
+    setLoadingMore(true);
+    try {
+      // Carries the CURRENT query alongside the cursor: paging through a
+      // filtered list must stay filtered.
+      const res = await api.aiHistory.list({ ...(q ? { q } : {}), cursor: nextCursor });
+      if (searchSeqRef.current !== seq) return; // the search moved on mid-flight
+      setItems((prev) => appendPage(prev, res.items ?? []));
+      setNextCursor(res.nextCursor ?? null);
+    } catch {
+      toast.error('Could not load more of your history');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const groups = useMemo(() => groupByRecency(items, new Date()), [items]);
 
@@ -203,6 +237,15 @@ export default function AiHistoryPage() {
             </ul>
           </section>
           ))}
+
+        {!loading && nextCursor && (
+          <div className="flex justify-center pt-2">
+            <Button variant="ghost" size="sm" onClick={() => void loadMore()} disabled={loadingMore} className="gap-1.5">
+              {loadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {loadingMore ? 'Loading' : 'Load more'}
+            </Button>
+          </div>
+        )}
         </div>
       </div>
     </div>

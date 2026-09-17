@@ -58,8 +58,12 @@ export class InlineImageCacheService {
 
       // Write to a temp file first, then rename atomically. This ensures a
       // concurrent reader sees either the previous file or the complete new one,
-      // never a partial file mid-write.
-      const tmp = full + '.tmp';
+      // never a partial file mid-write. Use a unique temp name (pid + random) per call
+      // to prevent concurrent writes to the same path from corrupting each other, and
+      // to make temp files recognizable to the cache evictor (Task 5).
+      const pid = process.pid;
+      const random = Math.random().toString(36).slice(2, 8);
+      const tmp = `${full}.tmp-${pid}-${random}`;
       try {
         await fs.writeFile(tmp, data);
         await fs.rename(tmp, full);

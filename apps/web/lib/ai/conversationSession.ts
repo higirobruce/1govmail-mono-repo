@@ -1,9 +1,9 @@
 /**
  * Tracks which saved Ask 1Gov conversation the panel is currently appending
  * to, and serializes the async writes that decide it. Pulled out of
- * AskPanel.tsx — which cannot be mounted in jsdom (see its header comment),
- * so this is the part of that bookkeeping a test can actually exercise —
- * rather than left inline as a handful of refs.
+ * AskPanel.tsx, where it is a handful of refs tangled into a 900-line
+ * component, so that the ordering rules below can be stated once and tested
+ * directly rather than only through the panel.
  *
  * The id is stored PER GENERATION (a `Map<number, string>`), not as one
  * mutable cell. That is what lets a turn's target survive a later
@@ -28,10 +28,13 @@
  *     create() resolving afterwards must not silently resurrect the
  *     conversation the user just walked away from — the next question
  *     would then append to it instead of starting fresh, with no sign of
- *     that having happened. `setIfCurrent` only writes an id into the
- *     generation it was issued under if that generation is STILL the
- *     current one; a late write lands in neither its own (superseded) slot
- *     nor the new one.
+ *     that having happened. The KEYING is what provides this: a late write
+ *     goes into the generation it was issued under, and the current
+ *     generation reads a different key, so it can never see it. An extra
+ *     "only if still current" condition on the write was tried and removed
+ *     — it bought nothing here and cost hazard 3 below its narrow-window
+ *     case, where a late create()'s id is exactly what a still-queued turn
+ *     of the SAME generation needs to find.
  *  3. A turn asked (and enqueued) just BEFORE "New conversation" is
  *     clicked can still be sitting in the queue, behind an earlier turn's
  *     still-pending persist, when the click happens. Because it addresses
@@ -54,13 +57,14 @@ export interface ConversationSession {
    */
   id: (generation: number) => string | null;
   /**
-   * Writes `id` into `expectedGeneration`'s slot, but only if that
-   * generation is still the current one. Every write in this module goes
-   * through this one gate — a create()'s result, and a resumed
-   * conversation's id — so "does this write still apply" is answered the
-   * same way everywhere an id gets set (see hazard 2 above).
+   * Records `id` as the conversation `generation` is writing to. Writes are
+   * ADDRESSED, never conditional on what is current: a write is always for
+   * the generation that issued it, and only turns captured under that same
+   * generation can read it back (see hazard 2 above for why that is already
+   * the whole of the isolation, and hazard 3 for what a "still current"
+   * condition would cost).
    */
-  setIfCurrent: (id: string, expectedGeneration: number) => void;
+  setForGeneration: (id: string, generation: number) => void;
   /**
    * Starts a fresh, empty generation. The OLD generation's slot is left
    * exactly as it was — never wiped — which is what hazard 3 depends on: a
@@ -87,9 +91,7 @@ export function createConversationSession(): ConversationSession {
   return {
     generation: () => generation,
     id: (gen) => idsByGeneration.get(gen) ?? null,
-    setIfCurrent: (newId, expectedGeneration) => {
-      if (expectedGeneration === generation) idsByGeneration.set(expectedGeneration, newId);
-    },
+    setForGeneration: (newId, forGeneration) => { idsByGeneration.set(forGeneration, newId); },
     clear: () => { generation += 1; },
     enqueue: (fn) => {
       chain = chain.then(fn).catch(() => {});

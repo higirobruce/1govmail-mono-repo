@@ -478,15 +478,11 @@ export default function AskPanel() {
           fromHistory: true,
         }));
         setTurns(restored);
-        // Goes through the exact same guarded write every other id-setter
-        // uses, rather than a bespoke unconditional one just for this path.
-        // Nothing between the checks above and this line can yield to other
-        // JS (no `await` in between), so there is no actual gap for "New
-        // conversation" to land in between them — this call is provably
-        // redundant with those checks today. It stays anyway: it costs
-        // nothing, and it is the one thing standing between a future edit
-        // that adds an await in between and a real reopened hole.
-        session.setIfCurrent(id, generationAtResumeStart);
+        // Addressed to the generation this resume started under — the same
+        // write every other id-setter uses. The checks above are what decide
+        // whether the restore applies at all; nothing between them and this
+        // line can yield to other JS, so the two land together or not at all.
+        session.setForGeneration(id, generationAtResumeStart);
       } catch {
         if (resumeRunRef.current === run) toast.error('That conversation is no longer available');
       }
@@ -576,10 +572,11 @@ export default function AskPanel() {
    * for the double-create race — while staying scoped to `generation`
    * rather than "whatever generation is current right now" is what lets a
    * turn queued before "New conversation" still find its own conversation
-   * even if it doesn't run until after that click. `setIfCurrent` is the
-   * matching guard on the write side: a create() that resolves after
-   * "New conversation" has moved the generation on must not resurrect the
-   * conversation the user walked away from.
+   * even if it doesn't run until after that click. `setForGeneration` is
+   * the matching half on the write side: an id is recorded against the
+   * generation that asked for it, so a create() resolving after "New
+   * conversation" is reachable by that generation's other queued turns and
+   * by nothing else.
    */
   const persistTurnPair = async (
     question: string, answer: AnswerTurn, turnId: string | null, generation: number,
@@ -609,11 +606,13 @@ export default function AskPanel() {
           scopeLabel: scope?.kind === 'thread' ? scope.subject : scope?.kind === 'doc' ? scope.docTitle : null,
           model: aiModel,
         });
-        // The created row is kept either way (losing it would break the
-        // "never breaks an answer" rule) — but only wire it up as THIS
-        // session's active conversation if nothing superseded it while the
-        // request was in flight. A superseded create() lands nowhere.
-        session.setIfCurrent(id, generation);
+        // Recorded against the generation this turn was captured under, not
+        // "whatever is current now". If "New conversation" landed while the
+        // request was in flight, that is still the right slot: a turn queued
+        // under the same generation must find this id and append to it, and
+        // the generation the user moved to reads a different key, so it
+        // cannot be resurrected by this write.
+        session.setForGeneration(id, generation);
       }
     } catch {
       // History is a convenience. Losing a write must not cost the answer.

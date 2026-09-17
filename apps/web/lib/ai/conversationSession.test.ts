@@ -8,10 +8,10 @@ describe('createConversationSession', () => {
     expect(s.id(0)).toBeNull();
   });
 
-  it('setIfCurrent writes into the given generation when it matches the current one', () => {
+  it('setForGeneration writes into the generation it is given', () => {
     const s = createConversationSession();
     const gen = s.generation();
-    s.setIfCurrent('c1', gen);
+    s.setForGeneration('c1', gen);
     expect(s.id(gen)).toBe('c1');
   });
 
@@ -22,7 +22,7 @@ describe('createConversationSession', () => {
   });
 
   /**
-   * Catches: `setIfCurrent` writing to a single shared cell instead of
+   * Catches: `setForGeneration` writing to a single shared cell instead of
    * `idsByGeneration.set(expectedGeneration, ...)` — e.g. a regression back
    * to one mutable `id` variable. If two generations' ids were not kept
    * separately, writing under generation 1 would leak into generation 0's
@@ -30,9 +30,9 @@ describe('createConversationSession', () => {
    */
   it('a generation\'s id is independent of another generation\'s', () => {
     const s = createConversationSession();
-    s.setIfCurrent('conv-a', 0);
+    s.setForGeneration('conv-a', 0);
     s.clear(); // now at generation 1
-    s.setIfCurrent('conv-b', 1);
+    s.setForGeneration('conv-b', 1);
     expect(s.id(0)).toBe('conv-a');
     expect(s.id(1)).toBe('conv-b');
   });
@@ -42,26 +42,29 @@ describe('createConversationSession', () => {
    * generation before its network round trip; "New conversation" clears —
    * bumps the generation — while that round trip is still in flight; the
    * response then arrives claiming an id under a generation that is no
-   * longer current. It must land nowhere: not in the new generation's slot,
-   * and not even in its OWN (now-superseded) slot. Catches: dropping the
-   * `expectedGeneration === generation` check, or comparing against the
-   * wrong variable.
+   * longer current. It must not resurrect the conversation the user walked
+   * away from: the CURRENT generation must still be empty afterwards, so
+   * their next question starts fresh. The id lands in its own (superseded)
+   * generation's slot, where only a turn captured under that generation can
+   * ever read it — see the F6 case below for why that matters. Catches: a
+   * regression to one shared cell, or writing into `generation` instead of
+   * the generation the write was issued under.
    */
-  it('setIfCurrent is a no-op once the generation has moved on — a late response lands nowhere, not even in its own slot', () => {
+  it('a late write cannot resurrect a cleared conversation — the current generation stays empty', () => {
     const s = createConversationSession();
     const genAtRequestTime = s.generation(); // captured before the "network call"
     s.clear(); // "New conversation", clicked while that call is still in flight
-    s.setIfCurrent('late-id', genAtRequestTime); // the call finally resolves
-    expect(s.id(genAtRequestTime)).toBeNull();
+    s.setForGeneration('late-id', genAtRequestTime); // the call finally resolves
     expect(s.id(s.generation())).toBeNull();
+    expect(s.id(genAtRequestTime)).toBe('late-id');
   });
 
   it('a stale write does not consume the new generation — the next legitimate write still succeeds', () => {
     const s = createConversationSession();
     const staleGen = s.generation();
     s.clear();
-    s.setIfCurrent('late-id', staleGen);
-    s.setIfCurrent('fresh-id', s.generation());
+    s.setForGeneration('late-id', staleGen);
+    s.setForGeneration('fresh-id', s.generation());
     expect(s.id(s.generation())).toBe('fresh-id');
   });
 
@@ -78,7 +81,7 @@ describe('createConversationSession', () => {
   it('an old generation\'s slot survives clear() untouched — a turn queued before the click still finds its own conversation after it', () => {
     const s = createConversationSession();
     const gen = s.generation();
-    s.setIfCurrent('conv-c', gen); // an earlier turn under this generation already has a conversation
+    s.setForGeneration('conv-c', gen); // an earlier turn under this generation already has a conversation
     s.clear(); // "New conversation" clicked — moves on to the next generation
     // The turn that was already asked (and queued) before the click still
     // addresses ITS OWN captured generation, not whatever is current now.
@@ -95,7 +98,7 @@ describe('createConversationSession', () => {
    */
   it('the generation after clear() genuinely starts empty', () => {
     const s = createConversationSession();
-    s.setIfCurrent('conv-a', s.generation());
+    s.setForGeneration('conv-a', s.generation());
     s.clear();
     expect(s.id(s.generation())).toBeNull();
   });
@@ -139,7 +142,7 @@ describe('createConversationSession', () => {
         return;
       }
       creates.push(label);
-      s.setIfCurrent(`conv-from-${label}`, gen);
+      s.setForGeneration(`conv-from-${label}`, gen);
     };
 
     await Promise.all([s.enqueue(turn('A')), s.enqueue(turn('B'))]);
@@ -148,21 +151,55 @@ describe('createConversationSession', () => {
   });
 
   /**
-   * Hazard #3 end to end: a superseded create() (turn under the OLD
-   * generation) lands nowhere, and the next turn — enqueued under the NEW
-   * generation, asked right after "New conversation" — still gets its own
-   * id, unaffected by the turn still resolving behind it in the chain.
+   * F6 — the residual split the `expectedGeneration === generation` guard
+   * left open. "New conversation" lands between turn 1's create() being
+   * issued and it resolving. Turn 2 was asked (and queued) BEFORE the click,
+   * so it belongs to turn 1's conversation. If the late create() is dropped
+   * instead of recorded under its own generation, turn 2 finds null and
+   * creates a SECOND conversation — the same user-visible split hazard #1
+   * exists to prevent, in a narrower window. Catches a reintroduction of the
+   * conditional write.
    */
-  it('a superseded create() lands nowhere, and the next turn after New conversation still gets its own id', async () => {
+  it('a create() that resolves after New conversation still records its id under its OWN generation, so a turn queued under it appends', async () => {
+    const s = createConversationSession();
+    const gen = s.generation();
+    const creates: string[] = [];
+    const appends: string[] = [];
+
+    const turn = (label: string) => async () => {
+      const existing = s.id(gen);
+      if (existing) { appends.push(`${label}->${existing}`); return; }
+      creates.push(label);
+      s.clear(); // "New conversation" clicked while this create() was in flight
+      s.setForGeneration(`conv-from-${label}`, gen);
+    };
+
+    await Promise.all([s.enqueue(turn('A')), s.enqueue(turn('B'))]);
+
+    expect(creates).toEqual(['A']);
+    expect(appends).toEqual(['B->conv-from-A']);
+    // ...and the conversation the user walked away to is still empty, so
+    // their next question starts fresh (hazard #2, provided by the keying).
+    expect(s.id(s.generation())).toBeNull();
+  });
+
+  /**
+   * Hazard #3 end to end: a superseded create() (turn under the OLD
+   * generation) stays confined to that generation, and the next turn —
+   * enqueued under the NEW generation, asked right after "New conversation"
+   * — still gets its own id, unaffected by the turn still resolving behind
+   * it in the chain. The two generations never see each other's id.
+   */
+  it('a superseded create() stays confined to its own generation, and the next turn after New conversation still gets its own id', async () => {
     const s = createConversationSession();
     const genForTurn1 = s.generation();
     s.clear(); // New conversation, clicked before turn 1's create() resolved
     const genForTurn2 = s.generation();
 
-    await s.enqueue(async () => { s.setIfCurrent('turn-1-id', genForTurn1); });
-    await s.enqueue(async () => { s.setIfCurrent('turn-2-id', genForTurn2); });
+    await s.enqueue(async () => { s.setForGeneration('turn-1-id', genForTurn1); });
+    await s.enqueue(async () => { s.setForGeneration('turn-2-id', genForTurn2); });
 
-    expect(s.id(genForTurn1)).toBeNull();
+    expect(s.id(genForTurn1)).toBe('turn-1-id');
     expect(s.id(genForTurn2)).toBe('turn-2-id');
   });
 });

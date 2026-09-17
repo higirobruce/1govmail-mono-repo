@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import { join, resolve, sep } from 'path';
+import { join, resolve, sep, dirname } from 'path';
 import { Injectable, Logger } from '@nestjs/common';
 
 export const CACHE_ROOT_DEFAULT = process.env.INLINE_IMAGE_CACHE_DIR ?? '/opt/govmail/imgcache';
@@ -53,8 +53,25 @@ export class InlineImageCacheService {
     if (data.byteLength > MAX_FILE_BYTES) return false;
     try {
       const full = this.pathFor(userId, messageId, partId);
-      await fs.mkdir(join(full, '..'), { recursive: true });
-      await fs.writeFile(full, data);
+      const dir = dirname(full);
+      await fs.mkdir(dir, { recursive: true });
+
+      // Write to a temp file first, then rename atomically. This ensures a
+      // concurrent reader sees either the previous file or the complete new one,
+      // never a partial file mid-write.
+      const tmp = full + '.tmp';
+      try {
+        await fs.writeFile(tmp, data);
+        await fs.rename(tmp, full);
+      } catch (err: any) {
+        // Clean up the temp file on any error (write, rename, etc).
+        try {
+          await fs.unlink(tmp);
+        } catch {
+          // If temp file doesn't exist or can't be deleted, ignore.
+        }
+        throw err;
+      }
       return true;
     } catch (err: any) {
       // Log once. A cache that cannot be written is a degraded cache, not an

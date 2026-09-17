@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useInlineImages, EARLY_FLUSH_MS } from './useInlineImages';
+import { useInlineImages, FLUSH_INTERVAL_MS } from './useInlineImages';
 
 vi.mock('@/lib/api', () => ({
   api: { mail: { inlineImage: vi.fn() } },
@@ -64,24 +64,11 @@ describe('useInlineImages', () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it('rebuilds the map once, not once per image, when the images arrive together', async () => {
-    const d = IMAGES.map(() => deferred<string>());
-    let i = 0;
-    inlineImage.mockImplementation(() => d[i++].promise);
-
-    const view = renderCountingMaps('m1', IMAGES);
-
-    await act(async () => {
-      d.forEach((x, n) => x.resolve(`blob:${n}`));
-      await Promise.resolve();
-    });
-
-    await waitFor(() => expect(view.result.current.size).toBe(5));
-    // The empty map the effect starts from, plus exactly one populated map.
-    expect(view.distinctMaps()).toBe(2);
-  });
-
-  it('never rebuilds more than twice, however the arrivals are spread out', async () => {
+  it('rebuilds the map once for all the arrivals inside one flush window', async () => {
+    // Each arrival lands in its OWN tick, so React cannot batch them: without
+    // the pending map every one of them is a separate iframe rebuild. Four of
+    // the five resolve, so nothing is published by the all-settled path and
+    // the interval is the only thing that can show them.
     vi.useFakeTimers();
     const d = IMAGES.map(() => deferred<string>());
     let i = 0;
@@ -89,19 +76,49 @@ describe('useInlineImages', () => {
 
     const view = renderCountingMaps('m1', IMAGES);
 
-    // Arrivals dribble in one at a time, each in its own tick — the shape that
-    // used to cost one iframe reload per image.
-    for (let n = 0; n < d.length; n++) {
+    for (let n = 0; n < 4; n++) {
       await act(async () => {
         d[n].resolve(`blob:${n}`);
         await Promise.resolve();
-        vi.advanceTimersByTime(EARLY_FLUSH_MS + 10);
+        vi.advanceTimersByTime(10); // 40 ms in total — one window, comfortably
       });
     }
 
-    expect(view.result.current.size).toBe(5);
-    // Empty, one early flush, one final flush.
-    expect(view.distinctMaps()).toBeLessThanOrEqual(3);
+    // Held, not shown one by one.
+    expect(view.result.current.size).toBe(0);
+
+    await act(async () => { vi.advanceTimersByTime(FLUSH_INTERVAL_MS); });
+
+    expect(view.result.current.size).toBe(4);
+    // The empty map the effect starts from, plus exactly one populated map.
+    expect(view.distinctMaps()).toBe(2);
+  });
+
+  it('keeps publishing later windows instead of waiting for the slowest image', async () => {
+    // The interval has to REPEAT. With a one-shot timer the reader sees the
+    // first window and then nothing at all until the last image settles — on a
+    // cache-miss open that is a live provider download per part.
+    vi.useFakeTimers();
+    const d = IMAGES.map(() => deferred<string>());
+    let i = 0;
+    inlineImage.mockImplementation(() => d[i++].promise);
+
+    const view = renderCountingMaps('m1', IMAGES);
+
+    // Three arrivals, each a full window apart. Two images stay in flight
+    // throughout, so nothing here is the all-settled flush.
+    for (let n = 0; n < 3; n++) {
+      await act(async () => {
+        d[n].resolve(`blob:${n}`);
+        await Promise.resolve();
+        vi.advanceTimersByTime(FLUSH_INTERVAL_MS + 10);
+      });
+      expect(view.result.current.size).toBe(n + 1);
+    }
+
+    // Still bounded: the empty map plus one rebuild per window that had
+    // something new in it — never one per image beyond that.
+    expect(view.distinctMaps()).toBe(4);
   });
 
   it('shows the images that have arrived without waiting for a slow one', async () => {
@@ -116,7 +133,7 @@ describe('useInlineImages', () => {
       d[0].resolve('blob:0');
       d[1].resolve('blob:1');
       await Promise.resolve();
-      vi.advanceTimersByTime(EARLY_FLUSH_MS);
+      vi.advanceTimersByTime(FLUSH_INTERVAL_MS);
     });
 
     // Three images are still in flight; the two that landed are already usable.

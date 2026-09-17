@@ -138,8 +138,8 @@ function escapeHtml(s: string): string {
 // body any more, they are fetched from the cache route and resolved to blob:
 // URLs by useInlineImages. The body therefore renders immediately with the
 // images still in flight, and rewriteCidRefs swaps each `cid:` for its blob
-// URL as they arrive — in at most two batches, because every new map rebuilds
-// this iframe's srcDoc from scratch.
+// URL as they arrive — in batches of at most one per 250 ms, because every new
+// map rebuilds this iframe's srcDoc from scratch.
 // External images (http/https src) are handled separately: the CSP meta tag
 // below upgrades insecure http:// requests to https:// to avoid mixed-content
 // blocks.

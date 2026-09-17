@@ -134,10 +134,15 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-// bodyHtml is pre-processed server-side: inline images are already embedded as
-// base64 data URIs, so EmailBody renders immediately with no async fetching.
-// External images (http/https src) are also handled: the CSP meta tag below
-// upgrades insecure http:// requests to https:// to avoid mixed-content blocks.
+// bodyHtml keeps its `cid:` references: inline images are NOT embedded in the
+// body any more, they are fetched from the cache route and resolved to blob:
+// URLs by useInlineImages. The body therefore renders immediately with the
+// images still in flight, and rewriteCidRefs swaps each `cid:` for its blob
+// URL as they arrive — in at most two batches, because every new map rebuilds
+// this iframe's srcDoc from scratch.
+// External images (http/https src) are handled separately: the CSP meta tag
+// below upgrades insecure http:// requests to https:// to avoid mixed-content
+// blocks.
 function EmailBody({
   html,
   text,

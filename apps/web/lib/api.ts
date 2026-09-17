@@ -454,6 +454,19 @@ export const api = {
       return URL.createObjectURL(blob);
     },
 
+    /** Inline image as a blob: URL. The iframe is sandboxed and cannot send a
+     *  bearer token, so the bytes are fetched here and handed over as a blob. */
+    inlineImage: async (messageId: string, partId: string): Promise<string> => {
+      if (USE_MOCK) return '';
+      const token = getToken();
+      const res = await fetch(
+        `${API_BASE}/mail/messages/${messageId}/inline/${encodeURIComponent(partId)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      if (!res.ok) throw new Error('Failed to load inline image');
+      return URL.createObjectURL(await res.blob());
+    },
+
     // ── Snooze ────────────────────────────────────────────────────────────────
     snooze: (messageId: string, snoozedUntil: string, originalFolderId: string) => {
       if (USE_MOCK) return delay({ success: true });

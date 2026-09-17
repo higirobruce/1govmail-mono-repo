@@ -13,7 +13,8 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
-import { prepareEmailHtml } from '@/lib/emailRender';
+import { prepareEmailHtml, rewriteCidRefs } from '@/lib/emailRender';
+import { useInlineImages } from '@/lib/mail/useInlineImages';
 import { buildEmailFrameCss, emailFrameColors } from '@/lib/emailFrameCss';
 import { repairEmailContrast } from '@/lib/emailContrastRepair';
 import { useIsDark } from '@/hooks/useIsDark';
@@ -140,10 +141,17 @@ function escapeHtml(s: string): string {
 function EmailBody({
   html,
   text,
+  messageId = null,
+  inlineImages,
 }: {
   html: string | null;
   text: string | null;
+  messageId?: string | null;
+  inlineImages?: Array<{ cid: string; partId: string }>;
 }) {
+  // Called unconditionally, above the no-html early return below, to keep hook
+  // order stable across renders.
+  const inlineUrls = useInlineImages(messageId, inlineImages);
   // Read the user's "consistent email display" preference from localStorage.
   // Evaluated once per mount (remount happens on message switch via key=).
   // Default: true (normalize on). Set to false only when user disables it.
@@ -198,13 +206,13 @@ function EmailBody({
   // can't see the app's `.dark` class, so its palette is baked in here.
   const srcDoc = useMemo(() => {
     if (!html) return null;
-    const body = prepareEmailHtml(html);
+    const body = prepareEmailHtml(rewriteCidRefs(html, inlineUrls));
     const css = buildEmailFrameCss({ dark: isDark, normalize: normalizeStyles });
     // <base target="_blank">: the frame is sandboxed without top-navigation, so
     // an in-frame link click would otherwise be silently blocked — route every
     // link to a new tab instead (pairs with allow-popups on the iframe).
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>${css}</style></head><body>${body}</body></html>`;
-  }, [html, normalizeStyles, isDark]);
+  }, [html, normalizeStyles, isDark, inlineUrls]);
 
   if (!srcDoc) {
     return (
@@ -778,6 +786,8 @@ export default function MailDetail({
               key={message.id}
               html={message.bodyHtml}
               text={message.bodyText}
+              messageId={message.id}
+              inlineImages={message.inlineImages}
             />
 
             {/* Inline attachments bar — shown below the email body so the user

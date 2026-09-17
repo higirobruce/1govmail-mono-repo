@@ -54,3 +54,44 @@ export function createEmailPreparer(
 
 /** App-wide memoized preparer shared by all reader components. */
 export const prepareEmailHtml = createEmailPreparer();
+
+/** Stored cids arrive wrapped in angle brackets; HTML `src="cid:…"` never has them. */
+const bareCid = (cid: string) => cid.replace(/^<|>$/g, '');
+
+/**
+ * Swap `src="cid:…"` for a resolved URL.
+ *
+ * Three normalisations, all of them load-bearing and all of them copied from the
+ * embed code this replaces (`mail.service.ts:1349-1358`, and see
+ * `zimbra.mappers.ts:106`):
+ *
+ *  1. Stored cids are wrapped in angle brackets — `<img0@govmail>` — while the
+ *     HTML reference never is. Both sides are stripped before comparison.
+ *  2. HTML may encode the `@` as `&#64;` or `&#x40;`.
+ *  3. Some mail references only the part before the `@`, so a full-cid miss
+ *     falls back to matching on that base.
+ *
+ * An unresolved cid is left exactly as it was: a broken image icon is a better
+ * failure than a blank src, which some renderers treat as the page itself.
+ */
+export function rewriteCidRefs(html: string, resolved: Map<string, string>): string {
+  if (!html || resolved.size === 0) return html;
+
+  const byCid = new Map<string, string>();
+  const byBase = new Map<string, string>();
+  for (const [cid, url] of resolved) {
+    const bare = bareCid(cid);
+    byCid.set(bare.toLowerCase(), url);
+    const base = bare.split('@')[0];
+    if (base && !byBase.has(base.toLowerCase())) byBase.set(base.toLowerCase(), url);
+  }
+
+  return html.replace(
+    /src=(["'])cid:([^"']+)\1/gi,
+    (whole, quote: string, raw: string) => {
+      const ref = bareCid(raw).replace(/&#(?:64|x40);/gi, '@').toLowerCase();
+      const url = byCid.get(ref) ?? byBase.get(ref.split('@')[0]);
+      return url ? `src=${quote}${url}${quote}` : whole;
+    },
+  );
+}

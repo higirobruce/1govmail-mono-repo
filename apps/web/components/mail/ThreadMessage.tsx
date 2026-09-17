@@ -19,10 +19,11 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { usePeopleStore } from '@/stores/people.store';
 import { useAuthStore } from '@/stores/auth.store';
-import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
+import { fetchBodyCached } from '@/lib/mailBodyCache';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
-import { prepareEmailHtml } from '@/lib/emailRender';
+import { prepareEmailHtml, rewriteCidRefs } from '@/lib/emailRender';
+import { useInlineImages } from '@/lib/mail/useInlineImages';
 import { buildEmailFrameCss, emailFrameColors } from '@/lib/emailFrameCss';
 import { repairEmailContrast } from '@/lib/emailContrastRepair';
 import { useIsDark } from '@/hooks/useIsDark';
@@ -172,7 +173,22 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
   return { main: tmp.innerHTML, quoted: quotedDiv.innerHTML };
 }
 
-function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | null; text: string | null; stripQuotes?: boolean }) {
+function EmailBodyFrame({
+  html,
+  text,
+  stripQuotes = true,
+  messageId = null,
+  inlineImages,
+}: {
+  html: string | null;
+  text: string | null;
+  stripQuotes?: boolean;
+  messageId?: string | null;
+  inlineImages?: Array<{ cid: string; partId: string }>;
+}) {
+  // Called unconditionally, above the no-html early return below, to keep hook
+  // order stable across renders.
+  const inlineUrls = useInlineImages(messageId, inlineImages);
   const normalizeStyles =
     typeof window !== 'undefined'
       ? localStorage.getItem('1gov_normalize_email_styles') !== 'false'
@@ -287,7 +303,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
   // hook order stable.
   const docs = useMemo(() => {
     if (!html) return null;
-    const body = prepareEmailHtml(html);
+    const body = prepareEmailHtml(rewriteCidRefs(html, inlineUrls));
     const css = buildEmailFrameCss({ dark: isDark, normalize: normalizeStyles });
     // <base target="_blank">: the frame is sandboxed without top-navigation,
     // so an in-frame link click would otherwise be silently blocked — route
@@ -299,7 +315,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
       return { main: mkSrcDoc(split.main), quoted: split.quoted ? mkSrcDoc(split.quoted) : null };
     }
     return { main: mkSrcDoc(body, true), quoted: null };
-  }, [html, normalizeStyles, stripQuotes, isDark]);
+  }, [html, normalizeStyles, stripQuotes, isDark, inlineUrls]);
 
   if (!docs) {
     return (
@@ -512,14 +528,7 @@ export default function ThreadMessage({
     // (the guard above then blocked every retry → eternal spinner on re-open,
     // since a closed reader keeps its ThreadView rows mounted).
     fetchBodyCached(message.id, api.mail.getMessage)
-      .then((data) => {
-        setFullMessage(data);
-        // Inline images still embedding server-side — poll for the final body
-        // and swap it in when it lands (shares one poll loop with the detail pane).
-        if ((data as { embedPending?: boolean })?.embedPending) {
-          watchPendingBody(message.id, api.mail.getMessage, (fresh) => setFullMessage(fresh));
-        }
-      })
+      .then((data) => setFullMessage(data))
       // `cancelled` only gates the error flag — a failure from an abandoned
       // expand shouldn't flash "Could not load" on a collapsed row; the next
       // expand simply retries because loadingBody is reset below.
@@ -761,7 +770,13 @@ export default function ThreadMessage({
             </div>
           ) : fullMessage ? (
             <div className="border-t border-border-faint">
-              <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} stripQuotes={!isOnlyMessage} />
+              <EmailBodyFrame
+                html={fullMessage.bodyHtml}
+                text={fullMessage.bodyText}
+                stripQuotes={!isOnlyMessage}
+                messageId={fullMessage.id}
+                inlineImages={fullMessage.inlineImages}
+              />
             </div>
           ) : (
             <div className="px-4 py-4 text-ui text-ink-3">

@@ -4,6 +4,12 @@ import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import { InlineImageCacheService, MAX_FILE_BYTES } from './inline-image-cache.service';
 
+// Temp files are named `<partId>.tmp-<pid>-<random>` — the marker is a suffix
+// appended after the part id, not a bare substring. Anchoring to the actual
+// suffix shape (rather than `.includes('.tmp-')`) means a part id that itself
+// contained the literal text `.tmp-` can never be mistaken for cache litter.
+const isTempFile = (name: string): boolean => /\.tmp-\d+-[0-9a-z]+$/.test(name);
+
 describe('InlineImageCacheService', () => {
   let root: string;
   let svc: InlineImageCacheService;
@@ -82,7 +88,7 @@ describe('InlineImageCacheService', () => {
     // The target file should exist.
     expect(existsSync(path)).toBe(true);
     // No temp file (`<partId>.tmp-<pid>-<random>`) should remain in the directory.
-    const leftover = readdirSync(dirname(path)).filter(f => f.includes('.tmp-'));
+    const leftover = readdirSync(dirname(path)).filter(isTempFile);
     expect(leftover).toEqual([]);
   });
 
@@ -99,7 +105,8 @@ describe('InlineImageCacheService', () => {
     expect(read2).not.toEqual(data1);
     // After both writes, no temp file should exist.
     const path = svc.pathFor('u1', 'm1', '1.1');
-    expect(existsSync(path + '.tmp')).toBe(false);
+    const leftover = readdirSync(dirname(path)).filter(isTempFile);
+    expect(leftover).toEqual([]);
   });
 
   it('cleans up temp file when writeFile succeeds but rename fails', async () => {
@@ -120,7 +127,7 @@ describe('InlineImageCacheService', () => {
     const files = readdirSync(dir);
     // Temp files are named `<partId>.tmp-<pid>-<random>` — the marker is a
     // suffix on a name that begins with the part id, not a prefix.
-    const tmpFiles = files.filter(f => f.includes('.tmp-'));
+    const tmpFiles = files.filter(isTempFile);
     expect(tmpFiles).toEqual([]);
   });
 
@@ -153,28 +160,35 @@ describe('InlineImageCacheService', () => {
     expect(await svc.read('u1', 'm1', '1.1')).toEqual(original);
     // And the half-written temp file from the failed attempt must not survive.
     const dir = dirname(svc.pathFor('u1', 'm1', '1.1'));
-    const leftover = readdirSync(dir).filter(f => f.includes('.tmp-'));
+    const leftover = readdirSync(dir).filter(isTempFile);
     expect(leftover).toEqual([]);
   });
 
   it('uses unique temp file names per write call', async () => {
     // Temp file names must be unique per call (include process id + random) to prevent
     // concurrent writes to the same path from corrupting each other via shared temp.
+    // Capture the actual temp name used on each write (fs.rename's first argument
+    // is the temp path) and assert they differ across two writes to the same key —
+    // a fixed `${full}.tmp` name would pass every other assertion in this file.
     const data1 = Buffer.from('first');
     const data2 = Buffer.from('second');
     const path = svc.pathFor('u1', 'm1', '1.1');
     const dir = dirname(path);
 
-    // Write the same path twice (simulating concurrent calls, though sequentially here)
-    // and verify that temp files are distinct (or cleaned up immediately)
+    const renameSpy = jest.spyOn(fs, 'rename');
+
     await svc.write('u1', 'm1', '1.1', data1);
     await svc.write('u1', 'm1', '1.1', data2);
 
+    const tempNamesUsed = renameSpy.mock.calls.map(call => call[0]);
+    renameSpy.mockRestore();
+
+    expect(tempNamesUsed.length).toBe(2);
+    expect(tempNamesUsed[0]).not.toEqual(tempNamesUsed[1]);
+
     // After both writes, only the target file exists, no .tmp-* files left behind
-    const files = readdirSync(dirname(path));
-    // Temp files are named `<partId>.tmp-<pid>-<random>` — the marker is a
-    // suffix on a name that begins with the part id, not a prefix.
-    const tmpFiles = files.filter(f => f.includes('.tmp-'));
+    const files = readdirSync(dir);
+    const tmpFiles = files.filter(isTempFile);
     expect(tmpFiles).toEqual([]);
 
     // The final content is the second write

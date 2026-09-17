@@ -284,4 +284,48 @@ describe('backfillMessage', () => {
     expect(c.write).not.toHaveBeenCalled();
     expect(r.ambiguousBody).toBe(true);
   });
+
+  // ── C9: rule 3, the base-before-@ fallback ───────────────────────────────
+  // `rewriteCidRefs` (apps/web/lib/emailRender.ts) resolves a reference by the
+  // part before the `@` when the full cid misses, because real Outlook mail
+  // references images that way. The exclusion check here has to use the same
+  // three rules, or a mapping that IS already referenced looks unreferenced,
+  // re-enters the pairing pool, and unbalances the counts.
+
+  it('excludes an already-referenced mapping when the body references only the part before the @', async () => {
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="cid:image001.gif"><img src="data:image/gif;base64,${PNG}">`,
+      inlineImages: [
+        { cid: 'image001.gif@01DD2986.DAAA8E30', partId: '1.1', mimeType: 'image/png' },
+        { cid: 'other@host', partId: '1.2', mimeType: 'image/gif' },
+      ],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).toHaveBeenCalledTimes(1);
+    expect(c.write).toHaveBeenCalledWith('u1', 'm1', '1.2', expect.any(Buffer));
+    expect(r.html).toBe('<img src="cid:image001.gif"><img src="cid:other@host">');
+  });
+
+  it('excludes an already-referenced mapping when the mapping stores only the part before the @', async () => {
+    // The mirror image: rewriteCidRefs indexes the resolved map by base too, so
+    // this reference also resolves in the browser and must be treated as used.
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="cid:image001.gif@01DD2986.DAAA8E30"><img src="data:image/gif;base64,${PNG}">`,
+      inlineImages: [
+        { cid: 'image001.gif', partId: '1.1', mimeType: 'image/png' },
+        { cid: 'other@host', partId: '1.2', mimeType: 'image/gif' },
+      ],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).toHaveBeenCalledTimes(1);
+    expect(c.write).toHaveBeenCalledWith('u1', 'm1', '1.2', expect.any(Buffer));
+  });
 });

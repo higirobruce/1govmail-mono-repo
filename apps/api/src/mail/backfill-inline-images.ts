@@ -9,28 +9,41 @@ interface Row {
 }
 
 /**
- * Normalise a cid for identity comparison — same three rules, and for the same
- * reason, as `rewriteCidRefs`'s `bareCid`/`@`-decode/lowercase chain in
- * apps/web/lib/emailRender.ts (its browser-side twin: same fix, duplicated on
- * purpose rather than promoted to packages/shared while that package's build
- * is a live hazard — see plan notes):
+ * Normalise a cid for identity comparison — the same three rules, and for the
+ * same reasons, as `rewriteCidRefs` in apps/web/lib/emailRender.ts:
  *
  *  1. Stored cids may be wrapped in angle brackets — Zimbra strips them before
- *     storage (zimbra.mappers.ts), but EWS passes ContentId through raw
- *     (ews.service.ts) — while an HTML `src="cid:…"` reference never has them.
+ *     storage, but EWS passes ContentId through raw (ews.service.ts) — while an
+ *     HTML `src="cid:…"` reference never has them.
  *  2. HTML may encode the `@` as `&#64;` or `&#x40;`.
  *  3. Case is not significant.
  *
- * Without this, an already-converted mapping stored in a different shape than
- * its body reference is missed by the exclusion check below and wrongly
- * re-admitted to the pairing pool — the same mis-pairing corruption as an
- * unnormalised re-run, just triggered by ordinary mixed mail instead.
+ * Rule 4 lives in `cidBase` below: some mail references only the part before
+ * the `@`, so a full-cid miss falls back to that base. It is separate only
+ * because the caller has to try both keys, not because it is optional —
+ * `rewriteCidRefs` resolves such a reference, so this side must consider the
+ * mapping used.
+ *
+ * Without all of these, an already-converted mapping stored in a different
+ * shape than its body reference is missed by the exclusion check below and
+ * wrongly re-admitted to the pairing pool.
+ *
+ * DUPLICATION IS DELIBERATE, AND TEMPORARY. `rewriteCidRefs` is the copy that
+ * must stay in step with this one; promoting the pair into packages/shared is
+ * deferred to the next release, when rebuilding that package's dist is not a
+ * live boot hazard. Change one, change the other — this rule has already
+ * drifted once (the missing base fallback was a review finding).
  */
 function normalizeCid(cid: string): string {
   return cid
     .replace(/^<|>$/g, '')
     .replace(/&#(?:64|x40);/gi, '@')
     .toLowerCase();
+}
+
+/** Rule 3 of the normalisation above: the part of a normalised cid before the `@`. */
+function cidBase(normalised: string): string {
+  return normalised.split('@')[0];
 }
 
 /** A MIME type compared for identity: lowercased, parameters (`; name="x"`) dropped. */
@@ -130,11 +143,21 @@ export async function backfillMessage(
   // converted by an earlier run — it is not part of the pool being paired here.
   const usedCids = new Set<string>();
   const cidRe = /src=(["'])cid:([^"']+)\1/gi;
-  for (let u = cidRe.exec(html); u; u = cidRe.exec(html)) usedCids.add(normalizeCid(u[2]));
+  // Both the full cid and its base go in, and both are checked against, because
+  // either side may be the one carrying the `@` suffix. Over-excluding is the
+  // safe direction: the worst case is a body left unreclaimed.
+  for (let u = cidRe.exec(html); u; u = cidRe.exec(html)) {
+    const ref = normalizeCid(u[2]);
+    usedCids.add(ref);
+    usedCids.add(cidBase(ref));
+  }
 
   const maps = ((row.inlineImages as any[]) ?? [])
     .filter((m) => m?.cid && m?.partId)
-    .filter((m) => !usedCids.has(normalizeCid(m.cid)));
+    .filter((m) => {
+      const cid = normalizeCid(m.cid);
+      return !usedCids.has(cid) && !usedCids.has(cidBase(cid));
+    });
 
   const re = /src=(["'])data:(image\/[^;]+);base64,([^"']+)\1/gi;
   const uris = Array.from(html.matchAll(re));

@@ -73,6 +73,10 @@ const bareCid = (cid: string) => cid.replace(/^<|>$/g, '');
  *
  * An unresolved cid is left exactly as it was: a broken image icon is a better
  * failure than a blank src, which some renderers treat as the page itself.
+ *
+ * `normalizeCid`/`cidBase` in apps/api/src/mail/backfill-inline-images.ts is a
+ * deliberate duplicate of these three rules, kept API-local until the shared
+ * package can be rebuilt safely. Change one, change the other.
  */
 export function rewriteCidRefs(html: string, resolved: Map<string, string>): string {
   if (!html || resolved.size === 0) return html;

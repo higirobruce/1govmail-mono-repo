@@ -8,6 +8,7 @@ import { EmbedderService } from './embedder.service';
 import { EmbedWorkerService } from './embed-worker.service';
 import { AttachmentEmbedWorkerService } from './attachment-embed-worker.service';
 import { SenderRuleSweepService } from './sender-rule-sweep.service';
+import { InlineImageCacheService } from './inline-image-cache.service';
 import { ProviderModule } from '../provider/provider.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -15,7 +16,7 @@ import { TasksModule } from '../tasks/tasks.module';
 
 @Module({
   imports: [ProviderModule, PrismaModule, NotificationsModule, TasksModule],
-  providers: [MailService, MailScheduler, CardExtractorService, CardWorkerService, EmbedderService, EmbedWorkerService, AttachmentEmbedWorkerService, SenderRuleSweepService],
+  providers: [MailService, MailScheduler, CardExtractorService, CardWorkerService, EmbedderService, EmbedWorkerService, AttachmentEmbedWorkerService, SenderRuleSweepService, InlineImageCacheService],
   exports: [MailService, EmbedderService],
   controllers: [MailController],
 })

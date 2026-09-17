@@ -11,6 +11,7 @@ import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
 import { inlineSignatureImages } from '../common/signature-images';
 import { MailSearchFilter, isEmptyFilter } from '../provider/mail-search-filter';
 import { ProviderMessage, ProviderMessagePage } from '../provider/provider-types';
+import { InlineImageCacheService } from './inline-image-cache.service';
 
 const CARD_WINDOWS = ['today', '24h', 'week'] as const;
 type CardWindow = (typeof CARD_WINDOWS)[number];
@@ -165,6 +166,7 @@ export class MailService {
     private readonly resolver: MailProviderResolver,
     private readonly notifications: NotificationsService,
     private readonly tasksService: TasksService,
+    private readonly inlineCache: InlineImageCacheService = new InlineImageCacheService(),
   ) {}
 
   private async getUser(userId: string) {
@@ -1065,6 +1067,39 @@ export class MailService {
     return this.resolver
       .forUser(user)
       .downloadAttachment(buildMailSession(user), msg.zimbraId, partId);
+  }
+
+  /**
+   * Bytes for one inline image. Cache first, provider on a miss.
+   *
+   * The part must be declared in the message's own `inlineImages`. Without that
+   * check this route would be a general attachment reader with a cache bolted
+   * on, reachable for any part of any message the caller owns.
+   */
+  async getInlineImage(
+    userId: string,
+    messageId: string,
+    partId: string,
+  ): Promise<{ data: Buffer; contentType: string; cached: boolean }> {
+    const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
+    if (!msg) throw new NotFoundException('Message not found');
+
+    const declared = ((msg.inlineImages as any[]) ?? [])
+      .find((i) => i?.partId === partId);
+    if (!declared) throw new NotFoundException('Inline image not found');
+
+    const hit = await this.inlineCache.read(userId, messageId, partId);
+    if (hit) {
+      return { data: hit, contentType: declared.mimeType ?? 'application/octet-stream', cached: true };
+    }
+
+    const user = await this.getUser(userId);
+    const { data, contentType } = await this.resolver
+      .forUser(user)
+      .downloadAttachmentBuffer(buildMailSession(user), msg.zimbraId, partId);
+
+    await this.inlineCache.write(userId, messageId, partId, data);
+    return { data, contentType: contentType ?? declared.mimeType, cached: false };
   }
 
   async sendMessage(

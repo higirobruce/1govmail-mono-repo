@@ -235,6 +235,30 @@ export class MailController {
     stream.pipe(res);
   }
 
+  /**
+   * Inline images only — the parts a message declares in `inlineImages`, which
+   * the client fetches automatically on every open. Cached on disk, unlike
+   * attachments, which are clicked deliberately and can be enormous.
+   */
+  @Get('messages/:messageId/inline/:partId')
+  async inlineImage(
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response,
+    @Param('messageId') messageId: string,
+    @Param('partId') partId: string,
+  ) {
+    const { data, contentType } =
+      await this.mailService.getInlineImage(req.user.sub, messageId, partId);
+
+    res.set({
+      'Content-Type': contentType,
+      'Content-Length': String(data.byteLength),
+      'Cache-Control': 'private, max-age=86400',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.end(data);
+  }
+
   // ── Snooze ───────────────────────────────────────────────────────────────────
 
   @Post('snooze')

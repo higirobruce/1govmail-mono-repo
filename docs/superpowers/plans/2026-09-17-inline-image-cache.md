@@ -309,12 +309,21 @@ Expected: FAIL — `svc.getInlineImage is not a function`.
 
 - [ ] **Step 3: Add the service method**
 
-In `apps/api/src/mail/mail.service.ts`, add `private readonly inlineCache: InlineImageCacheService`
-as the **fifth** constructor parameter (import it from `./inline-image-cache.service`).
+In `apps/api/src/mail/mail.service.ts`, add a **fifth constructor parameter with a default**:
 
-**This breaks three existing call sites** — `mail.service.spec.ts:29`, `:111` and `:220` all call
-`new MailService(prisma, makeResolver(zimbra), notifications, tasksService)`. Update each to pass
-a stub cache. Fix them; do not delete or skip those tests.
+```typescript
+    private readonly inlineCache: InlineImageCacheService = new InlineImageCacheService(),
+```
+
+**The default is not laziness — there are 23 `new MailService(...)` call sites** across
+`mail.service.spec.ts` and `mail-recipients.spec.ts`. A required parameter would mean hand-editing
+all 23 for no benefit. A default keeps them compiling, and Nest still injects the registered
+provider in production: a default value does not opt a parameter out of DI, so an unregistered
+provider still throws at boot and Step 5's registration stays a real requirement.
+
+This is safe only because §4.1 of the spec requires every cache failure path to degrade rather
+than throw — a default-constructed cache in a test points at a path that does not exist, reads
+miss, writes return `false`, and nothing breaks. Do not weaken that degradation.
 
 Then add:
 
@@ -547,6 +556,31 @@ describe('rewriteCidRefs', () => {
     expect(rewriteCidRefs('<p>hello</p>', map)).toBe('<p>hello</p>');
   });
 
+  // The three normalisations below are not hypothetical — each is handled by the
+  // embed code this replaces (mail.service.ts:1349-1358). Dropping any of them
+  // means images silently failing to resolve on real mail while CI stays green.
+
+  it('matches when the STORED cid is bracket-wrapped and the html is not', () => {
+    const stored = new Map([['<img0@govmail>', 'blob:x/9']]);
+    expect(rewriteCidRefs('<img src="cid:img0@govmail">', stored)).toBe('<img src="blob:x/9">');
+  });
+
+  it('matches when the html encodes the @ as an entity', () => {
+    const stored = new Map([['img0@govmail', 'blob:x/9']]);
+    expect(rewriteCidRefs('<img src="cid:img0&#64;govmail">', stored)).toBe('<img src="blob:x/9">');
+    expect(rewriteCidRefs('<img src="cid:img0&#x40;govmail">', stored)).toBe('<img src="blob:x/9">');
+  });
+
+  it('falls back to the base when the html omits the @domain', () => {
+    const stored = new Map([['image001.gif@01DD2986.DAAA8E30', 'blob:x/9']]);
+    expect(rewriteCidRefs('<img src="cid:image001.gif">', stored)).toBe('<img src="blob:x/9">');
+  });
+
+  it('matches case-insensitively on the cid itself', () => {
+    const stored = new Map([['IMG0@GovMail', 'blob:x/9']]);
+    expect(rewriteCidRefs('<img src="cid:img0@govmail">', stored)).toBe('<img src="blob:x/9">');
+  });
+
   it('returns the input unchanged for an empty map', () => {
     expect(rewriteCidRefs('<img src="cid:c1">', new Map())).toBe('<img src="cid:c1">');
   });
@@ -563,19 +597,42 @@ Expected: FAIL — `rewriteCidRefs` is not exported.
 Add to `apps/web/lib/emailRender.ts`:
 
 ```typescript
+/** Stored cids arrive wrapped in angle brackets; HTML `src="cid:…"` never has them. */
+const bareCid = (cid: string) => cid.replace(/^<|>$/g, '');
+
 /**
- * Swap `src="cid:…"` for a resolved URL. CIDs are stored with surrounding angle
- * brackets in some providers' payloads, so both spellings resolve.
+ * Swap `src="cid:…"` for a resolved URL.
+ *
+ * Three normalisations, all of them load-bearing and all of them copied from the
+ * embed code this replaces (`mail.service.ts:1349-1358`, and see
+ * `zimbra.mappers.ts:106`):
+ *
+ *  1. Stored cids are wrapped in angle brackets — `<img0@govmail>` — while the
+ *     HTML reference never is. Both sides are stripped before comparison.
+ *  2. HTML may encode the `@` as `&#64;` or `&#x40;`.
+ *  3. Some mail references only the part before the `@`, so a full-cid miss
+ *     falls back to matching on that base.
  *
  * An unresolved cid is left exactly as it was: a broken image icon is a better
  * failure than a blank src, which some renderers treat as the page itself.
  */
 export function rewriteCidRefs(html: string, resolved: Map<string, string>): string {
   if (!html || resolved.size === 0) return html;
+
+  const byCid = new Map<string, string>();
+  const byBase = new Map<string, string>();
+  for (const [cid, url] of resolved) {
+    const bare = bareCid(cid);
+    byCid.set(bare.toLowerCase(), url);
+    const base = bare.split('@')[0];
+    if (base && !byBase.has(base.toLowerCase())) byBase.set(base.toLowerCase(), url);
+  }
+
   return html.replace(
-    /src=(["'])cid:<?([^"'>]+?)>?\1/gi,
-    (whole, quote: string, cid: string) => {
-      const url = resolved.get(cid);
+    /src=(["'])cid:([^"']+)\1/gi,
+    (whole, quote: string, raw: string) => {
+      const ref = bareCid(raw).replace(/&#(?:64|x40);/gi, '@').toLowerCase();
+      const url = byCid.get(ref) ?? byBase.get(ref.split('@')[0]);
       return url ? `src=${quote}${url}${quote}` : whole;
     },
   );
@@ -585,7 +642,7 @@ export function rewriteCidRefs(html: string, resolved: Map<string, string>): str
 - [ ] **Step 4: Run them and watch them pass**
 
 Run: `cd apps/web && npx vitest run lib/emailRender.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (11 tests).
 
 - [ ] **Step 5: Add the API client method**
 
@@ -643,6 +700,9 @@ export function useInlineImages(
         .then((url) => {
           if (!alive) { URL.revokeObjectURL(url); return; }
           created.push(url);
+          // Key by the cid VERBATIM as stored. rewriteCidRefs does the
+          // bracket/entity/base normalisation — doing it in two places would
+          // guarantee the two drift apart.
           setResolved((prev) => new Map(prev).set(img.cid, url));
         })
         // One image failing is not worth a broken message.

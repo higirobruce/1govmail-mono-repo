@@ -1,7 +1,7 @@
 # Inline images out of the message row — design
 
 **Date:** 2026-09-17
-**Status:** approved in chat, awaiting spec review
+**Status:** approved in chat; §6.1 gate resolved 2026-09-17 (passed on both boxes)
 **Branch:** ft-hyperscale
 
 ## 1. Why
@@ -26,6 +26,24 @@ The distribution is not uniform, which is what makes this tractable:
 
 It is not bloat. Autovacuum is healthy and there were 334 dead tuples at
 measurement. It is exactly what the code was built to do.
+
+**`.154` measured 2026-09-17, and it sharpens the picture rather than repeating
+it:** 6,352 MB across 18,117 rows — four times the mail of `.155` in under half
+the space. 442 oversized bodies hold 5,706 MB of that.
+
+So the 295 KB anchor is not uniformly wrong; it is an average over a distribution
+with a very heavy tail. Strip the oversized bodies out and `.154` sits at **37 KB
+per message**, comfortably under the anchor. The tail is the whole problem:
+
+| | `.154` | `.155` |
+|---|---|---|
+| Rows | 18,117 | 4,122 |
+| Oversized bodies | 442 (2.4%) | 854 (21%) |
+| Share of all bytes they hold | ~90% | ~93% |
+
+A capacity model built on a mean will therefore be wrong in both directions — far
+too pessimistic for ordinary mail, and far too optimistic for any mailbox that
+receives newsletters. §11.
 
 Two consequences beyond disk: every query touching `messages` drags multi-megabyte
 TOAST around, and at the 5,000-mailbox target this storage model does not survive
@@ -160,22 +178,31 @@ needs little free space — which matters, because a rewrite of the *current* 15
 would not fit. It takes an exclusive lock, so the API is down for minutes and it
 should run in a chosen window.
 
-### 6.1 ⚠ The gate
+### 6.1 The gate — RESOLVED, and it passed
 
-**Do those 854 rows still carry their `inlineImages` mapping?** The plan rests on
-it and it is unverified — the VPN dropped one query short.
+The question was whether those rows still carry their `inlineImages` mapping. If
+they did not, the cache would become the **only** copy of those images — a
+downgrade in durability from today, since the database is backed up and a cache
+directory would not be.
 
-- **If yes:** a backfilled image whose cache file is later evicted or lost is
-  re-fetched from the provider by its real part id. The cache stays genuinely
-  losable, §4.1 holds, and the backfill is safe.
-- **If no:** the cache becomes the **only** copy for those images. That is a
-  *downgrade in durability from today*, because the database is backed up and a
-  cache directory would not be. In that case the options narrow to backfilling
-  only the rows that kept their mapping, or accepting the cache as authoritative
-  for the rest and backing it up — which forfeits most of the reason for choosing
-  a filesystem cache in the first place.
+Measured 2026-09-17 on both boxes:
 
-Run this before writing the plan's backfill task; it may change that task's shape:
+| | oversized bodies | with a usable map | without |
+|---|---|---|---|
+| `.155` | 854 | **854** | 0 |
+| `.154` | 442 | **442** | 0 |
+
+Every single one retains a real `partId` — a sample entry reads
+`{"cid": "image001.gif@01DD2986.DAAA8E30", "partId": "1.1.2", "mimeType": "image/gif"}`.
+
+So a backfilled image whose cache file is later evicted or lost is re-fetched
+from the provider by its real part id. **§4.1's property holds: the cache is
+authoritative for nothing**, which is what makes it safe to evict, safe to lose,
+and correct to exclude from backups. The backfill keeps the shape described
+above, and no fallback branch is needed for unmapped rows.
+
+The query, for re-running before each box's backfill — it is cheap and the answer
+could differ on a box synced later:
 
 ```sql
 select count(*) from messages

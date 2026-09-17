@@ -332,6 +332,14 @@ export default function AskPanel() {
   const toggleScopeLock = useAskStore((s) => s.toggleScopeLock);
   const setOpenTarget = useAskStore((s) => s.setOpenTarget);
   const takeResumeId = useAskStore((s) => s.takeResumeId);
+  // Subscribed to as a VALUE, not read once: this panel is rendered from the
+  // (app) route-group layout, which Next preserves across every in-group
+  // navigation, so it mounts exactly once — long before the user can reach
+  // /ai/history and click Resume. (`if (!open) return null` sits after the
+  // hooks; closing the panel does not unmount it either.) A mount-keyed
+  // effect would read null and never run again, which is precisely how
+  // resume came to be dead on all three scopes.
+  const resumeId = useAskStore((s) => s.resumeId);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
@@ -347,14 +355,24 @@ export default function AskPanel() {
   if (!sessionRef.current) sessionRef.current = createConversationSession();
   const session = sessionRef.current;
   const turnIdRef = useRef<string | null>(null);
-  // Set the instant ask() is called (not once it completes) — the ONLY
-  // signal the mount-time resume effect has for "the user already started
-  // their own turn while my fetch was still in flight," since the composer
-  // is disabled by `streaming` alone, not by that fetch. See the resume
-  // effect below for why this matters and why it is not testable in
-  // conversationSession.ts's pure unit tests (it lives entirely in this
-  // component, not in the session module).
-  const hasAskedRef = useRef(false);
+  // Bumped the instant ask() is called (not once it completes) — the ONLY
+  // signal the resume effect has for "the user already started their own
+  // turn while my fetch was still in flight," since the composer is disabled
+  // by `streaming` alone, not by that fetch.
+  //
+  // A COUNTER, deliberately, not a boolean latch: the resume effect is keyed
+  // on the pending id, so it can run at any point in the session. A sticky
+  // "has the user ever asked" flag would abandon every resume after the
+  // user's first question — silently, since abandoning is by design invisible.
+  // The counter is compared against a snapshot taken when the resume started,
+  // so it answers "did a turn start SINCE then", which is the actual question.
+  const askSeqRef = useRef(0);
+  // Distinguishes resume attempts from one another. takeResumeId() below
+  // clears the store field, which re-runs this value-keyed effect with a null
+  // id — so this effect deliberately has no cleanup function to cancel with;
+  // that re-run would otherwise abort the fetch it just started. A newer
+  // resume superseding an older one is caught by this counter instead.
+  const resumeRunRef = useRef(0);
   const [pendingSources, setPendingSources] = useState<AskSource[]>([]);
   const [pendingDegraded, setPendingDegraded] = useState<AskDegraded>({ vector: false, keyword: false, docs: false, calendar: false });
   const [error, setError] = useState<string | null>(null);
@@ -400,9 +418,11 @@ export default function AskPanel() {
   useEffect(() => () => abortRef.current?.abort(), []);
 
   // Resume a saved conversation, if the history page (or a "resume" action
-  // elsewhere) left one pending. Read once via takeResumeId — it clears the
-  // flag in the same call — before any other data loading, so a resumed
-  // conversation's turns are what the panel first renders.
+  // elsewhere) left one pending. Keyed on the pending id and consumed with
+  // takeResumeId() inside the effect — the same value-keyed consume-and-clear
+  // shape the docs and calendar pages use for AskOpenTarget, and for the same
+  // reason (see the resumeId subscription above: this component mounts once
+  // per session, so a mount-keyed read can never see a later request).
   //
   // The `api.aiHistory.get(id)` fetch below can take long enough for the
   // user to ask — and fully receive an answer to — a turn of their own
@@ -415,24 +435,28 @@ export default function AskPanel() {
   // clobber it, with no visible sign that a resume was even attempted
   // (the toast below is reserved for a genuinely failed fetch, not this).
   //
-  // Two independent signs something happened while this was in flight:
-  // `hasAskedRef.current` (the user asked something — the composer never
-  // blocked them) and the generation moving on (they clicked "New
-  // conversation" without necessarily asking anything). Either is enough
-  // to abandon. Both checks — and the eventual write — happen in that
-  // order, BEFORE any state changes, so there is no window where the
-  // restore is partially applied (turns replaced but the id not written,
-  // or vice versa).
+  // Three independent signs something happened while this was in flight:
+  // `askSeqRef` moving (the user asked something — the composer never
+  // blocked them), the generation moving on (they clicked "New
+  // conversation" without necessarily asking anything), and `resumeRunRef`
+  // moving (a second resume was requested and is now the one that counts).
+  // Any is enough to abandon. All three checks — and the eventual write —
+  // happen in that order, BEFORE any state changes, so there is no window
+  // where the restore is partially applied (turns replaced but the id not
+  // written, or vice versa).
   useEffect(() => {
+    if (!resumeId) return;
     const id = takeResumeId();
     if (!id) return;
     const generationAtResumeStart = session.generation();
-    let alive = true;
-    (async () => {
+    const askSeqAtResumeStart = askSeqRef.current;
+    const run = ++resumeRunRef.current;
+    void (async () => {
       try {
         const t = await api.aiHistory.get(id);
-        if (!alive || !t) return;
-        if (hasAskedRef.current || session.generation() !== generationAtResumeStart) return;
+        if (!t || resumeRunRef.current !== run) return;
+        if (askSeqRef.current !== askSeqAtResumeStart) return;
+        if (session.generation() !== generationAtResumeStart) return;
         // Pair the flat turn rows back into the panel's Turn shape. Proposals
         // are restored for display only — a proposal from an earlier session
         // is rendered inert (see the fromHistory branch below) rather than
@@ -444,25 +468,31 @@ export default function AskPanel() {
           sources: row.sources ?? [],
           steps: row.steps ?? undefined,
           proposals: row.proposals ?? undefined,
+          // Not persisted — `degraded` describes the retrieval health of the
+          // run that produced the answer, which is not a property of the saved
+          // answer. DegradedNotice reads its fields unguarded, so a restored
+          // turn without this throws on render; nothing caught that while the
+          // resume effect could never fire. All-false is also the honest
+          // value: a restored answer makes no claim about backends now.
+          degraded: { vector: false, keyword: false, docs: false, calendar: false },
           fromHistory: true,
         }));
         setTurns(restored);
         // Goes through the exact same guarded write every other id-setter
         // uses, rather than a bespoke unconditional one just for this path.
-        // Nothing between the check above and this line can yield to other
+        // Nothing between the checks above and this line can yield to other
         // JS (no `await` in between), so there is no actual gap for "New
         // conversation" to land in between them — this call is provably
-        // redundant with that check today. It stays anyway: it costs
+        // redundant with those checks today. It stays anyway: it costs
         // nothing, and it is the one thing standing between a future edit
         // that adds an await in between and a real reopened hole.
         session.setIfCurrent(id, generationAtResumeStart);
       } catch {
-        toast.error('That conversation is no longer available');
+        if (resumeRunRef.current === run) toast.error('That conversation is no longer available');
       }
     })();
-    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [resumeId]);
 
   // A different thread (or no thread at all) invalidates both the gathered
   // text and the server's ack about it.
@@ -593,9 +623,9 @@ export default function AskPanel() {
   async function ask(question: string) {
     const q = question.trim();
     if (!q || streaming) return;
-    // The user has now definitively started their own turn — see hasAskedRef's
-    // declaration above for why the mount-time resume effect needs this.
-    hasAskedRef.current = true;
+    // The user has now definitively started their own turn — see askSeqRef's
+    // declaration above for why the resume effect needs this.
+    askSeqRef.current += 1;
     setError(null);
     setInput('');
     // A clarify turn's question lives in the card, not the bubble text — fold

@@ -9,6 +9,31 @@ interface Row {
 }
 
 /**
+ * Normalise a cid for identity comparison — same three rules, and for the same
+ * reason, as `rewriteCidRefs`'s `bareCid`/`@`-decode/lowercase chain in
+ * apps/web/lib/emailRender.ts (its browser-side twin: same fix, duplicated on
+ * purpose rather than promoted to packages/shared while that package's build
+ * is a live hazard — see plan notes):
+ *
+ *  1. Stored cids may be wrapped in angle brackets — Zimbra strips them before
+ *     storage (zimbra.mappers.ts), but EWS passes ContentId through raw
+ *     (ews.service.ts) — while an HTML `src="cid:…"` reference never has them.
+ *  2. HTML may encode the `@` as `&#64;` or `&#x40;`.
+ *  3. Case is not significant.
+ *
+ * Without this, an already-converted mapping stored in a different shape than
+ * its body reference is missed by the exclusion check below and wrongly
+ * re-admitted to the pairing pool — the same mis-pairing corruption as an
+ * unnormalised re-run, just triggered by ordinary mixed mail instead.
+ */
+function normalizeCid(cid: string): string {
+  return cid
+    .replace(/^<|>$/g, '')
+    .replace(/&#(?:64|x40);/gi, '@')
+    .toLowerCase();
+}
+
+/**
  * Lift every data: URI in one body into the cache and rewrite the tag back to
  * its `cid:`. Pairs each remaining data: URI with the next unclaimed
  * `inlineImages` entry, in document order — the order embedInlineImages wrote
@@ -22,14 +47,22 @@ interface Row {
  * InlineImageCacheService's MAX_FILE_BYTES cap) and still a data: URI — and
  * that body is persisted regardless, since main() writes back whenever
  * anything in it converted. On the next run only the skipped image's data:
- * URI remains, so mappings whose `cid` already appears as a `cid:` reference
- * in the body are excluded from the pairing pool up front. Without this, a
- * positional index reset to 0 on every call would pair the remaining URI with
- * the WRONG mapping — overwriting the already-converted image's cache file
- * with the wrong bytes and relabelling it with the wrong cid.
+ * URI remains, so mappings whose (normalised) `cid` already appears as a
+ * (normalised) `cid:` reference in the body are excluded from the pairing
+ * pool up front. Without this, a positional index reset to 0 on every call
+ * would pair the remaining URI with the WRONG mapping — overwriting the
+ * already-converted image's cache file with the wrong bytes and relabelling
+ * it with the wrong cid. The same corruption is also reachable in a single
+ * call, not just across runs, when a genuine pre-existing `cid:` reference
+ * sits beside a base64'd image — see `normalizeCid` above.
  *
  * A URI with no mapping left, or whose cache write fails, is LEFT AS A DATA URI.
  * Rewriting it to a cid with nothing behind it would lose the image outright.
+ *
+ * Known deferred minor: if two mappings share a cid, both are excluded once
+ * either is referenced, so an unconverted sibling can never be reclaimed. The
+ * safety valve still applies — it stays a data: URI, never gets corrupted —
+ * so this is a lost opportunity, not a bug.
  */
 export async function backfillMessage(
   row: Row,
@@ -41,11 +74,11 @@ export async function backfillMessage(
   // converted by an earlier run — it is not part of the pool being paired here.
   const usedCids = new Set<string>();
   const cidRe = /src=(["'])cid:([^"']+)\1/gi;
-  for (let u = cidRe.exec(html); u; u = cidRe.exec(html)) usedCids.add(u[2]);
+  for (let u = cidRe.exec(html); u; u = cidRe.exec(html)) usedCids.add(normalizeCid(u[2]));
 
   const maps = ((row.inlineImages as any[]) ?? [])
     .filter((m) => m?.cid && m?.partId)
-    .filter((m) => !usedCids.has(m.cid));
+    .filter((m) => !usedCids.has(normalizeCid(m.cid)));
 
   let written = 0, skipped = 0, index = 0;
   const parts: string[] = [];

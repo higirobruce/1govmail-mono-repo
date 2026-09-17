@@ -115,4 +115,67 @@ describe('backfillMessage', () => {
     expect(c.write).toHaveBeenCalledTimes(1);
     expect(c.write).toHaveBeenCalledWith('u1', 'm1', '1.2', expect.any(Buffer));
   });
+
+  // The same mis-pairing corruption as the "second run" test above, but
+  // triggered in a single call by a format mismatch instead of a prior run —
+  // an "already referenced" cid can arrive in a different shape than the one
+  // stored on inlineImages, because different providers write cid differently
+  // (Zimbra strips angle brackets before storage; EWS passes ContentId through
+  // raw with brackets intact). Without normalising both sides identically,
+  // the exclusion check misses and the mapping is wrongly re-admitted to the
+  // pairing pool.
+
+  it('excludes an already-referenced mapping even when its stored cid is bracketed (the EWS shape) but the body reference is not', async () => {
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="cid:img0@host"><img src="data:image/gif;base64,${PNG}">`,
+      inlineImages: [
+        { cid: '<img0@host>', partId: '1.1', mimeType: 'image/png' },
+        { cid: 'img1@host', partId: '1.2', mimeType: 'image/gif' },
+      ],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).toHaveBeenCalledTimes(1);
+    expect(c.write).toHaveBeenCalledWith('u1', 'm1', '1.2', expect.any(Buffer));
+    expect(r.html).toBe('<img src="cid:img0@host"><img src="cid:img1@host">');
+  });
+
+  it('excludes an already-referenced mapping when only letter case differs between the stored cid and the body reference', async () => {
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="cid:IMG0@HOST"><img src="data:image/gif;base64,${PNG}">`,
+      inlineImages: [
+        { cid: 'img0@host', partId: '1.1', mimeType: 'image/png' },
+        { cid: 'img1@host', partId: '1.2', mimeType: 'image/gif' },
+      ],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).toHaveBeenCalledTimes(1);
+    expect(c.write).toHaveBeenCalledWith('u1', 'm1', '1.2', expect.any(Buffer));
+    expect(r.html).toBe('<img src="cid:IMG0@HOST"><img src="cid:img1@host">');
+  });
+
+  it('excludes an already-referenced mapping when the body HTML-encodes the @ as &#64;', async () => {
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="cid:img0&#64;host"><img src="data:image/gif;base64,${PNG}">`,
+      inlineImages: [
+        { cid: 'img0@host', partId: '1.1', mimeType: 'image/png' },
+        { cid: 'img1@host', partId: '1.2', mimeType: 'image/gif' },
+      ],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).toHaveBeenCalledTimes(1);
+    expect(c.write).toHaveBeenCalledWith('u1', 'm1', '1.2', expect.any(Buffer));
+    expect(r.html).toBe('<img src="cid:img0&#64;host"><img src="cid:img1@host">');
+  });
 });

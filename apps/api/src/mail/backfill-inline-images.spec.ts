@@ -1,4 +1,5 @@
 import { backfillMessage, runBackfill } from './backfill-inline-images';
+import { MAX_FILE_BYTES } from './inline-image-cache.service';
 
 const cache = () => ({ write: jest.fn().mockResolvedValue(true) } as any);
 
@@ -465,5 +466,59 @@ describe('runBackfill', () => {
       expect(q.sql).not.toContain("'m2'");
       expect(q.sql).not.toContain('m2');
     }
+  });
+
+  // ── C3: the run report has to say WHY an image was left behind ───────────
+  // The whole point of this backfill is the heavy tail — 648 bodies holding
+  // 13 GB, one image of 133 MB — which is exactly where a single image is most
+  // likely to exceed the 5 MB per-file cap. "skipped: 400" cannot tell anyone
+  // whether the tail was reclaimed or refused, and that is the one number the
+  // decision to raise INLINE_IMAGE_MAX_BYTES for the run depends on.
+
+  it('counts and reports skipped images by reason', async () => {
+    const over = Buffer.alloc(MAX_FILE_BYTES + 1).toString('base64');
+    const rows: FakeRow[] = [
+      { id: 'm1', userId: 'u1',
+        bodyHtml: `<img src="data:image/png;base64,${over}">`,
+        inlineImages: [{ cid: 'a@host', partId: '1.1', mimeType: 'image/png' }] },
+      { id: 'm2', userId: 'u1',
+        bodyHtml: `<img src="data:image/png;base64,${PNG}">`,
+        inlineImages: [{ cid: 'b@host', partId: '1.1', mimeType: 'image/png' }] },
+      { id: 'm3', userId: 'u1',
+        bodyHtml: `<img src="data:image/png;base64,${PNG}">`,
+        inlineImages: [] },
+    ];
+    const db = fakeDb(rows);
+    const c = cache();
+    // m1 never reaches the cache (it is over the cap); m2's write is refused.
+    c.write.mockResolvedValueOnce(false);
+    const lines: string[] = [];
+
+    const totals = await runBackfill(db as any, c, (l: string) => lines.push(l));
+
+    expect(totals.skippedTooLarge).toBe(1);
+    expect(totals.skippedWriteFailed).toBe(1);
+    expect(totals.skippedAmbiguous).toBe(1);
+    expect(totals.skipped).toBe(3);
+    expect(totals.ambiguousIds).toEqual(['m3']);
+
+    const report = lines.join('\n');
+    expect(report).toMatch(/1 over the per-image cap/);
+    expect(report).toContain('INLINE_IMAGE_MAX_BYTES');
+    expect(report).toMatch(/1 refused by the cache/);
+    expect(report).toMatch(/1 in bodies skipped wholesale/);
+    expect(report).toContain('ambiguous: m3');
+  });
+
+  it('reports nothing about reasons that did not occur', async () => {
+    const db = fakeDb([convertible('m1')]);
+    const lines: string[] = [];
+
+    await runBackfill(db as any, cache(), (l: string) => lines.push(l));
+
+    const report = lines.join('\n');
+    expect(report).toMatch(/1\/1 bodies rewritten/);
+    expect(report).not.toContain('over the per-image cap');
+    expect(report).not.toContain('ambiguous:');
   });
 });

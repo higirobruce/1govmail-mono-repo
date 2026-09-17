@@ -221,7 +221,14 @@ export interface BackfillTotals {
   scanned: number;
   rewritten: number;
   images: number;
+  /** Images left as data: URIs, all reasons. */
   skipped: number;
+  /** Over InlineImageCacheService's per-file cap — the heavy tail this pass exists for. */
+  skippedTooLarge: number;
+  /** The cache refused the write for some other reason (unwritable directory). */
+  skippedWriteFailed: number;
+  /** Images inside bodies the pairing guards refused to touch at all. */
+  skippedAmbiguous: number;
   ambiguousIds: string[];
 }
 
@@ -247,7 +254,11 @@ export async function runBackfill(
   cache: Pick<InlineImageCacheService, 'write'>,
   log: (line: string) => void = console.log,
 ): Promise<BackfillTotals> {
-  const totals: BackfillTotals = { scanned: 0, rewritten: 0, images: 0, skipped: 0, ambiguousIds: [] };
+  const totals: BackfillTotals = {
+    scanned: 0, rewritten: 0, images: 0,
+    skipped: 0, skippedTooLarge: 0, skippedWriteFailed: 0, skippedAmbiguous: 0,
+    ambiguousIds: [],
+  };
 
   let cursor: string | undefined;
   for (;;) {
@@ -275,7 +286,10 @@ export async function runBackfill(
       totals.scanned++;
       const r = await backfillMessage(row, cache);
       totals.images += r.written;
-      totals.skipped += r.skipped + r.skippedAmbiguous;
+      totals.skipped += r.skipped; // already the sum of the three reasons
+      totals.skippedTooLarge += r.skippedTooLarge;
+      totals.skippedWriteFailed += r.skippedWriteFailed;
+      totals.skippedAmbiguous += r.skippedAmbiguous;
       if (r.ambiguousBody) totals.ambiguousIds.push(row.id);
       if (r.written > 0) {
         await prisma.message.update({ where: { id: row.id }, data: { bodyHtml: r.html } });
@@ -285,7 +299,43 @@ export async function runBackfill(
     log(`  scanned ${totals.scanned}, rewritten ${totals.rewritten}, images ${totals.images}, skipped ${totals.skipped}`);
   }
 
+  reportTotals(totals, log);
   return totals;
+}
+
+/**
+ * The run summary, split by reason.
+ *
+ * "skipped: 400" cannot tell anyone whether the heavy tail this pass exists for
+ * was reclaimed or refused, and that is precisely the number the decision to
+ * raise INLINE_IMAGE_MAX_BYTES for the backfill run turns on. The cap itself is
+ * deliberately left alone here: measure the distribution on the live box first,
+ * then raise it through the env var for that run if the measurement says so.
+ */
+function reportTotals(totals: BackfillTotals, log: (line: string) => void): void {
+  log(
+    `done: ${totals.rewritten}/${totals.scanned} bodies rewritten, ` +
+    `${totals.images} images cached, ${totals.skipped} left as data URIs`,
+  );
+  if (totals.skippedTooLarge) {
+    log(
+      `  ${totals.skippedTooLarge} over the per-image cap ` +
+      `(INLINE_IMAGE_MAX_BYTES=${MAX_FILE_BYTES}) — raise it for the backfill run ` +
+      'if the measured size distribution justifies it',
+    );
+  }
+  if (totals.skippedWriteFailed) {
+    log(`  ${totals.skippedWriteFailed} refused by the cache — check the cache directory is writable`);
+  }
+  if (totals.skippedAmbiguous) {
+    log(
+      `  ${totals.skippedAmbiguous} in bodies skipped wholesale: their data URIs and ` +
+      'inlineImages entries did not line up, so converting could have written one ' +
+      "image under another image's part id. They keep their base64 and can be " +
+      'reclaimed by hand:',
+    );
+    for (const id of totals.ambiguousIds) log(`    ambiguous: ${id}`);
+  }
 }
 
 /** Entry point: `pnpm --filter api backfill:inline-images`. */
@@ -293,20 +343,8 @@ export async function main(): Promise<void> {
   const prisma = new PrismaClient();
   const cache = new InlineImageCacheService();
 
-  const totals = await runBackfill(prisma as unknown as BackfillDb, cache);
+  await runBackfill(prisma as unknown as BackfillDb, cache);
 
-  console.log(
-    `done: ${totals.rewritten}/${totals.scanned} bodies rewritten, ` +
-    `${totals.images} images cached, ${totals.skipped} left as data URIs`,
-  );
-  if (totals.ambiguousIds.length) {
-    console.log(
-      `${totals.ambiguousIds.length} bodies skipped wholesale — data URIs and mappings did not line up, ` +
-      'so converting them could have written one image under another image\'s part id. ' +
-      'They keep their base64 and can be reclaimed by hand:',
-    );
-    for (const id of totals.ambiguousIds) console.log(`  ambiguous: ${id}`);
-  }
   console.log('now run:  VACUUM FULL messages;   -- required to return the space to the OS');
   await prisma.$disconnect();
 }

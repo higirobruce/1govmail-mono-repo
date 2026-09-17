@@ -126,8 +126,13 @@ export interface BackfillResult {
  * blanked, just absent, so there is no `src=""` to find — with the MIME
  * sequences agreeing. The counts coincide again and nothing left in the body
  * distinguishes it. No evidence available to this pass can separate that from
- * a correctly aligned body; the deploy gate (back up `bodyHtml` before
- * `VACUUM FULL`) is what covers it, not more code here.
+ * a correctly aligned body, so no amount of further code here closes it. What
+ * covers it is that the corruption is recoverable: this database is a cache of
+ * Zimbra/Exchange, and `MailService.getMessage` refetches the body from the
+ * provider whenever `bodyHtml` or `inlineImages` is null. A row found showing
+ * the wrong image is repaired by nulling those two columns and reopening the
+ * message — `VACUUM FULL` reclaims only our copy, never the provider's. The
+ * exposure is therefore limited to mail deleted server-side since the sync.
  *
  * Idempotent: a body already rewritten contains no data: URIs and is returned
  * untouched, so the job is safe to re-run after an interruption.

@@ -1242,10 +1242,21 @@ git commit -m "feat(api): backfill embedded images into the cache, and drop the 
       - Check free space against the expected cache size on both boxes. Disk holds the old
         bodies *and* the new cache until `VACUUM FULL` runs.
 - [ ] Run the backfill, then `VACUUM FULL messages` in a chosen window. It takes an exclusive lock; the API is down for minutes.
-- [ ] **Capture the backfill's `ambiguous:` lines before `VACUUM FULL`.** A body whose data
-      URIs cannot be proved to match its `inlineImages` is skipped whole and left embedded —
-      that list is the only record of which rows need reclaiming by hand, and the originals
-      are gone once the vacuum runs.
+- [ ] **Capture the backfill's skip lines before `VACUUM FULL`.** A body whose data URIs
+      cannot be proved to match its `inlineImages` is skipped whole and left embedded. The
+      run report names the reason per image — ambiguous, blank-src, over-cap, write-failed —
+      and that output is the only record of which rows to reclaim by hand.
+- [ ] **Know the recovery path before running anything.** If a message is ever found showing
+      the wrong inline image, null its `bodyHtml` and `inlineImages` and reopen it:
+      `MailService.getMessage` (`mail.service.ts:609-621`) refetches from the provider when
+      either is null. This database is a cache of Zimbra/Exchange, so `VACUUM FULL` reclaims
+      only our copy — the true message is still on the server. No backup table is needed,
+      which matters on a box at 68%. The one uncovered case is mail deleted server-side
+      since the sync.
+- [ ] **Check inline images through `.155`'s TLS edge specifically.** An EWS part id can
+      contain `/`; it is hashed into the cache filename but still travels in the request URL.
+      Confirm the docker https-portal/nginx front end does not normalise `%2F` and break the
+      route — a Zimbra-only test on `.154` will not catch this.
 - [ ] **First open of an already-cached message pays one provider fetch.** Cache filenames are
       now the sha256 of the part id; anything written by a box running an earlier build misses
       and is refetched and rewritten once. Harmless, but do not read it as a cache failure.

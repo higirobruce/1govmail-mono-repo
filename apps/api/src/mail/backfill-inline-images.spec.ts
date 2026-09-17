@@ -425,6 +425,13 @@ function fakeDb(rows: FakeRow[]) {
       findUnique: async ({ where }: any) => {
         state.bodyFetches.push(where.id);
         state.inFlight++;
+        // A real suspension point, and the reason this fake is async at all.
+        // Without one, inFlight is back to 0 before the function ever yields
+        // and peakBodiesInFlight cannot exceed 1 under ANY implementation —
+        // including `Promise.all(page.map(findUnique))`, which is the one
+        // shape this assertion exists to catch (and which bodyFetches, being
+        // order-preserving, does not catch on its own).
+        await new Promise((r) => setImmediate(r));
         state.peakBodiesInFlight = Math.max(state.peakBodiesInFlight, state.inFlight);
         const row = byId.get(where.id) ?? null;
         state.inFlight--;

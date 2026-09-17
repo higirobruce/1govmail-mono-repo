@@ -73,7 +73,12 @@ interface AskState {
   setOpenTarget: (target: AskOpenTarget) => void;
   /** Consumes the signal — called by the page that acted on it. */
   clearOpenTarget: () => void;
-  /** Set by the history page; read once by AskPanel on mount, then cleared. */
+  /**
+   * Set by the history page. AskPanel subscribes to this VALUE and consumes
+   * it with takeResumeId() when it changes — NOT on mount: the panel is
+   * rendered from the (app) layout, so it mounts once per session, long
+   * before any Resume click. A mount-time read is how resume came to be dead.
+   */
   resumeId: string | null;
   resumeConversation: (id: string) => void;
   takeResumeId: () => string | null;

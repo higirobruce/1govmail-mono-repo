@@ -55,15 +55,17 @@ export interface BackfillResult {
   html: string;
   /** Images lifted into the cache and rewritten to their `cid:`. */
   written: number;
-  /** Images left as data: URIs, for any reason. Sum of the three below. */
+  /** Images left as data: URIs, for any reason. Sum of the four below. */
   skipped: number;
   /** Images in a body this pass refused to convert at all — see the guards below. */
   skippedAmbiguous: number;
+  /** Images in a body refused because it carries pass 3's `src=""` fingerprint. */
+  skippedBlankSrc: number;
   /** Images over InlineImageCacheService's MAX_FILE_BYTES cap. */
   skippedTooLarge: number;
   /** Images the cache declined to store for any other reason (unwritable cache). */
   skippedWriteFailed: number;
-  /** True when this whole body was left untouched because the evidence was ambiguous. */
+  /** True when this whole body was left untouched by any of the three guards. */
   ambiguousBody: boolean;
 }
 
@@ -94,15 +96,38 @@ export interface BackfillResult {
  * evidence says the sequences are aligned, and otherwise leaves the whole body
  * alone. An unconverted body costs disk; a mis-paired one costs an image.
  *
- * Two guards, both required:
- *  1. COUNTS — the number of unclaimed data: URIs must equal the number of
- *     unclaimed mappings. Catches pass 2 and pass 3.
- *  2. MIME — each pair's declared types must match. Catches a re-ordering,
+ * Three guards, all required:
+ *  1. BLANK SRC — a body containing an empty `src` attribute is refused
+ *     outright. That is pass 3's fingerprint, and it is the ONLY way a mapping
+ *     can exist with no data URI beside it in the same body, which is the half
+ *     of the desynchronisation the counts cannot see when something else makes
+ *     up the difference (see the residual below).
+ *  2. COUNTS — the number of unclaimed data: URIs must equal the number of
+ *     unclaimed mappings. Catches pass 2, and pass 3 whenever guard 1 has not
+ *     already refused the body.
+ *  3. MIME — each pair's declared types must match. Catches a re-ordering,
  *     which the counts cannot see. A mapping with no recorded `mimeType` has no
  *     evidence to offer, so it fails this check too.
- * A failure of either skips the body WHOLESALE (`ambiguousBody`): once the two
- * sequences are known to disagree, no individual pairing in that body can be
+ * A failure of any of them skips the body WHOLESALE (`ambiguousBody`): once the
+ * two sequences are known to disagree, no individual pairing in that body can be
  * trusted either. main() logs those message ids so they can be reclaimed by hand.
+ *
+ * Why guard 1 exists on top of guard 2 (the case that shipped broken once): a
+ * pass-2 extra and a pass-3 blank in the SAME body offset each other. One
+ * Zimbra-hosted logo (data URI, no mapping) plus one blanked image (mapping,
+ * no data URI) is 1 URI vs 1 mapping — guard 2 passes — and if both declare
+ * image/png guard 3 passes too, so the logo's bytes land under the failed
+ * image's partId. Guard 1 closes that half deterministically: with it in
+ * place, a pass-2 extra can only ever push the URI count ABOVE the mapping
+ * count, which guard 2 catches.
+ *
+ * THE DOCUMENTED REMAINDER, deliberately accepted: a body holding a pass-2
+ * extra *and* a mapping that is simply never referenced anywhere in it — not
+ * blanked, just absent, so there is no `src=""` to find — with the MIME
+ * sequences agreeing. The counts coincide again and nothing left in the body
+ * distinguishes it. No evidence available to this pass can separate that from
+ * a correctly aligned body; the deploy gate (back up `bodyHtml` before
+ * `VACUUM FULL`) is what covers it, not more code here.
  *
  * Idempotent: a body already rewritten contains no data: URIs and is returned
  * untouched, so the job is safe to re-run after an interruption.
@@ -133,9 +158,12 @@ export async function backfillMessage(
   cache: Pick<InlineImageCacheService, 'write'>,
 ): Promise<BackfillResult> {
   const html = row.bodyHtml ?? '';
-  const untouched = (count: number): BackfillResult => ({
+  const untouched = (count: number, reason: 'ambiguous' | 'blankSrc'): BackfillResult => ({
     html, written: 0,
-    skipped: count, skippedAmbiguous: count, skippedTooLarge: 0, skippedWriteFailed: 0,
+    skipped: count,
+    skippedAmbiguous: reason === 'ambiguous' ? count : 0,
+    skippedBlankSrc: reason === 'blankSrc' ? count : 0,
+    skippedTooLarge: 0, skippedWriteFailed: 0,
     ambiguousBody: count > 0,
   });
 
@@ -162,11 +190,14 @@ export async function backfillMessage(
   const re = /src=(["'])data:(image\/[^;]+);base64,([^"']+)\1/gi;
   const uris = Array.from(html.matchAll(re));
 
-  // Guard 1 — counts.
-  if (uris.length !== maps.length) return untouched(uris.length);
-  // Guard 2 — declared MIME types, pair by pair.
+  // Guard 1 — pass 3's blank src. Both quote styles, whitespace anywhere a
+  // browser would tolerate it, including an all-whitespace value.
+  if (/src\s*=\s*(["'])\s*\1/i.test(html)) return untouched(uris.length, 'blankSrc');
+  // Guard 2 — counts.
+  if (uris.length !== maps.length) return untouched(uris.length, 'ambiguous');
+  // Guard 3 — declared MIME types, pair by pair.
   if (uris.some((m, i) => bareMime(m[2]) !== bareMime(maps[i].mimeType) || !bareMime(maps[i].mimeType))) {
-    return untouched(uris.length);
+    return untouched(uris.length, 'ambiguous');
   }
 
   let written = 0, skippedTooLarge = 0, skippedWriteFailed = 0;
@@ -199,6 +230,7 @@ export async function backfillMessage(
     written,
     skipped: skippedTooLarge + skippedWriteFailed,
     skippedAmbiguous: 0,
+    skippedBlankSrc: 0,
     skippedTooLarge,
     skippedWriteFailed,
     ambiguousBody: false,
@@ -227,8 +259,10 @@ export interface BackfillTotals {
   skippedTooLarge: number;
   /** The cache refused the write for some other reason (unwritable directory). */
   skippedWriteFailed: number;
-  /** Images inside bodies the pairing guards refused to touch at all. */
+  /** Images inside bodies the count/MIME guards refused to touch at all. */
   skippedAmbiguous: number;
+  /** Images inside bodies refused for carrying pass 3's `src=""` fingerprint. */
+  skippedBlankSrc: number;
   ambiguousIds: string[];
 }
 
@@ -257,6 +291,7 @@ export async function runBackfill(
   const totals: BackfillTotals = {
     scanned: 0, rewritten: 0, images: 0,
     skipped: 0, skippedTooLarge: 0, skippedWriteFailed: 0, skippedAmbiguous: 0,
+    skippedBlankSrc: 0,
     ambiguousIds: [],
   };
 
@@ -290,6 +325,7 @@ export async function runBackfill(
       totals.skippedTooLarge += r.skippedTooLarge;
       totals.skippedWriteFailed += r.skippedWriteFailed;
       totals.skippedAmbiguous += r.skippedAmbiguous;
+      totals.skippedBlankSrc += r.skippedBlankSrc;
       if (r.ambiguousBody) totals.ambiguousIds.push(row.id);
       if (r.written > 0) {
         await prisma.message.update({ where: { id: row.id }, data: { bodyHtml: r.html } });
@@ -331,9 +367,18 @@ function reportTotals(totals: BackfillTotals, log: (line: string) => void): void
     log(
       `  ${totals.skippedAmbiguous} in bodies skipped wholesale: their data URIs and ` +
       'inlineImages entries did not line up, so converting could have written one ' +
-      "image under another image's part id. They keep their base64 and can be " +
-      'reclaimed by hand:',
+      "image under another image's part id",
     );
+  }
+  if (totals.skippedBlankSrc) {
+    log(
+      `  ${totals.skippedBlankSrc} in bodies carrying an empty src="" — an inline ` +
+      'image whose download failed at sync time, which leaves a mapping with no ' +
+      'data URI beside it and so no trustworthy pairing anywhere in that body',
+    );
+  }
+  if (totals.ambiguousIds.length) {
+    log('  the skipped bodies keep their base64 and can be reclaimed by hand:');
     for (const id of totals.ambiguousIds) log(`    ambiguous: ${id}`);
   }
 }

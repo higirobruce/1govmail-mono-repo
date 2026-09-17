@@ -233,6 +233,52 @@ describe('backfillMessage', () => {
     expect(r.ambiguousBody).toBe(true);
   });
 
+  it('converts nothing when a pass-2 extra and a pass-3 blank offset each other', async () => {
+    // The coincidence neither the count nor the MIME guard can see: one
+    // Zimbra-hosted logo (data URI, NO mapping) beside one image whose download
+    // failed (mapping survives, src="" and no data URI). 1 URI == 1 mapping and
+    // both are image/png, so positional pairing would write the LOGO's bytes
+    // under the failed image's partId and relabel the logo's tag with the
+    // failed image's cid. The empty src is the only evidence left that the two
+    // sequences disagree — it is the one shape that can hide a missing URI.
+    const c = cache();
+    const LOGO = Buffer.from('briefcase-logo').toString('base64');
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/png;base64,${LOGO}"><img src="">`,
+      inlineImages: [{ cid: 'failed@host', partId: '1.2', mimeType: 'image/png' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).not.toHaveBeenCalled();
+    expect(r.html).toBe(row.bodyHtml);
+    expect(r.written).toBe(0);
+    expect(r.ambiguousBody).toBe(true);
+    expect(r.skippedBlankSrc).toBe(1);
+    expect(r.skippedAmbiguous).toBe(0);
+  });
+
+  it.each([
+    ["single quotes", "<img src=''>"],
+    ["spaces around the =", '<img src = "">'],
+    ["whitespace for a value", '<img src=" ">'],
+  ])('recognises pass 3\'s blank src written with %s', async (_label, blank) => {
+    const c = cache();
+    const LOGO = Buffer.from('briefcase-logo').toString('base64');
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/png;base64,${LOGO}">${blank}`,
+      inlineImages: [{ cid: 'failed@host', partId: '1.2', mimeType: 'image/png' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(c.write).not.toHaveBeenCalled();
+    expect(r.html).toBe(row.bodyHtml);
+    expect(r.skippedBlankSrc).toBe(1);
+  });
+
   it('converts nothing when the counts agree but a declared MIME type does not match its pair', async () => {
     // Counts alone cannot catch a re-ordering: two images, two mappings, but
     // document order is gif-then-png while the MIME part order is png-then-gif.
@@ -487,6 +533,10 @@ describe('runBackfill', () => {
       { id: 'm3', userId: 'u1',
         bodyHtml: `<img src="data:image/png;base64,${PNG}">`,
         inlineImages: [] },
+      // Guard 1: a failed inline download left its mapping with no data URI.
+      { id: 'm4', userId: 'u1',
+        bodyHtml: `<img src="data:image/png;base64,${PNG}"><img src="">`,
+        inlineImages: [{ cid: 'c@host', partId: '1.1', mimeType: 'image/png' }] },
     ];
     const db = fakeDb(rows);
     const c = cache();
@@ -499,15 +549,19 @@ describe('runBackfill', () => {
     expect(totals.skippedTooLarge).toBe(1);
     expect(totals.skippedWriteFailed).toBe(1);
     expect(totals.skippedAmbiguous).toBe(1);
-    expect(totals.skipped).toBe(3);
-    expect(totals.ambiguousIds).toEqual(['m3']);
+    expect(totals.skippedBlankSrc).toBe(1);
+    expect(totals.skipped).toBe(4);
+    expect(totals.ambiguousIds).toEqual(['m3', 'm4']);
 
     const report = lines.join('\n');
     expect(report).toMatch(/1 over the per-image cap/);
     expect(report).toContain('INLINE_IMAGE_MAX_BYTES');
     expect(report).toMatch(/1 refused by the cache/);
     expect(report).toMatch(/1 in bodies skipped wholesale/);
+    // The blank-src skips are reported as their own reason, not folded in.
+    expect(report).toMatch(/1 in bodies carrying an empty src=""/);
     expect(report).toContain('ambiguous: m3');
+    expect(report).toContain('ambiguous: m4');
   });
 
   it('reports nothing about reasons that did not occur', async () => {
@@ -519,6 +573,7 @@ describe('runBackfill', () => {
     const report = lines.join('\n');
     expect(report).toMatch(/1\/1 bodies rewritten/);
     expect(report).not.toContain('over the per-image cap');
+    expect(report).not.toContain('empty src=""');
     expect(report).not.toContain('ambiguous:');
   });
 });

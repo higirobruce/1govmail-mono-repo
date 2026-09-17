@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { createHash } from 'crypto';
 import { join, resolve, sep, dirname } from 'path';
 import { Injectable, Logger } from '@nestjs/common';
 
@@ -30,9 +31,20 @@ export class InlineImageCacheService {
    * Resolve and verify the path stays inside the user's directory. A part id
    * and message id arrive from the URL, so a traversing value would otherwise
    * read or write outside the caller's own directory — this is the tenancy boundary.
+   *
+   * The part id is HASHED rather than used as the filename. Zimbra's is "1.1.2",
+   * but Exchange's is the EWS AttachmentId (ews.service.ts) — an opaque base64
+   * blob of 150-400 characters that can contain `/` and `+`. Verbatim, that is
+   * over the 255-byte filename limit, so every write on the Exchange box failed
+   * ENAMETOOLONG, was swallowed by write()'s catch, and the cache stored nothing
+   * at all: every message open refetched every inline image from EWS, silently
+   * and forever. A `/` in the id also fanned one key out into nested directories.
+   * Nothing ever reads a part id back out of a path — the evictor needs only size
+   * and mtime — so a hash is a lossless key here.
    */
   pathFor(userId: string, messageId: string, partId: string): string {
-    const full = resolve(join(this.root, userId, messageId, partId));
+    const name = createHash('sha256').update(partId, 'utf8').digest('hex');
+    const full = resolve(join(this.root, userId, messageId, name));
     const userBase = resolve(join(this.root, userId)) + sep;
     if (!full.startsWith(userBase)) {
       throw new Error('inline image path escapes the cache root');

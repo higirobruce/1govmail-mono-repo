@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readdirSync 
 import { promises as fs } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
+import { createHash } from 'crypto';
 import { InlineImageCacheService, MAX_FILE_BYTES } from './inline-image-cache.service';
 
 // Temp files are named `<partId>.tmp-<pid>-<random>` — the marker is a suffix
@@ -20,15 +21,73 @@ describe('InlineImageCacheService', () => {
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  it('keys the path by user, message and part', () => {
-    expect(svc.pathFor('u1', 'm1', '1.1.2')).toBe(join(root, 'u1', 'm1', '1.1.2'));
+  const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+
+  it('keys the path by user, message and a hash of the part', () => {
+    expect(svc.pathFor('u1', 'm1', '1.1.2')).toBe(join(root, 'u1', 'm1', sha('1.1.2')));
   });
 
-  it('refuses a part id that would escape the cache root', () => {
-    // A traversing part id must not be able to read or write outside the user's
-    // own directory. This is the tenancy boundary, not a tidiness rule.
-    expect(() => svc.pathFor('u1', 'm1', '../../../../etc/passwd')).toThrow();
+  it('refuses a message id that would escape the cache root', () => {
+    // A traversing id must not be able to read or write outside the user's own
+    // directory. This is the tenancy boundary, not a tidiness rule.
     expect(() => svc.pathFor('u1', '../u2', '1.1')).toThrow();
+  });
+
+  it('neutralises a traversing part id instead of letting it reach the filesystem', () => {
+    // The part id is hashed, so it cannot contribute path syntax at all; the
+    // containment check below is the belt to that pair of braces.
+    const p = svc.pathFor('u1', 'm1', '../../../../etc/passwd');
+    expect(p).toBe(join(root, 'u1', 'm1', sha('../../../../etc/passwd')));
+    expect(p.startsWith(join(root, 'u1'))).toBe(true);
+  });
+
+  // ── C8: an EWS AttachmentId is not a safe filename ───────────────────────
+  // Zimbra part ids look like "1.1.2". Exchange gives the EWS AttachmentId/@Id
+  // (ews.service.ts:544) — an opaque base64 blob, routinely 150-400 characters,
+  // containing `/` and `+`. Used verbatim as the final path component that is
+  // over the 255-byte filename limit, so writeFile fails ENAMETOOLONG, write()
+  // swallows it and returns false, and the cache silently stores NOTHING on the
+  // Exchange box: every message open refetches every inline image, forever.
+
+  const EWS_ATTACHMENT_ID =
+    'AAMkADk3ZmQxZTJhLTk5NTUtNDU5Yi04ZGIyLTQ0ZTdkNzRjMGEyYgBGAAAAAAB' +
+    'hR7s9jK+pTZ0QwPqVnZ1TBwCr3f/lK2nTQpXlS8mA0NlsAAAAAAEMAACr3f+lK2' +
+    'nTQpXlS8mA0NlsAAAG9fJ3AAABEgAQANn4k8Fk3rBLl0Ck3wQ0Yz8=/ASAWlwWs' +
+    'hAdKm7uDqMVn7+gABEgAQANn4k8Fk3rBLl0Ck3wQ0Yz8AAAABDgAAAABEgAQANn' +
+    '4k8Fk3rBLl0Ck3wQ0Yz8AAAG9fJ3AAABEgAQAJ+KpWnbMU9NpAtVZ3n1ThYAAAA' +
+    'BDwAAAA==';
+
+  // The same thing without a `/` anywhere in it — the shape that hits the
+  // 255-byte limit on a single path component instead of fanning out into
+  // directories that happen to stay under it.
+  const EWS_ATTACHMENT_ID_UNSPLIT = EWS_ATTACHMENT_ID.replace(/\//g, 'Q');
+
+  it('round-trips an EWS AttachmentId longer than the filesystem name limit', async () => {
+    expect(EWS_ATTACHMENT_ID_UNSPLIT.length).toBeGreaterThan(255);
+    expect(EWS_ATTACHMENT_ID_UNSPLIT).not.toContain('/');
+    const data = Buffer.from('exchange-inline-image-bytes');
+
+    expect(await svc.write('u1', 'm1', EWS_ATTACHMENT_ID_UNSPLIT, data)).toBe(true);
+    expect(await svc.read('u1', 'm1', EWS_ATTACHMENT_ID_UNSPLIT)).toEqual(data);
+  });
+
+  it('keeps an EWS AttachmentId in one flat directory despite the slashes in it', async () => {
+    // A `/` inside the id would otherwise silently become nested directories,
+    // breaking the evictor's depth assumption and any manual inspection.
+    expect(EWS_ATTACHMENT_ID).toContain('/');
+    await svc.write('u1', 'm1', EWS_ATTACHMENT_ID, Buffer.from('x'));
+
+    const messageDir = join(root, 'u1', 'm1');
+    const names = readdirSync(messageDir);
+    expect(names).toEqual([sha(EWS_ATTACHMENT_ID)]);
+    expect(names[0].length).toBeLessThanOrEqual(255);
+  });
+
+  it('gives two different part ids two different files', async () => {
+    await svc.write('u1', 'm1', '1.1', Buffer.from('first'));
+    await svc.write('u1', 'm1', '1.2', Buffer.from('second'));
+    expect(await svc.read('u1', 'm1', '1.1')).toEqual(Buffer.from('first'));
+    expect(await svc.read('u1', 'm1', '1.2')).toEqual(Buffer.from('second'));
   });
 
   it('returns null for a miss', async () => {
@@ -73,7 +132,8 @@ describe('InlineImageCacheService', () => {
 
   it('reports a miss instead of throwing when a read fails (EISDIR)', async () => {
     // A path that is a directory, not a file, should be read as null, not throw.
-    const dir = join(root, 'u1', 'm1', '1.1');
+    // Built through pathFor so it lands on the hashed name the read will use.
+    const dir = svc.pathFor('u1', 'm1', '1.1');
     mkdirSync(dir, { recursive: true });
     expect(existsSync(dir)).toBe(true);
     expect(await svc.read('u1', 'm1', '1.1')).toBeNull();

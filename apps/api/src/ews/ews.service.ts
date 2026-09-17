@@ -525,8 +525,10 @@ export class EwsService implements MailProvider {
       snippet: textOf(item?.Preview) ?? null,
       from,
       to: this.mapMailboxList(item?.ToRecipients),
-      cc: [],
-      bcc: [],
+      // Absent from the response → [], which MailService treats as "no news"
+      // and will not write over recipients a GetItem already stored.
+      cc: this.mapMailboxList(item?.CcRecipients),
+      bcc: this.mapMailboxList(item?.BccRecipients),
       receivedAt: new Date(textOf(item?.DateTimeReceived) ?? 0),
       size: this.numOr(item?.Size, 0),
       isRead: toBool(item?.IsRead),

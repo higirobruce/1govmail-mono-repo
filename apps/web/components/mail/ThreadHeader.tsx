@@ -3,7 +3,7 @@
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import {
   X, Reply, ReplyAll, Forward, ScrollText, FileText,
-  MessageSquareReply, MessagesSquare, MoreVertical,
+  MessageSquareReply, MessagesSquare, MoreVertical, Trash2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -39,6 +39,9 @@ interface Props {
   drafting?: boolean;
   onQuickReply?: () => void;
   onAskThread?: () => void;
+  /** Deleting the thread. Reachable only from the phone overflow — the desktop
+   *  toolbar already has a per-message Delete in each message's action bar. */
+  onDelete?: () => void;
 }
 
 /**
@@ -73,6 +76,7 @@ export default function ThreadHeader({
   drafting,
   onQuickReply,
   onAskThread,
+  onDelete,
 }: Props) {
   const lastActivity = (() => {
     try {
@@ -213,6 +217,20 @@ export default function ThreadHeader({
                     {a.label}
                   </DropdownMenuItem>
                 ))}
+                {/* Last, behind its own separator: this is the one irreversible
+                    item in a menu the thumb opens blind. */}
+                {onDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={onDelete}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

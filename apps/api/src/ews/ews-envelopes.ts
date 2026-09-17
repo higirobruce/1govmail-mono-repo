@@ -108,6 +108,10 @@ const FINDITEM_SUMMARY_FIELDS =
   '<t:FieldURI FieldURI="item:Subject"/>' +
   '<t:FieldURI FieldURI="message:From"/>' +
   '<t:FieldURI FieldURI="message:ToRecipients"/>' +
+  // Cc is requested alongside To so a listed row knows whether the user was
+  // copied rather than addressed. Bcc is deliberately absent: Exchange never
+  // returns it on received mail, and GetItem supplies it for own sent items.
+  '<t:FieldURI FieldURI="message:CcRecipients"/>' +
   '<t:FieldURI FieldURI="item:DateTimeReceived"/>' +
   '<t:FieldURI FieldURI="item:Size"/>' +
   '<t:FieldURI FieldURI="message:IsRead"/>' +

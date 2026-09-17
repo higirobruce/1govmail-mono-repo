@@ -12,7 +12,7 @@ import { parseTaskInput } from '@/lib/ai/taskParse';
 import { AIClient } from '@/lib/ai/client';
 import { getCachedBody, setCachedBody, fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
 import type { TriageLabel } from '@email-client/shared';
-import { isSpamFolderPath } from '@email-client/shared';
+import { isSpamFolderPath, isSentLikeFolderPath } from '@email-client/shared';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { AIRail } from '@/components/layout/AIRail';
@@ -1685,6 +1685,9 @@ export default function MailPage() {
               hasMore={!!hasNextPage && !triageLabelFilter}
               onContextAction={handleContextAction}
               inSpamFolder={isSpamFolderPath(activeFolder?.path)}
+              // Not applied to the search list above: hits span folders, so
+              // there the sender is still the useful column.
+              showRecipients={isSentLikeFolderPath(activeFolder?.path)}
               onBulkAction={handleBulkAction}
               filterTagNames={selectedLabelNames}
               folders={folders}

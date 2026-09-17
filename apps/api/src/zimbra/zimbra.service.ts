@@ -417,6 +417,11 @@ export class ZimbraService implements MailProvider {
             offset,
             html: 1,
             needExp: 1,
+            // `recip=2` = return the sender AND the recipients in `<e>`. At the
+            // default Zimbra returns only one role (the sender on received
+            // mail), so `to`/`cc` parse to [] and the row is persisted with no
+            // recipients at all — the list view then has no "To" to show.
+            recip: 2,
           },
         },
         Header: this.soapHeader(s.csrfToken),
@@ -481,6 +486,8 @@ export class ZimbraService implements MailProvider {
             sortBy: 'dateDesc',
             limit,
             offset,
+            // See getMessages — without this the hits carry no To/Cc addresses.
+            recip:  2,
           },
         },
         Header: this.soapHeader(s.csrfToken),

@@ -90,8 +90,11 @@ after    open ──▶ bodyHtml keeps cid: refs ──────────�
 
 ### 4.1 The cache
 
-`/opt/govmail/imgcache/<userId>/<messageId>/<partId>`
+`/opt/govmail/imgcache/<userId>/<messageId>/<sha256(partId) hex>`
 
+- **The filename is the partId hashed, not the partId**, because an EWS
+  AttachmentId runs 150-400 characters and may contain `/` — neither of which
+  survives as a path segment. 64 hex characters always do.
 - **`userId` is in the path deliberately.** Combined with authorising the route
   against the token's subject, guessing another person's message id reaches
   nothing — the path they would need is not the path that gets built.

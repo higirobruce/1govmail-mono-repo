@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **The cache is authoritative for nothing.** Every entry must be rebuildable from the provider via `inlineImages`. Verified on both boxes: 854/854 and 442/442 oversized bodies retain a real `partId`.
-- **Cache path is `/opt/govmail/imgcache/<userId>/<messageId>/<partId>`** — `userId` is in the path deliberately, and the route authorises against the token's subject.
+- **Cache path is `/opt/govmail/imgcache/<userId>/<messageId>/<sha256(partId) hex>`** — `userId` is in the path deliberately, and the route authorises against the token's subject; the partId is hashed because an EWS AttachmentId runs 150-400 characters and may contain `/`, so it cannot be a path segment as-is.
 - **A broken cache degrades to serving straight through, never to a broken mailbox.**
 - **Inline images only, never attachments.** The existing attachment route is untouched.
 - **The compose path is untouched.** It already converts pasted data URIs into CID attachments.

@@ -180,8 +180,25 @@ hand-written `/docs?doc=` URLs that no page handled were the Critical finding of
 the meeting-minutes review; there must be one definition of these routes.
 
 The handoff is a `resumeId` field on `useAskStore`, set by the page and
-consumed-and-cleared by `AskPanel` on mount — the pattern the store already uses
-for `AskOpenTarget`, so this adds a field rather than a second mechanism.
+consumed-and-cleared by `AskPanel` in an effect **keyed on the value**.
+
+⚠ **Corrected after the whole-branch review.** This paragraph originally said
+"consumed-and-cleared by `AskPanel` on mount — the pattern the store already
+uses for `AskOpenTarget`". Both halves were wrong, and the implementation
+followed them faithfully, which made Resume silently dead on every scope.
+
+`AskOpenTarget` is **not** consumed on mount: the docs and calendar pages
+consume it in effects keyed on the value. And a mount-only effect cannot work
+here at all, because `AskLauncher` renders `AskPanel` from the `(app)`
+route-group layout, which Next preserves across in-group navigation — the panel
+mounts once at first app render and never again, and `if (!open) return null`
+sits after every hook, so closing it does not unmount it either. A `[]`-keyed
+effect therefore runs once, long before the user can reach the history page.
+
+One consequence worth stating because it is not obvious: any guard the resume
+path consults must be **snapshot-relative, not absolute**. A latch that is set
+on the user's first question and never reset is harmless for a mount-only
+effect and fatal for a value-keyed one, since every later resume would abandon.
 
 **A thread scope is not stored in full, and does not need to be.** `AskThreadScope`
 carries `conversationId`, `seedMessageId`, `subject`, `messageCount` and `locked`,
@@ -348,7 +365,7 @@ ninety more days. The cascade is what makes the promise true.
 | A history write fails | The answer is unaffected and a warning is logged. History is a convenience and must never block an answer. |
 | A stored source points at a purged message | The chip stays rendered and clickable — the snapshot cannot know the target is gone without a liveness check per source, which is not worth a query per chip — and the destination shows its own not-found. This is exactly how `AiGeneration`'s snapshots already behave, so it is existing behaviour rather than new work, and it is named in §12 as a limit. |
 | Two tabs append to one conversation | `seq` is unique per conversation, so the loser raises P2002 — re-read `max(seq)` and retry once. The same shape as the meeting-minutes idempotency fix. |
-| Resume target is gone (thread purged, doc deleted) | The panel opens app-wide with a line naming what the conversation was about and saying the source is unavailable. The turns stay readable; only dead chips degrade. |
+| Resume target is gone (thread purged, doc deleted) | Resume navigates as normal and the destination reports its own not-found; the transcript stays readable and only the dead chips degrade. An earlier draft promised the panel would open app-wide "with a line saying the source is unavailable" — that is **not** implemented and should not be, because it could only ever fire for the narrow case where no `scopeId` was stored at all. The common case is a `scopeId` that is present but points at something deleted, which is indistinguishable without a liveness check per resume. A notice that covers the rare case and stays silent for the common one is worse than none. Same behaviour as the meeting-minutes citation chips, and named in §12. |
 | Retention removes a conversation open in another tab | Resume gets a 404 and reports that the conversation is no longer available, rather than erroring. |
 | The account is deleted | Cascades. |
 | A conversation with no completed answer | Never written (§6.1). |
@@ -393,5 +410,8 @@ ninety more days. The cascade is what makes the promise true.
   ask again to get a fresh proposal.
 - A citation chip stops working if the mail or document it pointed at is gone.
 - Search matches the words as typed; it is not semantic.
+- Resuming a conversation whose thread or document has since been deleted takes
+  you to that destination, which reports the miss; the transcript itself stays
+  readable.
 - Deleting a conversation also deletes the record of any action the agent took
   inside it.

@@ -974,6 +974,81 @@ describe('MailService.getMessage attachment classification', () => {
   });
 });
 
+describe('MailService.getMessage no longer embeds inline images', () => {
+  const user = {
+    id: 'u1',
+    email: 'u@example.com',
+    zimbraHost: 'mail.example.com',
+    authToken: 'tok',
+    csrfToken: null,
+    provider: 'zimbra',
+    tokenExpiry: new Date(Date.now() + 60_000),
+  };
+
+  // Mirrors the harness the other getMessage describe blocks in this file already
+  // use (see "attachment classification" above) — the shared top-level makeService()
+  // at the top of this file only equips prisma.user/senderRule for the sender-rule
+  // tests and has no message/folder mocks, so it cannot drive getMessage.
+  function makeService() {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      message: {
+        findFirst: jest.fn(),
+        update: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'm1', zimbraId: 'z1', ...data })),
+        upsert: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      folder: { findFirst: jest.fn() },
+    } as unknown as PrismaService;
+    const zimbra = {
+      getMessage: jest.fn(),
+      // Resolved immediately (no timer) so the old embed-with-budget race would
+      // take the "done" branch synchronously rather than the timeout branch —
+      // otherwise a RED run would fail for the wrong reason (a rejected/late
+      // embed task), not because a data: URI actually got written.
+      downloadAttachmentBuffer: jest.fn().mockResolvedValue({ data: Buffer.from('gif'), contentType: 'image/gif' }),
+    } as unknown as ZimbraService;
+    const service = new MailService(prisma, makeResolver(zimbra), {} as NotificationsService, {} as TasksService);
+    return { service, prisma: prisma as any, zimbra: zimbra as any };
+  }
+
+  it('does not re-fetch a cached body that still contains cid: refs', async () => {
+    const { service, prisma, zimbra } = makeService();
+    prisma.message.findFirst.mockResolvedValue({
+      id: 'm1', userId: 'u1', zimbraId: 'z1',
+      bodyHtml: '<img src="cid:c1">', bodyText: 'hi',
+      attachments: [], inlineImages: [{ cid: 'c1', partId: '1.1', mimeType: 'image/png' }],
+    });
+
+    await service.getMessage('u1', 'm1');
+
+    // The whole point: a cid: body is now the resting state, not a cache miss.
+    // Fails if `bodyHasCids` is put back into the cache-hit condition.
+    expect(zimbra.getMessage).not.toHaveBeenCalled();
+  });
+
+  it('never writes a body containing a data: URI', async () => {
+    const { service, prisma, zimbra } = makeService();
+    prisma.message.findFirst.mockResolvedValue(null);
+    prisma.folder.findFirst.mockResolvedValue({ id: 'f1' });
+    zimbra.getMessage.mockResolvedValue(mapZimbraMessage({
+      id: 'z1', l: '2', su: 'hi', d: Date.now(), f: '', e: [],
+      mp: [
+        { part: '1', ct: 'text/html', body: true, content: '<p>hi <img src="cid:sig@x"></p>' },
+        { part: '2', ct: 'image/gif', filename: 'inline.gif', ci: '<sig@x>', s: 1234 },
+      ],
+    } as any));
+
+    await service.getMessage('u1', 'm1').catch(() => {});
+
+    // Fails if embedInlineImages is called again on the persist path — its
+    // output is a base64 data: URI written straight into this same upsert call.
+    for (const call of (prisma.message.upsert as jest.Mock).mock.calls) {
+      expect(JSON.stringify(call[0])).not.toContain('data:image');
+    }
+  });
+});
+
 describe('MailService.getConversation back-fill batching', () => {
   const user = {
     id: 'u1',
@@ -1086,7 +1161,16 @@ describe('MailService.getConversation back-fill batching', () => {
   });
 });
 
-describe('MailService.getMessage embed budget (async image embedding)', () => {
+// This describe block used to exercise the async embed-with-budget path:
+// embed inline images with a time budget, return early with `embedPending`
+// when Zimbra was slow, and finish the embed in the background. That whole
+// mechanism (EMBED_BUDGET_MS, inflightEmbeds, embedPending, stripCidRefs) was
+// retired in the "stop embedding" change — getMessage never calls
+// embedInlineImages on the persist path anymore, so there is no budget, no
+// pending state and no background write-back left to race. Every test below
+// is kept (per the task-3 brief: fix, never delete) and repurposed to assert
+// the new resting state instead of the retired one.
+describe('MailService.getMessage no longer runs the async embed-with-budget path', () => {
   const user = {
     id: 'u1',
     email: 'u@example.com',
@@ -1096,12 +1180,6 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
     provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   };
-
-  function deferred<T>() {
-    let resolve!: (v: T) => void;
-    const promise = new Promise<T>((r) => (resolve = r));
-    return { promise, resolve };
-  }
 
   function makeService() {
     const prisma = {
@@ -1130,122 +1208,90 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
   } as any);
   const cachedRow = { id: 'm1', zimbraId: 'z1', bodyHtml: null, bodyText: null, attachments: null, inlineImages: null };
 
-  afterEach(() => {
-    delete process.env.EMBED_BUDGET_MS;
-  });
-
-  it('returns the body immediately with embedPending=true when embedding exceeds the budget, stripping unresolved cid refs from the response', async () => {
-    process.env.EMBED_BUDGET_MS = '25';
+  // Production change that would fail this test: reinstating the
+  // `embedInlineImages` call (and its budget race) inside getMessage.
+  it('returns the raw body with cid: refs intact, no embedPending flag, and no background write-back', async () => {
     const { service, prisma, zimbra } = makeService();
     prisma.message.findFirst.mockResolvedValue(cachedRow);
     zimbra.getMessage.mockResolvedValue(zimbraMsg);
-    const dl = deferred<{ data: Buffer; contentType: string }>();
-    zimbra.downloadAttachmentBuffer.mockReturnValue(dl.promise);
-
-    const result = await service.getMessage('u1', 'm1');
-
-    expect(result.embedPending).toBe(true);
-    // Response body must not contain broken cid: image refs
-    expect(result.bodyHtml).not.toContain('cid:');
-    // The DB keeps the raw (cid-bearing) body so the cache guard keeps refusing it as final
-    expect(prisma.message.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ bodyHtml: expect.stringContaining('cid:') }) }),
-    );
-
-    // Background embed finishes → cache warmed with the embedded body
-    dl.resolve({ data: Buffer.from('gif'), contentType: 'image/gif' });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(prisma.message.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { bodyHtml: expect.stringContaining('data:image/gif;base64') } }),
-    );
-  });
-
-  it('does not re-fetch from Zimbra while a background embed is in flight — serves the cached raw body with embedPending', async () => {
-    process.env.EMBED_BUDGET_MS = '25';
-    const { service, prisma, zimbra } = makeService();
-    prisma.message.findFirst.mockResolvedValue(cachedRow);
-    zimbra.getMessage.mockResolvedValue(zimbraMsg);
-    const dl = deferred<{ data: Buffer; contentType: string }>();
-    zimbra.downloadAttachmentBuffer.mockReturnValue(dl.promise);
-
-    const first = await service.getMessage('u1', 'm1');
-    expect(first.embedPending).toBe(true);
-    expect(zimbra.getMessage).toHaveBeenCalledTimes(1);
-
-    // Poll while embed is still running: cached row now holds the raw cid body
-    prisma.message.findFirst.mockResolvedValue({
-      ...cachedRow,
-      bodyHtml: '<p>hi <img src="cid:sig@x"></p>',
-      attachments: [],
-      inlineImages: [{ cid: 'sig@x', partId: '2', mimeType: 'image/gif' }],
-    });
-    const second = await service.getMessage('u1', 'm1');
-
-    expect(zimbra.getMessage).toHaveBeenCalledTimes(1); // no duplicate Zimbra fetch
-    expect(second.embedPending).toBe(true);
-    expect(second.bodyHtml).not.toContain('cid:');
-
-    dl.resolve({ data: Buffer.from('gif'), contentType: 'image/gif' });
-    await new Promise((r) => setTimeout(r, 10));
-
-    // Embed done → in-flight cleared; a fully-embedded cached row is served as final
-    prisma.message.findFirst.mockResolvedValue({
-      ...cachedRow,
-      bodyHtml: '<p>hi <img src="data:image/gif;base64,Z2lm"></p>',
-      attachments: [],
-      inlineImages: [{ cid: 'sig@x', partId: '2', mimeType: 'image/gif' }],
-    });
-    const third = await service.getMessage('u1', 'm1');
-    expect(third.embedPending).toBeUndefined();
-    expect(zimbra.getMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns the embedded body with no embedPending flag when embedding completes within budget', async () => {
-    const { service, prisma, zimbra } = makeService();
-    prisma.message.findFirst.mockResolvedValue(cachedRow);
-    zimbra.getMessage.mockResolvedValue(zimbraMsg);
-    zimbra.downloadAttachmentBuffer.mockResolvedValue({ data: Buffer.from('gif'), contentType: 'image/gif' });
 
     const result = await service.getMessage('u1', 'm1');
 
     expect(result.embedPending).toBeUndefined();
-    expect(result.bodyHtml).toContain('data:image/gif;base64');
+    // cid: is the new resting state — it is never embedded and never stripped.
+    expect(result.bodyHtml).toContain('cid:sig@x');
+    expect(result.bodyHtml).not.toContain('data:image');
+    expect(prisma.message.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ bodyHtml: expect.stringContaining('cid:') }) }),
+    );
+    // There is no async embed left to finish in the background anymore.
+    expect(prisma.message.updateMany).not.toHaveBeenCalled();
   });
 
-  // Pass 2 of the embed (embedZimbraHostedImages) is the one method with both
-  // an interface call and a Zimbra-only extra in it. It resolves BOTH from the
-  // user row it is handed — no provider argument — so the branch that checks
-  // `user.provider` can never disagree with the provider doing the fetching.
-  describe('Zimbra-hosted image URLs (pass 2)', () => {
+  // Production change that would fail this test: putting `bodyHasCids` back
+  // into the getMessage cache-hit condition (the exact regression this task
+  // exists to prevent).
+  it('repeated opens of a cached body with cid: refs never re-fetch from the provider', async () => {
+    const { service, prisma, zimbra } = makeService();
+    const cachedWithCid = {
+      ...cachedRow,
+      bodyHtml: '<p>hi <img src="cid:sig@x"></p>',
+      attachments: [],
+      inlineImages: [{ cid: 'sig@x', partId: '2', mimeType: 'image/gif' }],
+    };
+    prisma.message.findFirst.mockResolvedValue(cachedWithCid);
+
+    const first = await service.getMessage('u1', 'm1');
+    const second = await service.getMessage('u1', 'm1');
+
+    expect(zimbra.getMessage).not.toHaveBeenCalled();
+    expect(first.bodyHtml).toContain('cid:sig@x');
+    expect(second.bodyHtml).toContain('cid:sig@x');
+    expect(first.embedPending).toBeUndefined();
+    expect(second.embedPending).toBeUndefined();
+  });
+
+  // Production change that would fail this test: reinstating the call to
+  // embedInlineImages (which is what drove downloadAttachmentBuffer before).
+  it('never calls the provider to download attachment bytes for embedding', async () => {
+    const { service, prisma, zimbra } = makeService();
+    prisma.message.findFirst.mockResolvedValue(cachedRow);
+    zimbra.getMessage.mockResolvedValue(zimbraMsg);
+
+    await service.getMessage('u1', 'm1');
+
+    expect(zimbra.downloadAttachmentBuffer).not.toHaveBeenCalled();
+  });
+
+  // Pass 2 of the old embed (embedZimbraHostedImages) used to rewrite any
+  // Zimbra-hosted image URL (id/part, briefcase path, or otherwise) into a
+  // base64 data: URI. embedInlineImages is no longer called at all, so none
+  // of these URL shapes are touched anymore — they are returned exactly as
+  // the provider sent them.
+  describe('Zimbra-hosted image URLs are left untouched (pass 2 of the old embed no longer runs)', () => {
     const hostedMsg = (html: string) =>
       mapZimbraMessage({
         id: 'z1', l: '2', su: 'hi', d: Date.now(), f: '', e: [],
         mp: [{ part: '1', ct: 'text/html', body: true, content: html }],
       } as any);
 
-    it('embeds an id/part URL through the resolved provider', async () => {
+    it('leaves an id/part Zimbra image URL untouched — no embedding is attempted', async () => {
       const { service, prisma, zimbra } = makeService();
       prisma.message.findFirst.mockResolvedValue(cachedRow);
       zimbra.getMessage.mockResolvedValue(
         hostedMsg('<p><img src="https://mail.example.com/service/home/~/?id=z9&part=3"></p>'),
       );
-      zimbra.downloadAttachmentBuffer.mockResolvedValue({ data: Buffer.from('gif'), contentType: 'image/gif' });
 
       const result = await service.getMessage('u1', 'm1');
 
-      expect(zimbra.downloadAttachmentBuffer).toHaveBeenCalledWith(
-        { host: 'mail.example.com', email: 'u@example.com', authToken: 'tok', csrfToken: undefined },
-        'z9',
-        '3',
-      );
-      expect(result.bodyHtml).toContain(`data:image/gif;base64,${Buffer.from('gif').toString('base64')}`);
+      expect(zimbra.downloadAttachmentBuffer).not.toHaveBeenCalled();
+      expect(result.bodyHtml).toContain('src="https://mail.example.com/service/home/~/?id=z9&part=3"');
+      expect(result.bodyHtml).not.toContain('base64');
     });
 
-    it('embeds a path-based URL through the Zimbra-only extra', async () => {
+    it('leaves a briefcase path-based Zimbra image URL untouched — no embedding is attempted', async () => {
       const { service, prisma, zimbra } = makeService();
-      zimbra.downloadZimbraPath = jest.fn().mockResolvedValue({
-        data: Buffer.from('png'), contentType: 'image/png',
-      });
+      zimbra.downloadZimbraPath = jest.fn();
       prisma.message.findFirst.mockResolvedValue(cachedRow);
       zimbra.getMessage.mockResolvedValue(
         hostedMsg('<p><img src="https://mail.example.com/home/bruce/Briefcase/logo.png"></p>'),
@@ -1253,18 +1299,15 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
 
       const result = await service.getMessage('u1', 'm1');
 
-      expect(zimbra.downloadZimbraPath).toHaveBeenCalledWith(
-        'mail.example.com', 'tok', '/home/bruce/Briefcase/logo.png',
-      );
+      expect(zimbra.downloadZimbraPath).not.toHaveBeenCalled();
       expect(zimbra.downloadAttachmentBuffer).not.toHaveBeenCalled();
-      expect(result.bodyHtml).toContain(`data:image/png;base64,${Buffer.from('png').toString('base64')}`);
+      expect(result.bodyHtml).toContain('src="https://mail.example.com/home/bruce/Briefcase/logo.png"');
+      expect(result.bodyHtml).not.toContain('base64');
     });
 
-    it('leaves a non-image response at its original URL', async () => {
+    it('leaves a non-image response at its original URL — no embedding is attempted at all now', async () => {
       const { service, prisma, zimbra } = makeService();
-      zimbra.downloadZimbraPath = jest.fn().mockResolvedValue({
-        data: Buffer.from('%PDF'), contentType: 'application/pdf',
-      });
+      zimbra.downloadZimbraPath = jest.fn();
       prisma.message.findFirst.mockResolvedValue(cachedRow);
       zimbra.getMessage.mockResolvedValue(
         hostedMsg('<p><img src="https://mail.example.com/home/bruce/Briefcase/report.pdf"></p>'),
@@ -1272,6 +1315,7 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
 
       const result = await service.getMessage('u1', 'm1');
 
+      expect(zimbra.downloadZimbraPath).not.toHaveBeenCalled();
       expect(result.bodyHtml).toContain('src="https://mail.example.com/home/bruce/Briefcase/report.pdf"');
       expect(result.bodyHtml).not.toContain('base64');
     });

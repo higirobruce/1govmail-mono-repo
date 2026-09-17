@@ -145,21 +145,9 @@ function recipientRefresh(m: ProviderMessage): Record<string, unknown> {
   return out;
 }
 
-// Browsers cannot load cid: URLs — replace with src="" so the image is skipped
-// silently instead of rendering a broken-image icon. Applied to embedPending
-// responses only; the DB keeps the raw cid-bearing body until the embed lands.
-function stripCidRefs(html: string): string {
-  return html.replace(/src=["']cid:[^"']*["']/gi, 'src=""');
-}
-
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-
-  // Background inline-image embeds still running, keyed `${userId}:${zimbraId}`.
-  // getMessage checks this to serve polls from the cached raw body instead of
-  // spawning a duplicate Zimbra fetch + embed per poll.
-  private readonly inflightEmbeds = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -619,30 +607,25 @@ export class MailService {
     });
 
     // Return cache when: body exists, attachments are stored, inlineImages is not null
-    // (null = never fetched), and bodyHtml has no un-embedded cid: refs.
+    // (null = never fetched). A cid: reference in bodyHtml is now the NORMAL resting
+    // state — inline images are served from the inline-image cache (see
+    // InlineImageCacheService / getInlineImage) instead of being embedded as base64,
+    // so a leftover cid: must NOT force a refetch here. Doing so would mean every
+    // single open re-fetches from the provider forever, since bodies are never
+    // embedded anymore. An un-proxied Zimbra-hosted image URL is a different problem
+    // and still forces a refetch.
     const attachmentsCached = Array.isArray(cached?.attachments) && (cached.attachments as any[]).length >= 0;
-    const bodyHasCids = (cached?.bodyHtml ?? '').includes('cid:');
     const bodyHasZimbraUrls = (cached?.bodyHtml ?? '').includes('/service/home/');
-    if ((cached?.bodyHtml || cached?.bodyText) && attachmentsCached && cached?.inlineImages !== null && !bodyHasCids && !bodyHasZimbraUrls) {
+    if ((cached?.bodyHtml || cached?.bodyText) && attachmentsCached && cached?.inlineImages !== null && !bodyHasZimbraUrls) {
       return cached;
-    }
-
-    // A background embed for this message is still running (the previous open
-    // returned early with embedPending). Serve the cached raw body again instead
-    // of firing a duplicate Zimbra fetch + embed — the poller will get the final
-    // version once the in-flight embed lands in the DB.
-    if (cached && this.inflightEmbeds.has(`${userId}:${cached.zimbraId}`)) {
-      return {
-        ...cached,
-        bodyHtml: cached.bodyHtml == null ? cached.bodyHtml : stripCidRefs(cached.bodyHtml),
-        embedPending: true,
-      };
     }
 
     const session = buildMailSession(user);
     const m = await this.resolver.forUser(user).getMessage(session, cached?.zimbraId ?? messageId);
 
-    const rawBodyHtml  = m.bodyHtml ?? null;
+    // Stored and returned as-is — cid: refs intact, nothing embedded. The client
+    // resolves them via the inline-image cache route.
+    const bodyHtml     = m.bodyHtml ?? null;
     const bodyText     = m.bodyText ?? null;
     const attachments  = this.toStoredAttachments(m.attachments);
     const inlineImages = this.toStoredInlineImages(m.attachments);
@@ -651,59 +634,6 @@ export class MailService {
     const ccRecipients  = m.cc.map((a) => ({ email: a.email, name: a.name ?? null }));
     // Bcc is only visible on the user's own sent/draft items.
     const bccRecipients = m.bcc.map((a) => ({ email: a.email, name: a.name ?? null }));
-
-    // Embed inline images with a short time budget.
-    // - If Zimbra responds quickly: return fully embedded HTML immediately.
-    // - If slow: return the raw HTML now flagged `embedPending` (cid refs stripped
-    //   for display) and finish embedding in the background — the client polls
-    //   getMessage until the pending flag clears, so slow Zimbra attachment
-    //   fetches never hold the open behind a spinner.
-    const EMBED_BUDGET_MS = Number(process.env.EMBED_BUDGET_MS ?? 1_500);
-    let bodyHtml = rawBodyHtml;
-    let embedPending = false;
-
-    // Detect any src attribute pointing to the Zimbra host — covers
-    // /service/home/ (inline attachments), /service/proxy/ (image proxy for
-    // external images), /home/ briefcase paths, and other Zimbra REST URLs.
-    const zimbraHostPattern = new RegExp(
-      `src=["']https?://${user.zimbraHost.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`,
-      'i',
-    );
-    const hasZimbraImages = rawBodyHtml ? zimbraHostPattern.test(rawBodyHtml) : false;
-    if (rawBodyHtml && (inlineImages.length > 0 || hasZimbraImages)) {
-      const embedTask = this.embedInlineImages(rawBodyHtml, inlineImages, user, m.id);
-      const raceResult = await Promise.race([
-        embedTask.then((html) => ({ html, done: true as const })),
-        new Promise<{ html: null; done: false }>((r) =>
-          setTimeout(() => r({ html: null, done: false }), EMBED_BUDGET_MS),
-        ),
-      ]);
-
-      if (raceResult.done) {
-        // Images loaded within budget — use the embedded version
-        bodyHtml = raceResult.html;
-      } else {
-        // Timed out — warm the cache in the background; next open will be instant.
-        // Use updateMany keyed on zimbraId so this works whether the DB record was
-        // pre-existing (folder-listed message) or newly upserted below (search result).
-        // Register the task in inflightEmbeds so polls for this message reuse the
-        // cached raw body instead of spawning duplicate Zimbra fetches.
-        embedPending = true;
-        const embedKey = `${userId}:${m.id}`;
-        const background = embedTask
-          .then((embeddedHtml) =>
-            this.prisma.message.updateMany({
-              where: { userId, zimbraId: m.id },
-              data:  { bodyHtml: embeddedHtml },
-            }),
-          )
-          .catch((err: any) =>
-            this.logger.error(`[getMessage] background embed failed: ${err?.message}`),
-          )
-          .finally(() => this.inflightEmbeds.delete(embedKey));
-        this.inflightEmbeds.set(embedKey, background);
-      }
-    }
 
     let result: any;
     if (cached) {
@@ -719,8 +649,7 @@ export class MailService {
       });
     } else {
       // Message is not in DB yet (e.g. opened from search results before the folder
-      // was synced). Attempt to upsert so that subsequent opens are served from cache
-      // and the background embed above can update the record via zimbraId.
+      // was synced). Attempt to upsert so that subsequent opens are served from cache.
       const folder = await this.prisma.folder.findFirst({ where: { userId, zimbraId: m.folderId } });
 
       if (folder) {
@@ -763,16 +692,6 @@ export class MailService {
       }
     }
 
-    if (embedPending) {
-      // DB keeps the raw cid-bearing body (so the cache guard above keeps treating
-      // it as not-final); the response gets a display-safe copy with cid refs
-      // stripped so the client never renders broken-image icons.
-      return {
-        ...result,
-        bodyHtml: result.bodyHtml == null ? result.bodyHtml : stripCidRefs(result.bodyHtml),
-        embedPending: true,
-      };
-    }
     return result;
   }
 

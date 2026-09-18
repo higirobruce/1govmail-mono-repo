@@ -72,6 +72,11 @@ model Institution {
   provider  String
   host      String
   ewsDomain String?
+  // Address domain users sign in with (e.g. "risa.gov.rw"), which is NOT the
+  // mail host — MINAFFET's host is webmail.minaffet.gov.rw. Login derives the
+  // institution from this instead of asking the user to pick one. Nullable so
+  // a row added without a mapping is still reachable by explicit id.
+  emailDomain String? @unique
   enabled   Boolean @default(true)
   position  Int     @default(0)
 

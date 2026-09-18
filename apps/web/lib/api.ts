@@ -252,11 +252,10 @@ export const api = {
   },
 
   auth: {
-    institutions: () => {
-      if (USE_MOCK) return delay<Array<{ id: string; label: string }>>([{ id: 'memory', label: 'Demo (local)' }]);
-      return request<Array<{ id: string; label: string }>>('/auth/institutions');
-    },
-    login: (email: string, password: string, institution: string) => {
+    // No `institution` argument: the server derives it from the address domain.
+    // GET /auth/institutions still exists for ops and non-web clients, but the
+    // login form no longer needs it.
+    login: (email: string, password: string) => {
       if (USE_MOCK)
         return delay({ accessToken: 'mock-token', user: { id: 'u1', email, displayName: 'Demo User', zimbraHost: 'mail.company.com' } });
       return request<
@@ -264,7 +263,7 @@ export const api = {
         | { requiresTwoFactor: true; twoFactorToken: string }
       >('/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password, institution }),
+        body: JSON.stringify({ email, password }),
       });
     },
     twoFactor: (twoFactorToken: string, code: string) => {

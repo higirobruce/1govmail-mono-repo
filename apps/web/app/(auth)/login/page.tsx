@@ -1,14 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth.store';
-import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Loader2, Mail, Lock, Building2, ShieldCheck } from 'lucide-react';
-import { canSubmit, institutionsToOptions, type InstitutionOption } from './institutions';
+import { Loader2, Mail, Lock, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,39 +14,13 @@ export default function LoginPage() {
   const twoFactor = useAuthStore((s) => s.twoFactor);
 
   // ── Credentials step ──────────────────────────────────────────────────────
+  // No institution here: the server derives it from the address domain, so the
+  // form is submittable the instant it renders — nothing to fetch or pick.
   const [form, setForm] = useState({
     email: '',
     password: '',
-    institution: '',
   });
-
-  // ── Institutions ──────────────────────────────────────────────────────────
-  const [institutions, setInstitutions] = useState<InstitutionOption[]>([]);
-  const [institutionsLoading, setInstitutionsLoading] = useState(true);
-  const [institutionsError, setInstitutionsError] = useState<string | null>(null);
-
-  const loadInstitutions = () => {
-    setInstitutionsLoading(true);
-    setInstitutionsError(null);
-    api.auth
-      .institutions()
-      .then((rows) => {
-        const options = institutionsToOptions(rows);
-        setInstitutions(options);
-        setForm((f) => ({ ...f, institution: f.institution || options[0]?.id || '' }));
-      })
-      .catch(() => {
-        setInstitutionsError('Could not load institutions');
-      })
-      .finally(() => {
-        setInstitutionsLoading(false);
-      });
-  };
-
-  useEffect(() => {
-    loadInstitutions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [showPassword, setShowPassword] = useState(false);
 
   // ── 2FA step ──────────────────────────────────────────────────────────────
   const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
@@ -60,16 +32,11 @@ export default function LoginPage() {
   // ── Step 1: credentials ───────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Defense in depth: the submit button is disabled in this state, but an
-    // Enter-key submit can bypass a disabled button in some browsers/flows.
-    // Never let the form submit with no institution selected.
-    if (!canSubmit({ loading, institutionsLoading, institutionsError, institution: form.institution })) {
-      return;
-    }
+    if (loading) return;
     setError(null);
     setLoading(true);
     try {
-      const result = await login(form.email, form.password, form.institution);
+      const result = await login(form.email, form.password);
       if (result?.requiresTwoFactor) {
         // Transition to OTP step — store the challenge token in local state
         setTwoFactorToken(result.twoFactorToken);
@@ -196,46 +163,6 @@ export default function LoginPage() {
 
             /* ── Credentials step ── */
             <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Institution */}
-              <div className="space-y-1.5">
-                <Label htmlFor="institution" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Institution
-                </Label>
-                <div className="relative">
-                  <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60 pointer-events-none z-10" />
-                  <select
-                    id="institution"
-                    className="flex h-10 w-full rounded-md border border-border/60 bg-muted/50 pl-10 pr-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 disabled:opacity-50 disabled:cursor-not-allowed appearance-none"
-                    value={form.institution}
-                    onChange={(e) => setForm((f) => ({ ...f, institution: e.target.value }))}
-                    required
-                    disabled={loading || institutionsLoading || !!institutionsError}
-                  >
-                    {institutionsLoading ? (
-                      <option value="">Loading institutions…</option>
-                    ) : (
-                      institutions.map((inst) => (
-                        <option key={inst.id} value={inst.id}>
-                          {inst.label}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </div>
-                {institutionsError && (
-                  <div className="flex items-center justify-between gap-2 text-xs text-destructive">
-                    <span>{institutionsError} — retry</span>
-                    <button
-                      type="button"
-                      onClick={loadInstitutions}
-                      className="underline hover:text-destructive/80"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                )}
-              </div>
-
               {/* Email */}
               <div className="space-y-1.5">
                 <Label htmlFor="email" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -246,7 +173,7 @@ export default function LoginPage() {
                   <Input
                     id="email"
                     type="email"
-                    placeholder="you@company.com"
+                    placeholder="you@risa.gov.rw"
                     className="pl-10 bg-muted/50 border-border/60 focus-visible:border-primary/60 focus-visible:ring-primary/20"
                     value={form.email}
                     onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
@@ -265,14 +192,28 @@ export default function LoginPage() {
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
                   <Input
                     id="password"
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     placeholder="••••••••"
-                    className="pl-10 bg-muted/50 border-border/60 focus-visible:border-primary/60 focus-visible:ring-primary/20"
+                    className="pl-10 pr-10 bg-muted/50 border-border/60 focus-visible:border-primary/60 focus-visible:ring-primary/20"
                     value={form.password}
                     onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
                     required
                     disabled={loading}
                   />
+                  {/* type="button" matters: inside a form, the default submit
+                      type would send the credentials on every peek. */}
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    aria-pressed={showPassword}
+                    disabled={loading}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-muted-foreground/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {showPassword
+                      ? <EyeOff className="w-4 h-4" aria-hidden="true" />
+                      : <Eye className="w-4 h-4" aria-hidden="true" />}
+                  </button>
                 </div>
               </div>
 
@@ -285,7 +226,7 @@ export default function LoginPage() {
               <Button
                 type="submit"
                 className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium h-10 rounded-lg transition-all duration-150"
-                disabled={!canSubmit({ loading, institutionsLoading, institutionsError, institution: form.institution })}
+                disabled={loading}
               >
                 {loading ? (
                   <>

@@ -118,6 +118,8 @@ interface Props {
   onDelete: () => void;
   onToggleStar: () => void;
   onMoveToInbox?: () => void;
+  /** Only provided while viewing the spam folder. */
+  onNotSpam?: () => void;
   folders?: any[];
   onMoveToFolder?: (folderId: string) => void;
   /** Increment to force the thread conversation to re-fetch (e.g. after sending a reply). */
@@ -139,6 +141,7 @@ export default function ThreadView({
   onDelete,
   onToggleStar,
   onMoveToInbox,
+  onNotSpam,
   folders,
   onMoveToFolder,
   refreshKey,
@@ -466,6 +469,7 @@ export default function ThreadView({
           onDelete={onDelete}
           onToggleStar={onToggleStar}
           onMoveToInbox={onMoveToInbox}
+          onNotSpam={onNotSpam}
           folders={folders}
           onMoveToFolder={onMoveToFolder}
           onMute={onMute}
@@ -583,6 +587,9 @@ export default function ThreadView({
         onReply={() => { setActiveTab('messages'); setInlineReply({ mode: 'reply', target: lastMessage }); }}
         onReplyAll={() => { setActiveTab('messages'); setInlineReply({ mode: 'replyAll', target: lastMessage }); }}
         onForward={() => onComposeWith('forward', lastMessage)}
+        // On a phone the overflow is the only route to Delete: there is no
+        // right-click, and the per-message action bar sits below the fold.
+        onDelete={onDelete}
         onSummarize={aiEnabled ? handleSummarize : undefined}
         summarizing={summarizing}
         onDraftDoc={aiEnabled ? handleDraftDoc : undefined}

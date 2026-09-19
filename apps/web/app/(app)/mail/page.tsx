@@ -10,8 +10,9 @@ import { usePeopleStore } from '@/stores/people.store';
 import { api, type Commitment, type MailSearchFilter } from '@/lib/api';
 import { parseTaskInput } from '@/lib/ai/taskParse';
 import { AIClient } from '@/lib/ai/client';
-import { getCachedBody, setCachedBody, fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
+import { getCachedBody, setCachedBody, fetchBodyCached } from '@/lib/mailBodyCache';
 import type { TriageLabel } from '@email-client/shared';
+import { isSpamFolderPath, isSentLikeFolderPath } from '@email-client/shared';
 import Sidebar from '@/components/layout/Sidebar';
 import { MobileSidebarSheet } from '@/components/layout/MobileSidebarSheet';
 import { AIRail } from '@/components/layout/AIRail';
@@ -28,6 +29,7 @@ import TaskModal, { type Task } from '@/components/tasks/TaskModal';
 import { KeyboardShortcutsModal } from '@/components/mail/KeyboardShortcutsModal';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useInboxSync } from '@/hooks/useInboxSync';
 import { useResizable, clampWidth } from '@/hooks/useResizable';
 import { ResizeHandle } from '@/components/layout/ResizeHandle';
 import { useUIStore } from '@/stores/ui.store';
@@ -449,11 +451,8 @@ export default function MailPage() {
   }, [composeOpen]);
 
   // ── Electron background polling ────────────────────────────────────────────
-  // Tracks the last known inbox unread count so we can detect new arrivals.
   // The BrowserWindow is never destroyed when minimised to tray, so this
-  // interval keeps running and can fire native notifications even while the
-  // window is hidden.
-  const lastInboxUnreadRef = useRef<number | null>(null);
+  // interval keeps running even while the window is hidden.
 
   // Wait for Zustand persist to hydrate from localStorage before any redirect
   useEffect(() => {
@@ -468,53 +467,11 @@ export default function MailPage() {
     if (!isAuthenticated) router.replace('/login');
   }, [hydrated, isAuthenticated, router]);
 
-  // Electron: poll the inbox unread count every 2 minutes and fire native
-  // notifications when new messages arrive.  Works whether the window is
-  // visible or hidden in the system tray.
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    // Only enable polling when running inside the Electron desktop app
-    if (!window.electronAPI?.isElectron) return;
-
-    const checkInbox = async () => {
-      try {
-        const data: any[] = await api.mail.getFolders();
-        const inbox = data.find((f) => f.path === '/Inbox');
-        if (!inbox) return;
-
-        const currentUnread: number = inbox.unreadCount ?? 0;
-        const prev = lastInboxUnreadRef.current;
-
-        if (prev !== null && currentUnread > prev) {
-          const newCount = currentUnread - prev;
-          window.electronAPI?.sendNotification(
-            `${newCount} new message${newCount !== 1 ? 's' : ''}`,
-            `You have ${currentUnread} unread message${currentUnread !== 1 ? 's' : ''} in your inbox.`,
-          );
-        }
-
-        // Update Dock badge on macOS
-        window.electronAPI?.setBadgeCount(currentUnread);
-
-        lastInboxUnreadRef.current = currentUnread;
-
-        // Also refresh the sidebar folder list if unread counts shifted
-        setFolders(data);
-      } catch {
-        // Polling is best-effort — silent failure keeps the app stable
-      }
-    };
-
-    // First check 10 s after mount (give the initial folder load time to finish)
-    const initial = setTimeout(checkInbox, 10_000);
-    // Subsequent checks every 2 minutes
-    const interval = setInterval(checkInbox, 2 * 60 * 1000);
-
-    return () => {
-      clearTimeout(initial);
-      clearInterval(interval);
-    };
-  }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Keep folders (and, in Electron, the dock badge) current every 2 minutes.
+  // This poll is also what lets the server SEE new mail: detection happens
+  // during a folder sync, so it must run in a browser too — not only in the
+  // desktop build. See useInboxSync.
+  useInboxSync(isAuthenticated, setFolders);
 
   // Load folders on mount
   useEffect(() => {
@@ -701,15 +658,6 @@ export default function MailPage() {
       } else {
         setCachedBody(messageId, data);
         setActiveMessage(data);
-        // Server is still embedding inline images (embedPending) — poll until
-        // the final body lands, then swap it in if this message is still open.
-        // setCachedBody above is a no-op for pending bodies, so the cache only
-        // ever holds the final version.
-        if (data?.embedPending) {
-          watchPendingBody<any>(messageId, (id) => api.mail.getMessage(id), (fresh) => {
-            setActiveMessage((prev: any) => (prev && prev.id === messageId ? fresh : prev));
-          });
-        }
         // Persist read status to server (fire-and-forget, don't block UI)
         if (wasUnread) {
           api.mail.markRead(messageId, true).catch(() => {});
@@ -835,6 +783,33 @@ export default function MailPage() {
       },
     });
   }, [activeMessageId, folders, messages, activeFolderId, updateFolderCounts, removeMessageFromCache, invalidateMessages, offline]);
+
+  /**
+   * "Not spam": the server moves the message to the Inbox AND clears the block
+   * that filed it, so it cannot be dragged back on the next sync. Goes over
+   * the network directly rather than through the offline queue, because it is
+   * not a plain move — it changes sender rules too.
+   */
+  const markNotSpam = useCallback(async (messageId: string) => {
+    const sourceFolderId = activeFolderId;
+    const removed = messages.find((m) => m.id === messageId);
+    const wasUnread = removed ? !removed.isRead : false;
+
+    removeMessageFromCache(sourceFolderId, messageId);
+    setActiveMessageId((current) => (current === messageId ? undefined : current));
+    setActiveMessage((current: any) => (current?.id === messageId ? null : current));
+    updateFolderCounts(sourceFolderId, wasUnread ? -1 : 0, -1);
+
+    try {
+      const result = await api.mail.notSpam(messageId);
+      toast.success(result?.unblocked ? 'Moved to Inbox — sender unblocked' : 'Moved to Inbox');
+      invalidateMessages();
+    } catch (err: any) {
+      invalidateMessages();
+      updateFolderCounts(sourceFolderId, wasUnread ? +1 : 0, +1);
+      toast.error('Could not move the message', { description: err?.message });
+    }
+  }, [activeFolderId, messages, removeMessageFromCache, updateFolderCounts, invalidateMessages]);
 
   const deleteMessage = useCallback(async () => {
     if (!activeMessageId) return;
@@ -1002,6 +977,11 @@ export default function MailPage() {
 
     if (type === 'snooze') {
       setSnoozeTarget({ messageId, folderId: activeFolderId });
+      return;
+    }
+
+    if (type === 'notSpam') {
+      await markNotSpam(messageId);
       return;
     }
 
@@ -1639,6 +1619,7 @@ export default function MailPage() {
             }}
             hasMore={searchHasMore}
             onContextAction={handleContextAction}
+            inSpamFolder={isSpamFolderPath(activeFolder?.path)}
             onBulkAction={handleBulkAction}
             folders={folders}
             mutedConversationIds={mutedConversationIds}
@@ -1694,6 +1675,10 @@ export default function MailPage() {
               }}
               hasMore={!!hasNextPage && !triageLabelFilter}
               onContextAction={handleContextAction}
+              inSpamFolder={isSpamFolderPath(activeFolder?.path)}
+              // Not applied to the search list above: hits span folders, so
+              // there the sender is still the useful column.
+              showRecipients={isSentLikeFolderPath(activeFolder?.path)}
               onBulkAction={handleBulkAction}
               filterTagNames={selectedLabelNames}
               folders={folders}
@@ -1738,6 +1723,11 @@ export default function MailPage() {
             folders.find((f) => f.id === activeFolderId)?.path === '/Trash' &&
             folders.some((f) => f.path === '/Inbox')
               ? moveToInbox
+              : undefined
+          }
+          onNotSpam={
+            isSpamFolderPath(activeFolder?.path) && activeMessageId
+              ? () => markNotSpam(activeMessageId)
               : undefined
           }
           folders={folders}

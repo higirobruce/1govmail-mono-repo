@@ -92,3 +92,18 @@ describe('MailController.searchAdvanced', () => {
     expect(mailService.searchStructured).toHaveBeenCalledWith('u1', {}, 50, 0);
   });
 });
+
+describe('MailController.markNotSpam', () => {
+  it('passes the caller and message straight through to the service', async () => {
+    const mailService = {
+      markNotSpam: jest.fn().mockResolvedValue({ success: true, unblocked: true }),
+    } as unknown as MailService;
+    const controller = new MailController(mailService);
+
+    const result = await controller.markNotSpam({ user: { sub: 'u1' } } as any, 'm1');
+
+    expect(mailService.markNotSpam).toHaveBeenCalledWith('u1', 'm1');
+    expect(result).toEqual({ success: true, unblocked: true });
+  });
+});
+

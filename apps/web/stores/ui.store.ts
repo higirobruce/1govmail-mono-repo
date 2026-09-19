@@ -15,6 +15,13 @@ interface UIState {
   panelWidths: Record<string, number>;
   setPanelWidth: (key: string, width: number) => void;
   resetPanelWidth: (key: string) => void;
+  /**
+   * The AI-profile prompt has been waved away on this device. One-way: it is
+   * an invitation, and re-asking someone who already said no is nagging.
+   * Filling the profile hides the prompt on its own, everywhere.
+   */
+  aiProfileNudgeDismissed: boolean;
+  dismissAiProfileNudge: () => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -31,6 +38,8 @@ export const useUIStore = create<UIState>()(
           delete next[key];
           return { panelWidths: next };
         }),
+      aiProfileNudgeDismissed: false,
+      dismissAiProfileNudge: () => set({ aiProfileNudgeDismissed: true }),
     }),
     { name: 'ui' },
   ),

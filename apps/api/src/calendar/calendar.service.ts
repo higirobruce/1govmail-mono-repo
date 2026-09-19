@@ -6,6 +6,22 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { buildMailSession } from '../provider/mail-session';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
+import { DocsService } from '../docs/docs.service';
+import { CreateMinutesDto } from './dto/create-minutes.dto';
+
+/**
+ * `CalendarEvent.attendees` is a JSON column, and both providers persist it as
+ * `{email, name}[]` (see zimbra.mappers.ts mapZimbraAppointment and
+ * ews.service.ts mapAttendeeContainer) — never bare strings. Accept either
+ * shape so a naive `string[]` assumption elsewhere can't silently hand a raw
+ * attendee object downstream.
+ */
+function attendeeEmails(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((a) => (typeof a === 'string' ? a : (a as { email?: string } | null)?.email ?? ''))
+    .filter((e): e is string => e.length > 0);
+}
 
 export interface CalendarEventData {
   title: string;
@@ -24,6 +40,7 @@ export class CalendarService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly resolver: MailProviderResolver,
+    private readonly docs: DocsService,
   ) {}
 
   private async getUser(userId: string) {
@@ -69,10 +86,14 @@ export class CalendarService {
         syncedAt:       new Date(),
       };
 
+      // icalUid is the one field NOT written unconditionally on update: a UID
+      // never legitimately changes or clears, and a search response that omits
+      // it (Zimbra does on some versions — see getEvent's detail fallback)
+      // would otherwise erase the UID the detail fetch had just stored.
       const cached = await this.prisma.calendarEvent.upsert({
         where: { userId_zimbraId: { userId, zimbraId: ev.id } },
-        create: { userId, zimbraId: ev.id, ...row },
-        update: row,
+        create: { userId, zimbraId: ev.id, ...row, icalUid: ev.icalUid ?? null },
+        update: { ...row, ...(ev.icalUid ? { icalUid: ev.icalUid } : {}) },
       });
       results.push(cached);
     }
@@ -95,7 +116,9 @@ export class CalendarService {
 
     const detail = await this.resolver.forUser(user).getAppointment(buildMailSession(user), event.zimbraId);
 
-    if (!detail) return event;
+    if (!detail) {
+      return { ...event, minutesDocumentId: await this.resolveMinutesDocumentId(event) };
+    }
 
     // A null attendee list means the response carried none at all — keep the
     // cached one rather than blanking it.
@@ -103,10 +126,38 @@ export class CalendarService {
     const organizer: string | null = detail.organizer?.email ?? event.organizer;
 
     // Persist the enriched attendees so the event list is also up to date
-    return this.prisma.calendarEvent.update({
+    const updated = await this.prisma.calendarEvent.update({
       where: { id: eventId },
-      data: { attendees: attendees as any, organizer, syncedAt: new Date() },
+      data: {
+        attendees: attendees as any,
+        organizer,
+        // `undefined` means "leave unchanged" in Prisma; null would erase a UID
+        // the list sync had already stored.
+        ...(detail.icalUid ? { icalUid: detail.icalUid } : {}),
+        syncedAt: new Date(),
+      },
     });
+
+    // The drawer needs this to choose between "Create minutes" and "Open
+    // minutes", so it rides the detail response rather than costing a request.
+    return { ...updated, minutesDocumentId: await this.resolveMinutesDocumentId(updated) };
+  }
+
+  /**
+   * Resolve the MeetingMinutes link for one occurrence. `row` must be the row
+   * about to be returned to the caller — never a stale pre-refresh copy — so
+   * its `icalUid` and `startAt` are always from the same generation of the
+   * event. No UID means no query and a null answer.
+   */
+  private async resolveMinutesDocumentId(row: { icalUid: string | null; startAt: Date }): Promise<string | null> {
+    if (!row.icalUid) return null;
+    const link = await this.prisma.meetingMinutes.findUnique({
+      where: {
+        icalUid_occurrenceStartAt: { icalUid: row.icalUid, occurrenceStartAt: row.startAt },
+      },
+      select: { documentId: true },
+    });
+    return link?.documentId ?? null;
   }
 
   // ── Create event ──────────────────────────────────────────────────────────
@@ -239,6 +290,29 @@ export class CalendarService {
     const replyId = event.zimbraInviteId ?? event.zimbraId;
     await this.resolver.forUser(user).sendInviteReply(buildMailSession(user), replyId, verb);
     return { success: true };
+  }
+
+  // ── Minutes ──────────────────────────────────────────────────────────────
+
+  /**
+   * Create the minutes for one event. The caller must own the event row; the
+   * occurrence is the row's own `startAt`, because both providers expand a
+   * recurring series into one row per instance.
+   */
+  async createMinutes(userId: string, eventId: string, dto: CreateMinutesDto) {
+    const event = await this.prisma.calendarEvent.findFirst({
+      where: { id: eventId, userId },
+      select: { icalUid: true, startAt: true, attendees: true },
+    });
+    if (!event) throw new NotFoundException('Event not found');
+
+    return this.docs.createMinutesDocument(userId, {
+      title: dto.title,
+      content: dto.content,
+      attendeeEmails: attendeeEmails(event.attendees),
+      icalUid: event.icalUid,
+      occurrenceStartAt: event.startAt,
+    });
   }
 
   // ── Free / Busy ───────────────────────────────────────────────────────────

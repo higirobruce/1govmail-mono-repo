@@ -1,0 +1,215 @@
+import { Prisma } from '@prisma/client';
+import { DocsService } from './docs.service';
+import { PrismaService } from '../prisma/prisma.service';
+
+describe('DocsService.createMinutesDocument', () => {
+  const INPUT = {
+    title: 'Minutes — Cabinet briefing',
+    content: '{"type":"doc","content":[]}',
+    attendeeEmails: ['Chair@risa.gov.rw', 'a@risa.gov.rw', 'a@risa.gov.rw', '', 'me@risa.gov.rw'],
+    icalUid: 'cabinet@zimbra',
+    occurrenceStartAt: new Date('2026-09-17T09:00:00Z'),
+  };
+
+  function makeService(existingLink: any = null) {
+    const tx = {
+      document: { create: jest.fn().mockResolvedValue({ id: 'doc-1' }), findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
+      documentInvite: { createMany: jest.fn().mockResolvedValue({ count: 2 }) },
+      meetingMinutes: { create: jest.fn().mockResolvedValue({ id: 'link-1' }) },
+    };
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'u1', email: 'me@risa.gov.rw' }) },
+      // Only `findFirst` — the advisory position read. No `document.create`
+      // here, so moving any WRITE off the transaction client still throws.
+      document: { findFirst: jest.fn().mockResolvedValue({ position: 3 }) },
+      meetingMinutes: { findUnique: jest.fn().mockResolvedValue(existingLink) },
+      $transaction: jest.fn(async (fn: any) => fn(tx)),
+    } as unknown as PrismaService;
+    return { service: new DocsService(prisma as any, {} as any), prisma: prisma as any, tx };
+  }
+
+  it('creates the document, the invites, the share link and the link row', async () => {
+    const { service, tx } = makeService();
+
+    const result = await service.createMinutesDocument('u1', INPUT);
+
+    expect(result).toEqual({ documentId: 'doc-1', linked: true });
+    expect(tx.document.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({
+        userId: 'u1', title: INPUT.title, content: INPUT.content,
+        isShared: true, sharePermission: 'VIEW',
+      }) }),
+    );
+    expect(tx.document.create.mock.calls[0][0].data.shareToken).toBeTruthy();
+    expect(tx.meetingMinutes.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({
+        icalUid: 'cabinet@zimbra', occurrenceStartAt: INPUT.occurrenceStartAt,
+        documentId: 'doc-1', createdBy: 'u1',
+      }) }),
+    );
+  });
+
+  it('invites each attendee once, lowercased, and never the caller', async () => {
+    const { service, tx } = makeService();
+
+    await service.createMinutesDocument('u1', INPUT);
+
+    expect(tx.documentInvite.createMany).toHaveBeenCalledWith({
+      data: [
+        { documentId: 'doc-1', invitedEmail: 'chair@risa.gov.rw', invitedBy: 'u1', role: 'EDITOR' },
+        { documentId: 'doc-1', invitedEmail: 'a@risa.gov.rw', invitedBy: 'u1', role: 'EDITOR' },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it('returns the existing document when this occurrence already has minutes', async () => {
+    // Idempotent by the unique key, not by check-then-act: two attendees
+    // clicking at the same moment must land on the same document.
+    const { service, prisma, tx } = makeService({ documentId: 'doc-existing' });
+
+    const result = await service.createMinutesDocument('u1', INPUT);
+
+    expect(result).toEqual({ documentId: 'doc-existing', linked: true });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(tx.document.create).not.toHaveBeenCalled();
+  });
+
+  it('creates an UNLINKED document when the meeting has no UID', async () => {
+    const { service, tx } = makeService();
+
+    const result = await service.createMinutesDocument('u1', { ...INPUT, icalUid: null });
+
+    expect(result).toEqual({ documentId: 'doc-1', linked: false });
+    expect(tx.meetingMinutes.create).not.toHaveBeenCalled();
+    expect(tx.document.create).toHaveBeenCalled();   // the minutes still exist
+  });
+
+  it('writes every row on the TRANSACTION client, not the ambient one', async () => {
+    // A fake that hands back `prisma` itself would prove only that the writes
+    // happened during the transaction window. This asserts they ran ON it.
+    const { service, prisma, tx } = makeService();
+
+    await service.createMinutesDocument('u1', INPUT);
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(tx.document.create).toHaveBeenCalled();
+    expect(tx.documentInvite.createMany).toHaveBeenCalled();
+    expect(tx.meetingMinutes.create).toHaveBeenCalled();
+  });
+
+  it('reads the sidebar position OUTSIDE the transaction', async () => {
+    // The transaction holds a pooled connection, so it must contain no
+    // avoidable work. This read is advisory sidebar ordering, not correctness,
+    // and it is the one query in the block whose cost grows with the user's
+    // document count. createDoc already does findFirst-then-create with no
+    // transaction at all, so hoisting adds no raciness.
+    const { service, prisma, tx } = makeService();
+
+    await service.createMinutesDocument('u1', INPUT);
+
+    expect(prisma.document.findFirst).toHaveBeenCalled();
+    expect(tx.document.findFirst).not.toHaveBeenCalled();
+    // ...and the hoisted read still feeds the document it orders.
+    expect(tx.document.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ position: 4 }) }),
+    );
+  });
+
+  it("resolves to the winner's document when two attendees race on the same occurrence", async () => {
+    // Both callers miss the pre-transaction existence check above and both
+    // enter the transaction; only one `meetingMinutes.create` can win
+    // @@unique([icalUid, occurrenceStartAt]) — the other gets P2002 and its
+    // whole transaction rolls back. The loser must still land on the
+    // winner's document rather than surfacing a 500.
+    const { service, prisma, tx } = makeService();
+    tx.meetingMinutes.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint failed on the fields: (`icalUid`,`occurrenceStartAt`)',
+        { code: 'P2002', clientVersion: 'test' },
+      ),
+    );
+    prisma.meetingMinutes.findUnique
+      .mockResolvedValueOnce(null) // the pre-check: this caller doesn't see it yet
+      .mockResolvedValueOnce({ documentId: 'doc-winner' }); // post-P2002 re-fetch: the winner's row
+
+    const result = await service.createMinutesDocument('u1', INPUT);
+
+    expect(result).toEqual({ documentId: 'doc-winner', linked: true });
+  });
+
+  it('does not swallow a non-P2002 failure as if it were the race', async () => {
+    // A too-wide catch here would let a real failure (bad FK, dead
+    // connection, ...) masquerade as a successful race loss.
+    const { service, tx } = makeService();
+    tx.meetingMinutes.create.mockRejectedValue(new Error('connection reset'));
+
+    await expect(service.createMinutesDocument('u1', INPUT)).rejects.toThrow('connection reset');
+  });
+
+  it('does not swallow a NON-P2002 Prisma error as if it were the race', async () => {
+    // The plain-Error case above stops at the `instanceof` guard, so it never
+    // exercises `err.code === 'P2002'` — it would stay green if someone
+    // widened the catch to every PrismaClientKnownRequestError. P2003 is a
+    // foreign-key violation: what a genuinely bad documentId/createdBy raises,
+    // and never a race. It must reach the caller, not be reported as success.
+    const { service, prisma, tx } = makeService();
+    tx.meetingMinutes.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError(
+        'Foreign key constraint failed on the field: `createdBy`',
+        { code: 'P2003', clientVersion: 'test' },
+      ),
+    );
+    prisma.meetingMinutes.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ documentId: 'doc-should-not-be-returned' });
+
+    await expect(service.createMinutesDocument('u1', INPUT))
+      .rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    // The re-fetch belongs to the P2002 path only.
+    expect(prisma.meetingMinutes.findUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DocsService invite lookups vs. a mixed-case User.email', () => {
+  // Invites are written lowercased (both on the minutes path and, in effect,
+  // wherever an address is normalised), but `User.email` is stored exactly as
+  // the client sent it — nothing normalises it at login. A user whose stored
+  // address carries uppercase must still match their lowercased invite, or the
+  // document is silently invisible to them: no "Shared with me" row and a
+  // ForbiddenException on opening it.
+  const STORED = 'Bruce.Higiro@RISA.gov.rw';
+  const NORMALISED = 'bruce.higiro@risa.gov.rw';
+
+  function makeService() {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue({ email: ` ${STORED} ` }) },
+      documentInvite: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue({ id: 'inv-1', role: 'EDITOR' }),
+      },
+    } as any;
+    return { service: new DocsService(prisma, {} as any), prisma };
+  }
+
+  it('findSharedWithMe matches the lowercased invite address', async () => {
+    const { service, prisma } = makeService();
+
+    await service.findSharedWithMe('u1');
+
+    expect(prisma.documentInvite.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { invitedEmail: NORMALISED } }),
+    );
+  });
+
+  it('getInviteForUser matches the lowercased invite address', async () => {
+    const { service, prisma } = makeService();
+
+    const invite = await service.getInviteForUser('u1', 'doc-1');
+
+    expect(invite).toEqual({ id: 'inv-1', role: 'EDITOR' });
+    expect(prisma.documentInvite.findUnique).toHaveBeenCalledWith({
+      where: { documentId_invitedEmail: { documentId: 'doc-1', invitedEmail: NORMALISED } },
+    });
+  });
+});

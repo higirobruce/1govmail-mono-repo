@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import { CalendarService } from './calendar.service';
 import type { CalendarEventData } from './calendar.service';
+import { CreateMinutesDto } from './dto/create-minutes.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 
@@ -92,6 +93,17 @@ export class CalendarController {
     @Body() body: { verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE' },
   ) {
     return this.calendarService.rsvpEvent(req.user.sub, id, body.verb);
+  }
+
+  /** Create (or open) the minutes document for this event's occurrence. */
+  @Post('events/:id/minutes')
+  @HttpCode(HttpStatus.OK)
+  createMinutes(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CreateMinutesDto,
+  ) {
+    return this.calendarService.createMinutes(req.user.sub, id, dto);
   }
 
   /**

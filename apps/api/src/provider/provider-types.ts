@@ -92,6 +92,12 @@ export interface ProviderEvent {
   organizer?: ProviderAddress; attendees: ProviderEventAttendee[];
   inviteId: string | null;
   isRecurring: boolean;
+  /**
+   * iCalendar UID — the same string in every attendee's copy of the meeting,
+   * and the only cross-mailbox identity a meeting has. Optional because not
+   * every provider or response carries it; consumers must handle null.
+   */
+  icalUid?: string | null;
 }
 
 /**
@@ -124,6 +130,12 @@ export interface ProviderEventDetail {
   /** Optimistic-concurrency counters the provider requires on an update. */
   modifiedSequence?: number;
   rev?: number;
+  /**
+   * iCalendar UID — the same string in every attendee's copy of the meeting,
+   * and the only cross-mailbox identity a meeting has. Optional because not
+   * every provider or response carries it; consumers must handle null.
+   */
+  icalUid?: string | null;
 }
 
 export interface ProviderFreeBusy {

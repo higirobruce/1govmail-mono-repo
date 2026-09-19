@@ -123,8 +123,8 @@ describe('AgentService.run', () => {
     await svc.run('u1', [{ role: 'user', content: 'go' }], emit, new AbortController().signal);
 
     const events = frames.map((f) => f.event);
-    expect(events).toEqual(['tool_start', 'tool_result', null]);
-    expect(frames[1].data).toMatchObject({ ok: true, summary: 'echoed' });
+    expect(events).toEqual(['turn', 'tool_start', 'tool_result', null]);
+    expect(frames[2].data).toMatchObject({ ok: true, summary: 'echoed' });
 
     // second upstream call carries the fenced tool result in a role:'tool' message
     const secondBody = ai.upstream.mock.calls[1][0];
@@ -658,6 +658,35 @@ describe('AgentService.run', () => {
       expect(getThreadTool.execute).not.toHaveBeenCalled();
       const emittedToolResults = frames.filter((f) => f.event === 'tool_result').map((f) => f.data);
       expect(emittedToolResults[0].summary).toMatch(/not part of this thread/i);
+    });
+  });
+
+  describe('AgentService.run turn frame', () => {
+    it('emits the turn id before any tool frame, so the client can link tool logs', async () => {
+      const { svc, frames, emit } = makeService([
+        { choices: [{ message: { role: 'assistant', content: 'You are welcome!' } }] },
+      ]);
+
+      await svc.run('u1', [{ role: 'user', content: 'thanks' }], emit, new AbortController().signal);
+
+      const turn = frames.find((f) => f.event === 'turn');
+      expect(turn).toBeDefined();
+      expect(typeof turn!.data.turnId).toBe('string');
+      expect(turn!.data.turnId.length).toBeGreaterThan(0);
+    });
+
+    it('emits it before the first tool frame', async () => {
+      const { svc, frames, emit } = makeService(
+        [jsonToolCall('echo', '{"message":"hi"}'), sseResponse([text('Done')])],
+        [echoTool],
+      );
+
+      await svc.run('u1', [{ role: 'user', content: 'hi' }], emit, new AbortController().signal);
+
+      const turnAt = frames.findIndex((f) => f.event === 'turn');
+      const toolAt = frames.findIndex((f) => f.event === 'tool_start');
+      expect(toolAt).toBeGreaterThanOrEqual(0);  // the fixture must really call a tool
+      expect(turnAt).toBeLessThan(toolAt);
     });
   });
 });

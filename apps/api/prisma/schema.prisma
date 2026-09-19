@@ -14,48 +14,50 @@ datasource db {
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  displayName  String?
+  id            String    @id @default(cuid())
+  email         String    @unique
+  displayName   String?
   /// Mail server host generally (Zimbra, EWS, etc.)
-  zimbraHost   String
-  authToken    String?
-  csrfToken    String?
-  tokenExpiry  DateTime?
+  zimbraHost    String
+  authToken     String?
+  csrfToken     String?
+  tokenExpiry   DateTime?
   /// Mail backend for this account: 'zimbra' | 'ews' | 'memory'
-  provider      String  @default("zimbra")
+  provider      String    @default("zimbra")
   institutionId String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  sessions           Session[]
-  folders            Folder[]
-  messages           Message[]
-  contacts           Contact[]
-  calendarEvents     CalendarEvent[]
-  tasks              Task[]
-  snoozedMessages    SnoozedMessage[]
-  scheduledMessages  ScheduledMessage[]
-  emailTemplates     EmailTemplate[]
-  mailRules          MailRule[]
-  senderRules        SenderRule[]
-  mutedConversations MutedConversation[]
-  contactGroups      ContactGroup[]
-  notifications      Notification[]
-  documents              Document[]
-  sentInvites            DocumentInvite[]
-  docComments            DocComment[]
-  docCommentReactions    DocCommentReaction[]
-  docVersionsCreated     DocVersion[]
-  docActivity            DocActivity[]
-  auditLogs              AuditLog[]
-  messageCards           MessageCard[]
-  commitments            Commitment[]
-  messageEmbeddings      MessageEmbedding[]
-  aiGenerations          AiGeneration[]
-  agentToolLogs          AgentToolLog[]
-  attachmentEmbeddings   AttachmentEmbedding[]
-  aiProfile              UserAiProfile?
+  sessions             Session[]
+  folders              Folder[]
+  messages             Message[]
+  contacts             Contact[]
+  calendarEvents       CalendarEvent[]
+  tasks                Task[]
+  snoozedMessages      SnoozedMessage[]
+  scheduledMessages    ScheduledMessage[]
+  emailTemplates       EmailTemplate[]
+  mailRules            MailRule[]
+  senderRules          SenderRule[]
+  mutedConversations   MutedConversation[]
+  contactGroups        ContactGroup[]
+  notifications        Notification[]
+  documents            Document[]
+  sentInvites          DocumentInvite[]
+  docComments          DocComment[]
+  docCommentReactions  DocCommentReaction[]
+  docVersionsCreated   DocVersion[]
+  docActivity          DocActivity[]
+  auditLogs            AuditLog[]
+  messageCards         MessageCard[]
+  commitments          Commitment[]
+  messageEmbeddings    MessageEmbedding[]
+  aiGenerations        AiGeneration[]
+  agentToolLogs        AgentToolLog[]
+  attachmentEmbeddings AttachmentEmbedding[]
+  aiProfile            UserAiProfile?
+  meetingMinutes       MeetingMinutes[]
+  aiConversations      AiConversation[]
 
   @@map("users")
 }
@@ -70,6 +72,11 @@ model Institution {
   provider  String
   host      String
   ewsDomain String?
+  // Address domain users sign in with (e.g. "risa.gov.rw"), which is NOT the
+  // mail host — MINAFFET's host is webmail.minaffet.gov.rw. Login derives the
+  // institution from this instead of asking the user to pick one. Nullable so
+  // a row added without a mapping is still reachable by explicit id.
+  emailDomain String? @unique
   enabled   Boolean @default(true)
   position  Int     @default(0)
 
@@ -85,8 +92,8 @@ model AuditLog {
   id         String   @id @default(cuid())
   userId     String?
   email      String?
-  action     String   // LOGIN_SUCCESS | LOGIN_FAILURE | LOGIN_2FA_REQUIRED | LOGOUT | DOC_SHARE_ENABLED | DOC_SHARE_DISABLED | DOC_INVITE_ADDED | DOC_INVITE_REMOVED | SIGNATURE_CHANGED | PASSWORD_CHANGED | PREFS_CHANGED
-  resource   String?  // e.g. "document", "signature"
+  action     String // LOGIN_SUCCESS | LOGIN_FAILURE | LOGIN_2FA_REQUIRED | LOGOUT | DOC_SHARE_ENABLED | DOC_SHARE_DISABLED | DOC_INVITE_ADDED | DOC_INVITE_REMOVED | SIGNATURE_CHANGED | PASSWORD_CHANGED | PREFS_CHANGED
+  resource   String? // e.g. "document", "signature"
   resourceId String?
   ip         String?
   userAgent  String?
@@ -182,10 +189,10 @@ model Message {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  folder     Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
-  card       MessageCard?
-  embeddings MessageEmbedding[]
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder               Folder                @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  card                 MessageCard?
+  embeddings           MessageEmbedding[]
   attachmentEmbeddings AttachmentEmbedding[]
 
   @@unique([userId, zimbraId])
@@ -206,7 +213,7 @@ model MessageCard {
   deadlines          Json     @default("[]")
   commitmentsIMade   Json     @default("[]")
   waitingOn          String?
-  importance         String   // 'high' | 'normal' | 'low'
+  importance         String // 'high' | 'normal' | 'low'
   injectionSuspected Boolean  @default(false)
   failed             Boolean  @default(false) // tombstone: extraction gave up; invisible to reads
   extractedAt        DateTime @default(now())
@@ -228,12 +235,12 @@ model MessageEmbedding {
   id          String                       @id @default(cuid())
   messageId   String
   userId      String
-  chunkIndex  Int                          // 0-based; <= 4 chunks per message
-  model       String                       // embed-model tag; model change => re-embed
-  chunkText   String                       // the embedded text — prompt context + snippet
+  chunkIndex  Int // 0-based; <= 4 chunks per message
+  model       String // embed-model tag; model change => re-embed
+  chunkText   String // the embedded text — prompt context + snippet
   embedding   Unsupported("vector(1024)")? // null on tombstone rows; written via $executeRaw
-  failed      Boolean  @default(false)     // tombstone: embedding gave up; invisible to reads
-  extractedAt DateTime @default(now())
+  failed      Boolean                      @default(false) // tombstone: embedding gave up; invisible to reads
+  extractedAt DateTime                     @default(now())
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -251,7 +258,7 @@ model MessageEmbedding {
 model AiGeneration {
   id           String   @id @default(cuid())
   userId       String
-  kind         String   // 'dossier' | 'meeting_prep'
+  kind         String // 'dossier' | 'meeting_prep'
   targetKey    String
   content      String
   sources      Json     @default("[]") // PublicAskSource[] snapshot for chip re-render
@@ -276,25 +283,69 @@ model AgentToolLog {
   durationMs Int
   createdAt  DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String?
+
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation AiConversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([conversationId])
   @@map("agent_tool_logs")
+}
+
+// ─── Ask 1Gov chat history ───────────────────────────────────────────────────
+
+model AiConversation {
+  id         String   @id @default(cuid())
+  userId     String
+  title      String
+  scopeKind  String // 'app' | 'thread' | 'doc'
+  scopeId    String? // thread: seedMessageId · doc: docId · app: null
+  scopeLabel String? // thread subject / doc title, snapshotted at creation
+  model      String
+  createdAt  DateTime @default(now())
+  lastTurnAt DateTime
+
+  turns    AiConversationTurn[]
+  toolLogs AgentToolLog[]
+  user     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, lastTurnAt])
+  @@map("ai_conversations")
+}
+
+model AiConversationTurn {
+  id             String   @id @default(cuid())
+  conversationId String
+  userId         String
+  seq            Int
+  role           String // 'user' | 'assistant'
+  content        String
+  sources        Json     @default("[]")
+  steps          Json?
+  proposals      Json?
+  createdAt      DateTime @default(now())
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, seq])
+  @@index([userId])
+  @@map("ai_conversation_turns")
 }
 
 model Commitment {
   id             String    @id @default(cuid())
   userId         String
   conversationId String?
-  messageId      String    // source message (kept even after its card purges)
-  type           String    // 'promised' | 'waiting'
+  messageId      String // source message (kept even after its card purges)
+  type           String // 'promised' | 'waiting'
   text           String
-  dueHint        String?   // fuzzy, as stated in the mail ("by Friday")
+  dueHint        String? // fuzzy, as stated in the mail ("by Friday")
   status         String    @default("open") // open | done | dismissed | archived | promoted
   suggestResolve Boolean   @default(false)
-  hintMessageId  String?   // newest conversation message that triggered the hint
-  taskId         String?   // set when promoted to a Task
-  textHash       String    // sha256 of normalized text — dedupe key
+  hintMessageId  String? // newest conversation message that triggered the hint
+  taskId         String? // set when promoted to a Task
+  textHash       String // sha256 of normalized text — dedupe key
   extractedAt    DateTime  @default(now())
   lastActivityAt DateTime  @default(now())
   resolvedAt     DateTime?
@@ -353,17 +404,17 @@ enum TaskPriority {
 }
 
 model Task {
-  id              String       @id @default(cuid())
-  userId          String
-  title           String
-  description     String?
-  status          TaskStatus   @default(TODO)
-  priority        TaskPriority @default(MEDIUM)
-  dueDate         DateTime?
-  completedAt     DateTime?
-  linkedMessageId String?
-  linkedSubject   String?
-  assignees         Json?    @default("[]") // [{ email: string, name?: string }]
+  id                String       @id @default(cuid())
+  userId            String
+  title             String
+  description       String?
+  status            TaskStatus   @default(TODO)
+  priority          TaskPriority @default(MEDIUM)
+  dueDate           DateTime?
+  completedAt       DateTime?
+  linkedMessageId   String?
+  linkedSubject     String?
+  assignees         Json?        @default("[]") // [{ email: string, name?: string }]
   attachments       Json?
   recurrence        String?
   recurrenceEndDate DateTime?
@@ -543,7 +594,10 @@ model ContactGroup {
 model Notification {
   id        String   @id @default(cuid())
   userId    String
-  type      String   // MAIL_SNOOZE_EXPIRED | SCHEDULED_SENT | TASK_DUE | EVENT_SOON
+  // A free String, not an enum: producers add types without a migration. Today:
+  // MAIL_SNOOZE_EXPIRED | SCHEDULED_SENT | TASK_DUE | EVENT_SOON | NEW_MAIL
+  // (NEW_MAIL and EVENT_SOON are the two the client announces audibly.)
+  type      String
   title     String
   body      String?
   isRead    Boolean  @default(false)
@@ -566,29 +620,30 @@ enum SharePermission {
 }
 
 model Document {
-  id         String   @id @default(cuid())
-  userId     String
-  title      String   @default("Untitled")
-  content    String?  // TipTap JSON stringified
-  emoji      String?  // Page icon
-  parentId   String?  // Nested pages
-  position   Int      @default(0)
-  shareToken String?  @unique   // UUID; set when sharing is enabled
-  isShared   Boolean  @default(false)
-  sharePermission SharePermission @default(VIEW)   // what a share-link holder may do
-  yjsState   Bytes?               // Yjs encoded binary state for real-time collaboration
-  isFavorite Boolean  @default(false)
-  tags       String[] @default([])
-  coverColor String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id              String          @id @default(cuid())
+  userId          String
+  title           String          @default("Untitled")
+  content         String? // TipTap JSON stringified
+  emoji           String? // Page icon
+  parentId        String? // Nested pages
+  position        Int             @default(0)
+  shareToken      String?         @unique // UUID; set when sharing is enabled
+  isShared        Boolean         @default(false)
+  sharePermission SharePermission @default(VIEW) // what a share-link holder may do
+  yjsState        Bytes? // Yjs encoded binary state for real-time collaboration
+  isFavorite      Boolean         @default(false)
+  tags            String[]        @default([])
+  coverColor      String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
-  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  invites   DocumentInvite[]
-  comments  DocComment[]
-  versions  DocVersion[]
-  activity  DocActivity[]
-  embeddings DocumentEmbedding[]
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invites        DocumentInvite[]
+  comments       DocComment[]
+  versions       DocVersion[]
+  activity       DocActivity[]
+  embeddings     DocumentEmbedding[]
+  meetingMinutes MeetingMinutes[]
 
   @@index([userId])
   @@index([userId, isFavorite])
@@ -604,13 +659,13 @@ model Document {
 model DocumentEmbedding {
   id              String                       @id @default(cuid())
   documentId      String
-  chunkIndex      Int                          // 0-based chunk within the document
-  model           String                       // embed-model tag; model change => re-embed
-  chunkText       String                       // the embedded text
+  chunkIndex      Int // 0-based chunk within the document
+  model           String // embed-model tag; model change => re-embed
+  chunkText       String // the embedded text
   embedding       Unsupported("vector(1024)")? // null on tombstone rows; written via $executeRaw
-  failed          Boolean  @default(false)     // tombstone: embedding gave up; invisible to reads
-  sourceUpdatedAt DateTime                     // Document.updatedAt at extraction time; staleness check
-  extractedAt     DateTime @default(now())
+  failed          Boolean                      @default(false) // tombstone: embedding gave up; invisible to reads
+  sourceUpdatedAt DateTime // Document.updatedAt at extraction time; staleness check
+  extractedAt     DateTime                     @default(now())
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
@@ -620,18 +675,18 @@ model DocumentEmbedding {
 }
 
 model AttachmentEmbedding {
-  id          String   @id @default(cuid())
+  id          String                       @id @default(cuid())
   messageId   String
   userId      String
-  partId      String                        // Zimbra MIME part id ("!" on tombstone rows)
+  partId      String // Zimbra MIME part id ("!" on tombstone rows)
   filename    String
   mimeType    String
-  chunkIndex  Int                           // 0-based; <= 6 chunks per attachment
-  model       String                        // embed-model tag; model change => re-extract
-  chunkText   String                        // embedded text — prompt context + snippet
-  embedding   Unsupported("vector(1024)")?  // null on tombstone rows; written via $executeRaw
-  failed      Boolean  @default(false)      // tombstone: extraction/embedding gave up
-  extractedAt DateTime @default(now())
+  chunkIndex  Int // 0-based; <= 6 chunks per attachment
+  model       String // embed-model tag; model change => re-extract
+  chunkText   String // embedded text — prompt context + snippet
+  embedding   Unsupported("vector(1024)")? // null on tombstone rows; written via $executeRaw
+  failed      Boolean                      @default(false) // tombstone: extraction/embedding gave up
+  extractedAt DateTime                     @default(now())
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -665,7 +720,7 @@ model DocumentInvite {
 model DocComment {
   id         String    @id @default(cuid())
   documentId String
-  anchorId   String    // UUID matching TipTap mark's data-cid attribute
+  anchorId   String // UUID matching TipTap mark's data-cid attribute
   content    String
   authorId   String?
   authorName String?
@@ -702,16 +757,16 @@ model DocCommentReaction {
 }
 
 model DocVersion {
-  id          String   @id @default(cuid())
-  documentId  String
-  title       String
-  content     String
-  authorId    String?
-  authorName  String?
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  documentId String
+  title      String
+  content    String
+  authorId   String?
+  authorName String?
+  createdAt  DateTime @default(now())
 
-  document  Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author   User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
 
   @@index([documentId])
   @@map("doc_versions")
@@ -722,7 +777,7 @@ model DocActivity {
   documentId String
   userId     String?
   actorName  String?
-  type       String   // VIEWED | EDITED | COMMENTED | RESOLVED | MENTIONED
+  type       String // VIEWED | EDITED | COMMENTED | RESOLVED | MENTIONED
   meta       Json?
   createdAt  DateTime @default(now())
 
@@ -736,7 +791,7 @@ model DocActivity {
 // ─── Calendar ────────────────────────────────────────────────────────────────
 
 model CalendarEvent {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   userId          String
   zimbraId        String
   zimbraInviteId  String?
@@ -745,18 +800,21 @@ model CalendarEvent {
   location        String?
   startAt         DateTime
   endAt           DateTime
-  allDay          Boolean  @default(false)
-  isRecurring     Boolean  @default(false)
+  allDay          Boolean   @default(false)
+  isRecurring     Boolean   @default(false)
   recurrenceRule  String?
   organizer       String?
-  attendees       Json     @default("[]")
+  attendees       Json      @default("[]")
   calendarName    String?
   color           String?
   linkedMessageId String?
   linkedSubject   String?
   syncedAt        DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  /// iCalendar UID — the same string in every attendee's copy of this meeting.
+  /// Null when the provider did not supply one (see the meeting-minutes spec).
+  icalUid         String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -765,16 +823,36 @@ model CalendarEvent {
   @@map("calendar_events")
 }
 
+/// Links one meeting OCCURRENCE to the single document that is its minutes.
+/// Keyed by the iCalendar UID plus the occurrence's start, because a UID is
+/// shared by every occurrence of a recurring series and weekly meetings have
+/// weekly minutes.
+model MeetingMinutes {
+  id                String   @id @default(cuid())
+  icalUid           String
+  occurrenceStartAt DateTime
+  documentId        String
+  createdBy         String
+  createdAt         DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  creator  User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@unique([icalUid, occurrenceStartAt])
+  @@index([documentId])
+  @@map("meeting_minutes")
+}
+
 // ─── AI profile ──────────────────────────────────────────────────────────────
 
 model UserAiProfile {
   id           String   @id @default(cuid())
   userId       String   @unique
-  instructions String?             // free-text preferences, hard cap 500 chars (DTO-enforced)
-  jobTitle     String?             // cap 80
-  institution  String?             // cap 80
-  department   String?             // cap 80
-  language     String?             // 'en' | 'fr' | 'rw' | null(auto)
+  instructions String? // free-text preferences, hard cap 500 chars (DTO-enforced)
+  jobTitle     String? // cap 80
+  institution  String? // cap 80
+  department   String? // cap 80
+  language     String? // 'en' | 'fr' | 'rw' | null(auto)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

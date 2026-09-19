@@ -239,14 +239,23 @@ export const api = {
         `/calendar/freebusy?email=${encodeURIComponent(email)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
       );
     },
+    /** Create (or open) the minutes document for this event's occurrence.
+     *  `linked: false` means the meeting had no iCalendar UID, so this
+     *  document is not the canonical record for other attendees. */
+    createMinutes: (eventId: string, body: { title: string; content: string }) => {
+      if (USE_MOCK) return delay({ documentId: 'mock-doc', linked: true });
+      return request<{ documentId: string; linked: boolean }>(
+        `/calendar/events/${eventId}/minutes`,
+        { method: 'POST', body: JSON.stringify(body) },
+      );
+    },
   },
 
   auth: {
-    institutions: () => {
-      if (USE_MOCK) return delay<Array<{ id: string; label: string }>>([{ id: 'memory', label: 'Demo (local)' }]);
-      return request<Array<{ id: string; label: string }>>('/auth/institutions');
-    },
-    login: (email: string, password: string, institution: string) => {
+    // No `institution` argument: the server derives it from the address domain.
+    // GET /auth/institutions still exists for ops and non-web clients, but the
+    // login form no longer needs it.
+    login: (email: string, password: string) => {
       if (USE_MOCK)
         return delay({ accessToken: 'mock-token', user: { id: 'u1', email, displayName: 'Demo User', zimbraHost: 'mail.company.com' } });
       return request<
@@ -254,7 +263,7 @@ export const api = {
         | { requiresTwoFactor: true; twoFactorToken: string }
       >('/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password, institution }),
+        body: JSON.stringify({ email, password }),
       });
     },
     twoFactor: (twoFactorToken: string, code: string) => {
@@ -396,6 +405,16 @@ export const api = {
         body: JSON.stringify({ folderId }),
       });
     },
+
+    /** Rescue a message from the spam folder. Also clears whatever block put it
+     *  there; `unblocked` says whether a rule actually changed. */
+    notSpam: (messageId: string) => {
+      if (USE_MOCK) return delay({ success: true, unblocked: false });
+      return request<{ success: boolean; unblocked: boolean }>(
+        `/mail/messages/${messageId}/not-spam`,
+        { method: 'PATCH' },
+      );
+    },
     createFolder: (name: string) => {
       if (USE_MOCK) return delay({ id: `f-${Date.now()}`, name, path: `/${name}`, unreadCount: 0, totalCount: 0 });
       return request<any>('/mail/folders', {
@@ -432,6 +451,19 @@ export const api = {
       if (!res.ok) throw new Error('Failed to download attachment');
       const blob = await res.blob();
       return URL.createObjectURL(blob);
+    },
+
+    /** Inline image as a blob: URL. The iframe is sandboxed and cannot send a
+     *  bearer token, so the bytes are fetched here and handed over as a blob. */
+    inlineImage: async (messageId: string, partId: string): Promise<string> => {
+      if (USE_MOCK) return '';
+      const token = getToken();
+      const res = await fetch(
+        `${API_BASE}/mail/messages/${messageId}/inline/${encodeURIComponent(partId)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      if (!res.ok) throw new Error('Failed to load inline image');
+      return URL.createObjectURL(await res.blob());
     },
 
     // ── Snooze ────────────────────────────────────────────────────────────────
@@ -922,6 +954,40 @@ export const api = {
     getOne: (token: string) => request<Doc>(`/docs/shared/${token}`),
     update: (token: string, data: Partial<{ title: string; content: string }>) =>
       request<Doc>(`/docs/shared/${token}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  },
+
+  aiHistory: {
+    /** Saved Ask 1Gov conversations, newest first. `q` searches titles and turn text. */
+    list: (opts?: { q?: string; cursor?: string }) => {
+      if (USE_MOCK) return delay<{ items: any[]; nextCursor: string | null }>({ items: [], nextCursor: null });
+      const p = new URLSearchParams();
+      if (opts?.q) p.set('q', opts.q);
+      if (opts?.cursor) p.set('cursor', opts.cursor);
+      const qs = p.toString();
+      return request<{ items: any[]; nextCursor: string | null }>(
+        `/ai/conversations${qs ? `?${qs}` : ''}`,
+      );
+    },
+    get: (id: string) => {
+      if (USE_MOCK) return delay<any>(null);
+      return request<any>(`/ai/conversations/${id}`);
+    },
+    create: (body: any) => {
+      if (USE_MOCK) return delay<{ id: string }>({ id: 'mock' });
+      return request<{ id: string }>('/ai/conversations', { method: 'POST', body: JSON.stringify(body) });
+    },
+    append: (id: string, body: any) => {
+      if (USE_MOCK) return delay<void>(undefined as any);
+      return request<void>(`/ai/conversations/${id}/turns`, { method: 'POST', body: JSON.stringify(body) });
+    },
+    remove: (id: string) => {
+      if (USE_MOCK) return delay<void>(undefined as any);
+      return request<void>(`/ai/conversations/${id}`, { method: 'DELETE' });
+    },
+    removeAll: () => {
+      if (USE_MOCK) return delay<{ deleted: number }>({ deleted: 0 });
+      return request<{ deleted: number }>('/ai/conversations', { method: 'DELETE' });
+    },
   },
 };
 

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -32,6 +33,17 @@ export class NotificationsService {
     return { success: true };
   }
 
+  /**
+   * Insert one notification row.
+   *
+   * `client` exists so a caller can put this insert in ITS OWN transaction.
+   * `MailService.notifyNewMail` needs that: it claims the arrival by advancing
+   * the stored Inbox baseline, and a crash between the claim and this insert
+   * would leave the baseline moved with no row to show for it — the next sync
+   * then sees no delta and the arrival is lost. Passing the transaction client
+   * makes the pair atomic. Defaults to the shared client, so every other
+   * caller is unaffected.
+   */
   async createNotification(
     userId: string,
     type: string,
@@ -39,8 +51,9 @@ export class NotificationsService {
     body?: string,
     actionUrl?: string,
     metadata?: Record<string, unknown>,
+    client: Prisma.TransactionClient = this.prisma,
   ) {
-    return this.prisma.notification.create({
+    return client.notification.create({
       data: { userId, type, title, body, actionUrl, metadata: metadata as any },
     });
   }

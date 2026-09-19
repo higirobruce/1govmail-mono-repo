@@ -8,6 +8,15 @@ function shortToken(): string {
   const bytes = randomBytes(16);
   return Array.from(bytes, (b) => CHARS[b % CHARS.length]).join('');
 }
+
+// `DocumentInvite.invitedEmail` is written lowercased, while `User.email` is
+// stored exactly as the client sent it at login (nothing normalises it and the
+// column is plain, not citext). Every lookup that joins the two through an
+// address has to normalise, or the match silently fails for any user whose
+// stored address carries uppercase or stray whitespace.
+function normaliseEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
 import {
   ConflictException,
   ForbiddenException,
@@ -68,7 +77,10 @@ export class DocsService {
     if (!user) return [];
 
     const invites = await this.prisma.documentInvite.findMany({
-      where: { invitedEmail: user.email },
+      // Invites are stored lowercased but `User.email` is kept exactly as the
+      // client sent it, so the lookup must normalise or a mixed-case user
+      // silently sees none of the documents shared with them.
+      where: { invitedEmail: normaliseEmail(user.email) },
       include: {
         document: {
           select: {
@@ -272,6 +284,145 @@ export class DocsService {
         position:   (last?.position ?? -1) + 1,
       },
     });
+  }
+
+  /**
+   * Create the minutes document for one meeting occurrence: the document, an
+   * EDITOR invite per attendee, the read-only share link, and the link row —
+   * all in ONE transaction, so a failure leaves nothing half-made.
+   *
+   * Idempotent by the link table's unique key rather than by checking first:
+   * two attendees clicking at the same moment must land on the same document.
+   *
+   * The transaction is deliberately small. Content arrives already composed by
+   * the caller, nothing inside it talks to a mail provider, and the invites go
+   * in as one `createMany` — an interactive transaction holds a pooled
+   * connection, and at 5,000 mailboxes that is a load-correlated failure.
+   */
+  async createMinutesDocument(
+    userId: string,
+    input: {
+      title: string;
+      content: string;
+      attendeeEmails: string[];
+      icalUid: string | null;
+      occurrenceStartAt: Date;
+    },
+  ): Promise<{ documentId: string; linked: boolean }> {
+    if (input.icalUid) {
+      const existing = await this.prisma.meetingMinutes.findUnique({
+        where: {
+          icalUid_occurrenceStartAt: {
+            icalUid: input.icalUid,
+            occurrenceStartAt: input.occurrenceStartAt,
+          },
+        },
+        select: { documentId: true },
+      });
+      if (existing) return { documentId: existing.documentId, linked: true };
+    }
+
+    const me = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    const mine = (me?.email ?? '').trim().toLowerCase();
+
+    // Lowercase, drop blanks, drop the caller (they own it), and dedupe while
+    // preserving the order the organizer listed people in.
+    const invitees = [...new Set(
+      input.attendeeEmails
+        .map((e) => (e ?? '').trim().toLowerCase())
+        .filter((e) => e.length > 0 && e !== mine),
+    )];
+
+    // Deliberately OUTSIDE the transaction: this is advisory sidebar ordering,
+    // not correctness, and it is the one query here whose cost grows with the
+    // user's document count. An interactive transaction holds a pooled
+    // connection, so nothing avoidable belongs inside it. createDoc already
+    // does findFirst-then-create with no transaction at all, so document
+    // position is best-effort in this codebase either way.
+    const last = await this.prisma.document.findFirst({
+      where: { userId, parentId: null },
+      orderBy: { position: 'desc' },
+      select: { position: true },
+    });
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const doc = await tx.document.create({
+          data: {
+            userId,
+            title: input.title,
+            content: input.content,
+            emoji: '📝',
+            parentId: null,
+            position: (last?.position ?? -1) + 1,
+            // Sharing is on from the start: being sent the minutes is the whole
+            // point, and VIEW keeps a forwarded link from rewriting the record.
+            isShared: true,
+            shareToken: shortToken(),
+            sharePermission: SharePermission.VIEW,
+          },
+          select: { id: true },
+        });
+
+        if (invitees.length) {
+          await tx.documentInvite.createMany({
+            data: invitees.map((invitedEmail) => ({
+              documentId: doc.id,
+              invitedEmail,
+              invitedBy: userId,
+              role: InviteRole.EDITOR,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        if (input.icalUid) {
+          await tx.meetingMinutes.create({
+            data: {
+              icalUid: input.icalUid,
+              occurrenceStartAt: input.occurrenceStartAt,
+              documentId: doc.id,
+              createdBy: userId,
+            },
+          });
+        }
+
+        return { documentId: doc.id, linked: !!input.icalUid };
+      });
+    } catch (err) {
+      // Two attendees clicking at the same moment can both miss the
+      // pre-transaction existence check above and both enter the
+      // transaction; only one `meetingMinutes.create` can win
+      // @@unique([icalUid, occurrenceStartAt]) — the other violates it with
+      // P2002 and its whole transaction rolls back (no orphaned document or
+      // invites survive that rollback). Treat that as "someone else already
+      // created it" rather than failing the loser's request: re-fetch the
+      // winner's row and hand back its documentId. Any other error code (a
+      // bad foreign key, a dead connection, ...) must still propagate.
+      const isRaceLoss =
+        input.icalUid != null &&
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002';
+      if (!isRaceLoss) throw err;
+
+      const winner = await this.prisma.meetingMinutes.findUnique({
+        where: {
+          icalUid_occurrenceStartAt: {
+            icalUid: input.icalUid as string,
+            occurrenceStartAt: input.occurrenceStartAt,
+          },
+        },
+        select: { documentId: true },
+      });
+      // A P2002 on this constraint with no row behind it afterward means
+      // something other than this race happened — don't invent a result.
+      if (!winner) throw err;
+
+      return { documentId: winner.documentId, linked: true };
+    }
   }
 
   // ── Share link ────────────────────────────────────────────────────────────
@@ -789,7 +940,12 @@ export class DocsService {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
     if (!user) return null;
     return this.prisma.documentInvite.findUnique({
-      where: { documentId_invitedEmail: { documentId: docId, invitedEmail: user.email } },
+      // Normalised for the same reason as findSharedWithMe: the write side
+      // lowercases, `User.email` is un-normalised, and a case mismatch here
+      // reads as "no invite" and throws ForbiddenException.
+      where: {
+        documentId_invitedEmail: { documentId: docId, invitedEmail: normaliseEmail(user.email) },
+      },
     });
   }
 

@@ -321,11 +321,13 @@ export interface ZimbraAppointment {
   inst?: ZimbraAppointmentInstance[];
   or?: ZimbraCalUser;
   at?: ZimbraCalUser[];
+  uid?: string;                // iCalendar UID — not on every Zimbra version's search hit
 }
 
 export interface ZimbraInviteComponent {
   at?: ZimbraCalUser[];
   or?: ZimbraCalUser;
+  uid?: string;                // iCalendar UID — always present on the invite component
 }
 
 export interface ZimbraInvite {
@@ -338,6 +340,7 @@ export interface ZimbraAppointmentDetail {
   id?: string | number;
   ms?: string | number;       // modifiedSequence
   rev?: string | number;
+  uid?: string;               // iCalendar UID — the `appt` node generally carries it too
   // The JSON bridge collapses single-item arrays into plain objects, so this
   // arrives either way.
   inv?: ZimbraInvite | ZimbraInvite[];
@@ -400,6 +403,10 @@ export function mapZimbraAppointment(raw: ZimbraAppointment): ProviderEvent | nu
     attendees: Array.isArray(raw.at)
       ? raw.at.map((a) => ({ email: a.a as string, name: a.d ?? undefined }))
       : [],
+    // Zimbra puts uid on the appointment in most versions and always on the
+    // invite component of a GetAppointment detail. Either is the same string
+    // in every attendee's mailbox.
+    icalUid: raw.uid ?? null,
   };
 }
 
@@ -445,6 +452,14 @@ export function mapZimbraAppointmentDetail(raw: ZimbraAppointmentDetail): Provid
     inviteMessageId: invMsgId != null ? String(invMsgId) : null,
     modifiedSequence: raw.ms != null ? Number(raw.ms) : undefined,
     rev: raw.rev != null ? Number(raw.rev) : undefined,
+    // NOT read through `comp` above: that accessor is deliberately array-only
+    // so an object `inv` falls through to the top-level attendee/organizer
+    // legs, and unifying it would change the REST payload. icalUid is a new
+    // field with no behaviour to preserve, so it resolves an object `inv` via
+    // firstOf() — the detail path is the authoritative UID source, and an
+    // array-only read here silently disables cross-attendee minutes for every
+    // bridge-collapsed Zimbra response.
+    icalUid: firstOf(raw.inv)?.comp?.[0]?.uid ?? raw.uid ?? null,
   };
 }
 

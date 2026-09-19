@@ -7,6 +7,8 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useConfirmStore } from '@/stores/confirm.store';
 import { useThemeStore, type FontSize } from '@/stores/theme.store';
 import { useAIStore } from '@/stores/ai.store';
+import { useNotificationsStore, type AudibleType, type ToneName } from '@/stores/notifications.store';
+import { TONES, playTone, unlockAudio } from '@/lib/notifications/chime';
 import { AI_LOCKED } from '@/lib/ai/config';
 import { api, type SettingsResponse } from '@/lib/api';
 import { AIClient } from '@/lib/ai/client';
@@ -18,7 +20,7 @@ import {
 import {
   normalizeProfileDraft, mergeSuggestions, AI_PROFILE_FIELD_MAX_CHARS,
   type AiProfileDraft,
-} from './ai-profile-helpers';
+} from '@/lib/ai/profileDraft';
 import Sidebar from '@/components/layout/Sidebar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -32,7 +34,7 @@ import {
   Check, ChevronRight, ArrowLeft, RotateCcw, FileSignature,
   Palmtree, Settings2, Bot, AlertTriangle, Ban, IdCard, Sparkles,
   Bold, Italic, Underline as UnderlineIcon, Image as ImageIcon,
-  Monitor, LogOut,
+  Monitor, LogOut, Bell,
 } from 'lucide-react';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -71,16 +73,21 @@ const ZimbraAwareImage = TiptapImage.extend({
 type SettingsData = SettingsResponse;
 type Signature = SettingsResponse['signatures'][number];
 
-type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'ai-profile' | 'security';
+type Section = 'profile' | 'signatures' | 'vacation' | 'blocked-senders' | 'preferences' | 'ai' | 'ai-profile' | 'notifications' | 'security';
 
 // ── Toggle Switch ──────────────────────────────────────────────────────────────
 
-function Switch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+function Switch({ checked, onChange, disabled, ariaLabel }: {
+  checked: boolean; onChange: (v: boolean) => void; disabled?: boolean;
+  /** Accessible name, for a switch whose visible label is not its own text. */
+  ariaLabel?: string;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
@@ -101,15 +108,18 @@ function Switch({ checked, onChange, disabled }: { checked: boolean; onChange: (
 
 // ── Select ─────────────────────────────────────────────────────────────────────
 
-function Select({ value, onChange, options }: {
+function Select({ value, onChange, options, ariaLabel }: {
   value: string;
   onChange: (v: string) => void;
   options: Array<{ value: string; label: string }>;
+  /** Accessible name, for a select whose visible label sits in a SettingRow. */
+  ariaLabel?: string;
 }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      aria-label={ariaLabel}
       className="h-8 px-2 text-sm rounded-md border border-border/50 bg-muted/30 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/20 focus:border-primary/30"
     >
       {options.map((o) => (
@@ -481,6 +491,7 @@ export default function SettingsPage() {
         )}
         <NavItem icon={Ban}           label="Blocked Senders" active={section === 'blocked-senders'} onClick={() => setSection('blocked-senders')} />
         <NavItem icon={Settings2}     label="Preferences"   active={section === 'preferences'} onClick={() => setSection('preferences')} />
+        <NavItem icon={Bell}          label="Notifications" active={section === 'notifications'} onClick={() => setSection('notifications')} />
         {!AI_LOCKED && (
           <NavItem icon={Bot}           label="AI Assistant"  active={section === 'ai'}          onClick={() => setSection('ai')} />
         )}
@@ -491,7 +502,9 @@ export default function SettingsPage() {
       {/* ── Main content ── */}
       <ScrollArea className="flex-1 min-w-0 min-h-0 md:h-full">
         <div className="max-w-2xl mx-auto px-4 py-6 sm:px-6 md:px-8 md:py-8">
-          {section === 'ai-profile' ? (
+          {section === 'notifications' ? (
+            <NotificationsSection />
+          ) : section === 'ai-profile' ? (
             // AI Profile fetches its own DB-only data (never Zimbra-backed) —
             // it must render even when the Zimbra settings load below fails
             // or is still pending, so it lives OUTSIDE the loading/data guard.
@@ -1845,3 +1858,90 @@ function SecuritySection({ data, caps }: { data: SettingsData; caps: SettingsCap
     </div>
   );
 }
+
+/**
+ * Human names for the tones. `soft`, `ping`, `double` and `chord` are store
+ * keys, not English — and the record is keyed by ToneName so a fifth tone
+ * cannot be added to TONES without a label being written here too.
+ */
+const TONE_LABELS: Record<ToneName, string> = {
+  soft:   'Soft chime',
+  ping:   'Ping',
+  double: 'Double beep',
+  chord:  'Chord',
+};
+
+const TONE_OPTIONS = (Object.keys(TONES) as ToneName[]).map((tone) => ({
+  value: tone,
+  label: TONE_LABELS[tone],
+}));
+
+export function NotificationsSection() {
+  const { soundEnabled, volume, tones, setSoundEnabled, setVolume, setTone } = useNotificationsStore();
+
+  const toggleSound = async (next: boolean) => {
+    setSoundEnabled(next);
+    // Ask for OS-notification permission at the moment the user shows they want
+    // to be alerted — never on page load, which is how permission gets denied
+    // permanently.
+    if (next && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      try { await Notification.requestPermission(); } catch { /* denied is fine */ }
+    }
+  };
+
+  const test = (type: AudibleType) => {
+    unlockAudio();           // this click is a real user gesture
+    void playTone(tones[type], volume);
+  };
+
+  const toneRow = (type: AudibleType, label: string, description: string, testLabel: string) => (
+    <SettingRow label={label} description={description}>
+      <div className="flex items-center gap-2">
+        <Select
+          ariaLabel={label}
+          value={tones[type]}
+          onChange={(v) => setTone(type, v as ToneName)}
+          options={TONE_OPTIONS}
+        />
+        <Button size="sm" variant="outline" aria-label={testLabel} onClick={() => test(type)} className="h-8">
+          Test
+        </Button>
+      </div>
+    </SettingRow>
+  );
+
+  return (
+    <div>
+      <SectionHeader
+        title="Notifications"
+        description="New mail and calendar reminders can make a sound. Stored on this device."
+      />
+      <div className="divide-y divide-border/30">
+        <SettingRow
+          label="Play a sound for notifications"
+          description="A chime for new mail and calendar reminders. Turning this on is also when the app asks to show system notifications."
+        >
+          <Switch
+            checked={soundEnabled}
+            onChange={(v) => void toggleSound(v)}
+            ariaLabel="Play a sound for notifications"
+          />
+        </SettingRow>
+
+        <SettingRow label="Volume" description="How loud the chimes are on this device.">
+          <input
+            type="range" min={0} max={1} step={0.1}
+            aria-label="Volume"
+            value={volume}
+            onChange={(e) => setVolume(Number(e.target.value))}
+            className="w-32 accent-primary"
+          />
+        </SettingRow>
+
+        {toneRow('NEW_MAIL', 'New mail sound', 'Plays when a message arrives.', 'Test the new mail sound')}
+        {toneRow('EVENT_SOON', 'Calendar reminder sound', 'Plays 30 minutes before an event starts.', 'Test the calendar reminder sound')}
+      </div>
+    </div>
+  );
+}
+

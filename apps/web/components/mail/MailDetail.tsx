@@ -7,14 +7,16 @@ import {
   Paperclip, Download, Loader2, MoreHorizontal,
   ChevronLeft, ChevronRight, X, Mail, User, Calendar,
   Eye, File, FileText, Image as ImageIcon, Printer, BellOff, Bell, AlarmClock,
-  ScrollText, X as XIcon,
+  ScrollText, X as XIcon, ShieldOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
-import { prepareEmailHtml } from '@/lib/emailRender';
-import { buildEmailFrameCss } from '@/lib/emailFrameCss';
+import { prepareEmailHtml, rewriteCidRefs } from '@/lib/emailRender';
+import { useInlineImages } from '@/lib/mail/useInlineImages';
+import { buildEmailFrameCss, emailFrameColors } from '@/lib/emailFrameCss';
+import { repairEmailContrast } from '@/lib/emailContrastRepair';
 import { useIsDark } from '@/hooks/useIsDark';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { downloadAll } from '@/lib/downloadAll';
@@ -74,6 +76,8 @@ interface MailDetailProps {
   onDelete?: () => void;
   onToggleStar?: () => void;
   onMoveToInbox?: () => void;
+  /** Only provided while viewing the spam folder. */
+  onNotSpam?: () => void;
   folders?: FolderItem[];
   onMoveToFolder?: (folderId: string) => void;
   onMute?: () => void;
@@ -130,17 +134,29 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-// bodyHtml is pre-processed server-side: inline images are already embedded as
-// base64 data URIs, so EmailBody renders immediately with no async fetching.
-// External images (http/https src) are also handled: the CSP meta tag below
-// upgrades insecure http:// requests to https:// to avoid mixed-content blocks.
+// bodyHtml keeps its `cid:` references: inline images are NOT embedded in the
+// body any more, they are fetched from the cache route and resolved to blob:
+// URLs by useInlineImages. The body therefore renders immediately with the
+// images still in flight, and rewriteCidRefs swaps each `cid:` for its blob
+// URL as they arrive — in batches of at most one per 250 ms, because every new
+// map rebuilds this iframe's srcDoc from scratch.
+// External images (http/https src) are handled separately: the CSP meta tag
+// below upgrades insecure http:// requests to https:// to avoid mixed-content
+// blocks.
 function EmailBody({
   html,
   text,
+  messageId = null,
+  inlineImages,
 }: {
   html: string | null;
   text: string | null;
+  messageId?: string | null;
+  inlineImages?: Array<{ cid: string; partId: string }>;
 }) {
+  // Called unconditionally, above the no-html early return below, to keep hook
+  // order stable across renders.
+  const inlineUrls = useInlineImages(messageId, inlineImages);
   // Read the user's "consistent email display" preference from localStorage.
   // Evaluated once per mount (remount happens on message switch via key=).
   // Default: true (normalize on). Set to false only when user disables it.
@@ -170,6 +186,11 @@ function EmailBody({
     resizeFrame();
     const doc = iframeRef.current?.contentDocument;
     if (!doc) return;
+    // Raw dark mode only: normalizeCss already forces its own palette over
+    // every inline style, so there is nothing left to repair when it is on.
+    if (isDark && !normalizeStyles) {
+      repairEmailContrast(doc, emailFrameColors(true));
+    }
     // Attach one-shot listeners to every image that hasn't loaded yet so the
     // iframe grows correctly after lazy / external images finish downloading.
     doc.querySelectorAll('img').forEach((img) => {
@@ -178,7 +199,7 @@ function EmailBody({
         img.addEventListener('error', resizeFrame, { once: true });
       }
     });
-  }, [resizeFrame]);
+  }, [resizeFrame, isDark, normalizeStyles]);
 
   // Prepare (dfsrc fix, data-URI fix, sanitize — memoized in prepareEmailHtml)
   // and build the srcDoc once per body; the hook runs before the no-html early
@@ -190,13 +211,13 @@ function EmailBody({
   // can't see the app's `.dark` class, so its palette is baked in here.
   const srcDoc = useMemo(() => {
     if (!html) return null;
-    const body = prepareEmailHtml(html);
+    const body = prepareEmailHtml(rewriteCidRefs(html, inlineUrls));
     const css = buildEmailFrameCss({ dark: isDark, normalize: normalizeStyles });
     // <base target="_blank">: the frame is sandboxed without top-navigation, so
     // an in-frame link click would otherwise be silently blocked — route every
     // link to a new tab instead (pairs with allow-popups on the iframe).
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>${css}</style></head><body>${body}</body></html>`;
-  }, [html, normalizeStyles, isDark]);
+  }, [html, normalizeStyles, isDark, inlineUrls]);
 
   if (!srcDoc) {
     return (
@@ -247,6 +268,7 @@ export default function MailDetail({
   onDelete,
   onToggleStar,
   onMoveToInbox,
+  onNotSpam,
   folders = [],
   onMoveToFolder,
   onMute,
@@ -553,6 +575,9 @@ export default function MailDetail({
           {onMoveToInbox && (
             <ActionBtn icon={Inbox} label="Move to Inbox" onClick={onMoveToInbox} />
           )}
+          {onNotSpam && (
+            <ActionBtn icon={ShieldOff} label="Not spam" onClick={onNotSpam} />
+          )}
           {labelFolders.length > 0 && onMoveToFolder && (
             <div ref={folderDropdownRef} className="relative">
               <Tooltip>
@@ -766,6 +791,8 @@ export default function MailDetail({
               key={message.id}
               html={message.bodyHtml}
               text={message.bodyText}
+              messageId={message.id}
+              inlineImages={message.inlineImages}
             />
 
             {/* Inline attachments bar — shown below the email body so the user

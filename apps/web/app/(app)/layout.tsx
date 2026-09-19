@@ -16,6 +16,7 @@ import { OfflineProvider } from '@/lib/offline/provider';
 import { AskLauncher } from '@/components/ai/AskLauncher';
 import { AiProfileSyncMount } from '@/components/ai/AiProfileSyncMount';
 import PersonDossierPanel from '@/components/people/PersonDossierPanel';
+import { NotificationAlerts } from '@/components/notifications/NotificationAlerts';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +31,7 @@ export default function AppLayout({
       <AskLauncher />
       <PersonDossierPanel />
       <AiProfileSyncMount />
+      <NotificationAlerts />
     </OfflineProvider>
   );
 }

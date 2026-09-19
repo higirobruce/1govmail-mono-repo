@@ -6,7 +6,7 @@ import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { ProviderAuthResult } from '../provider/provider-types';
 import { MailProvider } from '../provider/mail-provider.interface';
 import { AuditService } from '../common/audit/audit.service';
-import { InstitutionRegistry } from './institution.registry';
+import { emailDomainOf, InstitutionRegistry } from './institution.registry';
 import { LoginDto } from './dto/login.dto';
 
 export interface AuthContext {
@@ -17,6 +17,21 @@ export interface AuthContext {
 interface ResolvedInstitution {
   provider: string;
   institutionId: string;
+}
+
+/**
+ * The institution dropdown is gone, so the only unresolved-institution failure
+ * a real user can reach is "my address domain is not registered" — say exactly
+ * that, and name the domain they typed (which tells them nothing they did not
+ * just type). An explicit institution/zimbraHost only arrives from an older
+ * client, where naming a domain would be misleading.
+ */
+function unresolvedInstitutionMessage(dto: LoginDto): string {
+  if (dto.institution || dto.zimbraHost) return 'Unknown institution.';
+  const domain = emailDomainOf(dto.email);
+  return domain
+    ? `${domain} isn't set up on 1Gov Mail yet — contact your IT administrator.`
+    : 'Enter your full work email address.';
 }
 
 @Injectable()
@@ -34,13 +49,16 @@ export class AuthService {
   async login(dto: LoginDto, ctx: AuthContext = {}) {
     const { email, password } = dto;
 
+    // No institution and no legacy host means the current web client, which
+    // sends email + password only — the institution comes from the address
+    // domain. Explicit values still win so older clients are unaffected.
     const inst = dto.institution
       ? await this.institutionRegistry.resolve(dto.institution)
       : dto.zimbraHost
         ? await this.institutionRegistry.resolveByHost(dto.zimbraHost)
-        : null;
+        : await this.institutionRegistry.resolveByEmail(email);
     if (!inst) {
-      throw new BadRequestException('Unknown institution. Pick your institution from the list.');
+      throw new BadRequestException(unresolvedInstitutionMessage(dto));
     }
     if (dto.zimbraHost && !dto.institution) {
       this.logger.warn(`Legacy zimbraHost login for ${inst.id} — client should send institution`);

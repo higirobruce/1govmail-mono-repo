@@ -693,3 +693,66 @@ describe('backfillMessage — the MIME-parameter forms real mail uses', () => {
     expect((c.write.mock.calls[0][3] as Buffer).toString()).toBe('fakepng');
   });
 });
+
+// The scanner's reject paths. Every one of these leaves the occurrence exactly
+// as it is — on a corpus this pass rewrites in place, "not sure" must mean
+// "don't touch", never "best guess".
+describe('backfillMessage — occurrences the scanner refuses to claim', () => {
+  const only = (bodyHtml: string) => ({
+    id: 'm1', userId: 'u1', bodyHtml,
+    inlineImages: [{ cid: 'c1', partId: '1.1', mimeType: 'image/png' }],
+  });
+
+  it('ignores a data uri in a CSS url(), which is not a src attribute', async () => {
+    const c = cache();
+    const r = await backfillMessage(only(`<div style="background:url(data:image/png;base64,${PNG})">`) as any, c);
+    expect(r.written).toBe(0);
+    expect(c.write).not.toHaveBeenCalled();
+    expect(r.html).toContain('data:image/png;base64');
+  });
+
+  it('ignores an unquoted src attribute', async () => {
+    const c = cache();
+    const r = await backfillMessage(only(`<img src=data:image/png;base64,${PNG}>`) as any, c);
+    expect(r.written).toBe(0);
+    expect(r.html).toContain('data:image/png;base64');
+  });
+
+  it('ignores an attribute whose name merely ends in src', async () => {
+    const c = cache();
+    const r = await backfillMessage(only(`<img data-zimbra-src="data:image/png;base64,${PNG}">`) as any, c);
+    expect(r.written).toBe(0);
+    expect(r.html).toContain('data:image/png;base64');
+  });
+
+  it('ignores a payload whose closing quote never arrives (a truncated body)', async () => {
+    const c = cache();
+    const r = await backfillMessage(only(`<img src="data:image/png;base64,${PNG}`) as any, c);
+    expect(r.written).toBe(0);
+  });
+
+  it('will not cross out of the tag hunting for the base64 marker', async () => {
+    // `data:image/png` with no `;base64,` of its own, and a later tag that has
+    // one. Pairing across the tag boundary would rewrite the wrong element.
+    const c = cache();
+    const r = await backfillMessage(
+      only(`<img src="data:image/png"><b>x</b><span>;base64,${PNG}"</span>`) as any, c,
+    );
+    expect(r.written).toBe(0);
+    expect(c.write).not.toHaveBeenCalled();
+  });
+
+  it('will not accept a MIME parameter span longer than a real one could be', async () => {
+    const c = cache();
+    const long = 'a'.repeat(600);
+    const r = await backfillMessage(only(`<img src="data:image/png; name=${long}.png;base64,${PNG}">`) as any, c);
+    expect(r.written).toBe(0);
+  });
+
+  it('accepts a single-quoted src attribute and keeps that quote', async () => {
+    const c = cache();
+    const r = await backfillMessage(only(`<img src='data:image/png; name=a.png;base64,${PNG}'>`) as any, c);
+    expect(r.html).toBe("<img src='cid:c1'>");
+    expect(r.written).toBe(1);
+  });
+});

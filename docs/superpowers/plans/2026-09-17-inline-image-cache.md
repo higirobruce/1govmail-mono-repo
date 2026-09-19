@@ -1227,20 +1227,29 @@ git commit -m "feat(api): backfill embedded images into the cache, and drop the 
       `sudo install -d -o risa1 -g risa1 -m 700 /opt/govmail/imgcache` (user `test` on `.155`).
 - [ ] Deploy api + web to both VMs. **No migration in this release** — unlike the last two.
 - [ ] **Re-run the mapping check per box before its backfill** (spec §6.1) — it is cheap and the answer could differ on a box synced since.
-- [ ] **Size the two caps before the backfill — they are not code changes, they are per-box
-      decisions the final review flagged (C3, C4).**
-      - Measure the per-image size distribution on `.155` first. `INLINE_IMAGE_MAX_BYTES`
-        defaults to 5 MB, and the tail this feature exists for — 648 bodies holding 13 GB,
-        one of them 133 MB — is exactly where single images exceed it. Images over the cap
-        stay embedded. Raise the env var **for the backfill run only** if the distribution
-        says so; the run report now names why each image was left behind, so check it.
-      - `INLINE_IMAGE_MAX_TOTAL_BYTES` defaults to 2 GB and neither box sets it. The backfill
-        will write roughly 10 GB on `.155` and 4 GB on `.154`. Left at the default, the first
-        04:00 tick evicts ~80% of what was just written at 5,000 removals a day, and every
-        evicted image becomes a provider refetch. Set the ceiling deliberately per box against
-        actual free space — `.155` is at 68%.
-      - Check free space against the expected cache size on both boxes. Disk holds the old
-        bodies *and* the new cache until `VACUUM FULL` runs.
+- [ ] **MEASURED on `.155`, 2026-09-18** — random sample of 600 of 4,264 rows, so the
+      figures below scale by ~7.1. Re-run the same sample on `.154` before its backfill.
+
+      | | |
+      |---|---|
+      | Images in sample | 1,817 across 321 rows |
+      | Image bytes | 1,960 MB of 2,969 MB of body — **66% of body volume** |
+      | p50 / p90 / p99 / max | 5.7 kB / 2.2 MB / 12 MB / 13 MB |
+      | Over 5 MB | 157 images holding 1,611 MB — **82% of all image bytes** |
+      | Over 16 MB | none |
+      | Whole table | ~14 GB of inline images, ~12,900 images, ~2,280 rows |
+
+      `INLINE_IMAGE_MAX_BYTES` is now **16 MB** in code on that evidence — no env override
+      needed for the run. `INLINE_IMAGE_MAX_TOTAL_BYTES` still has to be set per box: it
+      defaults to 2 GB against ~14 GB of cache on `.155`, so left alone the first 04:00 tick
+      throws away most of the backfill at 5,000 removals a day.
+- [ ] **Extend the logical volume on `.155` FIRST — the backfill does not fit otherwise.**
+      `lsblk` shows `sda3` at 99 GB with the LV at 49.5 GB: the Ubuntu installer default
+      leaves ~49 GB of the volume group unallocated. Free space today is 15 GB against ~14 GB
+      of cache to write, and `VACUUM FULL` needs roughly the live table size free on top of
+      that — so the sequence cannot complete as the box stands, at any tranche size.
+      `sudo lvextend -l +100%FREE /dev/ubuntu-vg/ubuntu-lv && sudo resize2fs /dev/ubuntu-vg/ubuntu-lv`
+      is online and doubles the disk. Check `.154` for the same unallocated remainder.
 - [ ] Run the backfill, then `VACUUM FULL messages` in a chosen window. It takes an exclusive lock; the API is down for minutes.
 - [ ] **Capture the backfill's skip lines before `VACUUM FULL`.** A body whose data URIs
       cannot be proved to match its `inlineImages` is skipped whole and left embedded. The

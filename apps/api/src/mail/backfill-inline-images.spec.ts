@@ -584,3 +584,112 @@ describe('runBackfill', () => {
     expect(report).not.toContain('ambiguous:');
   });
 });
+
+// ── The shapes actually on the boxes ────────────────────────────────────────
+// Measured on 10.10.94.155, 2026-09-18, random sample of 600 of 4,264 rows:
+// 81 data URIs in the plain `data:image/gif;base64,` form against 1,359 that
+// carry a MIME parameter, and 792 where that parameter's own double quotes
+// terminate the src attribute early. The plain form is 6% of the corpus.
+describe('backfillMessage — the MIME-parameter forms real mail uses', () => {
+  it('converts a data uri whose MIME type carries an unquoted name parameter', async () => {
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/gif; name=Odilo.gif;base64,${PNG}">`,
+      inlineImages: [{ cid: 'c1', partId: '1.2.2', mimeType: 'image/gif' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(r.html).toBe('<img src="cid:c1">');
+    expect(r.written).toBe(1);
+    expect(c.write).toHaveBeenCalledWith('u1', 'm1', '1.2.2', expect.any(Buffer));
+  });
+
+  it('converts a data uri whose name parameter is quoted, closing the src attribute early', async () => {
+    // `src="data:image/gif; name="Paul Nshimyubutatu.gif";base64,…"` — the
+    // parameter's quote ends the attribute as far as an HTML parser is
+    // concerned, so this image does not render at all today. Converting it to
+    // a cid: reference is what puts it back on screen.
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/gif; name="Paul Nshimyubutatu.gif";base64,${PNG}">`,
+      inlineImages: [{ cid: 'c1', partId: '1.2.2', mimeType: 'image/gif' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(r.html).toBe('<img src="cid:c1">');
+    expect(r.written).toBe(1);
+    expect((c.write.mock.calls[0][3] as Buffer).toString()).toBe('fakepng');
+  });
+
+  it('matches the parameterised MIME type against the mapping on its bare type', async () => {
+    // Guard 3 compares declared types. `image/gif; name=x.gif` is image/gif.
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/jpeg; name=image001.jpg;base64,${PNG}">`,
+      inlineImages: [{ cid: 'c1', partId: '2.2', mimeType: 'image/png' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(r.written).toBe(0);
+    expect(r.skippedAmbiguous).toBe(1);
+  });
+
+  it('counts a parameterised uri toward the guards, so a body of them is not silently half-converted', async () => {
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml:
+        `<img src="data:image/gif; name=a.gif;base64,${PNG}">` +
+        `<img src="data:image/gif; name="b.gif";base64,${PNG}">`,
+      inlineImages: [{ cid: 'c1', partId: '1.1', mimeType: 'image/gif' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(r.written).toBe(0);
+    expect(r.skippedAmbiguous).toBe(2);
+    expect(r.ambiguousBody).toBe(true);
+  });
+
+  it('handles the three forms side by side in one body, in document order', async () => {
+    const c = cache();
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml:
+        `<img src="data:image/png;base64,${PNG}">` +
+        `<img src="data:image/gif; name=b.gif;base64,${PNG}">` +
+        `<img src="data:image/jpeg; name="c jpeg.jpg";base64,${PNG}">`,
+      inlineImages: [
+        { cid: 'c1', partId: '1.1', mimeType: 'image/png' },
+        { cid: 'c2', partId: '1.2', mimeType: 'image/gif' },
+        { cid: 'c3', partId: '1.3', mimeType: 'image/jpeg' },
+      ],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(r.html).toBe('<img src="cid:c1"><img src="cid:c2"><img src="cid:c3">');
+    expect(c.write.mock.calls.map((x: any[]) => x[2])).toEqual(['1.1', '1.2', '1.3']);
+  });
+
+  it('decodes a payload that carries line breaks', async () => {
+    const c = cache();
+    const wrapped = `${PNG.slice(0, 4)}\r\n${PNG.slice(4)}`;
+    const row = {
+      id: 'm1', userId: 'u1',
+      bodyHtml: `<img src="data:image/png;base64,${wrapped}">`,
+      inlineImages: [{ cid: 'c1', partId: '1.1', mimeType: 'image/png' }],
+    };
+
+    const r = await backfillMessage(row as any, c);
+
+    expect(r.written).toBe(1);
+    expect((c.write.mock.calls[0][3] as Buffer).toString()).toBe('fakepng');
+  });
+});

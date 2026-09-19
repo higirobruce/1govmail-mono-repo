@@ -51,6 +51,112 @@ function bareMime(mime: unknown): string {
   return typeof mime === 'string' ? mime.split(';')[0].trim().toLowerCase() : '';
 }
 
+/**
+ * One `src="data:image/…;base64,…"` occurrence, located by hand rather than by
+ * regex.
+ *
+ * ── Why this is not a regular expression ─────────────────────────────────────
+ * Measured on 10.10.94.155 (2026-09-18, random sample of 600 of 4,264 rows),
+ * the corpus holds three shapes and the obvious regex matches only the first:
+ *
+ *   1. `src="data:image/png;base64,…"`                        —    81 in sample
+ *   2. `src="data:image/gif; name=Odilo.gif;base64,…"`        — the MIME type
+ *      carries parameters, so `;base64,` does not follow it directly
+ *   3. `src="data:image/gif; name="Paul.gif";base64,…"`       —   792 in sample
+ *      the parameter's own quotes close the src attribute early, so as far as
+ *      an HTML parser is concerned this image has no source and does not
+ *      render. Converting it to a `cid:` reference is what puts it back.
+ *
+ * Shapes 2 and 3 together are 1,359 of 1,440 — 94% of the corpus. A pattern
+ * that spans them needs to cross both commas (filenames contain them) and
+ * quotes, which on a 77 MB body is exactly the backtracking that turns a
+ * backfill into a hang. Scanning forward from each `data:image/` is linear and
+ * cannot backtrack.
+ */
+interface EmbeddedImage {
+  /** Index of the `src` token — the whole attribute is what gets replaced. */
+  start: number;
+  /** Index just past the attribute's closing quote. */
+  end: number;
+  /** The quote character the src attribute opened with. */
+  quote: string;
+  /** Bare MIME type, parameters dropped: `image/gif`. */
+  mime: string;
+  /** The base64 payload, which may carry line breaks. */
+  b64: string;
+}
+
+const NEEDLE = 'data:image/';
+/** MIME plus its parameters. Generous, but bounded — a real one is under 100. */
+const MAX_MIME_SPAN = 512;
+
+const isSpace = (c: string) => c === ' ' || c === '\t' || c === '\r' || c === '\n';
+const isB64 = (c: string) =>
+  (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+  c === '+' || c === '/' || c === '=';
+
+/**
+ * Read one embedded image starting at the index of its `data:image/`, or
+ * return null when this occurrence is not a well-formed `src` attribute — a
+ * data URI in a CSS `url(…)`, an unquoted attribute, a truncated body. Null is
+ * always the safe answer: the occurrence is left exactly as it is.
+ */
+function readEmbeddedImage(html: string, at: number): EmbeddedImage | null {
+  // Back up over the opening quote to the `src` token.
+  let i = at - 1;
+  while (i >= 0 && isSpace(html[i])) i--;
+  if (i < 0 || (html[i] !== '"' && html[i] !== "'")) return null;
+  const quote = html[i];
+  i--;
+  while (i >= 0 && isSpace(html[i])) i--;
+  if (i < 0 || html[i] !== '=') return null;
+  i--;
+  while (i >= 0 && isSpace(html[i])) i--;
+  if (i < 2 || html.slice(i - 2, i + 1).toLowerCase() !== 'src') return null;
+  const start = i - 2;
+  // `datasrc=` and friends are not `src=`.
+  if (start > 0 && /[A-Za-z0-9_:-]/.test(html[start - 1])) return null;
+
+  // The bare MIME type runs to the first parameter, comma, or quote.
+  let j = at + NEEDLE.length;
+  while (j < html.length && /[A-Za-z0-9.+-]/.test(html[j])) j++;
+  const mime = html.slice(at + 5, j).toLowerCase(); // past "data:"
+  if (mime === 'image/') return null;
+
+  // `;base64,` may sit directly after the type or after its parameters.
+  const marker = html.indexOf(';base64,', j);
+  if (marker === -1 || marker - at > MAX_MIME_SPAN) return null;
+  // Never cross out of the tag looking for it.
+  const span = html.slice(j, marker);
+  if (span.includes('<') || span.includes('>')) return null;
+
+  let k = marker + ';base64,'.length;
+  const payloadStart = k;
+  while (k < html.length && (isB64(html[k]) || isSpace(html[k]))) k++;
+  if (k === payloadStart) return null;
+  // Trailing whitespace belongs to the attribute, not the payload.
+  let payloadEnd = k;
+  while (payloadEnd > payloadStart && isSpace(html[payloadEnd - 1])) payloadEnd--;
+  if (html[k] !== quote) return null;
+
+  return { start, end: k + 1, quote, mime, b64: html.slice(payloadStart, payloadEnd) };
+}
+
+/** Every embedded image in document order. Overlaps are impossible by construction. */
+function findEmbeddedImages(html: string): EmbeddedImage[] {
+  const out: EmbeddedImage[] = [];
+  for (let i = html.indexOf(NEEDLE); i !== -1; ) {
+    const hit = readEmbeddedImage(html, i);
+    if (hit) {
+      out.push(hit);
+      i = html.indexOf(NEEDLE, hit.end);
+    } else {
+      i = html.indexOf(NEEDLE, i + NEEDLE.length);
+    }
+  }
+  return out;
+}
+
 export interface BackfillResult {
   html: string;
   /** Images lifted into the cache and rewritten to their `cid:`. */
@@ -192,8 +298,7 @@ export async function backfillMessage(
       return !usedCids.has(cid) && !usedCids.has(cidBase(cid));
     });
 
-  const re = /src=(["'])data:(image\/[^;]+);base64,([^"']+)\1/gi;
-  const uris = Array.from(html.matchAll(re));
+  const uris = findEmbeddedImages(html);
 
   // Guard 1 — pass 3's blank src. Both quote styles, whitespace anywhere a
   // browser would tolerate it, including an all-whitespace value.
@@ -201,7 +306,7 @@ export async function backfillMessage(
   // Guard 2 — counts.
   if (uris.length !== maps.length) return untouched(uris.length, 'ambiguous');
   // Guard 3 — declared MIME types, pair by pair.
-  if (uris.some((m, i) => bareMime(m[2]) !== bareMime(maps[i].mimeType) || !bareMime(maps[i].mimeType))) {
+  if (uris.some((m, i) => m.mime !== bareMime(maps[i].mimeType) || !bareMime(maps[i].mimeType))) {
     return untouched(uris.length, 'ambiguous');
   }
 
@@ -212,20 +317,20 @@ export async function backfillMessage(
   for (let i = 0; i < uris.length; i++) {
     const m = uris[i];
     const mapping = maps[i];
-    const at = m.index ?? 0;
-    parts.push(html.slice(last, at));
-    last = at + m[0].length;
+    const raw = html.slice(m.start, m.end);
+    parts.push(html.slice(last, m.start));
+    last = m.end;
 
-    const buf = Buffer.from(m[3], 'base64');
+    const buf = Buffer.from(m.b64, 'base64');
     // Distinguish "too big for the cache" from "the cache would not take it":
     // the first is the heavy tail this backfill exists for, and the run report
     // has to say so before anyone decides whether to raise INLINE_IMAGE_MAX_BYTES.
-    if (buf.byteLength > MAX_FILE_BYTES) { parts.push(m[0]); skippedTooLarge++; continue; }
+    if (buf.byteLength > MAX_FILE_BYTES) { parts.push(raw); skippedTooLarge++; continue; }
 
     const ok = await cache.write(row.userId, row.id, mapping.partId, buf);
-    if (!ok) { parts.push(m[0]); skippedWriteFailed++; continue; }
+    if (!ok) { parts.push(raw); skippedWriteFailed++; continue; }
 
-    parts.push(`src=${m[1]}cid:${mapping.cid}${m[1]}`);
+    parts.push(`src=${m.quote}cid:${mapping.cid}${m.quote}`);
     written++;
   }
   parts.push(html.slice(last));

@@ -5,8 +5,18 @@ import { Injectable, Logger } from '@nestjs/common';
 
 export const CACHE_ROOT_DEFAULT = process.env.INLINE_IMAGE_CACHE_DIR ?? '/opt/govmail/imgcache';
 
-/** One 133 MB image must not be able to own the cache. Over this, serve through. */
-export const MAX_FILE_BYTES = Number(process.env.INLINE_IMAGE_MAX_BYTES ?? 5 * 1024 * 1024);
+/**
+ * One 133 MB image must not be able to own the cache. Over this, serve through.
+ *
+ * 16 MB, measured rather than guessed. On 10.10.94.155 (2026-09-18, random
+ * sample of 600 of 4,264 rows) inline images run p50 5.7 kB, p90 2.2 MB,
+ * p99 12 MB, max 13 MB — and nothing at all above 16 MB. The earlier 5 MB
+ * would have refused 157 of 1,817 images holding 1,611 MB: 9% of the images
+ * but **82% of the bytes**, which is precisely the heavy tail this cache
+ * exists to get out of the message row. A cap below the p99 does not bound
+ * the cache, it just exempts the expensive half of it.
+ */
+export const MAX_FILE_BYTES = Number(process.env.INLINE_IMAGE_MAX_BYTES ?? 16 * 1024 * 1024);
 
 /**
  * Bytes for inline images, on disk, keyed by user + message + part.

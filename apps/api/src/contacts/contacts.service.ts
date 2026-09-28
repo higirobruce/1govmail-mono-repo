@@ -40,6 +40,22 @@ export class ContactsService {
   }
 
   /**
+   * The caller's normalised address, for local ACL reads only.
+   *
+   * Deliberately NOT `getUser`: that throws when `authToken` is null, which is
+   * right before a provider call but wrong here — listing groups is a database
+   * read and must keep working when a user's Zimbra token has expired.
+   */
+  private async getUserEmail(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user.email.trim().toLowerCase();
+  }
+
+  /**
    * Convert a flat ContactData object (the REST/form shape) into the neutral
    * Partial<ProviderContact> the provider layer speaks. Zimbra-wire
    * serialization (the attrs array) now lives in
@@ -349,8 +365,15 @@ export class ContactsService {
   // ── Contact Groups ────────────────────────────────────────────────────────
 
   async getGroups(userId: string) {
+    const email = await this.getUserEmail(userId);
     return this.prisma.contactGroup.findMany({
-      where: { userId },
+      where: {
+        OR: [
+          { userId },
+          { invites: { some: { invitedEmail: email } } },
+        ],
+      },
+      include: { invites: true },
       orderBy: { name: 'asc' },
     });
   }

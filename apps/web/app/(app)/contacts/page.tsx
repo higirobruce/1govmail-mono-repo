@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverAnchor } from '@/components/ui/popover';
 import { GroupSharePanel } from '@/components/contacts/GroupSharePanel';
+import { composeUrlForGroup } from '@/lib/groupCompose';
 import { toast } from 'sonner';
 import {
   Search, Plus, User, Mail, Phone, Building2, Briefcase,
@@ -949,6 +950,13 @@ export default function ContactsPage() {
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <h2 className="text-sm font-semibold text-foreground flex-1 truncate">{selectedGroup.name}</h2>
+                <Button
+                  variant="ghost" size="sm"
+                  onClick={() => router.push(composeUrlForGroup(selectedGroup.members))}
+                  className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-foreground gap-1.5"
+                >
+                  <Mail className="w-3.5 h-3.5" /> Email this group
+                </Button>
                 {canEditGroup(selectedGroup) && (
                   <Button
                     variant="ghost" size="sm"

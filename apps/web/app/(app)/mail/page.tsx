@@ -334,6 +334,22 @@ export default function MailPage() {
     body: string;
   } | null>(null);
 
+  // Compose prefill handed over by another page (Contacts → "Email this group").
+  // Reads location directly rather than useSearchParams(), which would require a
+  // Suspense boundary this page does not have.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('compose') !== '1') return;
+    const to = (params.get('to') ?? '')
+      .split(',')
+      .map((e) => e.trim())
+      .filter(Boolean);
+    setComposeDraftProps(to.length > 0 ? ({ to } as typeof composeDraftProps) : null);
+    setComposeMode('new');
+    setComposeOpen(true);
+    window.history.replaceState({}, '', '/mail');
+  }, []);
+
   // ── Search state ───────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery]     = useState('');
   const [searchInput, setSearchInput]     = useState('');

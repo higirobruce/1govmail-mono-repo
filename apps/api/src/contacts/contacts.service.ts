@@ -82,7 +82,9 @@ export class ContactsService {
     const isOwner = group.userId === userId;
     if (need === 'own' && !isOwner) throw new NotFoundException('Group not found');
     if (need === 'write' && !isOwner) {
-      const mine = group.invites.find((i) => i.invitedEmail === email);
+      const mine = group.invites.find(
+        (i) => i.invitedEmail.trim().toLowerCase() === email,
+      );
       if (mine?.role !== 'EDITOR') throw new NotFoundException('Group not found');
     }
     return { group, isOwner };

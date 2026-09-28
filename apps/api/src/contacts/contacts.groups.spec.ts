@@ -103,6 +103,17 @@ describe('ContactsService group writes — role gates', () => {
     const { svc, prisma } = svcFor(sharedEditor);
     await svc.updateGroup('u1', 'g1', { name: 'Renamed' });
     expect(prisma.contactGroup.update).toHaveBeenCalled();
+    expect(prisma.contactGroup.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 'g1',
+          OR: [
+            { userId: 'u1' },
+            { invites: { some: { invitedEmail: 'me@risa.gov.rw' } } },
+          ],
+        },
+      }),
+    );
   });
 
   it('refuses a VIEWER invitee editing', async () => {

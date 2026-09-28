@@ -85,7 +85,42 @@ describe('EmailChipInput — groups', () => {
     await typeQuery();
     await pickGroup();
     await waitFor(() => expect(screen.getByText('a@risa.gov.rw')).toBeInTheDocument());
-    expect(screen.getAllByText(/@risa\.gov\.rw/)).toHaveLength(2); // b (pre-existing) + a
+    // Case-insensitive match (`i` flag) and an exact ordered set — not a bare
+    // length count — so a regression that failed to case-fold 'A@RISA.GOV.RW'
+    // (rendering it as its own chip alongside the lowercase 'a@risa.gov.rw')
+    // actually fails this assertion instead of coincidentally still totalling 2.
+    const chipTexts = screen.getAllByText(/@risa\.gov\.rw$/i).map((el) => el.textContent);
+    expect(chipTexts).toEqual(['b@risa.gov.rw', 'a@risa.gov.rw']); // b (pre-existing) + a
+  });
+
+  // Review Important 1 — a group picked while an earlier group's tail is
+  // still pending overflow must be deduped against that pending tail too,
+  // not just against `value`. Otherwise a shared member becomes a live chip
+  // while a stale copy of it still sits inside the "+N more" count, which
+  // overstates what clicking that chip will actually add.
+  it('dedupes a newly picked group against the pending overflow tail, not just against value', async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({ email: `u${i}@risa.gov.rw` }));
+    autocomplete.mockResolvedValueOnce([group(many)]);
+    render(<Harness />);
+    await typeQuery();
+    await pickGroup();
+    expect(await screen.findByText('+10 more')).toBeInTheDocument();
+
+    // u55 is one of the 10 members still sitting in the pending overflow —
+    // not yet a chip. The second group offers it again, plus one genuinely
+    // new address.
+    autocomplete.mockResolvedValueOnce([
+      group([{ email: 'u55@risa.gov.rw' }, { email: 'extra@risa.gov.rw' }]),
+    ]);
+    await typeQuery('fin2');
+    await pickGroup();
+
+    // The genuinely new address is added...
+    expect(await screen.findByText('extra@risa.gov.rw')).toBeInTheDocument();
+    // ...but u55 must NOT become a duplicate live chip — it stays represented
+    // solely by the still-accurate "+10 more" (unchanged, not inflated).
+    expect(screen.queryByText('u55@risa.gov.rw')).not.toBeInTheDocument();
+    expect(screen.getByText('+10 more')).toBeInTheDocument();
   });
 
   it('says so when the group is empty instead of doing nothing', async () => {

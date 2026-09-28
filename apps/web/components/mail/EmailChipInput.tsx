@@ -58,7 +58,10 @@ export function EmailChipInput({
    * a group, which is what lets the sender drop one person for one message.
    */
   const expandGroup = (members: Array<{ email: string }>, groupName: string) => {
-    const fresh = dedupeMemberEmails(members, value);
+    // Dedupe against both live chips AND anything still sitting in the
+    // overflow tail, so the "+N more" label never overstates what clicking
+    // it will add when a second group is picked before the first is expanded.
+    const fresh = dedupeMemberEmails(members, [...value, ...overflow]);
     if (fresh.length === 0) {
       toast.info(`"${groupName}" has no members to add`);
       return;

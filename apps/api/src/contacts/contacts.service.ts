@@ -56,6 +56,39 @@ export class ContactsService {
   }
 
   /**
+   * Resolve what the caller may do with a group, or refuse.
+   *
+   * Refusal is always NotFoundException, never Forbidden — a stranger must not
+   * be able to probe whether a group id exists.
+   */
+  private async requireGroupAccess(
+    userId: string,
+    groupId: string,
+    need: 'read' | 'write' | 'own',
+  ) {
+    const email = await this.getUserEmail(userId);
+    const group = await this.prisma.contactGroup.findFirst({
+      where: {
+        id: groupId,
+        OR: [
+          { userId },
+          { invites: { some: { invitedEmail: email } } },
+        ],
+      },
+      include: { invites: true },
+    });
+    if (!group) throw new NotFoundException('Group not found');
+
+    const isOwner = group.userId === userId;
+    if (need === 'own' && !isOwner) throw new NotFoundException('Group not found');
+    if (need === 'write' && !isOwner) {
+      const mine = group.invites.find((i) => i.invitedEmail === email);
+      if (mine?.role !== 'EDITOR') throw new NotFoundException('Group not found');
+    }
+    return { group, isOwner };
+  }
+
+  /**
    * Convert a flat ContactData object (the REST/form shape) into the neutral
    * Partial<ProviderContact> the provider layer speaks. Zimbra-wire
    * serialization (the attrs array) now lives in
@@ -390,8 +423,7 @@ export class ContactsService {
   }
 
   async updateGroup(userId: string, groupId: string, data: { name?: string; description?: string; members?: { email: string; name?: string }[] }) {
-    const group = await this.prisma.contactGroup.findFirst({ where: { id: groupId, userId } });
-    if (!group) throw new NotFoundException('Group not found');
+    await this.requireGroupAccess(userId, groupId, 'write');
     return this.prisma.contactGroup.update({
       where: { id: groupId },
       data: {
@@ -403,8 +435,7 @@ export class ContactsService {
   }
 
   async deleteGroup(userId: string, groupId: string): Promise<{ success: boolean }> {
-    const group = await this.prisma.contactGroup.findFirst({ where: { id: groupId, userId } });
-    if (!group) throw new NotFoundException('Group not found');
+    await this.requireGroupAccess(userId, groupId, 'own');
     await this.prisma.contactGroup.delete({ where: { id: groupId } });
     return { success: true };
   }

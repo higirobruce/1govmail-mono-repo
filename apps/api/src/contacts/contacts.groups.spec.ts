@@ -72,3 +72,60 @@ describe('ContactsService.getGroups — access', () => {
     await expect(svc.getGroups('u1')).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe('ContactsService group writes — role gates', () => {
+  const owned = { id: 'g1', userId: 'u1', name: 'Finance', members: [], invites: [] };
+  const sharedViewer = {
+    id: 'g1', userId: 'owner', name: 'Finance', members: [],
+    invites: [{ invitedEmail: 'me@risa.gov.rw', role: 'VIEWER' }],
+  };
+  const sharedEditor = {
+    id: 'g1', userId: 'owner', name: 'Finance', members: [],
+    invites: [{ invitedEmail: 'me@risa.gov.rw', role: 'EDITOR' }],
+  };
+
+  function svcFor(group: any) {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue({ id: 'u1', email: 'me@risa.gov.rw', authToken: 't' });
+    prisma.contactGroup.findFirst.mockResolvedValue(group);
+    prisma.contactGroup.update.mockResolvedValue({ ...group, name: 'Renamed' });
+    prisma.contactGroup.delete.mockResolvedValue(group);
+    return { prisma, svc: makeService(prisma) };
+  }
+
+  it('lets the owner edit', async () => {
+    const { svc, prisma } = svcFor(owned);
+    await svc.updateGroup('u1', 'g1', { name: 'Renamed' });
+    expect(prisma.contactGroup.update).toHaveBeenCalled();
+  });
+
+  it('lets an EDITOR invitee edit', async () => {
+    const { svc, prisma } = svcFor(sharedEditor);
+    await svc.updateGroup('u1', 'g1', { name: 'Renamed' });
+    expect(prisma.contactGroup.update).toHaveBeenCalled();
+  });
+
+  it('refuses a VIEWER invitee editing', async () => {
+    const { svc, prisma } = svcFor(sharedViewer);
+    await expect(svc.updateGroup('u1', 'g1', { name: 'Renamed' })).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.contactGroup.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stranger editing', async () => {
+    const { svc, prisma } = svcFor(null);
+    await expect(svc.updateGroup('u1', 'g1', { name: 'Renamed' })).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.contactGroup.update).not.toHaveBeenCalled();
+  });
+
+  it('lets only the owner delete — an EDITOR cannot', async () => {
+    const { svc, prisma } = svcFor(sharedEditor);
+    await expect(svc.deleteGroup('u1', 'g1')).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.contactGroup.delete).not.toHaveBeenCalled();
+  });
+
+  it('lets the owner delete', async () => {
+    const { svc, prisma } = svcFor(owned);
+    await expect(svc.deleteGroup('u1', 'g1')).resolves.toEqual({ success: true });
+    expect(prisma.contactGroup.delete).toHaveBeenCalledWith({ where: { id: 'g1' } });
+  });
+});

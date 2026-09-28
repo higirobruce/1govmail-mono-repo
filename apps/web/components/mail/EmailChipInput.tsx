@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, Users } from 'lucide-react';
+import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
-import { useContactSuggestions, type ContactSuggestion } from '@/hooks/useContactSuggestions';
+import { useContactSuggestions, isGroupSuggestion, type ContactSuggestion } from '@/hooks/useContactSuggestions';
+import { MAX_EXPANDED_MEMBERS, dedupeMemberEmails } from '@/lib/groupRecipients';
 
 export function EmailChipInput({
   label,
@@ -20,10 +22,15 @@ export function EmailChipInput({
 }) {
   const [input, setInput] = useState('');
   const [activeIdx, setActiveIdx] = useState(-1);
+  const [overflow, setOverflow] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   // Shared with advanced search's single-address fields so both behave alike.
-  const { suggestions, loading: loadingSuggestions, clear } = useContactSuggestions(input, { exclude: value });
+  // Unlike that field, compose also wants contact groups offered.
+  const { suggestions, loading: loadingSuggestions, clear } = useContactSuggestions(input, {
+    exclude: value,
+    includeGroups: true,
+  });
 
   useEffect(() => {
     if (autoFocus) inputRef.current?.focus();
@@ -37,8 +44,36 @@ export function EmailChipInput({
     setInput(''); closeSuggestions();
   };
   const selectSuggestion = (s: ContactSuggestion) => {
+    if (isGroupSuggestion(s)) {
+      expandGroup(s.members, s.display);
+      setInput(''); closeSuggestions(); inputRef.current?.focus();
+      return;
+    }
     if (!value.includes(s.email)) onChange([...value, s.email]);
     setInput(''); closeSuggestions(); inputRef.current?.focus();
+  };
+
+  /**
+   * A group becomes ordinary chips — nothing downstream remembers it came from
+   * a group, which is what lets the sender drop one person for one message.
+   */
+  const expandGroup = (members: Array<{ email: string }>, groupName: string) => {
+    const fresh = dedupeMemberEmails(members, value);
+    if (fresh.length === 0) {
+      toast.info(`"${groupName}" has no members to add`);
+      return;
+    }
+    const head = fresh.slice(0, MAX_EXPANDED_MEMBERS);
+    const tail = fresh.slice(MAX_EXPANDED_MEMBERS);
+    onChange([...value, ...head]);
+    if (tail.length > 0) setOverflow((prev) => [...prev, ...tail]);
+  };
+
+  const expandOverflow = () => {
+    const seen = new Set(value.map((v) => v.trim().toLowerCase()));
+    const rest = overflow.filter((e) => !seen.has(e.trim().toLowerCase()));
+    setOverflow([]);
+    if (rest.length > 0) onChange([...value, ...rest]);
   };
 
   const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -67,6 +102,15 @@ export function EmailChipInput({
             </button>
           </span>
         ))}
+        {overflow.length > 0 && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); expandOverflow(); }}
+            className="inline-flex items-center gap-1 px-2 py-0.5 bg-muted border border-border/60 text-muted-foreground text-xs rounded-full hover:bg-muted/70"
+          >
+            +{overflow.length} more
+          </button>
+        )}
         <input
           ref={inputRef}
           type="text"
@@ -91,14 +135,27 @@ export function EmailChipInput({
           ) : (
             <ul className="max-h-52 overflow-y-auto py-1">
               {suggestions.map((s, i) => (
-                <li key={s.email}>
+                <li key={isGroupSuggestion(s) ? `g:${s.groupId}` : s.email}>
                   <button
                     type="button"
                     onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
                     className={`w-full text-left px-3 py-2 flex flex-col gap-0.5 transition-colors ${i === activeIdx ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/60 text-foreground'}`}
                   >
-                    <span className="text-xs font-medium leading-tight truncate">{s.display !== s.email ? s.display : ''}</span>
-                    <span className={`text-xs leading-tight truncate ${s.display !== s.email ? 'text-muted-foreground/60' : 'font-medium'}`}>{s.email}</span>
+                    {isGroupSuggestion(s) ? (
+                      <>
+                        <span className="text-xs font-medium leading-tight truncate flex items-center gap-1.5">
+                          <Users className="w-3 h-3 text-primary shrink-0" />{s.display}
+                        </span>
+                        <span className="text-xs leading-tight text-muted-foreground/60">
+                          {s.memberCount} {s.memberCount === 1 ? 'member' : 'members'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xs font-medium leading-tight truncate">{s.display !== s.email ? s.display : ''}</span>
+                        <span className={`text-xs leading-tight truncate ${s.display !== s.email ? 'text-muted-foreground/60' : 'font-medium'}`}>{s.email}</span>
+                      </>
+                    )}
                   </button>
                 </li>
               ))}

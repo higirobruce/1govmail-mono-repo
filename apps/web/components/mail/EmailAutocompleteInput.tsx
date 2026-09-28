@@ -3,7 +3,11 @@
 import { useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { useContactSuggestions, type ContactSuggestion } from '@/hooks/useContactSuggestions';
+import {
+  useContactSuggestions,
+  isGroupSuggestion,
+  type ContactAddressSuggestion,
+} from '@/hooks/useContactSuggestions';
 
 /**
  * Single-address field with contact/GAL type-ahead, for search filters.
@@ -33,7 +37,14 @@ export function EmailAutocompleteInput({
 
   // Only query while the dropdown is open, so selecting a suggestion (which
   // sets `value` to a full address) does not immediately search for it again.
-  const { suggestions, loading, clear } = useContactSuggestions(open ? value : '');
+  const { suggestions: rawSuggestions, loading, clear } = useContactSuggestions(open ? value : '');
+
+  // This field never passes `includeGroups`, so the hook can never actually
+  // return a group — narrow the union away here rather than widening this
+  // field's contract to handle a case that cannot occur.
+  const suggestions: ContactAddressSuggestion[] = rawSuggestions.filter(
+    (s): s is ContactAddressSuggestion => !isGroupSuggestion(s),
+  );
 
   const close = () => {
     setOpen(false);
@@ -41,7 +52,7 @@ export function EmailAutocompleteInput({
     clear();
   };
 
-  const select = (s: ContactSuggestion) => {
+  const select = (s: ContactAddressSuggestion) => {
     onChange(s.email);
     close();
   };

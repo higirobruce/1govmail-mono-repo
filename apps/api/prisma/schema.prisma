@@ -41,6 +41,7 @@ model User {
   senderRules          SenderRule[]
   mutedConversations   MutedConversation[]
   contactGroups        ContactGroup[]
+  sentGroupInvites     GroupInvite[]
   notifications        Notification[]
   documents            Document[]
   sentInvites          DocumentInvite[]
@@ -583,10 +584,27 @@ model ContactGroup {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invites GroupInvite[]
 
   @@index([userId])
   @@map("contact_groups")
+}
+
+model GroupInvite {
+  id           String     @id @default(cuid())
+  groupId      String
+  invitedEmail String
+  invitedBy    String
+  role         InviteRole @default(VIEWER)
+  createdAt    DateTime   @default(now())
+
+  group   ContactGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  inviter User         @relation(fields: [invitedBy], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, invitedEmail])
+  @@index([invitedEmail])
+  @@map("group_invites")
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────

@@ -98,6 +98,44 @@ function delay<T>(data: T, ms = 120): Promise<T> {
   return new Promise((r) => setTimeout(() => r(data), ms));
 }
 
+export type ContactAddressSuggestionDTO = { kind?: undefined; email: string; display: string };
+
+export type ContactSuggestionDTO =
+  | ContactAddressSuggestionDTO
+  | {
+      kind: 'group';
+      groupId: string;
+      display: string;
+      memberCount: number;
+      members: Array<{ email: string; name?: string }>;
+    };
+
+/**
+ * Autocomplete email addresses / names from Zimbra contacts + GAL.
+ * Pass `includeGroups` to also receive the caller's contact groups — only
+ * the compose recipient field wants these; single-address search fields
+ * must not offer a group.
+ *
+ * Overloaded rather than a single optional-arg signature so the many
+ * existing call sites that never pass `opts` keep inferring the narrower
+ * address-only shape they were written against, instead of suddenly having
+ * to narrow a `kind: 'group'` case they can never actually receive.
+ */
+function contactsAutocomplete(q: string): Promise<ContactAddressSuggestionDTO[]>;
+function contactsAutocomplete(
+  q: string,
+  opts: { includeGroups: true },
+): Promise<ContactSuggestionDTO[]>;
+function contactsAutocomplete(
+  q: string,
+  opts?: { includeGroups?: boolean },
+): Promise<ContactSuggestionDTO[]> {
+  if (USE_MOCK) return delay<ContactSuggestionDTO[]>([]);
+  const qs = new URLSearchParams({ q });
+  if (opts?.includeGroups) qs.set('groups', 'true');
+  return request<ContactSuggestionDTO[]>(`/contacts/autocomplete?${qs.toString()}`);
+}
+
 export const api = {
   people: {
     /** Deterministic per-person dossier facts — GET /people/dossier. */
@@ -108,16 +146,7 @@ export const api = {
   },
 
   contacts: {
-    /**
-     * Autocomplete email addresses / names from Zimbra contacts + GAL.
-     * Returns up to ~20 matches for the given prefix query.
-     */
-    autocomplete: (q: string): Promise<Array<{ email: string; display: string }>> => {
-      if (USE_MOCK) return delay<Array<{ email: string; display: string }>>([]);
-      return request<Array<{ email: string; display: string }>>(
-        `/contacts/autocomplete?q=${encodeURIComponent(q)}`,
-      );
-    },
+    autocomplete: contactsAutocomplete,
     /** Fetch all contacts; sync=true forces a fresh pull from Zimbra. */
     getAll: (q?: string, sync = false) => {
       if (USE_MOCK) return delay<any[]>([]);
@@ -155,6 +184,26 @@ export const api = {
       delete: (id: string) => {
         if (USE_MOCK) return delay({ success: true });
         return request<{ success: boolean }>(`/contacts/groups/${id}`, { method: 'DELETE' });
+      },
+      shares: {
+        list: (groupId: string) => {
+          if (USE_MOCK) return delay<any[]>([]);
+          return request<any[]>(`/contacts/groups/${groupId}/shares`);
+        },
+        add: (groupId: string, data: { email: string; role?: 'VIEWER' | 'EDITOR' }) => {
+          if (USE_MOCK) return delay({ id: `i-${Date.now()}`, ...data });
+          return request<any>(`/contacts/groups/${groupId}/shares`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+          });
+        },
+        remove: (groupId: string, inviteId: string) => {
+          if (USE_MOCK) return delay({ success: true });
+          return request<{ success: boolean }>(
+            `/contacts/groups/${groupId}/shares/${inviteId}`,
+            { method: 'DELETE' },
+          );
+        },
       },
     },
   },

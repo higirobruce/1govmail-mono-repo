@@ -116,6 +116,17 @@ describe('ContactsService group writes — role gates', () => {
     );
   });
 
+  // The client keeps the Edit control visible by finding its own EDITOR invite in
+  // the group it holds. If the update response omits `invites`, an EDITOR loses
+  // the button the moment they use it, and only a full reload brings it back.
+  it('returns the invites on the updated group, so an EDITOR keeps edit rights', async () => {
+    const { svc, prisma } = svcFor(sharedEditor);
+    await svc.updateGroup('u1', 'g1', { name: 'Renamed' });
+    expect(prisma.contactGroup.update).toHaveBeenCalledWith(
+      expect.objectContaining({ include: { invites: true } }),
+    );
+  });
+
   it('refuses a VIEWER invitee editing', async () => {
     const { svc, prisma } = svcFor(sharedViewer);
     await expect(svc.updateGroup('u1', 'g1', { name: 'Renamed' })).rejects.toBeInstanceOf(NotFoundException);

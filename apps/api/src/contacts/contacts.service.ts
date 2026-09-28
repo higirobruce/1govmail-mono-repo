@@ -492,6 +492,11 @@ export class ContactsService {
         ...(data.description !== undefined && { description: data.description }),
         ...(data.members !== undefined && { members: data.members as any }),
       },
+      // Same shape as getGroups. The client decides whether to keep showing the
+      // Edit control by looking for its own EDITOR invite, so a response without
+      // `invites` reads as "no longer editable" and the button vanishes until the
+      // next full load.
+      include: { invites: true },
     });
   }
 

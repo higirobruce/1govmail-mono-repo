@@ -172,6 +172,12 @@ describe('ContactsService group shares', () => {
     const call = prisma.groupInvite.upsert.mock.calls[0][0];
     expect(call.where).toEqual({ groupId_invitedEmail: { groupId: 'g1', invitedEmail: 'alice@risa.gov.rw' } });
     expect(call.update).toEqual({ role: 'EDITOR' });
+    expect(call.create).toEqual({
+      groupId: 'g1',
+      invitedEmail: 'alice@risa.gov.rw',
+      invitedBy: 'u1',
+      role: 'EDITOR',
+    });
   });
 
   it('refuses inviting yourself', async () => {
@@ -195,6 +201,9 @@ describe('ContactsService group shares', () => {
     const { svc, prisma } = ownerSvc();
     prisma.groupInvite.findFirst.mockResolvedValue(null);
     await expect(svc.removeShare('u1', 'g1', 'i9')).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.groupInvite.findFirst).toHaveBeenCalledWith({
+      where: { id: 'i9', groupId: 'g1' },
+    });
     expect(prisma.groupInvite.delete).not.toHaveBeenCalled();
   });
 

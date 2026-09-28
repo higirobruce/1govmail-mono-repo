@@ -16,6 +16,7 @@ import { ContactsService } from './contacts.service';
 import type { ContactData } from './contacts.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { AddGroupShareDto } from './dto/group-share.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('contacts')
@@ -110,5 +111,33 @@ export class ContactsController {
   @HttpCode(HttpStatus.OK)
   deleteGroup(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.contactsService.deleteGroup(req.user.sub, id);
+  }
+
+  /** GET /contacts/groups/:id/shares — who this group is shared with */
+  @Get('groups/:id/shares')
+  listShares(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.contactsService.listShares(req.user.sub, id);
+  }
+
+  /** POST /contacts/groups/:id/shares — invite someone (owner only) */
+  @Post('groups/:id/shares')
+  @HttpCode(HttpStatus.OK)
+  addShare(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: AddGroupShareDto,
+  ) {
+    return this.contactsService.addShare(req.user.sub, id, body);
+  }
+
+  /** DELETE /contacts/groups/:id/shares/:inviteId — revoke (owner only) */
+  @Delete('groups/:id/shares/:inviteId')
+  @HttpCode(HttpStatus.OK)
+  removeShare(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('inviteId') inviteId: string,
+  ) {
+    return this.contactsService.removeShare(req.user.sub, id, inviteId);
   }
 }

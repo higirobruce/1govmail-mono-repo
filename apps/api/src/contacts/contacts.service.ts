@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -439,6 +440,55 @@ export class ContactsService {
   async deleteGroup(userId: string, groupId: string): Promise<{ success: boolean }> {
     await this.requireGroupAccess(userId, groupId, 'own');
     await this.prisma.contactGroup.delete({ where: { id: groupId } });
+    return { success: true };
+  }
+
+  // ── Group sharing ─────────────────────────────────────────────────────────
+
+  async listShares(userId: string, groupId: string) {
+    await this.requireGroupAccess(userId, groupId, 'read');
+    return this.prisma.groupInvite.findMany({
+      where: { groupId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async addShare(
+    userId: string,
+    groupId: string,
+    data: { email: string; role?: 'VIEWER' | 'EDITOR' },
+  ) {
+    await this.requireGroupAccess(userId, groupId, 'own');
+
+    const invitedEmail = data.email.trim().toLowerCase();
+    const me = await this.getUserEmail(userId);
+    if (invitedEmail === me) {
+      throw new BadRequestException('You already own this group');
+    }
+
+    const role = data.role ?? 'VIEWER';
+    // Upsert rather than create: @@unique([groupId, invitedEmail]) means a
+    // second invite to the same person is a role change, not an error.
+    return this.prisma.groupInvite.upsert({
+      where: { groupId_invitedEmail: { groupId, invitedEmail } },
+      update: { role },
+      create: { groupId, invitedEmail, invitedBy: userId, role },
+    });
+  }
+
+  async removeShare(
+    userId: string,
+    groupId: string,
+    inviteId: string,
+  ): Promise<{ success: boolean }> {
+    await this.requireGroupAccess(userId, groupId, 'own');
+    // Scoped by groupId so an invite id from another group cannot be revoked
+    // by someone who happens to own a different group.
+    const invite = await this.prisma.groupInvite.findFirst({
+      where: { id: inviteId, groupId },
+    });
+    if (!invite) throw new NotFoundException('Share not found');
+    await this.prisma.groupInvite.delete({ where: { id: inviteId } });
     return { success: true };
   }
 }

@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ContactsService } from './contacts.service';
 
 function makePrisma() {
@@ -138,5 +138,87 @@ describe('ContactsService group writes — role gates', () => {
     const { svc, prisma } = svcFor(owned);
     await expect(svc.deleteGroup('u1', 'g1')).resolves.toEqual({ success: true });
     expect(prisma.contactGroup.delete).toHaveBeenCalledWith({ where: { id: 'g1' } });
+  });
+});
+
+describe('ContactsService group shares', () => {
+  function ownerSvc() {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue({ id: 'u1', email: 'me@risa.gov.rw', authToken: 't' });
+    prisma.contactGroup.findFirst.mockResolvedValue({ id: 'g1', userId: 'u1', invites: [] });
+    prisma.groupInvite.upsert.mockImplementation(({ create }: any) => Promise.resolve({ id: 'i1', ...create }));
+    prisma.groupInvite.findFirst.mockResolvedValue({ id: 'i1', groupId: 'g1' });
+    prisma.groupInvite.delete.mockResolvedValue({ id: 'i1' });
+    return { prisma, svc: makeService(prisma) };
+  }
+
+  // Review Focus #1 — normalise on write, so read-side matching can succeed.
+  it('stores the invited email trimmed and lowercased', async () => {
+    const { svc, prisma } = ownerSvc();
+    await svc.addShare('u1', 'g1', { email: '  Alice@Risa.Gov.RW  ' });
+    expect(prisma.groupInvite.upsert.mock.calls[0][0].create.invitedEmail).toBe('alice@risa.gov.rw');
+  });
+
+  it('defaults a new invite to VIEWER', async () => {
+    const { svc, prisma } = ownerSvc();
+    await svc.addShare('u1', 'g1', { email: 'alice@risa.gov.rw' });
+    expect(prisma.groupInvite.upsert.mock.calls[0][0].create.role).toBe('VIEWER');
+  });
+
+  // Review Focus #2 — re-inviting must update the role, not raise P2002.
+  it('re-inviting the same email is idempotent and updates the role', async () => {
+    const { svc, prisma } = ownerSvc();
+    await svc.addShare('u1', 'g1', { email: 'alice@risa.gov.rw', role: 'EDITOR' });
+    const call = prisma.groupInvite.upsert.mock.calls[0][0];
+    expect(call.where).toEqual({ groupId_invitedEmail: { groupId: 'g1', invitedEmail: 'alice@risa.gov.rw' } });
+    expect(call.update).toEqual({ role: 'EDITOR' });
+  });
+
+  it('refuses inviting yourself', async () => {
+    const { svc, prisma } = ownerSvc();
+    await expect(svc.addShare('u1', 'g1', { email: 'ME@risa.gov.rw' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.groupInvite.upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-owner sharing', async () => {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue({ id: 'u1', email: 'me@risa.gov.rw', authToken: 't' });
+    prisma.contactGroup.findFirst.mockResolvedValue({
+      id: 'g1', userId: 'owner',
+      invites: [{ invitedEmail: 'me@risa.gov.rw', role: 'EDITOR' }],
+    });
+    const svc = makeService(prisma);
+    await expect(svc.addShare('u1', 'g1', { email: 'x@risa.gov.rw' })).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('refuses revoking an invite belonging to another group', async () => {
+    const { svc, prisma } = ownerSvc();
+    prisma.groupInvite.findFirst.mockResolvedValue(null);
+    await expect(svc.removeShare('u1', 'g1', 'i9')).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.groupInvite.delete).not.toHaveBeenCalled();
+  });
+
+  // Carried from Task 3's review: requireGroupAccess's 'read' branch had no
+  // test yet. listShares is the first caller to use it — prove a VIEWER
+  // invitee (not just the owner) can list shares, exercising that branch.
+  it('lets a VIEWER invitee list shares', async () => {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue({ id: 'u2', email: 'viewer@risa.gov.rw', authToken: 't' });
+    prisma.contactGroup.findFirst.mockResolvedValue({
+      id: 'g1', userId: 'owner',
+      invites: [{ invitedEmail: 'viewer@risa.gov.rw', role: 'VIEWER' }],
+    });
+    prisma.groupInvite.findMany.mockResolvedValue([
+      { id: 'i1', groupId: 'g1', invitedEmail: 'viewer@risa.gov.rw', role: 'VIEWER' },
+    ]);
+    const svc = makeService(prisma);
+
+    await expect(svc.listShares('u2', 'g1')).resolves.toEqual([
+      { id: 'i1', groupId: 'g1', invitedEmail: 'viewer@risa.gov.rw', role: 'VIEWER' },
+    ]);
+    expect(prisma.groupInvite.findMany).toHaveBeenCalledWith({
+      where: { groupId: 'g1' },
+      orderBy: { createdAt: 'asc' },
+    });
   });
 });

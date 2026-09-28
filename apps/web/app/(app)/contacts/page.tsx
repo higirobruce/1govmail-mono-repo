@@ -19,6 +19,7 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverAnchor } from '@/components/ui/popover';
+import { GroupSharePanel } from '@/components/contacts/GroupSharePanel';
 import { toast } from 'sonner';
 import {
   Search, Plus, User, Mail, Phone, Building2, Briefcase,
@@ -53,6 +54,8 @@ interface ContactGroup {
   description: string | null;
   members: Array<{ email: string; name?: string }>;
   createdAt: string;
+  userId?: string;
+  invites?: Array<{ id: string; invitedEmail: string; role: 'VIEWER' | 'EDITOR' }>;
 }
 
 type FormMode = 'view' | 'create' | 'edit';
@@ -137,6 +140,7 @@ function FormField({ label, value, onChange, placeholder, type = 'text' }: {
 export default function ContactsPage() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const currentUserId = useAuthStore((s) => s.user?.id);
   const [hydrated, setHydrated] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -166,6 +170,15 @@ export default function ContactsPage() {
   const memberDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [groupSaving, setGroupSaving] = useState(false);
   const [groupDeleting, setGroupDeleting] = useState(false);
+
+  // Ownership must fail closed: an unknown/missing userId is never treated as
+  // "owned by me". The API always returns userId on a group, so there is no
+  // legitimate case where this fallback would be needed.
+  const isGroupOwner = (g: ContactGroup | null) => !!g && g.userId === currentUserId;
+  // An EDITOR invitee may edit name/description/members even though they are
+  // not the owner; a VIEWER may only view and send.
+  const canEditGroup = (g: ContactGroup | null) =>
+    isGroupOwner(g) || !!g?.invites?.some((i) => i.role === 'EDITOR');
 
   const confirm = useConfirmStore((s) => s.confirm);
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -936,24 +949,28 @@ export default function ContactsPage() {
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <h2 className="text-sm font-semibold text-foreground flex-1 truncate">{selectedGroup.name}</h2>
-                <Button
-                  variant="ghost" size="sm"
-                  onClick={() => openEditGroup(selectedGroup)}
-                  className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-foreground gap-1.5"
-                >
-                  <Pencil className="w-3.5 h-3.5" /> Edit
-                </Button>
-                <Button
-                  variant="destructive-ghost" size="sm"
-                  onClick={() => handleDeleteGroup(selectedGroup)}
-                  disabled={groupDeleting}
-                  className="h-8 px-3 text-xs gap-1.5"
-                >
-                  {groupDeleting
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <Trash2 className="w-3.5 h-3.5" />}
-                  Delete
-                </Button>
+                {canEditGroup(selectedGroup) && (
+                  <Button
+                    variant="ghost" size="sm"
+                    onClick={() => openEditGroup(selectedGroup)}
+                    className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-foreground gap-1.5"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Edit
+                  </Button>
+                )}
+                {isGroupOwner(selectedGroup) && (
+                  <Button
+                    variant="destructive-ghost" size="sm"
+                    onClick={() => handleDeleteGroup(selectedGroup)}
+                    disabled={groupDeleting}
+                    className="h-8 px-3 text-xs gap-1.5"
+                  >
+                    {groupDeleting
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <Trash2 className="w-3.5 h-3.5" />}
+                    Delete
+                  </Button>
+                )}
               </div>
 
               <ScrollArea className="flex-1 min-h-0">
@@ -998,6 +1015,10 @@ export default function ContactsPage() {
                       </div>
                     )}
                   </div>
+
+                  {selectedGroup && groupMode === 'view' && (
+                    <GroupSharePanel groupId={selectedGroup.id} isOwner={isGroupOwner(selectedGroup)} />
+                  )}
                 </div>
               </ScrollArea>
             </div>

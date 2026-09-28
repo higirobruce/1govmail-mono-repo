@@ -31,8 +31,11 @@ export class ContactsController {
   autocomplete(
     @Req() req: AuthenticatedRequest,
     @Query('q') q: string,
-  ): Promise<Array<{ email: string; display: string }>> {
-    return this.contactsService.autocomplete(req.user.sub, q ?? '');
+    @Query('groups') groups: string,
+  ) {
+    return this.contactsService.autocomplete(req.user.sub, q ?? '', {
+      includeGroups: groups === 'true',
+    });
   }
 
   /**

@@ -9,6 +9,16 @@ import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { buildMailSession } from '../provider/mail-session';
 import { ProviderContact } from '../provider/provider-types';
 
+export type AutocompleteSuggestion =
+  | { email: string; display: string }
+  | {
+      kind: 'group';
+      groupId: string;
+      display: string;
+      memberCount: number;
+      members: Array<{ email: string; name?: string }>;
+    };
+
 export interface ContactData {
   firstName?: string;
   lastName?: string;
@@ -142,7 +152,8 @@ export class ContactsService {
   async autocomplete(
     userId: string,
     query: string,
-  ): Promise<Array<{ email: string; display: string }>> {
+    opts: { includeGroups?: boolean } = {},
+  ): Promise<AutocompleteSuggestion[]> {
     const q = (query ?? '').trim();
     if (!q) return [];
     const user = await this.getUser(userId);
@@ -167,7 +178,12 @@ export class ContactsService {
         merged.push(item);
       }
     }
-    return merged.slice(0, 20);
+    // Groups rank above addresses — someone typing their group's name wants the
+    // group — and sit outside the 20-address cap so a match is never crowded out.
+    const groups = opts.includeGroups
+      ? await this.autocompleteGroups(userId, q)
+      : [];
+    return [...groups, ...merged.slice(0, 20)];
   }
 
   /**
@@ -250,6 +266,48 @@ export class ContactsService {
     }
 
     return Array.from(map.values());
+  }
+
+  /**
+   * Groups the caller may send to whose name matches the query.
+   *
+   * Never throws — a failure here must degrade to address-only suggestions
+   * rather than breaking the recipient field.
+   */
+  private async autocompleteGroups(
+    userId: string,
+    query: string,
+  ): Promise<AutocompleteSuggestion[]> {
+    try {
+      const email = await this.getUserEmail(userId);
+      const groups = await this.prisma.contactGroup.findMany({
+        where: {
+          name: { contains: query, mode: 'insensitive' },
+          OR: [
+            { userId },
+            { invites: { some: { invitedEmail: email } } },
+          ],
+        },
+        orderBy: { name: 'asc' },
+        take: 5,
+      });
+      return groups.map((g) => {
+        const members = (Array.isArray(g.members) ? g.members : []) as Array<{
+          email: string;
+          name?: string;
+        }>;
+        return {
+          kind: 'group' as const,
+          groupId: g.id,
+          display: g.name,
+          memberCount: members.length,
+          members,
+        };
+      });
+    } catch (err: any) {
+      console.warn(`autocompleteGroups: ${err?.message ?? err}`);
+      return [];
+    }
   }
 
   // ── List / sync ────────────────────────────────────────────────────────────

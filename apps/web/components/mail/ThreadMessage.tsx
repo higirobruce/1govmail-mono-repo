@@ -44,20 +44,8 @@ function isPreviewableAttachment(att: { mimeType: string; filename: string }): b
 
 // ─── Email rendering (frame CSS shared with MailDetail via lib/emailFrameCss) ─
 
-// In thread view each message is shown individually so quoted history is stripped.
-// The CSS below is baked into the srcDoc for the stripQuotes=true (multi-message) path.
-const HIDE_QUOTES_CSS = `
-blockquote{display:none!important}
-.gmail_quote,.gmail_extra,.gmail_attr{display:none!important}
-[class*="yahoo_quoted"],[id*="yahoo_quoted"]{display:none!important}
-.moz-cite-prefix{display:none!important}
-#divRplyFwdMsg,#divReplyFwdMsg,#appendonsend{display:none!important}
-.OutlookMessageHeader,.x_OutlookMessageHeader{display:none!important}
-[id^="ms-outlook"]{display:none!important}
-div.WordSection1 blockquote{display:none!important}
-`;
-
-// Selectors used by the JS DOM stripper (stripQuotes=true path)
+// Quoted history is lifted out of the body and shown behind a toggle, never
+// deleted. Selectors used by splitEmailBody's first pass.
 const QUOTE_SELECTORS = [
   'blockquote',
   '.gmail_quote', '.gmail_extra', '.gmail_attr',
@@ -132,9 +120,15 @@ function findQuoteSep(root: Element): Element | null {
   return null;
 }
 
-// Splits preprocessed email HTML into main content and quoted content using the
-// same heuristics as the iframe DOM stripper.  Returns { main, quoted } where
-// quoted is null when no split point is found.  Client-side only.
+// Splits preprocessed email HTML into main content and quoted content.
+// Returns { main, quoted } where quoted is null when no split point is found.
+// Client-side only.
+//
+// This is the ONLY place quoted content is separated. It used to share the job
+// with a DOM stripper that ran inside the iframe and *deleted* what it matched;
+// a forwarded mail's payload sits exactly where a reply's history sits, so that
+// stripper silently destroyed forwards. Lifting the same nodes out instead
+// keeps them one click away.
 function splitEmailBody(html: string): { main: string; quoted: string | null } {
   if (typeof document === 'undefined') return { main: html, quoted: null };
 
@@ -142,6 +136,19 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
   tmp.innerHTML = html;
 
   const quotedNodes: Node[] = [];
+
+  // Pass 1 — elements whose class/id marks them as quoted history, wherever
+  // they sit in the body. Checking isConnected skips nodes already carried off
+  // inside an ancestor that an earlier selector matched.
+  QUOTE_SELECTORS.forEach((sel) => {
+    tmp.querySelectorAll(sel).forEach((el) => {
+      if (!el.isConnected) return;
+      quotedNodes.push(el);
+      el.remove();
+    });
+  });
+
+  // Pass 2 — a separator, and everything after it.
   const sep = findQuoteSep(tmp);
 
   if (sep) {
@@ -157,14 +164,9 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
       let sib2: Element | null = anc.nextElementSibling;
       while (sib2) { const nx: Element | null = sib2.nextElementSibling; quotedNodes.push(sib2); sib2.remove(); sib2 = nx; }
     }
-  } else {
-    // Fallback: split at the first blockquote
-    const firstBq = tmp.querySelector('blockquote');
-    if (firstBq) {
-      let sib: ChildNode | null = firstBq;
-      while (sib) { const nx: ChildNode | null = sib.nextSibling; quotedNodes.push(sib); tmp.removeChild(sib); sib = nx; }
-    }
   }
+  // No blockquote fallback here: `blockquote` is in QUOTE_SELECTORS, so pass 1
+  // has already lifted every one of them out.
 
   if (quotedNodes.length === 0) return { main: html, quoted: null };
 
@@ -173,16 +175,43 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
   return { main: tmp.innerHTML, quoted: quotedDiv.innerHTML };
 }
 
+/** Visible text length of an HTML fragment, whitespace collapsed. */
+function textLength(html: string): number {
+  if (typeof document === 'undefined') return html.length;
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  return (d.textContent ?? '').replace(/\s+/g, ' ').trim().length;
+}
+
+// Fwd:/FW: and the common non-English equivalents mail clients prepend.
+const FORWARD_SUBJECT_RE = /^\s*(fwd?|tr|wg|rv|enc)\s*:/i;
+
+/**
+ * A reply quotes; a forward encloses. In both cases the provider puts the older
+ * mail after the same separator, so the structure alone cannot tell them apart —
+ * the subject can.
+ *
+ * The length of what remains is deliberately NOT a signal: "Thanks, noted" is a
+ * perfectly ordinary reply, and expanding its history would be wrong. Only a
+ * body with no visible text at all forces expansion, because collapsing that
+ * renders a blank message, which is the failure this guards against.
+ */
+function quotedIsThePayload(subject: string | null | undefined, mainHtml: string): boolean {
+  if (subject && FORWARD_SUBJECT_RE.test(subject)) return true;
+  return textLength(mainHtml) === 0;
+}
+
 function EmailBodyFrame({
   html,
   text,
-  stripQuotes = true,
+  subject = null,
   messageId = null,
   inlineImages,
 }: {
   html: string | null;
   text: string | null;
-  stripQuotes?: boolean;
+  /** Used only to tell a forward from a reply when deciding what to collapse. */
+  subject?: string | null;
   messageId?: string | null;
   inlineImages?: Array<{ cid: string; partId: string }>;
 }) {
@@ -230,49 +259,12 @@ function EmailBodyFrame({
     if (isDark && !normalizeStyles) repairEmailContrast(doc, emailFrameColors(true));
   }, [isDark, normalizeStyles]);
 
-  // handleLoad for the main iframe.
-  // When stripQuotes=false the body was already split before render, so just resize.
-  // When stripQuotes=true run the full JS + CSS quote-stripping pass.
+  // handleLoad for the main iframe. The body arrives already split, so there is
+  // nothing to remove in here — only repair and size it. Quoted content is never
+  // deleted from the frame now; it rides in its own iframe behind the toggle.
   const handleMainLoad = useCallback(() => {
     const doc = mainRef.current?.contentDocument;
     if (!doc) return;
-
-    if (!stripQuotes) {
-      repairIfNeeded(doc);
-      resizeMain();
-      doc.querySelectorAll('img').forEach((img) => {
-        if (!img.complete) {
-          img.addEventListener('load',  resizeMain, { once: true });
-          img.addEventListener('error', resizeMain, { once: true });
-        }
-      });
-      return;
-    }
-
-    // Pass 1 — remove elements with known quote class/id
-    QUOTE_SELECTORS.forEach((sel) => {
-      doc.querySelectorAll(sel).forEach((el) => el.remove());
-    });
-
-    // Pass 2 — remove separator and everything after it
-    if (doc.body) {
-      const sep = findQuoteSep(doc.body);
-      if (sep) {
-        const ancestors: Element[] = [];
-        let node: Element = sep;
-        while (node.parentElement && node.parentElement !== doc.body) {
-          ancestors.push(node.parentElement);
-          node = node.parentElement;
-        }
-        let sib: Element | null = sep;
-        while (sib) { const nx: Element | null = sib.nextElementSibling; sib.remove(); sib = nx; }
-        for (const anc of ancestors) {
-          let sib2: Element | null = anc.nextElementSibling;
-          while (sib2) { const nx = sib2.nextElementSibling; sib2.remove(); sib2 = nx; }
-        }
-      }
-    }
-
     repairIfNeeded(doc);
     resizeMain();
     doc.querySelectorAll('img').forEach((img) => {
@@ -281,7 +273,7 @@ function EmailBodyFrame({
         img.addEventListener('error', resizeMain, { once: true });
       }
     });
-  }, [resizeMain, stripQuotes, repairIfNeeded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resizeMain, repairIfNeeded]);
 
   const handleQuotedLoad = useCallback(() => {
     const doc = quotedRef.current?.contentDocument;
@@ -308,14 +300,21 @@ function EmailBodyFrame({
     // <base target="_blank">: the frame is sandboxed without top-navigation,
     // so an in-frame link click would otherwise be silently blocked — route
     // every link to a new tab instead (pairs with allow-popups on the iframe).
-    const mkSrcDoc = (content: string, hideQuotes = false) =>
-      `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>${css}${hideQuotes ? HIDE_QUOTES_CSS : ''}</style></head><body>${content}</body></html>`;
-    if (!stripQuotes) {
-      const split = splitEmailBody(body);
-      return { main: mkSrcDoc(split.main), quoted: split.quoted ? mkSrcDoc(split.quoted) : null };
-    }
-    return { main: mkSrcDoc(body, true), quoted: null };
-  }, [html, normalizeStyles, stripQuotes, isDark, inlineUrls]);
+    const mkSrcDoc = (content: string) =>
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>${css}</style></head><body>${content}</body></html>`;
+    const split = splitEmailBody(body);
+    return {
+      main: mkSrcDoc(split.main),
+      quoted: split.quoted ? mkSrcDoc(split.quoted) : null,
+      // A forward's payload is not history — open it.
+      autoExpand: split.quoted ? quotedIsThePayload(subject, split.main) : false,
+    };
+  }, [html, normalizeStyles, isDark, inlineUrls, subject]);
+
+  // Follow the body: a forward opens expanded, a reply opens collapsed, and
+  // switching messages re-applies that rather than inheriting the last choice.
+  const autoExpand = docs?.autoExpand ?? false;
+  useEffect(() => { setShowQuoted(autoExpand); }, [autoExpand, html]);
 
   if (!docs) {
     return (
@@ -325,58 +324,45 @@ function EmailBodyFrame({
     );
   }
 
-  // ── stripQuotes=false: split body into main + quoted, render two iframes ──
-  if (!stripQuotes) {
-    return (
-      <div>
-        <iframe
-          ref={mainRef}
-          srcDoc={docs.main}
-          onLoad={handleMainLoad}
-          className="w-full border-0 block"
-          style={{ height: 200 }}
-          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-          title="Email message"
-        />
-        {docs.quoted && (
-          <div className="border-t border-border-faint">
-            <div className="px-4 py-2">
-              <button
-                onClick={() => setShowQuoted((v) => !v)}
-                className="flex items-center gap-1 text-ui text-ink-2 hover:text-foreground transition-colors"
-              >
-                {showQuoted ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                {showQuoted ? 'Hide quoted message' : 'Show quoted message'}
-              </button>
-            </div>
-            {showQuoted && (
-              <iframe
-                ref={quotedRef}
-                srcDoc={docs.quoted}
-                onLoad={handleQuotedLoad}
-                className="w-full border-0 block"
-                style={{ height: 200 }}
-                sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-                title="Quoted message"
-              />
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ── stripQuotes=true: single iframe, JS + CSS stripping in handleMainLoad ──
+  // One path for every message: the body above, anything quoted behind a
+  // toggle. There is deliberately no branch that renders the body without that
+  // toggle — that branch is what made forwarded mail unreachable.
   return (
-    <iframe
-      ref={mainRef}
-      srcDoc={docs.main}
-      onLoad={handleMainLoad}
-      className="w-full border-0 block"
-      style={{ height: 200 }}
-      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      title="Email message"
-    />
+    <div>
+      <iframe
+        ref={mainRef}
+        srcDoc={docs.main}
+        onLoad={handleMainLoad}
+        className="w-full border-0 block"
+        style={{ height: 200 }}
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        title="Email message"
+      />
+      {docs.quoted && (
+        <div className="border-t border-border-faint">
+          <div className="px-4 py-2">
+            <button
+              onClick={() => setShowQuoted((v) => !v)}
+              className="flex items-center gap-1 text-ui text-ink-2 hover:text-foreground transition-colors"
+            >
+              {showQuoted ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {showQuoted ? 'Hide quoted message' : 'Show quoted message'}
+            </button>
+          </div>
+          {showQuoted && (
+            <iframe
+              ref={quotedRef}
+              srcDoc={docs.quoted}
+              onLoad={handleQuotedLoad}
+              className="w-full border-0 block"
+              style={{ height: 200 }}
+              sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+              title="Quoted message"
+            />
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -438,7 +424,6 @@ interface Props {
   /** Called after expanding an unread message marks it read (parent updates its list state) */
   onMarkedRead?: () => void;
   /** When true, quoted history in the body is preserved (single-message threads) */
-  isOnlyMessage?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -454,7 +439,6 @@ export default function ThreadMessage({
   onToggleStar,
   onOpenDraft,
   onMarkedRead,
-  isOnlyMessage = false,
 }: Props) {
   const [fullMessage, setFullMessage] = useState<any>(null);
   const [loadingBody, setLoadingBody] = useState(false);
@@ -773,7 +757,7 @@ export default function ThreadMessage({
               <EmailBodyFrame
                 html={fullMessage.bodyHtml}
                 text={fullMessage.bodyText}
-                stripQuotes={!isOnlyMessage}
+                subject={fullMessage.subject ?? null}
                 messageId={fullMessage.id}
                 inlineImages={fullMessage.inlineImages}
               />

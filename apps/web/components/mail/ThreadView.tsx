@@ -866,7 +866,6 @@ export default function ThreadView({
               <ThreadMessage
                 message={msg}
                 isExpanded={!msg.isDraft && (expandAll || expandedId === msg.id)}
-                isOnlyMessage={threadMessages.length === 1}
                 onToggle={() => { if (!msg.isDraft) toggleMessage(msg.id); }}
                 onMarkedRead={() =>
                   setThreadMessages((prev) =>

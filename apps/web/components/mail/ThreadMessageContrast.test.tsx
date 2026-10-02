@@ -56,7 +56,6 @@ function renderExpanded() {
         onForward={noop}
         onDelete={noop}
         onToggleStar={noop}
-        isOnlyMessage
       />
     </TooltipProvider>,
   );

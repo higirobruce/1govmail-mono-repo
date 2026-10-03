@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { useAIStore } from '@/stores/ai.store';
+import { AiProfileNudge } from './AiProfileNudge';
 import {
   MessageCircleQuestion, X, Minus, Send, Loader2, CornerUpRight, TriangleAlert, Square,
-  Mail, FileText, Calendar, SquarePen, ChevronDown, ChevronUp,
+  Mail, FileText, Calendar, SquarePen, ChevronDown, ChevronUp, Clock,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { splitByCitations, type AnswerSegment } from '@email-client/shared';
 import { renderInline, splitBlocks } from './answerFormat';
 import { streamAsk, type AskSource, type AskSourceType, type AskDegraded, type AskTurn } from '@/lib/ai/ask';
@@ -14,6 +17,7 @@ import { usesRetrievalPath, historyLimitFor, buildPinned, type PinnedPayload } f
 import { gatherThreadContent, PINNED_THREAD_CHAR_BUDGET } from '@/lib/ai/threadContent';
 import { sourceHref } from '@/lib/ai/sourceNav';
 import { scrubOutput } from '@/lib/ai/prompt';
+import { createConversationSession } from '@/lib/ai/conversationSession';
 import { useCharStream } from '@/lib/ai/useCharStream';
 import { AIHttpError } from '@/lib/ai/client';
 import { cn } from '@/lib/utils';
@@ -39,8 +43,10 @@ interface AnswerTurn {
   proposals?: AgentProposal[];
   charts?: AgentChartSpec[];
   clarify?: AgentClarify;
+  /** Restored from saved history rather than freshly streamed — gates proposal approval (see ProposalCard rendering below). */
+  fromHistory?: boolean;
 }
-interface QuestionTurn { role: 'user'; content: string }
+interface QuestionTurn { role: 'user'; content: string; fromHistory?: boolean }
 type Turn = QuestionTurn | AnswerTurn;
 
 // The turn budgets and the routing rule live in lib/ai/threadPin.ts — one
@@ -301,6 +307,18 @@ function AnswerBody({
  */
 export default function AskPanel() {
   const router = useRouter();
+
+  // The AI profile this device already mirrors (lib/ai/profileSync.ts), reused
+  // to decide whether to invite the user to fill it in. `profileSyncedFor` is
+  // null until the first account sync completes — until then the profile is
+  // unknown rather than empty, so the nudge stays quiet instead of flashing.
+  const profileCard = useAIStore((s) => s.profileCard);
+  const customInstructions = useAIStore((s) => s.customInstructions);
+  const profileSyncedFor = useAIStore((s) => s.profileSyncedFor);
+  const aiModel = useAIStore((s) => s.model);
+  const nudgeProfile = profileSyncedFor
+    ? { ...profileCard, instructions: customInstructions }
+    : undefined;
   const pathname = usePathname();
   const panelResize = useResizable({ key: 'aiPanel', defaultWidth: 420, min: 320, max: 640, edge: 'left' });
   const open = useAskStore((s) => s.open);
@@ -313,10 +331,48 @@ export default function AskPanel() {
   const clearScope = useAskStore((s) => s.clearScope);
   const toggleScopeLock = useAskStore((s) => s.toggleScopeLock);
   const setOpenTarget = useAskStore((s) => s.setOpenTarget);
+  const takeResumeId = useAskStore((s) => s.takeResumeId);
+  // Subscribed to as a VALUE, not read once: this panel is rendered from the
+  // (app) route-group layout, which Next preserves across every in-group
+  // navigation, so it mounts exactly once — long before the user can reach
+  // /ai/history and click Resume. (`if (!open) return null` sits after the
+  // hooks; closing the panel does not unmount it either.) A mount-keyed
+  // effect would read null and never run again, which is precisely how
+  // resume came to be dead on all three scopes.
+  const resumeId = useAskStore((s) => s.resumeId);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  // The saved conversation this session is writing to, and the two hazards
+  // around writing it (a rapid double-turn racing two create()s; "New
+  // conversation" clearing the id while an older create() is still in
+  // flight) — pulled into lib/ai/conversationSession.ts because it's
+  // testable there, unlike this component (see the header comment). Lazy
+  // init: createConversationSession() must run exactly once per mounted
+  // panel, not once per render.
+  const sessionRef = useRef<ReturnType<typeof createConversationSession> | null>(null);
+  if (!sessionRef.current) sessionRef.current = createConversationSession();
+  const session = sessionRef.current;
+  const turnIdRef = useRef<string | null>(null);
+  // Bumped the instant ask() is called (not once it completes) — the ONLY
+  // signal the resume effect has for "the user already started their own
+  // turn while my fetch was still in flight," since the composer is disabled
+  // by `streaming` alone, not by that fetch.
+  //
+  // A COUNTER, deliberately, not a boolean latch: the resume effect is keyed
+  // on the pending id, so it can run at any point in the session. A sticky
+  // "has the user ever asked" flag would abandon every resume after the
+  // user's first question — silently, since abandoning is by design invisible.
+  // The counter is compared against a snapshot taken when the resume started,
+  // so it answers "did a turn start SINCE then", which is the actual question.
+  const askSeqRef = useRef(0);
+  // Distinguishes resume attempts from one another. takeResumeId() below
+  // clears the store field, which re-runs this value-keyed effect with a null
+  // id — so this effect deliberately has no cleanup function to cancel with;
+  // that re-run would otherwise abort the fetch it just started. A newer
+  // resume superseding an older one is caught by this counter instead.
+  const resumeRunRef = useRef(0);
   const [pendingSources, setPendingSources] = useState<AskSource[]>([]);
   const [pendingDegraded, setPendingDegraded] = useState<AskDegraded>({ vector: false, keyword: false, docs: false, calendar: false });
   const [error, setError] = useState<string | null>(null);
@@ -360,6 +416,79 @@ export default function AskPanel() {
 
   useEffect(() => { if (open && prefill) setInput(prefill); }, [open, prefill]);
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Resume a saved conversation, if the history page (or a "resume" action
+  // elsewhere) left one pending. Keyed on the pending id and consumed with
+  // takeResumeId() inside the effect — the same value-keyed consume-and-clear
+  // shape the docs and calendar pages use for AskOpenTarget, and for the same
+  // reason (see the resumeId subscription above: this component mounts once
+  // per session, so a mount-keyed read can never see a later request).
+  //
+  // The `api.aiHistory.get(id)` fetch below can take long enough for the
+  // user to ask — and fully receive an answer to — a turn of their own
+  // before it resolves: the composer is disabled only by `streaming`
+  // (see the textarea and Send button below), never by this fetch being in
+  // flight. Applying the restore over that would erase the question and
+  // answer the user just watched arrive, and silently overwrite the fresh
+  // conversation id that turn's own persist already wrote. Decision: the
+  // user's own live turn wins outright — abandon the resume rather than
+  // clobber it, with no visible sign that a resume was even attempted
+  // (the toast below is reserved for a genuinely failed fetch, not this).
+  //
+  // Three independent signs something happened while this was in flight:
+  // `askSeqRef` moving (the user asked something — the composer never
+  // blocked them), the generation moving on (they clicked "New
+  // conversation" without necessarily asking anything), and `resumeRunRef`
+  // moving (a second resume was requested and is now the one that counts).
+  // Any is enough to abandon. All three checks — and the eventual write —
+  // happen in that order, BEFORE any state changes, so there is no window
+  // where the restore is partially applied (turns replaced but the id not
+  // written, or vice versa).
+  useEffect(() => {
+    if (!resumeId) return;
+    const id = takeResumeId();
+    if (!id) return;
+    const generationAtResumeStart = session.generation();
+    const askSeqAtResumeStart = askSeqRef.current;
+    const run = ++resumeRunRef.current;
+    void (async () => {
+      try {
+        const t = await api.aiHistory.get(id);
+        if (!t || resumeRunRef.current !== run) return;
+        if (askSeqRef.current !== askSeqAtResumeStart) return;
+        if (session.generation() !== generationAtResumeStart) return;
+        // Pair the flat turn rows back into the panel's Turn shape. Proposals
+        // are restored for display only — a proposal from an earlier session
+        // is rendered inert (see the fromHistory branch below) rather than
+        // offered for approval, since the mail, calendar and drafts it was
+        // built against have all moved on since.
+        const restored: Turn[] = (t.turns ?? []).map((row: any) => ({
+          role: row.role,
+          content: row.content,
+          sources: row.sources ?? [],
+          steps: row.steps ?? undefined,
+          proposals: row.proposals ?? undefined,
+          // Not persisted — `degraded` describes the retrieval health of the
+          // run that produced the answer, which is not a property of the saved
+          // answer. DegradedNotice reads its fields unguarded, so a restored
+          // turn without this throws on render; nothing caught that while the
+          // resume effect could never fire. All-false is also the honest
+          // value: a restored answer makes no claim about backends now.
+          degraded: { vector: false, keyword: false, docs: false, calendar: false },
+          fromHistory: true,
+        }));
+        setTurns(restored);
+        // Addressed to the generation this resume started under — the same
+        // write every other id-setter uses. The checks above are what decide
+        // whether the restore applies at all; nothing between them and this
+        // line can yield to other JS, so the two land together or not at all.
+        session.setForGeneration(id, generationAtResumeStart);
+      } catch {
+        if (resumeRunRef.current === run) toast.error('That conversation is no longer available');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeId]);
 
   // A different thread (or no thread at all) invalidates both the gathered
   // text and the server's ack about it.
@@ -420,9 +549,88 @@ export default function AskPanel() {
     router.push(sourceHref({ type: 'mail', id: messageId }));
   }
 
+  /**
+   * Write the finished exchange to history. Never awaited by the render path
+   * and never allowed to throw outward: a failed history write must leave the
+   * answer on screen untouched.
+   *
+   * `turnId` and `generation` are parameters, not live reads of `turnIdRef`
+   * / `session.generation()` — this runs queued behind `session.enqueue`
+   * (see the call site), so by the time it actually executes, turnIdRef may
+   * already hold a LATER turn's id (or have been reset to null by a new
+   * `ask()` call), and the generation may already have moved on. The caller
+   * captures both synchronously at the moment ITS OWN turn completes and
+   * hands them in, so a queued persist always ships the id that belongs to
+   * it, and its create() result is only accepted if nothing superseded it.
+   *
+   * Reads `session.id(generation)` live (not a value captured in this
+   * function's own closure) for the same class of reason: the chain may
+   * run this well after the render that defined it, once an earlier queued
+   * persist has already resolved and recorded a conversation UNDER THIS
+   * SAME generation. That's what makes the "already have a conversation"
+   * check correct at execution time instead of at enqueue time — the fix
+   * for the double-create race — while staying scoped to `generation`
+   * rather than "whatever generation is current right now" is what lets a
+   * turn queued before "New conversation" still find its own conversation
+   * even if it doesn't run until after that click. `setForGeneration` is
+   * the matching half on the write side: an id is recorded against the
+   * generation that asked for it, so a create() resolving after "New
+   * conversation" is reachable by that generation's other queued turns and
+   * by nothing else.
+   */
+  const persistTurnPair = async (
+    question: string, answer: AnswerTurn, turnId: string | null, generation: number,
+  ) => {
+    const body = {
+      turnId,
+      turns: [
+        { role: 'user' as const, content: question },
+        {
+          role: 'assistant' as const,
+          content: answer.content,
+          sources: answer.sources ?? [],
+          steps: answer.steps ?? undefined,
+          proposals: answer.proposals ?? undefined,
+        },
+      ],
+    };
+    try {
+      const existingId = session.id(generation);
+      if (existingId) {
+        await api.aiHistory.append(existingId, body);
+      } else {
+        const { id } = await api.aiHistory.create({
+          ...body,
+          scopeKind: scope?.kind === 'thread' ? 'thread' : scope?.kind === 'doc' ? 'doc' : 'app',
+          scopeId: scope?.kind === 'thread' ? scope.seedMessageId : scope?.kind === 'doc' ? scope.docId : null,
+          scopeLabel: scope?.kind === 'thread' ? scope.subject : scope?.kind === 'doc' ? scope.docTitle : null,
+          model: aiModel,
+        });
+        // Recorded against the generation this turn was captured under, not
+        // "whatever is current now". If "New conversation" landed while the
+        // request was in flight, that is still the right slot: a turn queued
+        // under the same generation must find this id and append to it, and
+        // the generation the user moved to reads a different key, so it
+        // cannot be resurrected by this write.
+        session.setForGeneration(id, generation);
+      }
+    } catch (err) {
+      // History is a convenience. Losing a write must not cost the answer —
+      // but it must not be INVISIBLE either. Swallowed silently, a rejected
+      // write (a validation cap the server disagrees with, an expired
+      // session) looks exactly like a feature that works: the answer is on
+      // screen and nothing ever appears in history. §9 promises a warning
+      // here; this is it, and it is the only trace such a failure leaves.
+      console.warn('Ask 1Gov: saving this turn to history failed', err);
+    }
+  };
+
   async function ask(question: string) {
     const q = question.trim();
     if (!q || streaming) return;
+    // The user has now definitively started their own turn — see askSeqRef's
+    // declaration above for why the resume effect needs this.
+    askSeqRef.current += 1;
     setError(null);
     setInput('');
     // A clarify turn's question lives in the card, not the bubble text — fold
@@ -451,6 +659,10 @@ export default function AskPanel() {
     liveClarifyRef.current = null;
     setLiveSteps([]);
     setLiveProposals([]);
+    // A doc-scoped (streamAsk) turn never gets a `turn` frame, so a stale id
+    // from a previous agent turn must not carry over and misattribute this
+    // turn's (nonexistent) tool logs on persist.
+    turnIdRef.current = null;
     stream.reset();
     // Text streamed since the last tool_start. Iteration narration ("Let me
     // search…") belongs to the step that follows it, not the answer: on each
@@ -499,6 +711,7 @@ export default function AskPanel() {
         : await streamAgent(history, {
             pinned,
             onPinned: setPinnedAck,
+            onTurnId: (id) => { turnIdRef.current = id; },
             signal: ac.signal,
             onChunk: (delta) => {
               segRef.current += delta;
@@ -547,7 +760,7 @@ export default function AskPanel() {
       // so segRef never resets and this is a no-op there (raw === segment).
       const clean = scrubOutput(usesRetrievalPath(scope) ? raw : (segRef.current.trim() || raw));
       stream.replace(clean);
-      setTurns((prev) => [...prev, {
+      const answerTurn: AnswerTurn = {
         role: 'assistant',
         content: clean,
         sources: pendingSourcesRef.current,
@@ -556,7 +769,20 @@ export default function AskPanel() {
         proposals: liveProposalsRef.current,
         charts: liveChartsRef.current,
         clarify: liveClarifyRef.current ?? undefined,
-      }]);
+      };
+      setTurns((prev) => [...prev, answerTurn]);
+      // Reached only on completion — never in the catch/abort path below — so
+      // a Stop-ped turn is never saved half-finished. Capture the turn id and
+      // the generation NOW, synchronously — turnIdRef can move on (a later
+      // ask() resets or overwrites it) and the generation can move on too
+      // (if "New conversation" is clicked) before this persist actually
+      // runs — and enqueue rather than firing free, so two turns completing
+      // close together still persist in order instead of racing to
+      // create() twice, and a create() that resolves after this
+      // conversation was abandoned can't resurrect it.
+      const turnIdForThisTurn = turnIdRef.current;
+      const generationForThisTurn = session.generation();
+      void session.enqueue(() => persistTurnPair(q, answerTurn, turnIdForThisTurn, generationForThisTurn));
     } catch (err) {
       if (!ac.signal.aborted) {
         setError(err instanceof AIHttpError && err.status === 429
@@ -574,6 +800,11 @@ export default function AskPanel() {
    * A failed turn poisons follow-ups (the model repeats "couldn't find" from
    * history without re-searching) and long histories push the model into
    * fabricating tool results — this is the escape hatch.
+   *
+   * This no longer discards anything: each completed pair is already written
+   * to history as it happens, so the conversation just had is already saved.
+   * All this needs to do is forget its id so the next question starts a new
+   * saved conversation instead of appending to this one.
    */
   function startNewConversation() {
     setTurns([]);
@@ -594,6 +825,12 @@ export default function AskPanel() {
     // CACHE stays: re-gathering ten bodies to produce identical text is waste,
     // and the gathered messageCount is a property of the thread, not the chat.
     setPinnedAck(null);
+    // clear() bumps the generation, not just nulls the id — a create() from
+    // a turn asked just before this click may still be in flight; if it
+    // resolves afterwards, its captured generation no longer matches, so it
+    // cannot write itself back in and silently undo this "start fresh".
+    session.clear();
+    turnIdRef.current = null;
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -644,9 +881,18 @@ export default function AskPanel() {
           disabled={streaming}
           className="ml-auto p-1 rounded text-ink-3 hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40"
           aria-label="New conversation"
-          title="New conversation — clears this chat's history"
+          title="New conversation — this one stays in your history"
         >
           <SquarePen className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push('/ai/history')}
+          aria-label="Chat history"
+          title="Chat history"
+          className="text-ink-3 hover:text-foreground"
+        >
+          <Clock className="w-3.5 h-3.5" />
         </button>
         <button
           type="button"
@@ -667,6 +913,8 @@ export default function AskPanel() {
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      <AiProfileNudge profile={nudgeProfile} />
 
       {/* Scope chip — one per variant, same row shell for both. */}
       {scope?.kind === 'doc' && (
@@ -743,7 +991,15 @@ export default function AskPanel() {
               <AgentSteps steps={t.steps ?? []} />
               <AnswerBody content={t.content} sources={t.sources} onOpenSource={onOpenSource} />
               {t.charts?.map((c, ci) => <AgentChart key={ci} spec={c} />)}
-              {t.proposals?.map((p) => <ProposalCard key={p.proposalId} proposal={p} />)}
+              {t.proposals?.map((p) => (
+                t.fromHistory ? (
+                  <p key={p.proposalId} className="text-xs text-ink-3 italic">
+                    This was proposed in an earlier session. Ask again to get a fresh proposal.
+                  </p>
+                ) : (
+                  <ProposalCard key={p.proposalId} proposal={p} />
+                )
+              ))}
               {t.clarify && (
                 <ClarifyCard
                   clarify={t.clarify}

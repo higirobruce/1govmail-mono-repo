@@ -33,6 +33,19 @@ const THREAD = {
 
 const DOC = { kind: 'doc' as const, docId: 'd1', docTitle: 'Budget Memo' };
 
+// Every completed turn now persists to history in the background (Task 7).
+// Without this, these tests would fire real, unmocked api.aiHistory calls —
+// swallowed internally by the panel so the suite stays green today, but
+// unmocked network in a test file is exactly how an intermittent failure
+// shows up months later. A root-level hook (not inside either describe)
+// so it applies to every test below regardless of which describe it's in;
+// mockResolvedValue survives the per-test vi.clearAllMocks() calls since
+// clearing only resets call history, not the mock implementation.
+beforeEach(() => {
+  vi.spyOn(api.aiHistory, 'create').mockResolvedValue({ id: 'mock-conv' });
+  vi.spyOn(api.aiHistory, 'append').mockResolvedValue(undefined as any);
+});
+
 /**
  * The composer is a textarea + Send button, not a <form>, so drive the real
  * affordance. `act` wraps the whole async send so the post-await state writes

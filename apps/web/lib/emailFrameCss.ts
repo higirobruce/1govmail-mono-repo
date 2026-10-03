@@ -104,3 +104,24 @@ export function buildEmailFrameCss(opts: { dark: boolean; normalize: boolean }):
   const palette = opts.dark ? DARK : LIGHT;
   return opts.normalize ? baseCss(palette) + normalizeCss(palette) : baseCss(palette);
 }
+
+/**
+ * The frame's canvas and body-text colours in rgb(), for code that has to
+ * reason about what a sender's colours land on — see lib/emailContrastRepair.
+ *
+ * Only a FALLBACK: the repair reads the frame's real computed colours first.
+ * These exist because a browser may serialize a computed colour back as
+ * `oklch(...)`, which the contrast math cannot parse, and the dark values above
+ * are oklch tokens copied from globals.css.
+ *
+ * DARK here is the sRGB conversion of those two tokens:
+ *   --card       oklch(0.16 0.018 255) -> rgb(8, 14, 21)
+ *   --foreground oklch(0.95 0.006 245) -> rgb(235, 239, 242)
+ * emailFrameCss.test.ts pins the tokens, so changing one fails the test and
+ * forces these to be recomputed rather than quietly drifting.
+ */
+export function emailFrameColors(dark: boolean): { bg: string; text: string } {
+  return dark
+    ? { bg: 'rgb(8, 14, 21)', text: 'rgb(235, 239, 242)' }
+    : { bg: LIGHT.bg, text: LIGHT.text };
+}

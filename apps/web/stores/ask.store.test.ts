@@ -1,5 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAskStore } from './ask.store';
+
+// Captured before any test's beforeEach can reset it, so this reflects the
+// store's real default from create() rather than the fixture's forced reset.
+const DEFAULT_RESUME_ID = useAskStore.getState().resumeId;
 
 const SCOPE = { kind: 'doc', docId: 'doc-1', docTitle: 'Budget Memo' } as const;
 
@@ -14,7 +18,7 @@ const THREAD_SCOPE = {
 
 describe('useAskStore', () => {
   beforeEach(() => {
-    useAskStore.setState({ open: false, collapsed: false, prefill: null, scope: null, handlers: null, openTarget: null });
+    useAskStore.setState({ open: false, collapsed: false, prefill: null, scope: null, handlers: null, openTarget: null, resumeId: null });
   });
 
   it('starts closed, expanded, unscoped, unprefilled', () => {
@@ -142,6 +146,46 @@ describe('useAskStore', () => {
     expect(useAskStore.getState().handlers).toBe(handlers);
     useAskStore.getState().setHandlers(null);
     expect(useAskStore.getState().handlers).toBeNull();
+  });
+
+  describe('resumeId — the history page\'s handoff to AskPanel', () => {
+    it('starts null', () => {
+      // Asserts the store's actual default (captured pre-beforeEach), not the
+      // fixture's forced reset — the latter would pass even if create() never
+      // set resumeId at all.
+      expect(DEFAULT_RESUME_ID).toBeNull();
+    });
+
+    it('resumeConversation() sets resumeId and opens + un-collapses the panel', () => {
+      useAskStore.setState({ collapsed: true });
+      useAskStore.getState().resumeConversation('conv-1');
+      const s = useAskStore.getState();
+      expect(s.resumeId).toBe('conv-1');
+      expect(s.open).toBe(true);
+      expect(s.collapsed).toBe(false);
+    });
+
+    it('takeResumeId() reads and clears the pending id', () => {
+      useAskStore.getState().resumeConversation('conv-2');
+      expect(useAskStore.getState().takeResumeId()).toBe('conv-2');
+      expect(useAskStore.getState().resumeId).toBeNull();
+    });
+
+    it('takeResumeId() returns null and is a no-op when nothing is pending', () => {
+      // "No-op" means the store never notifies of a state change, not merely
+      // that resumeId ends up null (it would be null either way). Subscribing
+      // catches an unconditional clear that would still leave resumeId at
+      // null but would still call set() internally.
+      // (vi.spyOn(useAskStore, 'setState') would NOT catch this: the store
+      // creator's `set` closure is bound to the internal setState directly,
+      // not looked up through the api object's property each call.)
+      const listener = vi.fn();
+      const unsub = useAskStore.subscribe(listener);
+      expect(useAskStore.getState().takeResumeId()).toBeNull();
+      expect(listener).not.toHaveBeenCalled();
+      expect(useAskStore.getState().resumeId).toBeNull();
+      unsub();
+    });
   });
 });
 

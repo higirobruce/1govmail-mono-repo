@@ -3,10 +3,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 
-export interface ContactSuggestion {
+export interface ContactAddressSuggestion {
+  kind?: undefined;
   email: string;
   display: string;
 }
+
+export interface ContactGroupSuggestion {
+  kind: 'group';
+  groupId: string;
+  display: string;
+  memberCount: number;
+  members: Array<{ email: string; name?: string }>;
+}
+
+export type ContactSuggestion = ContactAddressSuggestion | ContactGroupSuggestion;
+
+export const isGroupSuggestion = (s: ContactSuggestion): s is ContactGroupSuggestion =>
+  s.kind === 'group';
 
 /** Suggestions only start once the query is worth a round-trip. */
 const MIN_CHARS = 2;
@@ -20,9 +34,18 @@ const DEBOUNCE_MS = 280;
  *
  * `exclude` is applied to the fetched list rather than to the request, so
  * removing a chip re-reveals its suggestion without another round-trip.
+ *
+ * `includeGroups` is opt-in and defaults to false: only the compose recipient
+ * field wants contact groups offered — a single-address field (e.g. Advanced
+ * Search From/To) must never be offered one, and omitting the option keeps
+ * the client call at one argument so existing single-argument assertions
+ * elsewhere keep passing.
  */
-export function useContactSuggestions(query: string, options: { exclude?: string[] } = {}) {
-  const { exclude } = options;
+export function useContactSuggestions(
+  query: string,
+  options: { exclude?: string[]; includeGroups?: boolean } = {},
+) {
+  const { exclude, includeGroups } = options;
   const [fetched, setFetched] = useState<ContactSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -41,7 +64,13 @@ export function useContactSuggestions(query: string, options: { exclude?: string
     const seq = ++requestSeq.current;
     debounceRef.current = setTimeout(async () => {
       try {
-        const results = await api.contacts.autocomplete(query.trim());
+        // Two explicit call shapes rather than a spread over a conditional
+        // tuple: TS cannot spread a union of differently-shaped tuple types
+        // (TS2556), and this form still keeps the one-argument call intact
+        // when groups are not requested.
+        const results = includeGroups
+          ? await api.contacts.autocomplete(query.trim(), { includeGroups: true })
+          : await api.contacts.autocomplete(query.trim());
         if (seq === requestSeq.current) setFetched(results);
       } catch {
         if (seq === requestSeq.current) setFetched([]);
@@ -52,12 +81,15 @@ export function useContactSuggestions(query: string, options: { exclude?: string
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query]);
+  }, [query, includeGroups]);
 
-  const suggestions = useMemo(
-    () => (exclude && exclude.length > 0 ? fetched.filter((s) => !exclude.includes(s.email)) : fetched),
-    [fetched, exclude],
-  );
+  const suggestions = useMemo(() => {
+    if (!exclude || exclude.length === 0) return fetched;
+    const skip = new Set(exclude.map((e) => e.trim().toLowerCase()));
+    return fetched.filter(
+      (s) => isGroupSuggestion(s) || !skip.has(s.email.trim().toLowerCase()),
+    );
+  }, [fetched, exclude]);
 
   /** Drop any pending request and hide what is currently loaded. */
   const clear = () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildEmailFrameCss } from './emailFrameCss';
+import { buildEmailFrameCss, emailFrameColors } from './emailFrameCss';
 
 // In dark mode the reader iframes used to keep a hardcoded #ffffff canvas —
 // the one surface that ignored the app theme. The builder must swap the whole
@@ -33,5 +33,29 @@ describe('buildEmailFrameCss', () => {
     expect(css).toContain('background-color:oklch(0.16 0.018 255)!important');
     expect(css).toContain('color:oklch(0.95 0.006 245)!important');
     expect(css).not.toMatch(/#fff\b|#ffffff/i);
+  });
+});
+
+// The contrast repair needs the canvas colour as rgb() — it cannot parse the
+// oklch tokens the frame is built from. These assertions are a drift guard:
+// change a token above and this fails, forcing the rgb conversion to be redone
+// rather than silently measuring contrast against the wrong background.
+describe('emailFrameColors', () => {
+  it('matches the oklch tokens the dark frame is actually built from', () => {
+    const css = buildEmailFrameCss({ dark: true, normalize: false });
+    expect(css).toContain('oklch(0.16 0.018 255)');   // --card       => rgb(8, 14, 21)
+    expect(css).toContain('oklch(0.95 0.006 245)');   // --foreground => rgb(235, 239, 242)
+
+    expect(emailFrameColors(true)).toEqual({
+      bg: 'rgb(8, 14, 21)',
+      text: 'rgb(235, 239, 242)',
+    });
+  });
+
+  it('reports the light frame colours straight from its palette', () => {
+    const css = buildEmailFrameCss({ dark: false, normalize: false });
+    const { bg, text } = emailFrameColors(false);
+    expect(css).toContain(`background:${bg}`);
+    expect(css).toContain(`color:${text}`);
   });
 });

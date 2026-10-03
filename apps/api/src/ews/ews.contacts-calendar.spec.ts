@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { EwsService } from './ews.service';
+import { findCalendarEnvelope, getAppointmentEnvelope } from './ews-envelopes';
 import { MailSession } from '../provider/mail-session';
 
 /**
@@ -263,6 +264,29 @@ describe('EwsService contacts, GAL, calendar, free/busy (Task 6)', () => {
     it('returns null (NOT NotFoundException) for an unknown id', async () => {
       const { svc } = svcWith(GET_APPT_NOTFOUND);
       await expect(svc.getAppointment(SESSION, 'nope==')).resolves.toBeNull();
+    });
+  });
+
+  describe('EWS calendar UID', () => {
+    it('asks for calendar:UID on both calendar envelopes', () => {
+      // The UID is the only cross-user identity a meeting has; without it the
+      // minutes of one meeting cannot be the same document for two attendees.
+      expect(findCalendarEnvelope('2026-09-01T00:00:00Z', '2026-09-30T00:00:00Z'))
+        .toContain('<t:FieldURI FieldURI="calendar:UID"/>');
+      expect(getAppointmentEnvelope('ITEM-1=='))
+        .toContain('<t:FieldURI FieldURI="calendar:UID"/>');
+    });
+
+    it('reads the UID off a calendar list hit', async () => {
+      const { svc } = svcWith(fixture('findcalendar-uid.success.xml'));
+      const events = await svc.getCalendarEvents(SESSION, Date.parse('2026-09-01'), Date.parse('2026-09-30'));
+      expect(events[0].icalUid).toBe('040000008200E00074C5B7101A82E008');
+    });
+
+    it('leaves icalUid null when the response carries no UID', async () => {
+      const { svc } = svcWith(FIND_CALENDAR);   // the pre-existing fixture has none
+      const events = await svc.getCalendarEvents(SESSION, Date.parse('2026-09-01'), Date.parse('2026-09-30'));
+      expect(events[0].icalUid ?? null).toBeNull();
     });
   });
 

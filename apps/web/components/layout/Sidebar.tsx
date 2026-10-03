@@ -12,7 +12,7 @@ import {
   Calendar, Users, FolderOpen,
   ListTodo, BookOpen, ShieldAlert,
   MoreHorizontal, Pencil, CloudOff, Loader2,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, Clock,
 } from 'lucide-react';
 import { useOffline } from '@/lib/offline/provider';
 import { cn } from '@/lib/utils';
@@ -810,6 +810,7 @@ export default function Sidebar({
           </div>
           <NavItem icon={Users} label="Contacts" onClick={() => { router.push('/contacts'); onClose?.(); }} tourId="contacts-nav" collapsed={railMode} />
           <NavItem icon={BookOpen} label="Docs" onClick={() => { router.push('/docs'); onClose?.(); }} tourId="docs-nav" collapsed={railMode} />
+          <NavItem icon={Clock} label="Chat history" onClick={() => { router.push('/ai/history'); onClose?.(); }} tourId="ai-history-nav" collapsed={railMode} />
 
           {/* Upcoming features */}
           <div

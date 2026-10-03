@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createEmailPreparer, prepareEmailHtml, extractBodyContent } from './emailRender';
+import { createEmailPreparer, prepareEmailHtml, extractBodyContent, rewriteCidRefs } from './emailRender';
 
 describe('extractBodyContent', () => {
   it('returns the inner body of a full HTML document', () => {
@@ -65,5 +65,64 @@ describe('prepareEmailHtml (default sanitizer)', () => {
     expect(out).not.toContain('script');
     expect(out).not.toContain('onclick');
     expect(out).toContain('hi');
+  });
+});
+
+describe('rewriteCidRefs', () => {
+  const map = new Map([['c1', 'blob:x/1'], ['c2', 'blob:x/2']]);
+
+  it('swaps a cid reference for its resolved url', () => {
+    expect(rewriteCidRefs('<img src="cid:c1">', map)).toBe('<img src="blob:x/1">');
+  });
+
+  it('handles single quotes and mixed case', () => {
+    expect(rewriteCidRefs("<img src='CID:c1'>", map)).toBe("<img src='blob:x/1'>");
+  });
+
+  it('swaps every occurrence, not just the first', () => {
+    const out = rewriteCidRefs('<img src="cid:c1"><img src="cid:c2"><img src="cid:c1">', map);
+    expect(out).toBe('<img src="blob:x/1"><img src="blob:x/2"><img src="blob:x/1">');
+  });
+
+  it('tolerates angle brackets around the cid, which is how they are stored', () => {
+    expect(rewriteCidRefs('<img src="cid:<c1>">', map)).toBe('<img src="blob:x/1">');
+  });
+
+  it('leaves an unresolved cid alone rather than blanking the image', () => {
+    const out = rewriteCidRefs('<img src="cid:unknown">', map);
+    expect(out).toBe('<img src="cid:unknown">');
+  });
+
+  it('leaves html with no cid refs untouched', () => {
+    expect(rewriteCidRefs('<p>hello</p>', map)).toBe('<p>hello</p>');
+  });
+
+  // The three normalisations below are not hypothetical — each is handled by the
+  // embed code this replaces (mail.service.ts:1349-1358). Dropping any of them
+  // means images silently failing to resolve on real mail while CI stays green.
+
+  it('matches when the STORED cid is bracket-wrapped and the html is not', () => {
+    const stored = new Map([['<img0@govmail>', 'blob:x/9']]);
+    expect(rewriteCidRefs('<img src="cid:img0@govmail">', stored)).toBe('<img src="blob:x/9">');
+  });
+
+  it('matches when the html encodes the @ as an entity', () => {
+    const stored = new Map([['img0@govmail', 'blob:x/9']]);
+    expect(rewriteCidRefs('<img src="cid:img0&#64;govmail">', stored)).toBe('<img src="blob:x/9">');
+    expect(rewriteCidRefs('<img src="cid:img0&#x40;govmail">', stored)).toBe('<img src="blob:x/9">');
+  });
+
+  it('falls back to the base when the html omits the @domain', () => {
+    const stored = new Map([['image001.gif@01DD2986.DAAA8E30', 'blob:x/9']]);
+    expect(rewriteCidRefs('<img src="cid:image001.gif">', stored)).toBe('<img src="blob:x/9">');
+  });
+
+  it('matches case-insensitively on the cid itself', () => {
+    const stored = new Map([['IMG0@GovMail', 'blob:x/9']]);
+    expect(rewriteCidRefs('<img src="cid:img0@govmail">', stored)).toBe('<img src="blob:x/9">');
+  });
+
+  it('returns the input unchanged for an empty map', () => {
+    expect(rewriteCidRefs('<img src="cid:c1">', new Map())).toBe('<img src="cid:c1">');
   });
 });

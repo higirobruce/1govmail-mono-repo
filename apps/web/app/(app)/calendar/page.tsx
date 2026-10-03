@@ -12,10 +12,13 @@ import { usePeopleStore } from '@/stores/people.store';
 import { MeetingPrepView } from '@/components/calendar/MeetingPrepView';
 import { AIClient } from '@/lib/ai/client';
 import { parseEventFromEmail } from '@/lib/ai/eventParse';
+import { sourceHref } from '@/lib/ai/sourceNav';
 import { mergeParsedEvent, sameAttendees, toFormDateTime } from '@/lib/calendar/eventPrefill';
 import { quickAddEventPrefill } from '@/lib/calendar/quickAddEvent';
+import { minutesPrefill } from '@/lib/calendar/minutesPrefill';
 import type { EventFormValues, EventFieldKey } from '@/lib/calendar/eventPrefill';
 import { parseMailDragPayload, dropPrefillFromPayload } from '@/lib/calendar/dropPrefill';
+import { PHONE_MEDIA_QUERY, defaultCalView, type CalView as CalViewType } from '@/lib/calendar/defaultView';
 import { AIWorkingIndicator } from '@/components/ai/AIWorkingIndicator';
 import { api } from '@/lib/api';
 import Sidebar from '@/components/layout/Sidebar';
@@ -31,7 +34,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Loader2,
   Clock, MapPin, Calendar as CalendarIcon, Trash2, Users,
   Video, Repeat, ExternalLink, Pencil, CheckCircle2,
-  HelpCircle, XCircle, Menu, Mail, CalendarSearch,
+  HelpCircle, XCircle, Menu, Mail, CalendarSearch, ScrollText,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth,
@@ -67,9 +70,10 @@ interface CalEvent {
   attendees: Array<{ email: string; name?: string; ptst?: string }>;
   linkedMessageId?: string | null;
   linkedSubject?: string | null;
+  minutesDocumentId?: string | null;
 }
 
-type CalView = 'day' | 'workweek' | 'week' | 'month' | 'year' | 'agenda';
+type CalView = CalViewType;
 
 interface FreeBusyData {
   email: string;
@@ -1620,6 +1624,7 @@ function EventDetailPanel({
   onDelete,
   onEdit,
   onRsvp,
+  onMinutesCreated,
   deleting,
   attendeesLoading,
 }: {
@@ -1629,9 +1634,11 @@ function EventDetailPanel({
   onDelete: (e: CalEvent) => void;
   onEdit: (e: CalEvent) => void;
   onRsvp: (e: CalEvent, verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => void;
+  onMinutesCreated: (eventId: string, documentId: string) => void;
   deleting: boolean;
   attendeesLoading?: boolean;
 }) {
+  const router = useRouter();
   const meetingLink = isOnlineMeetingLink(event.location) ? event.location : null;
   const isOrganizer = event.organizer && currentUserEmail
     ? event.organizer.toLowerCase() === currentUserEmail.toLowerCase()
@@ -1640,10 +1647,13 @@ function EventDetailPanel({
     (a) => a.email.toLowerCase() === currentUserEmail?.toLowerCase(),
   );
   const showRsvp = !isOrganizer && (isAttendee || event.attendees.length === 0);
+  // A local const so the narrowing survives into the click handler's closure.
+  const minutesId: string | null = event.minutesDocumentId ?? null;
   const aiEnabled = useAIStore((s) => s.enabled);
   const resize = useResizable({ key: 'calendarDetail', defaultWidth: 320, min: 280, max: 560, edge: 'left' });
 
   const [rsvping, setRsvping] = useState<'ACCEPT' | 'DECLINE' | 'TENTATIVE' | null>(null);
+  const [creatingMinutes, setCreatingMinutes] = useState(false);
 
   const handleRsvp = async (verb: 'ACCEPT' | 'DECLINE' | 'TENTATIVE') => {
     setRsvping(verb);
@@ -1895,7 +1905,52 @@ function EventDetailPanel({
       </ScrollArea>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-border/40 shrink-0">
+      <div className="px-4 py-3 border-t border-border/40 shrink-0 space-y-2">
+        {minutesId ? (
+          <button
+            onClick={() => router.push(sourceHref({ type: 'doc', id: minutesId }))}
+            className="flex items-center gap-1.5 text-ui text-primary hover:underline"
+          >
+            <ScrollText className="w-3.5 h-3.5" />
+            Open minutes
+          </button>
+        ) : (
+          <button
+            onClick={async () => {
+              setCreatingMinutes(true);
+              try {
+                const { documentId, linked } = await api.calendar.createMinutes(
+                  event.id,
+                  minutesPrefill({
+                    title: event.title,
+                    startAt: event.startAt,
+                    location: event.location,
+                    organizer: event.organizer ?? null,
+                    attendees: (event.attendees ?? []).map((a: any) => a?.email ?? a),
+                  }),
+                );
+                onMinutesCreated(event.id, documentId);
+                toast.success(
+                  linked
+                    ? 'Minutes created and shared with the attendees'
+                    : 'Minutes created — this meeting has no shared id, so attendees will need the link',
+                );
+                router.push(sourceHref({ type: 'doc', id: documentId }));
+              } catch (err: any) {
+                toast.error('Could not create the minutes', { description: err?.message });
+              } finally {
+                setCreatingMinutes(false);
+              }
+            }}
+            disabled={creatingMinutes}
+            className="flex items-center gap-1.5 text-ui text-ink-2 hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {creatingMinutes
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <ScrollText className="w-3.5 h-3.5" />}
+            Create minutes
+          </button>
+        )}
         <Button variant="destructive-ghost" size="sm" onClick={() => onDelete(event)} disabled={deleting}
           className="w-full h-8 gap-1.5 text-xs">
           {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
@@ -1919,7 +1974,9 @@ export default function CalendarPage() {
   const [hydrated, setHydrated] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const [calView, setCalView]       = useState<CalView>('agenda');
+  // Server-rendered first, so the initial value must not read `window` — a
+  // phone gets corrected to 'day' by the mount effect below, one frame later.
+  const [calView, setCalView]       = useState<CalView>(() => defaultCalView(false));
   const confirm = useConfirmStore((s) => s.confirm);
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [events, setEvents]         = useState<CalEvent[]>([]);
@@ -1955,6 +2012,14 @@ export default function CalendarPage() {
   const [freeBusyList, setFreeBusyList] = useState<FreeBusyData[]>([]);
   const [loadingFB, setLoadingFB]       = useState(false);
   const [suggestSlot, setSuggestSlot]   = useState<{ start: Date; end: Date; attendees: string[] } | null>(null);
+
+  // Phones open on today instead of the work week. Done on mount rather than in
+  // the initial state because this page is server-rendered and `window` does
+  // not exist there; running it once (not on resize) keeps a view the user
+  // picks during the visit from being yanked away by a rotation.
+  useEffect(() => {
+    if (window.matchMedia(PHONE_MEDIA_QUERY).matches) setCalView(defaultCalView(true));
+  }, []);
 
   // Auth guard
   useEffect(() => {
@@ -2362,6 +2427,21 @@ export default function CalendarPage() {
               onDelete={handleDelete}
               onEdit={(e) => { setEditingEvent(e); setSelectedEvent(null); }}
               onRsvp={handleRsvp}
+              onMinutesCreated={(eventId, documentId) => {
+                // Guard by id: the request that created this document may
+                // resolve after the drawer has moved on to a different
+                // event, and patching whatever is selected by then would
+                // attach this document to the wrong meeting.
+                setSelectedEvent((prev) =>
+                  prev?.id === eventId ? { ...prev, minutesDocumentId: documentId } : prev,
+                );
+                // Patch the list row too, as the detail fetch above does —
+                // otherwise reopening the drawer from the list shows "Create
+                // minutes" again until the detail request resolves.
+                setEvents((prev) => prev.map((e) =>
+                  e.id === eventId ? { ...e, minutesDocumentId: documentId } : e,
+                ));
+              }}
               deleting={deleting}
               attendeesLoading={selectedEventLoading}
             />

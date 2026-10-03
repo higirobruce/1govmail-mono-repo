@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -7,6 +8,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { buildMailSession } from '../provider/mail-session';
 import { ProviderContact } from '../provider/provider-types';
+
+export type AutocompleteSuggestion =
+  | { email: string; display: string }
+  | {
+      kind: 'group';
+      groupId: string;
+      display: string;
+      memberCount: number;
+      members: Array<{ email: string; name?: string }>;
+    };
 
 export interface ContactData {
   firstName?: string;
@@ -37,6 +48,57 @@ export class ContactsService {
     if (!user.authToken)
       throw new UnauthorizedException('Please log in again to connect to Zimbra.');
     return user;
+  }
+
+  /**
+   * The caller's normalised address, for local ACL reads only.
+   *
+   * Deliberately NOT `getUser`: that throws when `authToken` is null, which is
+   * right before a provider call but wrong here — listing groups is a database
+   * read and must keep working when a user's Zimbra token has expired.
+   */
+  private async getUserEmail(userId: string): Promise<string> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user.email.trim().toLowerCase();
+  }
+
+  /**
+   * Resolve what the caller may do with a group, or refuse.
+   *
+   * Refusal is always NotFoundException, never Forbidden — a stranger must not
+   * be able to probe whether a group id exists.
+   */
+  private async requireGroupAccess(
+    userId: string,
+    groupId: string,
+    need: 'read' | 'write' | 'own',
+  ) {
+    const email = await this.getUserEmail(userId);
+    const group = await this.prisma.contactGroup.findFirst({
+      where: {
+        id: groupId,
+        OR: [
+          { userId },
+          { invites: { some: { invitedEmail: email } } },
+        ],
+      },
+      include: { invites: true },
+    });
+    if (!group) throw new NotFoundException('Group not found');
+
+    const isOwner = group.userId === userId;
+    if (need === 'own' && !isOwner) throw new NotFoundException('Group not found');
+    if (need === 'write' && !isOwner) {
+      const mine = group.invites.find(
+        (i) => i.invitedEmail.trim().toLowerCase() === email,
+      );
+      if (mine?.role !== 'EDITOR') throw new NotFoundException('Group not found');
+    }
+    return { group, isOwner };
   }
 
   /**
@@ -90,7 +152,8 @@ export class ContactsService {
   async autocomplete(
     userId: string,
     query: string,
-  ): Promise<Array<{ email: string; display: string }>> {
+    opts: { includeGroups?: boolean } = {},
+  ): Promise<AutocompleteSuggestion[]> {
     const q = (query ?? '').trim();
     if (!q) return [];
     const user = await this.getUser(userId);
@@ -115,7 +178,12 @@ export class ContactsService {
         merged.push(item);
       }
     }
-    return merged.slice(0, 20);
+    // Groups rank above addresses — someone typing their group's name wants the
+    // group — and sit outside the 20-address cap so a match is never crowded out.
+    const groups = opts.includeGroups
+      ? await this.autocompleteGroups(userId, q)
+      : [];
+    return [...groups, ...merged.slice(0, 20)];
   }
 
   /**
@@ -198,6 +266,48 @@ export class ContactsService {
     }
 
     return Array.from(map.values());
+  }
+
+  /**
+   * Groups the caller may send to whose name matches the query.
+   *
+   * Never throws — a failure here must degrade to address-only suggestions
+   * rather than breaking the recipient field.
+   */
+  private async autocompleteGroups(
+    userId: string,
+    query: string,
+  ): Promise<AutocompleteSuggestion[]> {
+    try {
+      const email = await this.getUserEmail(userId);
+      const groups = await this.prisma.contactGroup.findMany({
+        where: {
+          name: { contains: query, mode: 'insensitive' },
+          OR: [
+            { userId },
+            { invites: { some: { invitedEmail: email } } },
+          ],
+        },
+        orderBy: { name: 'asc' },
+        take: 5,
+      });
+      return groups.map((g) => {
+        const members = (Array.isArray(g.members) ? g.members : []) as Array<{
+          email: string;
+          name?: string;
+        }>;
+        return {
+          kind: 'group' as const,
+          groupId: g.id,
+          display: g.name,
+          memberCount: members.length,
+          members,
+        };
+      });
+    } catch (err: any) {
+      console.warn(`autocompleteGroups: ${err?.message ?? err}`);
+      return [];
+    }
   }
 
   // ── List / sync ────────────────────────────────────────────────────────────
@@ -349,8 +459,15 @@ export class ContactsService {
   // ── Contact Groups ────────────────────────────────────────────────────────
 
   async getGroups(userId: string) {
+    const email = await this.getUserEmail(userId);
     return this.prisma.contactGroup.findMany({
-      where: { userId },
+      where: {
+        OR: [
+          { userId },
+          { invites: { some: { invitedEmail: email } } },
+        ],
+      },
+      include: { invites: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -367,8 +484,7 @@ export class ContactsService {
   }
 
   async updateGroup(userId: string, groupId: string, data: { name?: string; description?: string; members?: { email: string; name?: string }[] }) {
-    const group = await this.prisma.contactGroup.findFirst({ where: { id: groupId, userId } });
-    if (!group) throw new NotFoundException('Group not found');
+    await this.requireGroupAccess(userId, groupId, 'write');
     return this.prisma.contactGroup.update({
       where: { id: groupId },
       data: {
@@ -376,13 +492,66 @@ export class ContactsService {
         ...(data.description !== undefined && { description: data.description }),
         ...(data.members !== undefined && { members: data.members as any }),
       },
+      // Same shape as getGroups. The client decides whether to keep showing the
+      // Edit control by looking for its own EDITOR invite, so a response without
+      // `invites` reads as "no longer editable" and the button vanishes until the
+      // next full load.
+      include: { invites: true },
     });
   }
 
   async deleteGroup(userId: string, groupId: string): Promise<{ success: boolean }> {
-    const group = await this.prisma.contactGroup.findFirst({ where: { id: groupId, userId } });
-    if (!group) throw new NotFoundException('Group not found');
+    await this.requireGroupAccess(userId, groupId, 'own');
     await this.prisma.contactGroup.delete({ where: { id: groupId } });
+    return { success: true };
+  }
+
+  // ── Group sharing ─────────────────────────────────────────────────────────
+
+  async listShares(userId: string, groupId: string) {
+    await this.requireGroupAccess(userId, groupId, 'read');
+    return this.prisma.groupInvite.findMany({
+      where: { groupId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async addShare(
+    userId: string,
+    groupId: string,
+    data: { email: string; role?: 'VIEWER' | 'EDITOR' },
+  ) {
+    await this.requireGroupAccess(userId, groupId, 'own');
+
+    const invitedEmail = data.email.trim().toLowerCase();
+    const me = await this.getUserEmail(userId);
+    if (invitedEmail === me) {
+      throw new BadRequestException('You already own this group');
+    }
+
+    const role = data.role ?? 'VIEWER';
+    // Upsert rather than create: @@unique([groupId, invitedEmail]) means a
+    // second invite to the same person is a role change, not an error.
+    return this.prisma.groupInvite.upsert({
+      where: { groupId_invitedEmail: { groupId, invitedEmail } },
+      update: { role },
+      create: { groupId, invitedEmail, invitedBy: userId, role },
+    });
+  }
+
+  async removeShare(
+    userId: string,
+    groupId: string,
+    inviteId: string,
+  ): Promise<{ success: boolean }> {
+    await this.requireGroupAccess(userId, groupId, 'own');
+    // Scoped by groupId so an invite id from another group cannot be revoked
+    // by someone who happens to own a different group.
+    const invite = await this.prisma.groupInvite.findFirst({
+      where: { id: inviteId, groupId },
+    });
+    if (!invite) throw new NotFoundException('Share not found');
+    await this.prisma.groupInvite.delete({ where: { id: inviteId } });
     return { success: true };
   }
 }

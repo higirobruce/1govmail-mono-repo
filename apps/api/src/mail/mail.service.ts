@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, Logger, UnauthorizedException, ConflictException } from '@nestjs/common';
-import { deriveLabel, formatAttachments, mdToHtml, type ExtractedCard, type TriageLabel } from '@email-client/shared';
+import { deriveLabel, formatAttachments, isSpamFolderPath, mdToHtml, type ExtractedCard, type TriageLabel } from '@email-client/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailProviderResolver } from '../provider/mail-provider.resolver';
 import { MailSessionUser, buildMailSession } from '../provider/mail-session';
@@ -11,6 +11,7 @@ import { PromoteCommitmentDto } from './dto/promote-commitment.dto';
 import { inlineSignatureImages } from '../common/signature-images';
 import { MailSearchFilter, isEmptyFilter } from '../provider/mail-search-filter';
 import { ProviderMessage, ProviderMessagePage } from '../provider/provider-types';
+import { InlineImageCacheService } from './inline-image-cache.service';
 
 const CARD_WINDOWS = ['today', '24h', 'week'] as const;
 type CardWindow = (typeof CARD_WINDOWS)[number];
@@ -22,6 +23,24 @@ const COMMITMENT_STATUS_FILTERS = ['open', 'archived'] as const;
 type CommitmentStatusFilter = (typeof COMMITMENT_STATUS_FILTERS)[number];
 const COMMITMENT_UPDATE_STATUSES = ['done', 'dismissed', 'open'] as const;
 type CommitmentUpdateStatus = (typeof COMMITMENT_UPDATE_STATUSES)[number];
+
+/**
+ * What `notifyNewMail` tells the folder-persist loop that runs after it.
+ *
+ * `inboxUnreadOwnedFor` is the PROVIDER folder id whose stored `unreadCount`
+ * the notification path has taken responsibility for this cycle. The loop must
+ * leave that ONE column on that ONE row alone — every other column of that
+ * row, and every other folder, persists exactly as before.
+ *
+ * It exists because the loop used to write `unreadCount` for every folder
+ * unconditionally, which silently undid the transaction wrapping the claim and
+ * the insert: when those rolled back together, the loop advanced the baseline
+ * anyway, the next sync saw no delta, and the arrival was announced nowhere.
+ * `null` means the loop owns every count, as it always did.
+ */
+interface InboxBaselineOwnership {
+  inboxUnreadOwnedFor: string | null;
+}
 
 export interface CommitmentRow {
   id: string;
@@ -63,10 +82,6 @@ interface WindowCardRow {
   };
 }
 
-// Different Zimbra deployments report the spam folder under either path —
-// this app's own Sidebar (apps/web/components/layout/Sidebar.tsx) already
-// treats both as "the spam folder", so enforcement must match both too.
-const SPAM_FOLDER_PATHS = ['/Junk', '/Spam'];
 
 /**
  * Metadata-only column set for message rows returned to a list view (folder
@@ -102,27 +117,44 @@ const MESSAGE_LIST_SELECT = {
   updatedAt: true,
 } as const;
 
-// Browsers cannot load cid: URLs — replace with src="" so the image is skipped
-// silently instead of rendering a broken-image icon. Applied to embedPending
-// responses only; the DB keeps the raw cid-bearing body until the embed lands.
-function stripCidRefs(html: string): string {
-  return html.replace(/src=["']cid:[^"']*["']/gi, 'src=""');
+/** Provider addresses → the `{email, name}` JSON shape the DB columns hold. */
+function mapAddresses(
+  list: { email: string; name?: string | null }[] | undefined,
+): { email: string; name: string | null }[] {
+  return (list ?? []).map((a) => ({ email: a.email, name: a.name ?? null }));
+}
+
+/**
+ * Recipient fields for an upsert's `update` half.
+ *
+ * Recipients are refreshed on update (not written once on insert) so a row
+ * first synced without them — a pre-`recip=2` Zimbra sync, or an EWS FindItem
+ * that returns no recipient properties — heals on the next folder load instead
+ * of showing no "To" forever.
+ *
+ * The refresh is deliberately one-directional: a field is emitted ONLY when the
+ * provider actually returned addresses for it. A payload carrying no recipient
+ * roles must never blank out a full list that a message open already stored —
+ * the same erase-on-resync trap that cost icalUid its value in 630d28e.
+ */
+function recipientRefresh(m: ProviderMessage): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (m.to?.length)  out.toRecipients  = mapAddresses(m.to);
+  if (m.cc?.length)  out.ccRecipients  = mapAddresses(m.cc);
+  if (m.bcc?.length) out.bccRecipients = mapAddresses(m.bcc);
+  return out;
 }
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
 
-  // Background inline-image embeds still running, keyed `${userId}:${zimbraId}`.
-  // getMessage checks this to serve polls from the cached raw body instead of
-  // spawning a duplicate Zimbra fetch + embed per poll.
-  private readonly inflightEmbeds = new Map<string, Promise<unknown>>();
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly resolver: MailProviderResolver,
     private readonly notifications: NotificationsService,
     private readonly tasksService: TasksService,
+    private readonly inlineCache: InlineImageCacheService = new InlineImageCacheService(),
   ) {}
 
   private async getUser(userId: string) {
@@ -179,19 +211,32 @@ export class MailService {
       throw err;
     }
 
+    // Which folder's stored unreadCount the notification path owns for this
+    // cycle (see InboxBaselineOwnership). The loop below must not write that
+    // one column on that one row: doing so is what used to undo the claim's
+    // transaction on rollback, advancing the baseline with nothing announced.
+    const { inboxUnreadOwnedFor } = await this.notifyNewMail(userId, providerFolders);
+
     // Persist folders to DB for caching; failures here must not prevent the
     // response from reaching the client (don't let a Prisma error become 500).
     const saved: any[] = [];
     for (const f of providerFolders) {
       try {
         const folderType = this.folderKindToType(f.kind);
+        // The Inbox baseline is notifyNewMail's to move when it claimed the
+        // transition (it wrote the same value), declined to (nothing changed),
+        // or failed (the claim rolled back and must be retried next sync).
+        // Everything else about the upsert is unchanged — including the
+        // `create` branch, which always seeds the count, because a row that
+        // does not exist yet holds no baseline to protect.
+        const ownsUnread = f.id === inboxUnreadOwnedFor;
         const folder = await this.prisma.folder.upsert({
           where: { userId_zimbraId: { userId, zimbraId: f.id } },
           update: {
             name: f.name,
             path: f.path,
             type: folderType,
-            unreadCount: f.unreadCount,
+            ...(ownsUnread ? {} : { unreadCount: f.unreadCount }),
             totalCount: f.totalCount,
             syncedAt: new Date(),
           },
@@ -219,6 +264,228 @@ export class MailService {
     return saved;
   }
 
+  /**
+   * How many times one sync will re-read the baseline and retry its claim when
+   * a concurrent sync moved the baseline out from under it.
+   *
+   * A zero from the claim means "someone moved that baseline", NOT "someone
+   * announced what I measured" — the winner may have claimed a smaller
+   * transition than this sync measured, leaving its extra messages in no
+   * announcement at all. So a loser re-reads and tries again while the
+   * baseline is still below its own measurement. Bounded, because this runs
+   * inside every folder sync and under-announcing one arrival is far cheaper
+   * than a loop that never returns.
+   */
+  private static readonly NEW_MAIL_CLAIM_ATTEMPTS = 3;
+
+  /**
+   * Raise a NEW_MAIL notification when the Inbox unread count has RISEN since
+   * the last sync. A fall means the user read mail somewhere else, which is
+   * not an arrival.
+   *
+   * Reads the stored Inbox row itself (this must happen BEFORE the upsert loop
+   * in getFolders overwrites it — that read used to live in getFolders,
+   * unguarded; it now lives here so its failure is covered by the same
+   * try/catch as the claim below). Never throws: a failed read or a failed
+   * claim degrades to the same outcome as "no previous row" — skip the
+   * notification, log at WARN, and let the folder list continue. An alert is
+   * worth less than the folder list this runs inside.
+   *
+   * Returns which folder's stored `unreadCount` it owns for this cycle, which
+   * the persist loop then leaves alone (see InboxBaselineOwnership). This path
+   * owns that column from the moment it has read a baseline: it is the only
+   * thing that knows whether the value in the row is a claim to keep, a
+   * rolled-back claim to retry, or a count to lower.
+   */
+  private async notifyNewMail(
+    userId: string,
+    fetched: Array<{ id: string; path: string; unreadCount: number }>,
+  ): Promise<InboxBaselineOwnership> {
+    // Held OUTSIDE the try so a FAILURE can report ownership too. A claim that
+    // rolled back has left the baseline where it was on purpose, so the next
+    // sync measures the same delta and announces it; if the persist loop
+    // advanced the baseline anyway, that arrival would be announced nowhere —
+    // the identical loss the transaction was added to prevent, reached through
+    // the loop instead of through a crash.
+    let inboxProviderId: string | null = null;
+    try {
+      // Resolve the PROVIDER's inbox first, because its id is what identifies
+      // the row to read.
+      const current = fetched.find((f) => f.path === '/Inbox');
+      if (!current) return { inboxUnreadOwnedFor: null };
+      inboxProviderId = current.id;
+
+      // Resolved at most ONCE per sync, not once per attempt: both its inputs
+      // — the stored row's identity and the count this sync measured — are the
+      // same on every pass, so a retry that re-ran it would pay for another
+      // indexed query to rebuild a string it already has.
+      let body: string | undefined;
+
+      for (let attempt = 0; attempt < MailService.NEW_MAIL_CLAIM_ATTEMPTS; attempt += 1) {
+        // Read the baseline by the SAME identity the persist loop writes by.
+        //
+        // `path` is not unique. (userId, zimbraId) is the folders table's only
+        // unique key, the upsert loop writes by it, and nothing prunes rows the
+        // provider has stopped returning — so one user can hold TWO rows both
+        // stamped '/Inbox'. Flipping an Institution.provider from zimbra to
+        // exchange keeps the same User row (auth upserts on email) while EWS
+        // returns different folder ids that also map to '/Inbox'; so does a
+        // Demo/local login on a real address, a restored mailbox, and
+        // renameFolder, which rewrites `path` to `/${name}` unconditionally.
+        //
+        // The stale row is never upserted again, so its count is FROZEN — and
+        // being the older row it is the likely result of an unordered
+        // `findFirst`. Measuring against it computes a negative delta on every
+        // sync forever: no chime, no toast, no row, indefinitely. Reading by
+        // the unique key reads the row that gets written, so which ROW this
+        // measures against is no longer ambiguous. (`orderBy: { syncedAt:
+        // 'desc' }` would only pick the freshest duplicate and leave the
+        // ambiguity in place.)
+        //
+        // Which FOLDER is the inbox was a separate ambiguity, and it lived
+        // upstream of here: on EWS the whole tree arrives flat and any folder
+        // merely NAMED 'Inbox' used to carry the path '/Inbox', so the `find`
+        // above could pick `Archive/Inbox` and then compare that folder's own
+        // row against itself forever. It is fixed where it was created —
+        // EwsService.mapFolder grants a canonical system path only to a
+        // folder whose parent is the mail root — so the `find` resolves one
+        // folder, and this stays a lookup rather than a guess.
+        const previous = await this.prisma.folder.findUnique({
+          where: { userId_zimbraId: { userId, zimbraId: current.id } },
+          select: { id: true, unreadCount: true },
+        });
+        // No row for the provider's inbox yet: the first sync of a mailbox, or
+        // the first sync after the provider started issuing new folder ids. The
+        // upsert loop below creates it with the count just fetched, so the next
+        // sync has a baseline. Nothing to announce, nothing to claim — and
+        // nothing to own: the loop must be free to seed the row.
+        if (!previous) return { inboxUnreadOwnedFor: null };
+
+        const delta = current.unreadCount - previous.unreadCount;
+        // Nothing changed, so there is nothing for ANYONE to write. This is
+        // also what closes the rewind the fourth wave documented and left
+        // open: a sync holding a fetch that predates an arrival used to upsert
+        // its older count over a baseline another sync had just claimed.
+        if (delta === 0) return { inboxUnreadOwnedFor: inboxProviderId };
+        if (delta < 0) {
+          // The user read mail elsewhere. Not an arrival — but the baseline
+          // must still FALL, or it becomes a high-water mark and a user who
+          // once reached 50 unread hears nothing until they pass 50 again.
+          //
+          // Conditional on the value this sync actually read, for the same
+          // reason the claim is: if another sync moved the baseline in
+          // between, that sync's count is the fresher one and this write must
+          // not rewind it. A no-match needs no retry — the next sync re-reads
+          // and lowers if a fall is still owed.
+          await this.prisma.folder.updateMany({
+            where: { id: previous.id, unreadCount: previous.unreadCount },
+            data: { unreadCount: current.unreadCount },
+          });
+          return { inboxUnreadOwnedFor: inboxProviderId };
+        }
+
+        // Resolved BEFORE the transaction opens: it is a second query, and
+        // holding a transaction open across it on a per-sync path buys nothing.
+        body ??= await this.newMailBody(userId, previous.id, current.unreadCount);
+
+        // Claim the transition by ADVANCING THE BASELINE CONDITIONALLY.
+        //
+        // The decision and the write are one operation: move the stored Inbox
+        // count off the exact value this sync measured from, and announce only
+        // if that update matched a row. Whoever matches owns the arrival;
+        // everyone else finds the baseline already gone.
+        //
+        // The claim and the insert share ONE transaction. Apart, a crash
+        // between them loses the arrival outright: the baseline has moved, so
+        // the next sync sees no delta, and no row exists to show for it.
+        //
+        // Three timing-based guards were tried here before this one, and each
+        // lost real mail:
+        //
+        // - A clock window ("did we notify in the last 60s?") suppresses
+        //   whatever lands inside it, and the baseline advances whether or not
+        //   anything was announced, so a suppressed arrival is gone for good.
+        // - The level alone ("is the count higher than the last announced
+        //   one?") turns the announced count into a high-water mark that never
+        //   falls: a user who reaches 50 unread and clears the inbox hears
+        //   nothing until they pass 50 again.
+        // - The transition plus a short window has the same hole as the first,
+        //   only narrower. There is no window that is safe, because there is no
+        //   floor on how fast a baseline can legitimately return: the sidebar
+        //   polls folders every 60s on every non-mail page, the mail page syncs
+        //   on mount, and useInboxSync fires 10s after mount — a complete
+        //   notify -> read -> refill cycle fits inside seconds.
+        //
+        // The database answers the question none of them could: not "does this
+        // look like something we already said?" but "is this sync the one that
+        // moved the mailbox off that baseline?".
+        const claimed = await this.prisma.$transaction(async (tx) => {
+          const advanced = await tx.folder.updateMany({
+            where: { id: previous.id, unreadCount: previous.unreadCount },
+            data: { unreadCount: current.unreadCount },
+          });
+          if (advanced.count === 0) return false;
+
+          await this.notifications.createNotification(
+            userId,
+            'NEW_MAIL',
+            `${delta} new message${delta === 1 ? '' : 's'}`,
+            body,
+            '/mail',
+            // Recorded for debugging only — what the delta was measured from,
+            // what was announced, and the difference. Nothing compares these
+            // across rows; the claim above is the whole decision.
+            { baseline: previous.unreadCount, unreadCount: current.unreadCount, delta },
+            tx,
+          );
+          return true;
+        });
+
+        if (claimed) return { inboxUnreadOwnedFor: inboxProviderId };
+        // Lost the claim. Loop round: re-read the baseline, and retry while it
+        // is still below the count THIS sync measured. If the winner already
+        // took the baseline to (or past) that count, the delta comes out <= 0
+        // and the loop returns on the next pass.
+      }
+      // Out of attempts. The baseline is whatever the winning syncs left it
+      // at, which is never this sync's to overwrite.
+      return { inboxUnreadOwnedFor: inboxProviderId };
+    } catch (err: any) {
+      this.logger.warn(`NEW_MAIL notification failed for userId=${userId}: ${err?.message}`);
+      return { inboxUnreadOwnedFor: inboxProviderId };
+    }
+  }
+
+  /**
+   * What the toast and the OS notification actually read: the sender and
+   * subject of the newest unread Inbox message when the DB already holds it,
+   * and the unread total when it does not (a mailbox synced only at folder
+   * level, or a message that has not been pulled yet).
+   *
+   * One indexed lookup on the (userId, folderId) index, on a per-sync path.
+   * Never throws — a body is not worth losing the notification over.
+   */
+  private async newMailBody(userId: string, inboxFolderId: string, unreadCount: number): Promise<string> {
+    const fallback = `Inbox now has ${unreadCount} unread`;
+    try {
+      const newest = await this.prisma.message.findFirst({
+        where: { userId, folderId: inboxFolderId, isRead: false },
+        orderBy: { receivedAt: 'desc' },
+        select: { fromName: true, fromEmail: true, subject: true },
+      });
+      if (!newest) return fallback;
+
+      const sender = newest.fromName?.trim() || newest.fromEmail;
+      const subject = newest.subject?.trim() || '(no subject)';
+      return `${sender} — ${subject}`;
+    } catch (err: any) {
+      this.logger.warn(
+        `Could not read the newest unread Inbox message for userId=${userId}: ${err?.message}`,
+      );
+      return fallback;
+    }
+  }
+
   // `rules` and `junkFolder` are resolved once per `getMessages` call (see the
   // caller) rather than fetched here — this method used to re-query both on
   // every single message, which meant ~50 serialized Postgres queries (plus a
@@ -236,7 +503,7 @@ export class MailService {
     if (matchSenderRule(message.fromEmail, rules) !== 'BLOCK') return;
 
     const currentFolder = await this.prisma.folder.findFirst({ where: { userId, id: message.folderId } });
-    if (currentFolder && SPAM_FOLDER_PATHS.includes(currentFolder.path)) return;
+    if (isSpamFolderPath(currentFolder?.path)) return;
 
     if (!junkFolder) {
       this.logger.warn(
@@ -284,6 +551,7 @@ export class MailService {
             isStarred: m.isFlagged,
             isDraft:   m.isDraft,
             syncedAt:  new Date(),
+            ...recipientRefresh(m),
           },
           create: {
             userId,
@@ -294,7 +562,9 @@ export class MailService {
             snippet:        m.snippet,
             fromEmail:      m.from.email,
             fromName:       m.from.name ?? null,
-            toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+            toRecipients:   mapAddresses(m.to),
+            ccRecipients:   mapAddresses(m.cc),
+            bccRecipients:  mapAddresses(m.bcc),
             isRead:         m.isRead,
             isStarred:      m.isFlagged,
             isDraft:        m.isDraft,
@@ -337,30 +607,25 @@ export class MailService {
     });
 
     // Return cache when: body exists, attachments are stored, inlineImages is not null
-    // (null = never fetched), and bodyHtml has no un-embedded cid: refs.
+    // (null = never fetched). A cid: reference in bodyHtml is now the NORMAL resting
+    // state — inline images are served from the inline-image cache (see
+    // InlineImageCacheService / getInlineImage) instead of being embedded as base64,
+    // so a leftover cid: must NOT force a refetch here. Doing so would mean every
+    // single open re-fetches from the provider forever, since bodies are never
+    // embedded anymore. An un-proxied Zimbra-hosted image URL is a different problem
+    // and still forces a refetch.
     const attachmentsCached = Array.isArray(cached?.attachments) && (cached.attachments as any[]).length >= 0;
-    const bodyHasCids = (cached?.bodyHtml ?? '').includes('cid:');
     const bodyHasZimbraUrls = (cached?.bodyHtml ?? '').includes('/service/home/');
-    if ((cached?.bodyHtml || cached?.bodyText) && attachmentsCached && cached?.inlineImages !== null && !bodyHasCids && !bodyHasZimbraUrls) {
+    if ((cached?.bodyHtml || cached?.bodyText) && attachmentsCached && cached?.inlineImages !== null && !bodyHasZimbraUrls) {
       return cached;
-    }
-
-    // A background embed for this message is still running (the previous open
-    // returned early with embedPending). Serve the cached raw body again instead
-    // of firing a duplicate Zimbra fetch + embed — the poller will get the final
-    // version once the in-flight embed lands in the DB.
-    if (cached && this.inflightEmbeds.has(`${userId}:${cached.zimbraId}`)) {
-      return {
-        ...cached,
-        bodyHtml: cached.bodyHtml == null ? cached.bodyHtml : stripCidRefs(cached.bodyHtml),
-        embedPending: true,
-      };
     }
 
     const session = buildMailSession(user);
     const m = await this.resolver.forUser(user).getMessage(session, cached?.zimbraId ?? messageId);
 
-    const rawBodyHtml  = m.bodyHtml ?? null;
+    // Stored and returned as-is — cid: refs intact, nothing embedded. The client
+    // resolves them via the inline-image cache route.
+    const bodyHtml     = m.bodyHtml ?? null;
     const bodyText     = m.bodyText ?? null;
     const attachments  = this.toStoredAttachments(m.attachments);
     const inlineImages = this.toStoredInlineImages(m.attachments);
@@ -370,69 +635,21 @@ export class MailService {
     // Bcc is only visible on the user's own sent/draft items.
     const bccRecipients = m.bcc.map((a) => ({ email: a.email, name: a.name ?? null }));
 
-    // Embed inline images with a short time budget.
-    // - If Zimbra responds quickly: return fully embedded HTML immediately.
-    // - If slow: return the raw HTML now flagged `embedPending` (cid refs stripped
-    //   for display) and finish embedding in the background — the client polls
-    //   getMessage until the pending flag clears, so slow Zimbra attachment
-    //   fetches never hold the open behind a spinner.
-    const EMBED_BUDGET_MS = Number(process.env.EMBED_BUDGET_MS ?? 1_500);
-    let bodyHtml = rawBodyHtml;
-    let embedPending = false;
-
-    // Detect any src attribute pointing to the Zimbra host — covers
-    // /service/home/ (inline attachments), /service/proxy/ (image proxy for
-    // external images), /home/ briefcase paths, and other Zimbra REST URLs.
-    const zimbraHostPattern = new RegExp(
-      `src=["']https?://${user.zimbraHost.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`,
-      'i',
-    );
-    const hasZimbraImages = rawBodyHtml ? zimbraHostPattern.test(rawBodyHtml) : false;
-    if (rawBodyHtml && (inlineImages.length > 0 || hasZimbraImages)) {
-      const embedTask = this.embedInlineImages(rawBodyHtml, inlineImages, user, m.id);
-      const raceResult = await Promise.race([
-        embedTask.then((html) => ({ html, done: true as const })),
-        new Promise<{ html: null; done: false }>((r) =>
-          setTimeout(() => r({ html: null, done: false }), EMBED_BUDGET_MS),
-        ),
-      ]);
-
-      if (raceResult.done) {
-        // Images loaded within budget — use the embedded version
-        bodyHtml = raceResult.html;
-      } else {
-        // Timed out — warm the cache in the background; next open will be instant.
-        // Use updateMany keyed on zimbraId so this works whether the DB record was
-        // pre-existing (folder-listed message) or newly upserted below (search result).
-        // Register the task in inflightEmbeds so polls for this message reuse the
-        // cached raw body instead of spawning duplicate Zimbra fetches.
-        embedPending = true;
-        const embedKey = `${userId}:${m.id}`;
-        const background = embedTask
-          .then((embeddedHtml) =>
-            this.prisma.message.updateMany({
-              where: { userId, zimbraId: m.id },
-              data:  { bodyHtml: embeddedHtml },
-            }),
-          )
-          .catch((err: any) =>
-            this.logger.error(`[getMessage] background embed failed: ${err?.message}`),
-          )
-          .finally(() => this.inflightEmbeds.delete(embedKey));
-        this.inflightEmbeds.set(embedKey, background);
-      }
-    }
-
     let result: any;
     if (cached) {
       result = await this.prisma.message.update({
         where: { id: cached.id },
-        data: { bodyHtml, bodyText, attachments, inlineImages, hasAttachments: attachments.length > 0, ccRecipients, bccRecipients },
+        // GetMsg is the authoritative fetch, so it heals recipients a
+        // metadata-only list sync could not populate — To included.
+        data: {
+          bodyHtml, bodyText, attachments, inlineImages,
+          hasAttachments: attachments.length > 0,
+          toRecipients: mapAddresses(m.to), ccRecipients, bccRecipients,
+        },
       });
     } else {
       // Message is not in DB yet (e.g. opened from search results before the folder
-      // was synced). Attempt to upsert so that subsequent opens are served from cache
-      // and the background embed above can update the record via zimbraId.
+      // was synced). Attempt to upsert so that subsequent opens are served from cache.
       const folder = await this.prisma.folder.findFirst({ where: { userId, zimbraId: m.folderId } });
 
       if (folder) {
@@ -446,7 +663,7 @@ export class MailService {
             snippet:        null,
             fromEmail:      m.from.email,
             fromName:       m.from.name ?? null,
-            toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+            toRecipients:   mapAddresses(m.to),
             ccRecipients,
             bccRecipients,
             isRead:         m.isRead,
@@ -475,16 +692,6 @@ export class MailService {
       }
     }
 
-    if (embedPending) {
-      // DB keeps the raw cid-bearing body (so the cache guard above keeps treating
-      // it as not-final); the response gets a display-safe copy with cid refs
-      // stripped so the client never renders broken-image icons.
-      return {
-        ...result,
-        bodyHtml: result.bodyHtml == null ? result.bodyHtml : stripCidRefs(result.bodyHtml),
-        embedPending: true,
-      };
-    }
     return result;
   }
 
@@ -564,8 +771,9 @@ export class MailService {
             snippet:        m.snippet,
             fromEmail:      m.from.email,
             fromName:       m.from.name ?? null,
-            toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name ?? null })),
-            ccRecipients:   m.cc.map((a) => ({ email: a.email, name: a.name ?? null })),
+            toRecipients:   mapAddresses(m.to),
+            ccRecipients:   mapAddresses(m.cc),
+            bccRecipients:  mapAddresses(m.bcc),
             isRead:         m.isRead,
             isStarred:      m.isFlagged,
             isDraft:        m.isDraft,
@@ -693,7 +901,9 @@ export class MailService {
       snippet:        m.snippet,
       fromEmail:      m.from.email,
       fromName:       m.from.name ?? null,
-      toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+      toRecipients:   mapAddresses(m.to),
+      ccRecipients:   mapAddresses(m.cc),
+      bccRecipients:  mapAddresses(m.bcc),
       isRead:         m.isRead,
       isStarred:      m.isFlagged,
       hasAttachments: m.hasAttachments,
@@ -706,7 +916,12 @@ export class MailService {
 
     const upsertArgs = (m: ProviderMessage, folderId: string) => ({
       where:  { userId_zimbraId: { userId, zimbraId: m.id } },
-      update: { isRead: m.isRead, isStarred: m.isFlagged, syncedAt: new Date() },
+      update: {
+        isRead: m.isRead,
+        isStarred: m.isFlagged,
+        syncedAt: new Date(),
+        ...recipientRefresh(m),
+      },
       create: {
         userId,
         folderId,
@@ -716,7 +931,9 @@ export class MailService {
         snippet:        m.snippet,
         fromEmail:      m.from.email,
         fromName:       m.from.name ?? null,
-        toRecipients:   m.to.map((a) => ({ email: a.email, name: a.name })),
+        toRecipients:   mapAddresses(m.to),
+        ccRecipients:   mapAddresses(m.cc),
+        bccRecipients:  mapAddresses(m.bcc),
         isRead:         m.isRead,
         isStarred:      m.isFlagged,
         hasAttachments: m.hasAttachments,
@@ -769,6 +986,39 @@ export class MailService {
     return this.resolver
       .forUser(user)
       .downloadAttachment(buildMailSession(user), msg.zimbraId, partId);
+  }
+
+  /**
+   * Bytes for one inline image. Cache first, provider on a miss.
+   *
+   * The part must be declared in the message's own `inlineImages`. Without that
+   * check this route would be a general attachment reader with a cache bolted
+   * on, reachable for any part of any message the caller owns.
+   */
+  async getInlineImage(
+    userId: string,
+    messageId: string,
+    partId: string,
+  ): Promise<{ data: Buffer; contentType: string; cached: boolean }> {
+    const msg = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
+    if (!msg) throw new NotFoundException('Message not found');
+
+    const declared = ((msg.inlineImages as any[]) ?? [])
+      .find((i) => i?.partId === partId);
+    if (!declared) throw new NotFoundException('Inline image not found');
+
+    const hit = await this.inlineCache.read(userId, messageId, partId);
+    if (hit) {
+      return { data: hit, contentType: declared.mimeType ?? 'application/octet-stream', cached: true };
+    }
+
+    const user = await this.getUser(userId);
+    const { data, contentType } = await this.resolver
+      .forUser(user)
+      .downloadAttachmentBuffer(buildMailSession(user), msg.zimbraId, partId);
+
+    await this.inlineCache.write(userId, messageId, partId, data);
+    return { data, contentType: contentType ?? declared.mimeType, cached: false };
   }
 
   async sendMessage(
@@ -1019,150 +1269,6 @@ export class MailService {
     });
   }
 
-  /**
-   * Replace every `cid:` reference in the HTML with a base64 data URI fetched
-   * from Zimbra.  After CID embedding, also replaces Zimbra REST home URLs
-   * (used by signature images stored in Zimbra briefcase) with data URIs.
-   * Any remaining unresolvable `cid:` references are stripped so the browser
-   * does not display broken-image icons.
-   */
-  private async embedInlineImages(
-    html: string,
-    inlineImages: Array<{ cid: string; partId: string; mimeType: string }>,
-    // The user row, not just the session: pass 2 needs the provider (and, for
-    // Zimbra, the resolver's Zimbra-only path fetch), which is keyed off
-    // User.provider.
-    user: MailSessionUser,
-    messageId: string,
-  ): Promise<string> {
-    let processed = html;
-    const provider = this.resolver.forUser(user);
-    const session = buildMailSession(user);
-
-    // ── Pass 1: CID inline attachments ────────────────────────────────────────
-    if (inlineImages.length > 0) {
-      await Promise.all(
-        inlineImages.map(async (img) => {
-          try {
-            const { data, contentType } = await provider.downloadAttachmentBuffer(
-              session,
-              messageId,
-              img.partId,
-            );
-            const dataUri = `data:${contentType};base64,${data.toString('base64')}`;
-            // CIDs are stored with surrounding angle brackets (e.g. <img0@govmail>)
-            // but HTML src="cid:..." references never include them — strip before matching.
-            const rawCid  = img.cid.replace(/^<|>$/g, '');
-            const esc     = rawCid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            // HTML may encode '@' as '&#64;' or '&#x40;' — match all variants
-            const escCid  = esc.replace(/@/g, '(?:@|&#(?:64|x40);)');
-            const escBase = esc.split('@')[0];
-            processed = processed
-              .replace(new RegExp(`src=["']cid:${escCid}["']`,  'gi'), `src="${dataUri}"`)
-              .replace(new RegExp(`src=["']cid:${escBase}["']`, 'gi'), `src="${dataUri}"`);
-          } catch {
-            // individual image failure is handled below (stripped in pass 3)
-          }
-        }),
-      );
-    }
-
-    // ── Pass 2: Zimbra-hosted image URLs (e.g. signature logos in Briefcase) ──
-    processed = await this.embedZimbraHostedImages(processed, user);
-
-    // ── Pass 3: Strip any remaining cid: references that could not be resolved ─
-    // Browsers cannot load cid: URLs — they render as broken-image icons.
-    // Replacing with src="" causes the browser to skip the image silently.
-    processed = processed.replace(/src=["']cid:[^"']*["']/gi, 'src=""');
-
-    return processed;
-  }
-
-  /**
-   * Find every src attribute pointing to this Zimbra server in the HTML,
-   * download the resource server-side (with the user's auth token), and
-   * replace the src with a base64 data URI.
-   *
-   * Handles all Zimbra-hosted image patterns:
-   *   • /service/home/~/?id=X&part=Y  — inline attachments (uses downloadAttachmentBuffer)
-   *   • /service/proxy/?target=…      — Zimbra image-proxy for external images
-   *   • /home/user@domain/path        — Briefcase path-based URLs
-   *   • Any other path on this host   — generic Zimbra REST resources
-   *
-   * Only image/* content types are embedded; other types are left unchanged.
-   */
-  private async embedZimbraHostedImages(
-    html: string,
-    // The user row is the single source of provider truth here: the provider
-    // is resolved from it below rather than passed in, so a caller cannot hand
-    // over a provider that disagrees with `user.provider` (which the
-    // Zimbra-only path branch checks).
-    user: MailSessionUser,
-  ): Promise<string> {
-    const provider = this.resolver.forUser(user);
-    const session = buildMailSession(user);
-    if (!session.authToken) return html;
-
-    const escapedHost = session.host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Match ANY src attribute pointing to this Zimbra server (http or https)
-    const urlRe = new RegExp(
-      `src=["'](https?://${escapedHost}/[^"']*)["']`,
-      'gi',
-    );
-
-    const matches: Array<{ full: string; url: string }> = [];
-    let m: RegExpExecArray | null;
-    while ((m = urlRe.exec(html)) !== null) {
-      matches.push({ full: m[0], url: m[1] });
-    }
-
-    if (matches.length === 0) return html;
-
-    let processed = html;
-    await Promise.all(
-      matches.map(async ({ full, url }) => {
-        try {
-          const parsed = new URL(url);
-          const id   = parsed.searchParams.get('id');
-          const part = parsed.searchParams.get('part');
-
-          let data: Buffer;
-          let contentType: string;
-
-          if (id && part) {
-            // Standard inline attachment served via the Zimbra REST home endpoint
-            ({ data, contentType } = await provider.downloadAttachmentBuffer(session, id, part));
-          } else {
-            // Path-based URL (Briefcase image, image-proxy, or other Zimbra
-            // resource). downloadZimbraPath is a Zimbra-only extra, off the
-            // MailProvider interface, so it is reached through the resolver
-            // behind an explicit provider check; any other backend leaves the
-            // original URL in place (same graceful outcome as a failed fetch).
-            if (user.provider !== 'zimbra') return;
-            // downloadZimbraPath appends ?auth=qp&zauthtoken=... for query-param auth
-            const relativePath = parsed.pathname + (parsed.search || '');
-            ({ data, contentType } = await this.resolver.zimbra().downloadZimbraPath(
-              session.host,
-              session.authToken!,
-              relativePath,
-            ));
-          }
-
-          // Only embed image types; leave documents/videos/etc. with their original URL
-          if (!contentType.startsWith('image/')) return;
-
-          const dataUri = `data:${contentType};base64,${data.toString('base64')}`;
-          // Replace the exact matched attribute (literal string replace, no regex)
-          processed = processed.split(full).join(`src="${dataUri}"`);
-        } catch {
-          // leave the original URL in place; browser will try (and likely fail) to load it
-        }
-      }),
-    );
-
-    return processed;
-  }
-
   // The MIME-part walking itself lives in zimbra.mappers.ts. These two only
   // reshape the neutral ProviderAttachmentMeta into the two JSON column shapes
   // the DB and the REST responses have always used — renaming them would be a
@@ -1207,6 +1313,71 @@ export class MailService {
     });
 
     return { success: true };
+  }
+
+  /**
+   * "Not spam": rescue a message from Junk AND stop the rules that put it
+   * there from putting it back.
+   *
+   * The move alone is not enough. `enforceSenderRules` re-files mail from a
+   * BLOCKed sender on every Inbox sync (and the sweep cron does the same), so a
+   * rescued message would reappear in Junk minutes later and the button would
+   * look broken. Clearing the block is therefore part of the operation, not a
+   * separate courtesy.
+   */
+  async markNotSpam(userId: string, messageId: string) {
+    const user = await this.getUser(userId);
+
+    const message = await this.prisma.message.findFirst({ where: { userId, id: messageId } });
+    if (!message) throw new NotFoundException('Message not found');
+
+    const currentFolder = await this.prisma.folder.findFirst({ where: { userId, id: message.folderId } });
+    if (!isSpamFolderPath(currentFolder?.path)) {
+      throw new BadRequestException('This message is not in the spam folder.');
+    }
+
+    const inbox = await this.prisma.folder.findFirst({ where: { userId, path: '/Inbox' } });
+    if (!inbox) throw new NotFoundException('No Inbox folder is synced for this account');
+
+    await this.resolver
+      .forUser(user)
+      .moveMessage(buildMailSession(user), message.zimbraId, inbox.zimbraId);
+    await this.prisma.message.update({ where: { id: messageId }, data: { folderId: inbox.id } });
+
+    const unblocked = await this.unblockSender(userId, message.fromEmail);
+    return { success: true, unblocked };
+  }
+
+  /**
+   * Make `fromEmail` deliverable again, with the lightest touch that works.
+   *
+   * An exact-address BLOCK is simply deleted. A DOMAIN-wide BLOCK is left
+   * alone — dismantling a whole domain policy because one message was rescued
+   * is far more than the user asked for — and the sender is carved out of it
+   * with a narrower ALLOW instead, which is exactly the pairing
+   * `matchSenderRule` documents (ALLOW wins over BLOCK). Both can apply at
+   * once: deleting the exact rule still leaves the domain rule matching.
+   *
+   * Returns whether anything changed, so the caller can tell the user.
+   */
+  private async unblockSender(userId: string, fromEmail: string): Promise<boolean> {
+    const email = (fromEmail ?? '').trim().toLowerCase();
+    if (!email) return false;
+
+    const rules = await this.prisma.senderRule.findMany({ where: { userId } });
+    if (matchSenderRule(email, rules) !== 'BLOCK') return false;
+
+    const exact = rules.find(
+      (rule) => rule.type === 'BLOCK' && rule.address.trim().toLowerCase() === email,
+    );
+    if (exact) await this.prisma.senderRule.delete({ where: { id: exact.id } });
+
+    const remaining = exact ? rules.filter((rule) => rule.id !== exact.id) : rules;
+    if (matchSenderRule(email, remaining) === 'BLOCK') {
+      await this.prisma.senderRule.create({ data: { userId, type: 'ALLOW', address: email } });
+    }
+
+    return true;
   }
 
   async deleteFolder(userId: string, folderId: string) {

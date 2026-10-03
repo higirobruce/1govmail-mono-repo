@@ -19,11 +19,13 @@ import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { usePeopleStore } from '@/stores/people.store';
 import { useAuthStore } from '@/stores/auth.store';
-import { fetchBodyCached, watchPendingBody } from '@/lib/mailBodyCache';
+import { fetchBodyCached } from '@/lib/mailBodyCache';
 import { getAttachmentUrl } from '@/lib/attachmentBlobCache';
 import { getPreviewKind } from '@/lib/attachmentPreviewKind';
-import { prepareEmailHtml } from '@/lib/emailRender';
-import { buildEmailFrameCss } from '@/lib/emailFrameCss';
+import { prepareEmailHtml, rewriteCidRefs } from '@/lib/emailRender';
+import { useInlineImages } from '@/lib/mail/useInlineImages';
+import { buildEmailFrameCss, emailFrameColors } from '@/lib/emailFrameCss';
+import { repairEmailContrast } from '@/lib/emailContrastRepair';
 import { useIsDark } from '@/hooks/useIsDark';
 import { downloadAll } from '@/lib/downloadAll';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -31,6 +33,7 @@ import { Button } from '@/components/ui/button';
 import { MailAvatar, getInitials } from './MailAvatar';
 import { AttachmentTile } from './AttachmentTile';
 import { AttachmentLightbox } from './AttachmentLightbox';
+import RecipientDetails from './RecipientDetails';
 
 /** Files we can render inline rather than force-download — one shared
  *  classification with the lightbox and inline previewer (image / pdf / csv /
@@ -41,20 +44,8 @@ function isPreviewableAttachment(att: { mimeType: string; filename: string }): b
 
 // ─── Email rendering (frame CSS shared with MailDetail via lib/emailFrameCss) ─
 
-// In thread view each message is shown individually so quoted history is stripped.
-// The CSS below is baked into the srcDoc for the stripQuotes=true (multi-message) path.
-const HIDE_QUOTES_CSS = `
-blockquote{display:none!important}
-.gmail_quote,.gmail_extra,.gmail_attr{display:none!important}
-[class*="yahoo_quoted"],[id*="yahoo_quoted"]{display:none!important}
-.moz-cite-prefix{display:none!important}
-#divRplyFwdMsg,#divReplyFwdMsg,#appendonsend{display:none!important}
-.OutlookMessageHeader,.x_OutlookMessageHeader{display:none!important}
-[id^="ms-outlook"]{display:none!important}
-div.WordSection1 blockquote{display:none!important}
-`;
-
-// Selectors used by the JS DOM stripper (stripQuotes=true path)
+// Quoted history is lifted out of the body and shown behind a toggle, never
+// deleted. Selectors used by splitEmailBody's first pass.
 const QUOTE_SELECTORS = [
   'blockquote',
   '.gmail_quote', '.gmail_extra', '.gmail_attr',
@@ -129,9 +120,15 @@ function findQuoteSep(root: Element): Element | null {
   return null;
 }
 
-// Splits preprocessed email HTML into main content and quoted content using the
-// same heuristics as the iframe DOM stripper.  Returns { main, quoted } where
-// quoted is null when no split point is found.  Client-side only.
+// Splits preprocessed email HTML into main content and quoted content.
+// Returns { main, quoted } where quoted is null when no split point is found.
+// Client-side only.
+//
+// This is the ONLY place quoted content is separated. It used to share the job
+// with a DOM stripper that ran inside the iframe and *deleted* what it matched;
+// a forwarded mail's payload sits exactly where a reply's history sits, so that
+// stripper silently destroyed forwards. Lifting the same nodes out instead
+// keeps them one click away.
 function splitEmailBody(html: string): { main: string; quoted: string | null } {
   if (typeof document === 'undefined') return { main: html, quoted: null };
 
@@ -139,6 +136,21 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
   tmp.innerHTML = html;
 
   const quotedNodes: Node[] = [];
+
+  // Pass 1 — elements whose class/id marks them as quoted history, wherever
+  // they sit in the body. `tmp.contains` skips nodes an earlier selector
+  // already carried off inside an ancestor. It must NOT be `el.isConnected`:
+  // `tmp` is detached, so isConnected is false for everything in it and the
+  // whole pass silently does nothing.
+  QUOTE_SELECTORS.forEach((sel) => {
+    tmp.querySelectorAll(sel).forEach((el) => {
+      if (!tmp.contains(el)) return;
+      quotedNodes.push(el);
+      el.remove();
+    });
+  });
+
+  // Pass 2 — a separator, and everything after it.
   const sep = findQuoteSep(tmp);
 
   if (sep) {
@@ -148,20 +160,20 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
       ancestors.push(node.parentElement);
       node = node.parentElement;
     }
-    let sib: Element | null = sep;
-    while (sib) { const nx: Element | null = sib.nextElementSibling; quotedNodes.push(sib); sib.remove(); sib = nx; }
+    // Walk NODE siblings, not element siblings. Providers emit forward headers
+    // as `<b>From: </b>value<br>` — the labels are elements but the addresses
+    // and dates are bare text nodes between them, and nextElementSibling steps
+    // straight over those. Skipping them left the reader a column of empty
+    // "From:" / "To:" / "Cc:" labels.
+    let sib: ChildNode | null = sep;
+    while (sib) { const nx: ChildNode | null = sib.nextSibling; quotedNodes.push(sib); sib.remove(); sib = nx; }
     for (const anc of ancestors) {
-      let sib2: Element | null = anc.nextElementSibling;
-      while (sib2) { const nx: Element | null = sib2.nextElementSibling; quotedNodes.push(sib2); sib2.remove(); sib2 = nx; }
-    }
-  } else {
-    // Fallback: split at the first blockquote
-    const firstBq = tmp.querySelector('blockquote');
-    if (firstBq) {
-      let sib: ChildNode | null = firstBq;
-      while (sib) { const nx: ChildNode | null = sib.nextSibling; quotedNodes.push(sib); tmp.removeChild(sib); sib = nx; }
+      let sib2: ChildNode | null = anc.nextSibling;
+      while (sib2) { const nx: ChildNode | null = sib2.nextSibling; quotedNodes.push(sib2); sib2.remove(); sib2 = nx; }
     }
   }
+  // No blockquote fallback here: `blockquote` is in QUOTE_SELECTORS, so pass 1
+  // has already lifted every one of them out.
 
   if (quotedNodes.length === 0) return { main: html, quoted: null };
 
@@ -170,7 +182,49 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
   return { main: tmp.innerHTML, quoted: quotedDiv.innerHTML };
 }
 
-function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | null; text: string | null; stripQuotes?: boolean }) {
+/** Visible text length of an HTML fragment, whitespace collapsed. */
+function textLength(html: string): number {
+  if (typeof document === 'undefined') return html.length;
+  const d = document.createElement('div');
+  d.innerHTML = html;
+  return (d.textContent ?? '').replace(/\s+/g, ' ').trim().length;
+}
+
+// Fwd:/FW: and the common non-English equivalents mail clients prepend.
+const FORWARD_SUBJECT_RE = /^\s*(fwd?|tr|wg|rv|enc)\s*:/i;
+
+/**
+ * A reply quotes; a forward encloses. In both cases the provider puts the older
+ * mail after the same separator, so the structure alone cannot tell them apart —
+ * the subject can.
+ *
+ * The length of what remains is deliberately NOT a signal: "Thanks, noted" is a
+ * perfectly ordinary reply, and expanding its history would be wrong. Only a
+ * body with no visible text at all forces expansion, because collapsing that
+ * renders a blank message, which is the failure this guards against.
+ */
+function quotedIsThePayload(subject: string | null | undefined, mainHtml: string): boolean {
+  if (subject && FORWARD_SUBJECT_RE.test(subject)) return true;
+  return textLength(mainHtml) === 0;
+}
+
+function EmailBodyFrame({
+  html,
+  text,
+  subject = null,
+  messageId = null,
+  inlineImages,
+}: {
+  html: string | null;
+  text: string | null;
+  /** Used only to tell a forward from a reply when deciding what to collapse. */
+  subject?: string | null;
+  messageId?: string | null;
+  inlineImages?: Array<{ cid: string; partId: string }>;
+}) {
+  // Called unconditionally, above the no-html early return below, to keep hook
+  // order stable across renders.
+  const inlineUrls = useInlineImages(messageId, inlineImages);
   const normalizeStyles =
     typeof window !== 'undefined'
       ? localStorage.getItem('1gov_normalize_email_styles') !== 'false'
@@ -205,48 +259,20 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
     });
   }, []);
 
-  // handleLoad for the main iframe.
-  // When stripQuotes=false the body was already split before render, so just resize.
-  // When stripQuotes=true run the full JS + CSS quote-stripping pass.
+  // Raw dark mode only: with normalize ON, normalizeCss already forces its own
+  // palette over every inline style, leaving nothing to repair. Always run
+  // AFTER quote-stripping so the element budget isn't spent on removed nodes.
+  const repairIfNeeded = useCallback((doc: Document) => {
+    if (isDark && !normalizeStyles) repairEmailContrast(doc, emailFrameColors(true));
+  }, [isDark, normalizeStyles]);
+
+  // handleLoad for the main iframe. The body arrives already split, so there is
+  // nothing to remove in here — only repair and size it. Quoted content is never
+  // deleted from the frame now; it rides in its own iframe behind the toggle.
   const handleMainLoad = useCallback(() => {
     const doc = mainRef.current?.contentDocument;
     if (!doc) return;
-
-    if (!stripQuotes) {
-      resizeMain();
-      doc.querySelectorAll('img').forEach((img) => {
-        if (!img.complete) {
-          img.addEventListener('load',  resizeMain, { once: true });
-          img.addEventListener('error', resizeMain, { once: true });
-        }
-      });
-      return;
-    }
-
-    // Pass 1 — remove elements with known quote class/id
-    QUOTE_SELECTORS.forEach((sel) => {
-      doc.querySelectorAll(sel).forEach((el) => el.remove());
-    });
-
-    // Pass 2 — remove separator and everything after it
-    if (doc.body) {
-      const sep = findQuoteSep(doc.body);
-      if (sep) {
-        const ancestors: Element[] = [];
-        let node: Element = sep;
-        while (node.parentElement && node.parentElement !== doc.body) {
-          ancestors.push(node.parentElement);
-          node = node.parentElement;
-        }
-        let sib: Element | null = sep;
-        while (sib) { const nx: Element | null = sib.nextElementSibling; sib.remove(); sib = nx; }
-        for (const anc of ancestors) {
-          let sib2: Element | null = anc.nextElementSibling;
-          while (sib2) { const nx = sib2.nextElementSibling; sib2.remove(); sib2 = nx; }
-        }
-      }
-    }
-
+    repairIfNeeded(doc);
     resizeMain();
     doc.querySelectorAll('img').forEach((img) => {
       if (!img.complete) {
@@ -254,11 +280,12 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
         img.addEventListener('error', resizeMain, { once: true });
       }
     });
-  }, [resizeMain, stripQuotes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resizeMain, repairIfNeeded]);
 
   const handleQuotedLoad = useCallback(() => {
     const doc = quotedRef.current?.contentDocument;
     if (!doc) return;
+    repairIfNeeded(doc);
     resizeQuoted();
     doc.querySelectorAll('img').forEach((img) => {
       if (!img.complete) {
@@ -266,7 +293,7 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
         img.addEventListener('error', resizeQuoted, { once: true });
       }
     });
-  }, [resizeQuoted]);
+  }, [resizeQuoted, repairIfNeeded]);
 
   // Preprocess once per body (memoized here and in prepareEmailHtml): fix
   // Zimbra deferred images and malformed data URIs, sanitize (defense-in-depth
@@ -275,19 +302,26 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
   // hook order stable.
   const docs = useMemo(() => {
     if (!html) return null;
-    const body = prepareEmailHtml(html);
+    const body = prepareEmailHtml(rewriteCidRefs(html, inlineUrls));
     const css = buildEmailFrameCss({ dark: isDark, normalize: normalizeStyles });
     // <base target="_blank">: the frame is sandboxed without top-navigation,
     // so an in-frame link click would otherwise be silently blocked — route
     // every link to a new tab instead (pairs with allow-popups on the iframe).
-    const mkSrcDoc = (content: string, hideQuotes = false) =>
-      `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>${css}${hideQuotes ? HIDE_QUOTES_CSS : ''}</style></head><body>${content}</body></html>`;
-    if (!stripQuotes) {
-      const split = splitEmailBody(body);
-      return { main: mkSrcDoc(split.main), quoted: split.quoted ? mkSrcDoc(split.quoted) : null };
-    }
-    return { main: mkSrcDoc(body, true), quoted: null };
-  }, [html, normalizeStyles, stripQuotes, isDark]);
+    const mkSrcDoc = (content: string) =>
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_blank"><style>${css}</style></head><body>${content}</body></html>`;
+    const split = splitEmailBody(body);
+    return {
+      main: mkSrcDoc(split.main),
+      quoted: split.quoted ? mkSrcDoc(split.quoted) : null,
+      // A forward's payload is not history — open it.
+      autoExpand: split.quoted ? quotedIsThePayload(subject, split.main) : false,
+    };
+  }, [html, normalizeStyles, isDark, inlineUrls, subject]);
+
+  // Follow the body: a forward opens expanded, a reply opens collapsed, and
+  // switching messages re-applies that rather than inheriting the last choice.
+  const autoExpand = docs?.autoExpand ?? false;
+  useEffect(() => { setShowQuoted(autoExpand); }, [autoExpand, html]);
 
   if (!docs) {
     return (
@@ -297,58 +331,45 @@ function EmailBodyFrame({ html, text, stripQuotes = true }: { html: string | nul
     );
   }
 
-  // ── stripQuotes=false: split body into main + quoted, render two iframes ──
-  if (!stripQuotes) {
-    return (
-      <div>
-        <iframe
-          ref={mainRef}
-          srcDoc={docs.main}
-          onLoad={handleMainLoad}
-          className="w-full border-0 block"
-          style={{ height: 200 }}
-          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-          title="Email message"
-        />
-        {docs.quoted && (
-          <div className="border-t border-border-faint">
-            <div className="px-4 py-2">
-              <button
-                onClick={() => setShowQuoted((v) => !v)}
-                className="flex items-center gap-1 text-ui text-ink-2 hover:text-foreground transition-colors"
-              >
-                {showQuoted ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                {showQuoted ? 'Hide quoted message' : 'Show quoted message'}
-              </button>
-            </div>
-            {showQuoted && (
-              <iframe
-                ref={quotedRef}
-                srcDoc={docs.quoted}
-                onLoad={handleQuotedLoad}
-                className="w-full border-0 block"
-                style={{ height: 200 }}
-                sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-                title="Quoted message"
-              />
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ── stripQuotes=true: single iframe, JS + CSS stripping in handleMainLoad ──
+  // One path for every message: the body above, anything quoted behind a
+  // toggle. There is deliberately no branch that renders the body without that
+  // toggle — that branch is what made forwarded mail unreachable.
   return (
-    <iframe
-      ref={mainRef}
-      srcDoc={docs.main}
-      onLoad={handleMainLoad}
-      className="w-full border-0 block"
-      style={{ height: 200 }}
-      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      title="Email message"
-    />
+    <div>
+      <iframe
+        ref={mainRef}
+        srcDoc={docs.main}
+        onLoad={handleMainLoad}
+        className="w-full border-0 block"
+        style={{ height: 200 }}
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        title="Email message"
+      />
+      {docs.quoted && (
+        <div className="border-t border-border-faint">
+          <div className="px-4 py-2">
+            <button
+              onClick={() => setShowQuoted((v) => !v)}
+              className="flex items-center gap-1 text-ui text-ink-2 hover:text-foreground transition-colors"
+            >
+              {showQuoted ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {showQuoted ? 'Hide quoted message' : 'Show quoted message'}
+            </button>
+          </div>
+          {showQuoted && (
+            <iframe
+              ref={quotedRef}
+              srcDoc={docs.quoted}
+              onLoad={handleQuotedLoad}
+              className="w-full border-0 block"
+              style={{ height: 200 }}
+              sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+              title="Quoted message"
+            />
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -383,6 +404,10 @@ export interface ThreadMessageMeta {
   fromName: string | null;
   toRecipients: Array<{ email: string; name?: string | null }>;
   ccRecipients: Array<{ email: string; name?: string | null }>;
+  /** Own sent/draft items only — the provider never discloses another
+   *  sender's Bcc. Absent on rows synced before recipients were persisted. */
+  bccRecipients?: Array<{ email: string; name?: string | null }> | null;
+  replyTo?: string | null;
   snippet: string | null;
   isRead: boolean;
   isStarred: boolean;
@@ -406,7 +431,6 @@ interface Props {
   /** Called after expanding an unread message marks it read (parent updates its list state) */
   onMarkedRead?: () => void;
   /** When true, quoted history in the body is preserved (single-message threads) */
-  isOnlyMessage?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -422,7 +446,6 @@ export default function ThreadMessage({
   onToggleStar,
   onOpenDraft,
   onMarkedRead,
-  isOnlyMessage = false,
 }: Props) {
   const [fullMessage, setFullMessage] = useState<any>(null);
   const [loadingBody, setLoadingBody] = useState(false);
@@ -431,6 +454,7 @@ export default function ThreadMessage({
   const [lightboxSelectedId, setLightboxSelectedId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const [showRecipients, setShowRecipients] = useState(false);
   const currentUserEmail = useAuthStore((s) => s.user?.email);
   const isSelf = !!currentUserEmail && message.fromEmail.toLowerCase() === currentUserEmail.toLowerCase();
 
@@ -495,14 +519,7 @@ export default function ThreadMessage({
     // (the guard above then blocked every retry → eternal spinner on re-open,
     // since a closed reader keeps its ThreadView rows mounted).
     fetchBodyCached(message.id, api.mail.getMessage)
-      .then((data) => {
-        setFullMessage(data);
-        // Inline images still embedding server-side — poll for the final body
-        // and swap it in when it lands (shares one poll loop with the detail pane).
-        if ((data as { embedPending?: boolean })?.embedPending) {
-          watchPendingBody(message.id, api.mail.getMessage, (fresh) => setFullMessage(fresh));
-        }
-      })
+      .then((data) => setFullMessage(data))
       // `cancelled` only gates the error flag — a failure from an abandoned
       // expand shouldn't flash "Could not load" on a collapsed row; the next
       // expand simply retries because loadingBody is reset below.
@@ -518,6 +535,15 @@ export default function ThreadMessage({
   const initials = getInitials(message.fromName, message.fromEmail);
   const displayName = message.fromName ?? message.fromEmail;
   const timeStr = formatMessageTime(message.receivedAt);
+  // The header time is relative ("Yesterday 14:03"); the details panel states
+  // the unambiguous timestamp, which is what matters on a forwarded record.
+  const fullTimeStr = useMemo(() => {
+    try {
+      return format(parseISO(message.receivedAt), 'EEE, dd MMM yyyy HH:mm');
+    } catch {
+      return '';
+    }
+  }, [message.receivedAt]);
   const detail = fullMessage ?? message;
 
   // ── Collapsed row ─────────────────────────────────────────────────────────
@@ -663,7 +689,7 @@ export default function ThreadMessage({
               </div>
             </div>
             {/* Recipient summary */}
-            <div className="flex flex-wrap gap-x-3 text-micro text-ink-3 mt-0.5">
+            <div className="flex flex-wrap items-center gap-x-3 text-micro text-ink-3 mt-0.5">
               <span className="text-ink-3">{`<${message.fromEmail}>`}</span>
               {message.toRecipients.length > 0 && (
                 <span>
@@ -685,7 +711,35 @@ export default function ThreadMessage({
                   {message.ccRecipients.length > 2 && ` +${message.ccRecipients.length - 2}`}
                 </span>
               )}
+              {/* The summary above truncates; this opens the authoritative list.
+                  stopPropagation because the whole header is the collapse
+                  control — without it, reading the addresses closes the message. */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowRecipients((v) => !v); }}
+                aria-expanded={showRecipients}
+                aria-label={showRecipients ? 'Hide recipient details' : 'Show recipient details'}
+                className="inline-flex items-center gap-0.5 rounded text-ink-3 hover:text-foreground hover:underline"
+              >
+                Details
+                <ChevronDown
+                  className={cn('w-3 h-3 transition-transform', showRecipients && 'rotate-180')}
+                />
+              </button>
             </div>
+
+            {showRecipients && (
+              <div onClick={(e) => e.stopPropagation()}>
+                <RecipientDetails
+                  from={{ email: message.fromEmail, name: message.fromName }}
+                  replyTo={message.replyTo}
+                  to={message.toRecipients}
+                  cc={message.ccRecipients}
+                  bcc={message.bccRecipients ?? []}
+                  dateLabel={fullTimeStr}
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -707,7 +761,13 @@ export default function ThreadMessage({
             </div>
           ) : fullMessage ? (
             <div className="border-t border-border-faint">
-              <EmailBodyFrame html={fullMessage.bodyHtml} text={fullMessage.bodyText} stripQuotes={!isOnlyMessage} />
+              <EmailBodyFrame
+                html={fullMessage.bodyHtml}
+                text={fullMessage.bodyText}
+                subject={fullMessage.subject ?? null}
+                messageId={fullMessage.id}
+                inlineImages={fullMessage.inlineImages}
+              />
             </div>
           ) : (
             <div className="px-4 py-4 text-ui text-ink-3">

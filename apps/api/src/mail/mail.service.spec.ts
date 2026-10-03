@@ -1,5 +1,9 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { BadRequestException, ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { MailService } from './mail.service';
+import { EwsService } from '../ews/ews.service';
+import { ProviderFolder } from '../provider/provider-types';
 import { PrismaService } from '../prisma/prisma.service';
 import { ZimbraService } from '../zimbra/zimbra.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -970,6 +974,81 @@ describe('MailService.getMessage attachment classification', () => {
   });
 });
 
+describe('MailService.getMessage no longer embeds inline images', () => {
+  const user = {
+    id: 'u1',
+    email: 'u@example.com',
+    zimbraHost: 'mail.example.com',
+    authToken: 'tok',
+    csrfToken: null,
+    provider: 'zimbra',
+    tokenExpiry: new Date(Date.now() + 60_000),
+  };
+
+  // Mirrors the harness the other getMessage describe blocks in this file already
+  // use (see "attachment classification" above) — the shared top-level makeService()
+  // at the top of this file only equips prisma.user/senderRule for the sender-rule
+  // tests and has no message/folder mocks, so it cannot drive getMessage.
+  function makeService() {
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      message: {
+        findFirst: jest.fn(),
+        update: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'm1', zimbraId: 'z1', ...data })),
+        upsert: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      folder: { findFirst: jest.fn() },
+    } as unknown as PrismaService;
+    const zimbra = {
+      getMessage: jest.fn(),
+      // Resolved immediately (no timer) so the old embed-with-budget race would
+      // take the "done" branch synchronously rather than the timeout branch —
+      // otherwise a RED run would fail for the wrong reason (a rejected/late
+      // embed task), not because a data: URI actually got written.
+      downloadAttachmentBuffer: jest.fn().mockResolvedValue({ data: Buffer.from('gif'), contentType: 'image/gif' }),
+    } as unknown as ZimbraService;
+    const service = new MailService(prisma, makeResolver(zimbra), {} as NotificationsService, {} as TasksService);
+    return { service, prisma: prisma as any, zimbra: zimbra as any };
+  }
+
+  it('does not re-fetch a cached body that still contains cid: refs', async () => {
+    const { service, prisma, zimbra } = makeService();
+    prisma.message.findFirst.mockResolvedValue({
+      id: 'm1', userId: 'u1', zimbraId: 'z1',
+      bodyHtml: '<img src="cid:c1">', bodyText: 'hi',
+      attachments: [], inlineImages: [{ cid: 'c1', partId: '1.1', mimeType: 'image/png' }],
+    });
+
+    await service.getMessage('u1', 'm1');
+
+    // The whole point: a cid: body is now the resting state, not a cache miss.
+    // Fails if `bodyHasCids` is put back into the cache-hit condition.
+    expect(zimbra.getMessage).not.toHaveBeenCalled();
+  });
+
+  it('never writes a body containing a data: URI', async () => {
+    const { service, prisma, zimbra } = makeService();
+    prisma.message.findFirst.mockResolvedValue(null);
+    prisma.folder.findFirst.mockResolvedValue({ id: 'f1' });
+    zimbra.getMessage.mockResolvedValue(mapZimbraMessage({
+      id: 'z1', l: '2', su: 'hi', d: Date.now(), f: '', e: [],
+      mp: [
+        { part: '1', ct: 'text/html', body: true, content: '<p>hi <img src="cid:sig@x"></p>' },
+        { part: '2', ct: 'image/gif', filename: 'inline.gif', ci: '<sig@x>', s: 1234 },
+      ],
+    } as any));
+
+    await service.getMessage('u1', 'm1').catch(() => {});
+
+    // Fails if embedInlineImages is called again on the persist path — its
+    // output is a base64 data: URI written straight into this same upsert call.
+    for (const call of (prisma.message.upsert as jest.Mock).mock.calls) {
+      expect(JSON.stringify(call[0])).not.toContain('data:image');
+    }
+  });
+});
+
 describe('MailService.getConversation back-fill batching', () => {
   const user = {
     id: 'u1',
@@ -1082,7 +1161,16 @@ describe('MailService.getConversation back-fill batching', () => {
   });
 });
 
-describe('MailService.getMessage embed budget (async image embedding)', () => {
+// This describe block used to exercise the async embed-with-budget path:
+// embed inline images with a time budget, return early with `embedPending`
+// when Zimbra was slow, and finish the embed in the background. That whole
+// mechanism (EMBED_BUDGET_MS, inflightEmbeds, embedPending, stripCidRefs) was
+// retired in the "stop embedding" change — getMessage never calls
+// embedInlineImages on the persist path anymore, so there is no budget, no
+// pending state and no background write-back left to race. Every test below
+// is kept (per the task-3 brief: fix, never delete) and repurposed to assert
+// the new resting state instead of the retired one.
+describe('MailService.getMessage no longer runs the async embed-with-budget path', () => {
   const user = {
     id: 'u1',
     email: 'u@example.com',
@@ -1092,12 +1180,6 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
     provider: 'zimbra',
     tokenExpiry: new Date(Date.now() + 60_000),
   };
-
-  function deferred<T>() {
-    let resolve!: (v: T) => void;
-    const promise = new Promise<T>((r) => (resolve = r));
-    return { promise, resolve };
-  }
 
   function makeService() {
     const prisma = {
@@ -1126,122 +1208,90 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
   } as any);
   const cachedRow = { id: 'm1', zimbraId: 'z1', bodyHtml: null, bodyText: null, attachments: null, inlineImages: null };
 
-  afterEach(() => {
-    delete process.env.EMBED_BUDGET_MS;
-  });
-
-  it('returns the body immediately with embedPending=true when embedding exceeds the budget, stripping unresolved cid refs from the response', async () => {
-    process.env.EMBED_BUDGET_MS = '25';
+  // Production change that would fail this test: reinstating the
+  // `embedInlineImages` call (and its budget race) inside getMessage.
+  it('returns the raw body with cid: refs intact, no embedPending flag, and no background write-back', async () => {
     const { service, prisma, zimbra } = makeService();
     prisma.message.findFirst.mockResolvedValue(cachedRow);
     zimbra.getMessage.mockResolvedValue(zimbraMsg);
-    const dl = deferred<{ data: Buffer; contentType: string }>();
-    zimbra.downloadAttachmentBuffer.mockReturnValue(dl.promise);
-
-    const result = await service.getMessage('u1', 'm1');
-
-    expect(result.embedPending).toBe(true);
-    // Response body must not contain broken cid: image refs
-    expect(result.bodyHtml).not.toContain('cid:');
-    // The DB keeps the raw (cid-bearing) body so the cache guard keeps refusing it as final
-    expect(prisma.message.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ bodyHtml: expect.stringContaining('cid:') }) }),
-    );
-
-    // Background embed finishes → cache warmed with the embedded body
-    dl.resolve({ data: Buffer.from('gif'), contentType: 'image/gif' });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(prisma.message.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { bodyHtml: expect.stringContaining('data:image/gif;base64') } }),
-    );
-  });
-
-  it('does not re-fetch from Zimbra while a background embed is in flight — serves the cached raw body with embedPending', async () => {
-    process.env.EMBED_BUDGET_MS = '25';
-    const { service, prisma, zimbra } = makeService();
-    prisma.message.findFirst.mockResolvedValue(cachedRow);
-    zimbra.getMessage.mockResolvedValue(zimbraMsg);
-    const dl = deferred<{ data: Buffer; contentType: string }>();
-    zimbra.downloadAttachmentBuffer.mockReturnValue(dl.promise);
-
-    const first = await service.getMessage('u1', 'm1');
-    expect(first.embedPending).toBe(true);
-    expect(zimbra.getMessage).toHaveBeenCalledTimes(1);
-
-    // Poll while embed is still running: cached row now holds the raw cid body
-    prisma.message.findFirst.mockResolvedValue({
-      ...cachedRow,
-      bodyHtml: '<p>hi <img src="cid:sig@x"></p>',
-      attachments: [],
-      inlineImages: [{ cid: 'sig@x', partId: '2', mimeType: 'image/gif' }],
-    });
-    const second = await service.getMessage('u1', 'm1');
-
-    expect(zimbra.getMessage).toHaveBeenCalledTimes(1); // no duplicate Zimbra fetch
-    expect(second.embedPending).toBe(true);
-    expect(second.bodyHtml).not.toContain('cid:');
-
-    dl.resolve({ data: Buffer.from('gif'), contentType: 'image/gif' });
-    await new Promise((r) => setTimeout(r, 10));
-
-    // Embed done → in-flight cleared; a fully-embedded cached row is served as final
-    prisma.message.findFirst.mockResolvedValue({
-      ...cachedRow,
-      bodyHtml: '<p>hi <img src="data:image/gif;base64,Z2lm"></p>',
-      attachments: [],
-      inlineImages: [{ cid: 'sig@x', partId: '2', mimeType: 'image/gif' }],
-    });
-    const third = await service.getMessage('u1', 'm1');
-    expect(third.embedPending).toBeUndefined();
-    expect(zimbra.getMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns the embedded body with no embedPending flag when embedding completes within budget', async () => {
-    const { service, prisma, zimbra } = makeService();
-    prisma.message.findFirst.mockResolvedValue(cachedRow);
-    zimbra.getMessage.mockResolvedValue(zimbraMsg);
-    zimbra.downloadAttachmentBuffer.mockResolvedValue({ data: Buffer.from('gif'), contentType: 'image/gif' });
 
     const result = await service.getMessage('u1', 'm1');
 
     expect(result.embedPending).toBeUndefined();
-    expect(result.bodyHtml).toContain('data:image/gif;base64');
+    // cid: is the new resting state — it is never embedded and never stripped.
+    expect(result.bodyHtml).toContain('cid:sig@x');
+    expect(result.bodyHtml).not.toContain('data:image');
+    expect(prisma.message.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ bodyHtml: expect.stringContaining('cid:') }) }),
+    );
+    // There is no async embed left to finish in the background anymore.
+    expect(prisma.message.updateMany).not.toHaveBeenCalled();
   });
 
-  // Pass 2 of the embed (embedZimbraHostedImages) is the one method with both
-  // an interface call and a Zimbra-only extra in it. It resolves BOTH from the
-  // user row it is handed — no provider argument — so the branch that checks
-  // `user.provider` can never disagree with the provider doing the fetching.
-  describe('Zimbra-hosted image URLs (pass 2)', () => {
+  // Production change that would fail this test: putting `bodyHasCids` back
+  // into the getMessage cache-hit condition (the exact regression this task
+  // exists to prevent).
+  it('repeated opens of a cached body with cid: refs never re-fetch from the provider', async () => {
+    const { service, prisma, zimbra } = makeService();
+    const cachedWithCid = {
+      ...cachedRow,
+      bodyHtml: '<p>hi <img src="cid:sig@x"></p>',
+      attachments: [],
+      inlineImages: [{ cid: 'sig@x', partId: '2', mimeType: 'image/gif' }],
+    };
+    prisma.message.findFirst.mockResolvedValue(cachedWithCid);
+
+    const first = await service.getMessage('u1', 'm1');
+    const second = await service.getMessage('u1', 'm1');
+
+    expect(zimbra.getMessage).not.toHaveBeenCalled();
+    expect(first.bodyHtml).toContain('cid:sig@x');
+    expect(second.bodyHtml).toContain('cid:sig@x');
+    expect(first.embedPending).toBeUndefined();
+    expect(second.embedPending).toBeUndefined();
+  });
+
+  // Production change that would fail this test: reinstating the call to
+  // embedInlineImages (which is what drove downloadAttachmentBuffer before).
+  it('never calls the provider to download attachment bytes for embedding', async () => {
+    const { service, prisma, zimbra } = makeService();
+    prisma.message.findFirst.mockResolvedValue(cachedRow);
+    zimbra.getMessage.mockResolvedValue(zimbraMsg);
+
+    await service.getMessage('u1', 'm1');
+
+    expect(zimbra.downloadAttachmentBuffer).not.toHaveBeenCalled();
+  });
+
+  // Pass 2 of the old embed (embedZimbraHostedImages) used to rewrite any
+  // Zimbra-hosted image URL (id/part, briefcase path, or otherwise) into a
+  // base64 data: URI. embedInlineImages is no longer called at all, so none
+  // of these URL shapes are touched anymore — they are returned exactly as
+  // the provider sent them.
+  describe('Zimbra-hosted image URLs are left untouched (pass 2 of the old embed no longer runs)', () => {
     const hostedMsg = (html: string) =>
       mapZimbraMessage({
         id: 'z1', l: '2', su: 'hi', d: Date.now(), f: '', e: [],
         mp: [{ part: '1', ct: 'text/html', body: true, content: html }],
       } as any);
 
-    it('embeds an id/part URL through the resolved provider', async () => {
+    it('leaves an id/part Zimbra image URL untouched — no embedding is attempted', async () => {
       const { service, prisma, zimbra } = makeService();
       prisma.message.findFirst.mockResolvedValue(cachedRow);
       zimbra.getMessage.mockResolvedValue(
         hostedMsg('<p><img src="https://mail.example.com/service/home/~/?id=z9&part=3"></p>'),
       );
-      zimbra.downloadAttachmentBuffer.mockResolvedValue({ data: Buffer.from('gif'), contentType: 'image/gif' });
 
       const result = await service.getMessage('u1', 'm1');
 
-      expect(zimbra.downloadAttachmentBuffer).toHaveBeenCalledWith(
-        { host: 'mail.example.com', email: 'u@example.com', authToken: 'tok', csrfToken: undefined },
-        'z9',
-        '3',
-      );
-      expect(result.bodyHtml).toContain(`data:image/gif;base64,${Buffer.from('gif').toString('base64')}`);
+      expect(zimbra.downloadAttachmentBuffer).not.toHaveBeenCalled();
+      expect(result.bodyHtml).toContain('src="https://mail.example.com/service/home/~/?id=z9&part=3"');
+      expect(result.bodyHtml).not.toContain('base64');
     });
 
-    it('embeds a path-based URL through the Zimbra-only extra', async () => {
+    it('leaves a briefcase path-based Zimbra image URL untouched — no embedding is attempted', async () => {
       const { service, prisma, zimbra } = makeService();
-      zimbra.downloadZimbraPath = jest.fn().mockResolvedValue({
-        data: Buffer.from('png'), contentType: 'image/png',
-      });
+      zimbra.downloadZimbraPath = jest.fn();
       prisma.message.findFirst.mockResolvedValue(cachedRow);
       zimbra.getMessage.mockResolvedValue(
         hostedMsg('<p><img src="https://mail.example.com/home/bruce/Briefcase/logo.png"></p>'),
@@ -1249,18 +1299,15 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
 
       const result = await service.getMessage('u1', 'm1');
 
-      expect(zimbra.downloadZimbraPath).toHaveBeenCalledWith(
-        'mail.example.com', 'tok', '/home/bruce/Briefcase/logo.png',
-      );
+      expect(zimbra.downloadZimbraPath).not.toHaveBeenCalled();
       expect(zimbra.downloadAttachmentBuffer).not.toHaveBeenCalled();
-      expect(result.bodyHtml).toContain(`data:image/png;base64,${Buffer.from('png').toString('base64')}`);
+      expect(result.bodyHtml).toContain('src="https://mail.example.com/home/bruce/Briefcase/logo.png"');
+      expect(result.bodyHtml).not.toContain('base64');
     });
 
-    it('leaves a non-image response at its original URL', async () => {
+    it('leaves a non-image response at its original URL — no embedding is attempted at all now', async () => {
       const { service, prisma, zimbra } = makeService();
-      zimbra.downloadZimbraPath = jest.fn().mockResolvedValue({
-        data: Buffer.from('%PDF'), contentType: 'application/pdf',
-      });
+      zimbra.downloadZimbraPath = jest.fn();
       prisma.message.findFirst.mockResolvedValue(cachedRow);
       zimbra.getMessage.mockResolvedValue(
         hostedMsg('<p><img src="https://mail.example.com/home/bruce/Briefcase/report.pdf"></p>'),
@@ -1268,6 +1315,7 @@ describe('MailService.getMessage embed budget (async image embedding)', () => {
 
       const result = await service.getMessage('u1', 'm1');
 
+      expect(zimbra.downloadZimbraPath).not.toHaveBeenCalled();
       expect(result.bodyHtml).toContain('src="https://mail.example.com/home/bruce/Briefcase/report.pdf"');
       expect(result.bodyHtml).not.toContain('base64');
     });
@@ -1743,5 +1791,856 @@ describe('MailService search-result persistence (round-trip batching)', () => {
     expect(prisma.folder.findMany).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(out).toMatchObject({ messages: [], total: 0, hasMore: false });
+  });
+});
+
+describe('MailService markNotSpam', () => {
+  // `provider` is what MailProviderResolver.forUser reads — the DB always
+  // carries it, so the fixture has to as well or the resolver rejects the user.
+  const user = { id: 'u1', authToken: 'tok', tokenExpiry: new Date(Date.now() + 60_000), provider: 'zimbra' };
+  const junk = { id: 'f-junk', zimbraId: 'z-junk', path: '/Junk' };
+  const inbox = { id: 'f-inbox', zimbraId: 'z-inbox', path: '/Inbox' };
+  const message = { id: 'm1', userId: 'u1', zimbraId: 'z-m1', folderId: 'f-junk', fromEmail: 'sender@evil.com' };
+
+  /** Prisma + provider wiring shared by the cases below. */
+  function makeNotSpamService(rules: Array<{ id: string; type: string; address: string }>) {
+    const moveMessage = jest.fn().mockResolvedValue(undefined);
+    const prisma = {
+      user: { findUnique: jest.fn().mockResolvedValue(user) },
+      message: { findFirst: jest.fn().mockResolvedValue(message), update: jest.fn().mockResolvedValue(message) },
+      folder: {
+        findFirst: jest.fn(({ where }: any) =>
+          Promise.resolve(where.id === 'f-junk' ? junk : where.path === '/Inbox' ? inbox : null),
+        ),
+      },
+      senderRule: {
+        findMany: jest.fn().mockResolvedValue(rules),
+        delete: jest.fn().mockResolvedValue(undefined),
+        create: jest.fn().mockResolvedValue(undefined),
+      },
+    } as unknown as PrismaService;
+    const zimbra = { moveMessage } as unknown as ZimbraService;
+    const service = new MailService(
+      prisma, makeResolver(zimbra), {} as NotificationsService, { create: jest.fn() } as unknown as TasksService,
+    );
+    return { service, prisma: prisma as any, moveMessage };
+  }
+
+  it('moves the message to the Inbox', async () => {
+    const { service, prisma, moveMessage } = makeNotSpamService([]);
+
+    await service.markNotSpam('u1', 'm1');
+
+    expect(moveMessage).toHaveBeenCalledWith(expect.anything(), 'z-m1', 'z-inbox');
+    expect(prisma.message.update).toHaveBeenCalledWith({
+      where: { id: 'm1' }, data: { folderId: 'f-inbox' },
+    });
+  });
+
+  it('deletes the exact-address BLOCK rule, so the next sync cannot re-file it', async () => {
+    // Without this the message is dragged straight back to Junk by
+    // enforceSenderRules on the next Inbox sync, and the button looks broken.
+    const { service, prisma } = makeNotSpamService([
+      { id: 'r1', type: 'BLOCK', address: 'sender@evil.com' },
+    ]);
+
+    const result = await service.markNotSpam('u1', 'm1');
+
+    expect(prisma.senderRule.delete).toHaveBeenCalledWith({ where: { id: 'r1' } });
+    expect(prisma.senderRule.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ unblocked: true });
+  });
+
+  it('keeps a domain-wide BLOCK and allows just this sender instead', async () => {
+    // Deleting @evil.com because one message was rescued would unblock the
+    // whole domain. ALLOW beats BLOCK in the matcher, so a narrower allow is
+    // the intended way to carve out one sender.
+    const { service, prisma } = makeNotSpamService([
+      { id: 'r1', type: 'BLOCK', address: '@evil.com' },
+    ]);
+
+    const result = await service.markNotSpam('u1', 'm1');
+
+    expect(prisma.senderRule.delete).not.toHaveBeenCalled();
+    expect(prisma.senderRule.create).toHaveBeenCalledWith({
+      data: { userId: 'u1', type: 'ALLOW', address: 'sender@evil.com' },
+    });
+    expect(result).toMatchObject({ unblocked: true });
+  });
+
+  it('removes the exact rule AND allows the sender when a domain block also covers them', async () => {
+    const { service, prisma } = makeNotSpamService([
+      { id: 'r1', type: 'BLOCK', address: 'sender@evil.com' },
+      { id: 'r2', type: 'BLOCK', address: '@evil.com' },
+    ]);
+
+    await service.markNotSpam('u1', 'm1');
+
+    expect(prisma.senderRule.delete).toHaveBeenCalledWith({ where: { id: 'r1' } });
+    expect(prisma.senderRule.create).toHaveBeenCalledWith({
+      data: { userId: 'u1', type: 'ALLOW', address: 'sender@evil.com' },
+    });
+  });
+
+  it('touches no rules when the sender was never blocked', async () => {
+    const { service, prisma } = makeNotSpamService([
+      { id: 'r1', type: 'BLOCK', address: 'someone-else@evil.com' },
+    ]);
+
+    const result = await service.markNotSpam('u1', 'm1');
+
+    expect(prisma.senderRule.delete).not.toHaveBeenCalled();
+    expect(prisma.senderRule.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ unblocked: false });
+  });
+
+  it('refuses a message that is not in a spam folder', async () => {
+    const { service, prisma, moveMessage } = makeNotSpamService([]);
+    prisma.folder.findFirst.mockImplementation(({ where }: any) =>
+      Promise.resolve(where.id === 'f-junk' ? { ...junk, path: '/Archive' } : inbox),
+    );
+
+    await expect(service.markNotSpam('u1', 'm1')).rejects.toBeInstanceOf(BadRequestException);
+    expect(moveMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('MailService new-mail detection', () => {
+  const user = { id: 'u1', authToken: 'tok', tokenExpiry: new Date(Date.now() + 60_000), provider: 'zimbra' };
+
+  /** One row of the folders table, as the fake below stores it. */
+  interface FolderRow { id: string; zimbraId: string; path: string; unreadCount: number }
+
+  /** The Inbox row a healthy mailbox holds: the one the provider still returns. */
+  const liveInbox = (unreadCount: number): FolderRow => ({
+    id: 'f-inbox', zimbraId: 'z-inbox', path: '/Inbox', unreadCount,
+  });
+
+  interface DetectionOpts {
+    /** The unread count the stored Inbox row holds: the baseline the delta is
+     *  measured from. Defaults to 2. */
+    storedUnread?: number;
+    /**
+     * The whole folders table for this user, in INSERTION order — which is the
+     * order an unordered `findFirst` is most likely to hand back. Defaults to
+     * the one live Inbox row.
+     */
+    folderRows?: FolderRow[];
+    /**
+     * The folder list the provider returns, when a test needs one the
+     * `fetchedUnread` shorthand cannot express — e.g. the EWS shape where two
+     * folders are both named "Inbox".
+     */
+    providerFolders?: ProviderFolder[];
+    /** Override the baseline read — used to exercise a DB failure, or a
+     *  mailbox with no stored Inbox row at all. */
+    findUnique?: jest.Mock;
+    /** Override the conditional baseline advance — used to exercise a DB
+     *  failure. */
+    updateMany?: jest.Mock;
+    /**
+     * Stand in for a CONCURRENT sync. Called with the folder table immediately
+     * before attempt `attempt`'s compare-and-swap is evaluated, so a test can
+     * move the baseline out from under it exactly as another sync would.
+     */
+    onAttempt?: (attempt: number, rows: FolderRow[]) => void;
+    /** The newest unread Inbox message the DB holds, if any. */
+    newestUnread?: { fromName?: string | null; fromEmail: string; subject?: string | null } | null;
+    /** Override the newest-unread-message read — used to exercise a DB failure. */
+    messageFindFirst?: jest.Mock;
+  }
+
+  function makeService(fetchedUnread: number, opts: DetectionOpts = {}) {
+    const rows: FolderRow[] = opts.folderRows ?? [liveInbox(opts.storedUnread ?? 2)];
+
+    // What ran, in order, and — for a WRITE — on WHICH CLIENT.
+    //
+    // A write tagged '@tx' is one that ran on the transaction client the fake
+    // handed the callback, which is the only thing that distinguishes "ran on
+    // the transaction" from "ran on the shared pool while a transaction
+    // happened to be open". An earlier version of this fake handed the
+    // callback `prisma` itself and tagged by nesting depth, so it proved only
+    // the latter: dropping the trailing `tx` argument from the
+    // createNotification call, or swapping `tx.folder.updateMany` for
+    // `this.prisma.folder.updateMany`, deleted the atomicity with every test
+    // still green.
+    //
+    // For a READ (the body lookup) the depth is still what matters: it must
+    // run with NO transaction open, because holding one across a second query
+    // on a per-sync path buys nothing.
+    const trace: string[] = [];
+    let txDepth = 0;
+    const markWrite = (what: string, via: 'prisma' | 'tx') => {
+      trace.push(via === 'tx' ? `${what}@tx` : what);
+    };
+    const markRead = (what: string) => { trace.push(txDepth > 0 ? `${what}@tx` : what); };
+
+    const createNotification = jest.fn(async (...args: any[]) => {
+      markWrite('createNotification', args[6] === txClient ? 'tx' : 'prisma');
+      return {};
+    });
+    const notifications = { createNotification } as unknown as NotificationsService;
+
+    const messageFindFirst = opts.messageFindFirst ?? jest.fn(async () => {
+      markRead('newMailBody');
+      return opts.newestUnread ?? null;
+    });
+
+    // A faithful compare-and-swap, shared by both clients' `updateMany` so a
+    // write lands on the same table whichever client ran it: it matches only
+    // while the row still holds the exact count the calling sync measured
+    // from. `via` is recorded, not acted on.
+    let attempt = 0;
+    const compareAndSwap = async ({ where, data }: any, via: 'prisma' | 'tx') => {
+      opts.onAttempt?.(attempt, rows);
+      attempt += 1;
+      markWrite(via === 'tx' ? 'claim' : 'baselineWrite', via);
+      const row = rows.find((r) => r.id === where.id && r.unreadCount === where.unreadCount);
+      if (!row) return { count: 0 };
+      row.unreadCount = data.unreadCount;
+      return { count: 1 };
+    };
+    const txUpdateMany = opts.updateMany ?? jest.fn((args: any) => compareAndSwap(args, 'tx'));
+    const prismaUpdateMany = opts.updateMany ?? jest.fn((args: any) => compareAndSwap(args, 'prisma'));
+
+    // The baseline read, by the table's ONLY unique key.
+    const findUnique = opts.findUnique ?? jest.fn(async ({ where }: any) => {
+      const { zimbraId } = where.userId_zimbraId;
+      const row = rows.find((r) => r.zimbraId === zimbraId);
+      // A COPY, as Prisma's `select` returns — not a live reference into the
+      // table, which would let a later write appear to rewrite what was read.
+      return row ? { ...row } : null;
+    });
+
+    // Present only so a test can prove notifyNewMail does NOT use it. A
+    // `path: '/Inbox'` lookup is not unique — the table's only uniqueness is
+    // (userId, zimbraId) — so it picks an arbitrary row when two exist.
+    const findFirst = jest.fn(async ({ where }: any) => {
+      const row = rows.find((r) => r.path === where.path);
+      return row ? { ...row } : null;
+    });
+
+    // The persist loop's write, applied to the same table — including the
+    // absence of a column. `unreadCount` is omitted from `update` for the row
+    // whose count the notification path owns, and the tests below read `rows`
+    // to prove the baseline did not move behind a rolled-back claim.
+    const upsert = jest.fn(async ({ where, update, create }: any) => {
+      const { zimbraId } = where.userId_zimbraId;
+      const row = rows.find((r) => r.zimbraId === zimbraId);
+      if (!row) {
+        const created: FolderRow = {
+          id: `f-${zimbraId}`, zimbraId, path: create.path, unreadCount: create.unreadCount,
+        };
+        rows.push(created);
+        return { ...created };
+      }
+      if ('unreadCount' in update) row.unreadCount = update.unreadCount;
+      if (update.path !== undefined) row.path = update.path;
+      return { ...row };
+    });
+
+    const prisma: any = {
+      user: { findUnique: jest.fn().mockResolvedValue(user), update: jest.fn() },
+      folder: { findUnique, findFirst, updateMany: prismaUpdateMany, upsert },
+      message: { findFirst: messageFindFirst },
+    };
+    // A DISTINCT client, carrying only what the transaction is allowed to
+    // touch. Anything else reached through it is a TypeError, not a silent
+    // pass.
+    const txClient: any = {
+      folder: { updateMany: txUpdateMany },
+    };
+    prisma.$transaction = jest.fn(async (fn: any) => {
+      // Rollback is emulated, because one of the tests below turns on it: a
+      // failed insert must leave the claimed baseline exactly as it was.
+      const snapshot = rows.map((r) => ({ ...r }));
+      txDepth += 1;
+      try {
+        return await fn(txClient);
+      } catch (err) {
+        rows.splice(0, rows.length, ...snapshot);
+        throw err;
+      } finally {
+        txDepth -= 1;
+      }
+    });
+
+    const zimbra = {
+      getFolders: jest.fn().mockResolvedValue(opts.providerFolders ?? [
+        { id: 'z-inbox', name: 'Inbox', path: '/Inbox', kind: 'mail', unreadCount: fetchedUnread, totalCount: 10 },
+        // A second folder, so a test can prove the persist loop skips one
+        // COLUMN of one ROW and nothing else.
+        { id: 'z-sent', name: 'Sent', path: '/Sent', kind: 'mail', unreadCount: 0, totalCount: 4 },
+      ]),
+    } as unknown as ZimbraService;
+    const service = new MailService(
+      prisma as PrismaService, makeResolver(zimbra), notifications,
+      { create: jest.fn() } as unknown as TasksService,
+    );
+    /** The `update` payload the persist loop sent for one provider folder id. */
+    const upsertUpdateFor = (zimbraId: string) =>
+      upsert.mock.calls.find((c) => c[0].where.userId_zimbraId.zimbraId === zimbraId)?.[0].update;
+    return {
+      service,
+      createNotification,
+      notifications: notifications as any,
+      prisma,
+      rows,
+      trace,
+      messageFindFirst,
+      /** The claim: the conditional baseline advance, on the transaction client. */
+      txUpdateMany,
+      /** The same op on the SHARED client — the baseline write that has no
+       *  notification to be atomic with. */
+      prismaUpdateMany,
+      txClient,
+      upsert,
+      upsertUpdateFor,
+      findUnique,
+      findFirst,
+    };
+  }
+
+  it('creates one NEW_MAIL notification when the inbox unread count rises', async () => {
+    const { service, createNotification } = makeService(5);
+
+    await service.getFolders('u1');
+
+    expect(createNotification).toHaveBeenCalledTimes(1);
+    const [userId, type, title, , actionUrl, metadata] = createNotification.mock.calls[0] as any[];
+    expect(userId).toBe('u1');
+    expect(type).toBe('NEW_MAIL');
+    expect(title).toBe('3 new messages');
+    expect(actionUrl).toBe('/mail');
+    // Recorded for debugging only: what the delta was measured FROM, what was
+    // announced, and the difference. Nothing compares these across rows.
+    expect(metadata).toEqual({ baseline: 2, unreadCount: 5, delta: 3 });
+  });
+
+  it('says "1 new message" for a single arrival', async () => {
+    const { service, createNotification } = makeService(3);
+    await service.getFolders('u1');
+    expect(createNotification.mock.calls[0][2]).toBe('1 new message');
+  });
+
+  it('creates nothing, and writes nothing, when the count is unchanged', async () => {
+    const { service, createNotification, txUpdateMany, prismaUpdateMany } = makeService(2);
+    await service.getFolders('u1');
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(txUpdateMany).not.toHaveBeenCalled();
+    expect(prismaUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('creates nothing when the count FALLS — mail read elsewhere is not an arrival', async () => {
+    const { service, createNotification, rows } = makeService(1);
+
+    await service.getFolders('u1');
+
+    expect(createNotification).not.toHaveBeenCalled();
+    // And the baseline FELL. This is the guard on the high-water-mark bug an
+    // earlier wave shipped: a baseline that only ever rises leaves a user who
+    // once reached 50 unread hearing nothing until they pass 50 again.
+    expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(1);
+  });
+
+  it('creates nothing, logs nothing, and does not crash, when there is no stored Inbox row yet', async () => {
+    // The very first sync a mailbox ever does: there is no baseline to compare
+    // against, so there is no arrival to announce and nothing to claim.
+    //
+    // The WARN assertion is what gives this test teeth. Without it, deleting
+    // the `if (!previous) return` guard still passes: `previous.unreadCount`
+    // throws straight into notifyNewMail's own try/catch, which also yields no
+    // notification and no claim. The absence of a logged warning is the only
+    // observable difference between "handled" and "crashed and swallowed".
+    const { service, createNotification, txUpdateMany } = makeService(5, {
+      findUnique: jest.fn().mockResolvedValue(null),
+    });
+    const warn = jest.spyOn((service as any).logger, 'warn');
+
+    await expect(service.getFolders('u1')).resolves.toBeDefined();
+
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(txUpdateMany).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('reads the baseline by the SAME identity the persist loop writes by', async () => {
+    // (userId, zimbraId) is the folders table's only unique key, and the
+    // upsert loop in getFolders writes by it. Reading by anything else reads a
+    // different row from the one that gets written.
+    const { service, findUnique, findFirst } = makeService(5);
+
+    await service.getFolders('u1');
+
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId_zimbraId: { userId: 'u1', zimbraId: 'z-inbox' } } }),
+    );
+    // `where: { userId, path: '/Inbox' }` matches more than one row (see the
+    // stale-namesake test below) and has no ordering, so it must not be how
+    // the baseline is found.
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it('still returns the folder list when creating the notification throws', async () => {
+    // The folder list is the user's mailbox. An alert failure must never cost it.
+    const { service, notifications } = makeService(5);
+    notifications.createNotification.mockRejectedValue(new Error('db down'));
+
+    await expect(service.getFolders('u1')).resolves.toBeDefined();
+  });
+
+  it('still returns the folder list, and creates no notification, when reading the baseline throws', async () => {
+    // The baseline read happens inside notifyNewMail (not getFolders)
+    // precisely so a transient DB failure here degrades to "no previous row"
+    // instead of breaking folder sync.
+    const { service, createNotification } = makeService(
+      5, { findUnique: jest.fn().mockRejectedValue(new Error('connection reset')) },
+    );
+
+    const result = await service.getFolders('u1');
+
+    expect(result).toBeDefined();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  describe('two Inbox rows for one user', () => {
+    // `path` is not unique. Nothing prunes folder rows the provider has stopped
+    // returning, so one user can hold two rows both stamped '/Inbox': flipping
+    // an Institution.provider from zimbra to exchange keeps the same User row
+    // (auth upserts on email) while EWS returns different folder ids that also
+    // map to '/Inbox'; so does a Demo/local login on a real address, a restored
+    // mailbox, and renameFolder, which rewrites `path` to `/${name}`
+    // unconditionally.
+    //
+    // The stale row is never upserted again, so its count is FROZEN. Measuring
+    // against it computes a negative delta on every sync forever — no chime, no
+    // toast, no row, indefinitely.
+    const stale: FolderRow = { id: 'f-stale', zimbraId: 'ews-inbox', path: '/Inbox', unreadCount: 37 };
+
+    it('measures against the row the PROVIDER still returns, not the stale namesake', async () => {
+      const { service, createNotification, txUpdateMany, rows, messageFindFirst } = makeService(5, {
+        // Insertion order: the stale row came first, which is what an
+        // unordered findFirst is most likely to return.
+        folderRows: [stale, liveInbox(2)],
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][2]).toBe('3 new messages');
+      expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 2, unreadCount: 5, delta: 3 });
+      // The claim keys on the id the baseline read returned, so correcting the
+      // read moves the claim with it.
+      expect(txUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'f-inbox', unreadCount: 2 }, data: { unreadCount: 5 },
+      });
+      // And the body is read from the live folder, not the stale one.
+      expect(messageFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'u1', folderId: 'f-inbox', isRead: false } }),
+      );
+      // The stale row is left exactly as it was: notifyNewMail writes only the
+      // baseline it claims, and nothing here prunes.
+      expect(rows.find((r) => r.id === 'f-stale')!.unreadCount).toBe(37);
+    });
+
+    it('a genuine arrival still notifies when the stale count is far higher', async () => {
+      // 37 is the frozen count. Against it every real arrival looks like a
+      // fall, which is how this became permanent silence rather than one
+      // missed chime.
+      const { service, createNotification } = makeService(1, {
+        folderRows: [{ ...stale, unreadCount: 37 }, liveInbox(0)],
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][2]).toBe('1 new message');
+    });
+  });
+
+  describe('dedupe by compare-and-swap on the stored baseline', () => {
+    it('claims the transition by advancing the baseline CONDITIONALLY, and only then speaks', async () => {
+      // The decision and the write are one operation: whoever moves the stored
+      // baseline off the exact value it measured from owns the announcement.
+      // The condition is what makes it a claim rather than a plain write, and
+      // the ORDER is what makes it a claim rather than an afterthought — an
+      // insert that preceded the claim would announce arrivals it did not own.
+      const { service, createNotification, txUpdateMany, trace } = makeService(5);
+
+      await service.getFolders('u1');
+
+      expect(txUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'f-inbox', unreadCount: 2 },
+        data: { unreadCount: 5 },
+      });
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(trace.indexOf('claim@tx')).toBeLessThan(trace.indexOf('createNotification@tx'));
+    });
+
+    it('claims and inserts inside ONE transaction, with the body resolved before it opens', async () => {
+      // A crash between the claim and the insert used to lose the arrival
+      // outright: the baseline had moved, so the next sync saw no delta, and no
+      // row existed to show for it. One transaction makes the pair atomic —
+      // either the baseline moved AND the row exists, or neither happened.
+      //
+      // The body lookup stays outside: it is a second query, and holding a
+      // transaction open across it on a per-sync path buys nothing.
+      const { service, trace, prisma } = makeService(5);
+
+      await service.getFolders('u1');
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // '@tx' on the two writes means they RAN ON the transaction client the
+      // fake handed the callback — not merely that they ran while it was open.
+      expect(trace).toEqual(['newMailBody', 'claim@tx', 'createNotification@tx']);
+    });
+
+    it('runs the claim AND the insert on the transaction client, not on the shared one', async () => {
+      // The two one-token deletions this pins: `tx.folder.updateMany` ->
+      // `this.prisma.folder.updateMany`, and dropping the trailing `tx`
+      // argument to createNotification. Either one leaves the pair
+      // non-atomic while the claim and the insert still both happen, so only
+      // the identity of the client can catch it.
+      const { service, createNotification, txUpdateMany, prismaUpdateMany, txClient } = makeService(5);
+
+      await service.getFolders('u1');
+
+      expect(txUpdateMany).toHaveBeenCalledTimes(1);
+      expect(prismaUpdateMany).not.toHaveBeenCalled();
+      expect(createNotification.mock.calls[0][6]).toBe(txClient);
+    });
+
+    it('resolves the notification body once per sync, not once per attempt', async () => {
+      // Both its inputs — the stored row's identity and the count this sync
+      // measured — are the same on every pass, so a retry must not pay for
+      // another indexed query to rebuild the same string.
+      const { service, messageFindFirst, txUpdateMany } = makeService(6, {
+        onAttempt: (attempt, folders) => { if (attempt === 0) folders[0].unreadCount = 5; },
+      });
+
+      await service.getFolders('u1');
+
+      expect(txUpdateMany).toHaveBeenCalledTimes(2);
+      expect(messageFindFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates nothing when a concurrent sync already announced the count this one measured', async () => {
+      // Two syncs read the same stored baseline before either wrote. The first
+      // to run the conditional update matches the row and announces; the
+      // second matches NOTHING, because the baseline it required is gone. It
+      // then re-reads, finds the baseline already at (or past) the count it
+      // measured, and has nothing left to say.
+      const { service, createNotification, findUnique } = makeService(5, {
+        onAttempt: (attempt, rows) => { if (attempt === 0) rows[0].unreadCount = 5; },
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).not.toHaveBeenCalled();
+      // It re-read rather than assuming: a zero means "the baseline moved",
+      // not "what I measured has been announced".
+      expect(findUnique).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries with its OWN, larger delta when the winning sync announced less', async () => {
+      // count === 0 means "someone moved that baseline", not "someone
+      // announced what I measured". Sync A claims 2->5 and says "3 new" while
+      // sync B measured 6, so B's sixth message would appear in no
+      // announcement at all. B re-reads, sees 5 — still below the 6 it
+      // measured — and claims 5->6 for the one message A did not cover.
+      const { service, createNotification, txUpdateMany, rows } = makeService(6, {
+        onAttempt: (attempt, folders) => { if (attempt === 0) folders[0].unreadCount = 5; },
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][2]).toBe('1 new message');
+      expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 5, unreadCount: 6, delta: 1 });
+      expect(txUpdateMany).toHaveBeenLastCalledWith({
+        where: { id: 'f-inbox', unreadCount: 5 }, data: { unreadCount: 6 },
+      });
+      expect(rows[0].unreadCount).toBe(6);
+    });
+
+    it('bounds the retries, so a pathological interleaving cannot spin', async () => {
+      // A baseline that keeps moving and keeps landing below the measured
+      // count would retry forever. Three attempts, then give up: this runs
+      // inside every folder sync, and under-announcing one arrival is cheaper
+      // than a loop that never returns.
+      const { service, createNotification, txUpdateMany, findUnique } = makeService(20, {
+        onAttempt: (_attempt, folders) => { folders[0].unreadCount += 1; },
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(txUpdateMany).toHaveBeenCalledTimes(3);
+      expect(findUnique).toHaveBeenCalledTimes(3);
+    });
+
+    it('notifies a read-then-refill that repeats a transition announced SECONDS ago', async () => {
+      // The sequence every timing guard here has lost. (0 -> 1) is announced
+      // at t=0; the user opens the message, and a sync seconds later takes the
+      // stored baseline back to 0; another message arrives, and the next sync
+      // computes the identical (0 -> 1) pair well inside any plausible window.
+      // Nothing about the numbers or the clock distinguishes it from a
+      // duplicate — only the fact that the baseline genuinely returned to 0,
+      // which is exactly what the conditional update tests.
+      const { service, createNotification, txUpdateMany } = makeService(1, { storedUnread: 0 });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 0, unreadCount: 1, delta: 1 });
+      expect(txUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'f-inbox', unreadCount: 0 },
+        data: { unreadCount: 1 },
+      });
+    });
+
+    it('still returns the folder list, and creates no notification, when the claim itself throws', async () => {
+      const { service, createNotification } = makeService(5, {
+        updateMany: jest.fn().mockRejectedValue(new Error('deadlock detected')),
+      });
+
+      await expect(service.getFolders('u1')).resolves.toBeDefined();
+      expect(createNotification).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('who owns the stored Inbox unreadCount for a cycle', () => {
+    // The persist loop used to write `unreadCount: f.unreadCount` for every
+    // folder unconditionally, AFTER notifyNewMail had returned — so it undid
+    // the transaction it was supposed to be protected by. When the claim and
+    // the insert rolled back together, the loop advanced the baseline anyway
+    // and the next sync saw no delta: the arrival was announced nowhere, which
+    // is the exact failure the transaction was added to prevent. "Either both
+    // happened or neither did" held only for process death — the one case
+    // where the loop does not run either.
+    //
+    // So notifyNewMail now reports which provider folder's `unreadCount` it
+    // owns for this cycle, and the loop leaves THAT column, on THAT row,
+    // alone. Every other column and every other row are untouched.
+
+    it('does not advance the baseline behind a rolled-back claim', async () => {
+      const { service, notifications, rows, upsertUpdateFor } = makeService(5);
+      notifications.createNotification.mockRejectedValue(new Error('db down'));
+
+      await expect(service.getFolders('u1')).resolves.toBeDefined();
+
+      // The claim rolled back with the insert, so the baseline is still 2 and
+      // the next sync measures the same +3 and announces it.
+      expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(2);
+      expect(upsertUpdateFor('z-inbox')).not.toHaveProperty('unreadCount');
+    });
+
+    it('skips one COLUMN of one ROW — every other folder and column still persists', async () => {
+      const { service, upsertUpdateFor, rows } = makeService(5);
+
+      await service.getFolders('u1');
+
+      // The Inbox row keeps everything except the count the claim owns...
+      expect(upsertUpdateFor('z-inbox')).toMatchObject({ name: 'Inbox', path: '/Inbox', type: 'MAIL' });
+      expect(upsertUpdateFor('z-inbox')).not.toHaveProperty('unreadCount');
+      // ...and the claim itself left the count correct, so nothing is lost.
+      expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(5);
+      // Any other folder is written exactly as before.
+      expect(upsertUpdateFor('z-sent')).toMatchObject({ unreadCount: 0, totalCount: 4 });
+    });
+
+    it('lets the loop create the row on a mailbox that has no stored Inbox yet', async () => {
+      // Nothing to own and nothing to protect: the first sync of a mailbox
+      // (or the first after the provider started issuing new folder ids) has
+      // no baseline, and the row must be created with the count just fetched
+      // so the next sync has one.
+      const { service, upsert, rows } = makeService(5, { folderRows: [] });
+
+      await service.getFolders('u1');
+
+      expect(upsert.mock.calls[0][0].create).toMatchObject({ zimbraId: 'z-inbox', unreadCount: 5 });
+      expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(5);
+    });
+
+    it('does not rewind a concurrent claim when this sync measured no change', async () => {
+      // The residual the fourth wave documented and left open: a sync whose
+      // provider fetch predates an arrival upserts the older count and rewinds
+      // a baseline another sync just claimed — costing an extra chime, and in
+      // the traced case one lost arrival. Ownership closes it: the count this
+      // sync measured is the count it read, so it has nothing to write, and
+      // the loop no longer writes on its behalf.
+      const rows: FolderRow[] = [liveInbox(0)];
+      const { service, upsertUpdateFor, createNotification } = makeService(0, {
+        folderRows: rows,
+        findUnique: jest.fn(async () => {
+          const read = { id: 'f-inbox', unreadCount: 0 };
+          // A concurrent sync, holding a fresher fetch, claims 0 -> 3 in the
+          // instant after this read.
+          rows[0].unreadCount = 3;
+          return read;
+        }),
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(rows[0].unreadCount).toBe(3);
+      expect(upsertUpdateFor('z-inbox')).not.toHaveProperty('unreadCount');
+    });
+
+    it('lowers the baseline CONDITIONALLY, so a fall cannot rewind a concurrent claim', async () => {
+      // A fall must still lower the baseline (see the high-water-mark guard
+      // above), but only from the value this sync actually read. If another
+      // sync moved it in between, that sync's count is the fresher one and
+      // this write matches nothing.
+      const rows: FolderRow[] = [liveInbox(5)];
+      const { service, prismaUpdateMany, createNotification } = makeService(1, {
+        folderRows: rows,
+        findUnique: jest.fn(async () => {
+          const read = { id: 'f-inbox', unreadCount: 5 };
+          rows[0].unreadCount = 6; // a concurrent arrival, claimed by its own sync
+          return read;
+        }),
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(prismaUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'f-inbox', unreadCount: 5 }, data: { unreadCount: 1 },
+      });
+      expect(rows[0].unreadCount).toBe(6);
+    });
+
+    it('keeps the folder list when the baseline read throws, and leaves the baseline alone', async () => {
+      // A failure this early cannot tell whether the row holds a baseline that
+      // is about to be announced, so the loop must not move it: advancing it
+      // here is exactly how an arrival gets announced nowhere.
+      const { service, createNotification, rows, upsertUpdateFor } = makeService(5, {
+        findUnique: jest.fn().mockRejectedValue(new Error('connection reset')),
+      });
+
+      await expect(service.getFolders('u1')).resolves.toBeDefined();
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(rows.find((r) => r.zimbraId === 'z-inbox')!.unreadCount).toBe(2);
+      expect(upsertUpdateFor('z-inbox')).not.toHaveProperty('unreadCount');
+    });
+  });
+
+  describe('an Exchange mailbox with a nested folder named "Inbox"', () => {
+    // The provider list here is produced by the REAL EWS mapper from a real
+    // FindFolder response, because the impostor is made BY that mapping: a
+    // hand-written folder list cannot show the bug. Exchange returns the whole
+    // tree flat from one Deep traversal, and the mapper used to read
+    // DisplayName alone — so `Archive/Inbox` and a PST import's
+    // `Top of Information Store/Inbox` both arrived here stamped '/Inbox'.
+    //
+    // When the impostor is returned first, `fetched.find(f => f.path ===
+    // '/Inbox')` picked IT: every sync then compared the impostor's own row
+    // against itself — perfectly self-consistent, perfectly silent — and the
+    // real Inbox was never compared against anything. No delta, no claim, no
+    // notification, no WARN, and no recovery.
+    // EwsService refuses to construct without the credential key (it encrypts
+    // mailbox credentials); the fake transport never uses it.
+    const ORIGINAL_KEY = process.env.MAIL_CRED_KEY;
+    beforeEach(() => { process.env.MAIL_CRED_KEY = 'test-mail-cred-key-0123456789abcdef'; });
+    afterEach(() => {
+      if (ORIGINAL_KEY === undefined) delete process.env.MAIL_CRED_KEY;
+      else process.env.MAIL_CRED_KEY = ORIGINAL_KEY;
+    });
+
+    const ewsFolders = async () => {
+      const xml = readFileSync(
+        join(__dirname, '..', 'ews', '__fixtures__', 'findfolder.nested-inbox.xml'), 'utf8',
+      );
+      const transport = { call: async () => xml };
+      return new EwsService(transport as any).getFolders({
+        host: 'webmail.minaffet.gov.rw',
+        email: 'test-risa1@minaffet.gov.rw',
+        credentials: { username: 'MINAFFET\\test-risa1', password: 'fake-pw' },
+      });
+    };
+
+    it('measures the arrival against the REAL Inbox, not the namesake returned first', async () => {
+      const providerFolders = await ewsFolders();
+      // Sanity: the impostor really is first in what the provider returned.
+      expect(providerFolders[0].id).toBe('AAA-Archive-Inbox=');
+
+      const { service, createNotification, txUpdateMany } = makeService(0, {
+        providerFolders,
+        folderRows: [
+          // The namesake's stored row, frozen at the same count it fetches —
+          // so comparing it against itself yields a delta of zero forever.
+          { id: 'f-archive-inbox', zimbraId: 'AAA-Archive-Inbox=', path: 'Inbox', unreadCount: 5 },
+          { id: 'f-inbox', zimbraId: 'AAA-Inbox=', path: '/Inbox', unreadCount: 2 },
+        ],
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][2]).toBe('3 new messages');
+      expect(createNotification.mock.calls[0][5]).toEqual({ baseline: 2, unreadCount: 5, delta: 3 });
+      expect(txUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'f-inbox', unreadCount: 2 }, data: { unreadCount: 5 },
+      });
+    });
+
+    it('leaves exactly one folder carrying the canonical /Inbox path', async () => {
+      // Which is also what the sidebar needs: it resolves the Inbox item by
+      // `f.path === '/Inbox'` and hides every BUILTIN path from Labels, so two
+      // '/Inbox' rows meant the badge and click target could land on the
+      // namesake while the namesake itself was invisible.
+      const providerFolders = await ewsFolders();
+
+      expect(providerFolders.filter((f) => f.path === '/Inbox').map((f) => f.id)).toEqual(['AAA-Inbox=']);
+    });
+  });
+
+  describe('body text', () => {
+    it('names the sender and subject of the newest unread message when the DB holds it', async () => {
+      const { service, createNotification, messageFindFirst } = makeService(5, {
+        newestUnread: { fromName: 'Alice Uwase', fromEmail: 'alice@risa.gov.rw', subject: 'Budget review' },
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification.mock.calls[0][3]).toBe('Alice Uwase — Budget review');
+      // One indexed lookup, scoped to the stored Inbox folder and unread rows.
+      expect(messageFindFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'u1', folderId: 'f-inbox', isRead: false },
+          orderBy: { receivedAt: 'desc' },
+        }),
+      );
+    });
+
+    it('falls back to the sender address when the message has no display name', async () => {
+      const { service, createNotification } = makeService(5, {
+        newestUnread: { fromName: '  ', fromEmail: 'alice@risa.gov.rw', subject: null },
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification.mock.calls[0][3]).toBe('alice@risa.gov.rw — (no subject)');
+    });
+
+    it('falls back to the unread total when the DB holds no unread Inbox message', async () => {
+      const { service, createNotification } = makeService(5, { newestUnread: null });
+      await service.getFolders('u1');
+      expect(createNotification.mock.calls[0][3]).toBe('Inbox now has 5 unread');
+    });
+
+    it('falls back to the unread total, and still notifies, when the message read throws', async () => {
+      const { service, createNotification } = makeService(5, {
+        messageFindFirst: jest.fn().mockRejectedValue(new Error('connection reset')),
+      });
+
+      await service.getFolders('u1');
+
+      expect(createNotification).toHaveBeenCalledTimes(1);
+      expect(createNotification.mock.calls[0][3]).toBe('Inbox now has 5 unread');
+    });
   });
 });

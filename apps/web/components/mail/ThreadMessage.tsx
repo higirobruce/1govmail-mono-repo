@@ -138,11 +138,13 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
   const quotedNodes: Node[] = [];
 
   // Pass 1 — elements whose class/id marks them as quoted history, wherever
-  // they sit in the body. Checking isConnected skips nodes already carried off
-  // inside an ancestor that an earlier selector matched.
+  // they sit in the body. `tmp.contains` skips nodes an earlier selector
+  // already carried off inside an ancestor. It must NOT be `el.isConnected`:
+  // `tmp` is detached, so isConnected is false for everything in it and the
+  // whole pass silently does nothing.
   QUOTE_SELECTORS.forEach((sel) => {
     tmp.querySelectorAll(sel).forEach((el) => {
-      if (!el.isConnected) return;
+      if (!tmp.contains(el)) return;
       quotedNodes.push(el);
       el.remove();
     });
@@ -158,11 +160,16 @@ function splitEmailBody(html: string): { main: string; quoted: string | null } {
       ancestors.push(node.parentElement);
       node = node.parentElement;
     }
-    let sib: Element | null = sep;
-    while (sib) { const nx: Element | null = sib.nextElementSibling; quotedNodes.push(sib); sib.remove(); sib = nx; }
+    // Walk NODE siblings, not element siblings. Providers emit forward headers
+    // as `<b>From: </b>value<br>` — the labels are elements but the addresses
+    // and dates are bare text nodes between them, and nextElementSibling steps
+    // straight over those. Skipping them left the reader a column of empty
+    // "From:" / "To:" / "Cc:" labels.
+    let sib: ChildNode | null = sep;
+    while (sib) { const nx: ChildNode | null = sib.nextSibling; quotedNodes.push(sib); sib.remove(); sib = nx; }
     for (const anc of ancestors) {
-      let sib2: Element | null = anc.nextElementSibling;
-      while (sib2) { const nx: Element | null = sib2.nextElementSibling; quotedNodes.push(sib2); sib2.remove(); sib2 = nx; }
+      let sib2: ChildNode | null = anc.nextSibling;
+      while (sib2) { const nx: ChildNode | null = sib2.nextSibling; quotedNodes.push(sib2); sib2.remove(); sib2 = nx; }
     }
   }
   // No blockquote fallback here: `blockquote` is in QUOTE_SELECTORS, so pass 1

@@ -12,7 +12,7 @@ const WINDOWS: Array<[Window, string]> = [
 
 interface Item {
   kind: 'meeting' | 'document' | 'minutes';
-  id: string; title: string; at: string; participantCount: number; href: string;
+  id: string; title: string; at: string; participantCount: number; href?: string;
 }
 
 function Lane({ heading, items }: { heading: string; items: Item[] }) {
@@ -23,17 +23,30 @@ function Lane({ heading, items }: { heading: string; items: Item[] }) {
         {heading}
       </h2>
       <ul className="flex flex-col gap-1.5">
-        {items.map((i) => (
-          <li key={`${i.kind}:${i.id}`}>
-            <Link href={i.href} className="flex items-baseline justify-between gap-4 py-1.5 hover:text-primary">
+        {items.map((i) => {
+          const meta = (
+            <>
               <span className="text-sm truncate">{i.title}</span>
               <span className="text-xs text-muted-foreground/60 shrink-0">
                 {new Date(i.at).toLocaleDateString()}
                 {i.participantCount > 0 && ` · ${i.participantCount} people`}
               </span>
-            </Link>
-          </li>
-        ))}
+            </>
+          );
+          return (
+            <li key={`${i.kind}:${i.id}`}>
+              {i.href ? (
+                <Link href={i.href} className="flex items-baseline justify-between gap-4 py-1.5 hover:text-primary">
+                  {meta}
+                </Link>
+              ) : (
+                <div className="flex items-baseline justify-between gap-4 py-1.5">
+                  {meta}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -49,7 +62,7 @@ export function OrgDigest() {
     setLoading(true);
     setError(false);
     try { setData(await api.org.digest(w)); }
-    catch { setError(true); }
+    catch { setError(true); setData(null); }
     finally { setLoading(false); }
   }, []);
 
@@ -74,7 +87,7 @@ export function OrgDigest() {
         {loading && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground/50 ml-2" />}
       </div>
 
-      {data?.narrative && (
+      {!error && data?.narrative && (
         <p className="text-base leading-relaxed mb-8">{data.narrative}</p>
       )}
 

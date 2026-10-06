@@ -19,6 +19,7 @@ const doc = (over: Partial<any> = {}) => ({
   title: 'Q4 procurement plan',
   updatedAt: new Date('2026-10-02T10:00:00Z'),
   isShared: true,
+  shareToken: 'tok-d1',
   invites: [],
   ...over,
 });
@@ -43,7 +44,7 @@ describe('selectDocumentsAndMinutes', () => {
       .toEqual({ gte: range.pastFrom, lte: range.pastTo });
   });
 
-  it('includes a link-shared document', async () => {
+  it('includes a link-shared document, linked via its share token', async () => {
     const prisma = makePrisma([doc()]);
     const out = await selectDocumentsAndMinutes(prisma, 'risa', range);
     expect(out.concluded).toContainEqual({
@@ -52,7 +53,7 @@ describe('selectDocumentsAndMinutes', () => {
       title: 'Q4 procurement plan',
       at: '2026-10-02T10:00:00.000Z',
       participantCount: 0,
-      href: '/docs?open=d1',
+      href: '/docs/share/tok-d1',
     });
   });
 
@@ -60,6 +61,15 @@ describe('selectDocumentsAndMinutes', () => {
     const prisma = makePrisma([doc({ isShared: false, invites: [{ id: 'i1' }, { id: 'i2' }] })]);
     const out = await selectDocumentsAndMinutes(prisma, 'risa', range);
     expect(out.concluded[0].participantCount).toBe(2);
+  });
+
+  // docs?open=:id requires ownership or an invite (docs.service.ts throws
+  // ForbiddenException otherwise) — an invite-only document (not isShared)
+  // has no publicly-resolvable link, so it must render as plain text.
+  it('emits no href for an invite-only document that is not link-shared', async () => {
+    const prisma = makePrisma([doc({ isShared: false, shareToken: null, invites: [{ id: 'i1' }] })]);
+    const out = await selectDocumentsAndMinutes(prisma, 'risa', range);
+    expect(out.concluded[0].href).toBeUndefined();
   });
 
   it('asks only for documents that are shared or invited', async () => {
@@ -71,12 +81,12 @@ describe('selectDocumentsAndMinutes', () => {
     ]);
   });
 
-  it('includes minutes, titled from their document', async () => {
+  it('includes minutes, titled from their document and linked via its share token', async () => {
     const prisma = makePrisma([], [{
       id: 'm1',
       createdAt: new Date('2026-10-03T08:00:00Z'),
       documentId: 'doc-9',
-      document: { title: 'Minutes — 2G/3G sunset' },
+      document: { title: 'Minutes — 2G/3G sunset', isShared: true, shareToken: 'tok-9' },
     }]);
     const out = await selectDocumentsAndMinutes(prisma, 'risa', range);
     expect(out.concluded).toContainEqual({
@@ -85,14 +95,28 @@ describe('selectDocumentsAndMinutes', () => {
       title: 'Minutes — 2G/3G sunset',
       at: '2026-10-03T08:00:00.000Z',
       participantCount: 0,
-      href: '/docs?open=doc-9',
+      href: '/docs/share/tok-9',
     });
+  });
+
+  it('emits no href for minutes whose document is not link-shared', async () => {
+    const prisma = makePrisma([], [{
+      id: 'm1',
+      createdAt: new Date('2026-10-03T08:00:00Z'),
+      documentId: 'doc-9',
+      document: { title: 'Minutes — 2G/3G sunset', isShared: false, shareToken: null },
+    }]);
+    const out = await selectDocumentsAndMinutes(prisma, 'risa', range);
+    expect(out.concluded[0].href).toBeUndefined();
   });
 
   it('returns newest first across both kinds', async () => {
     const prisma = makePrisma(
       [doc({ id: 'older', updatedAt: new Date('2026-10-01T00:00:00Z') })],
-      [{ id: 'newer', createdAt: new Date('2026-10-04T00:00:00Z'), documentId: 'x', document: { title: 'M' } }],
+      [{
+        id: 'newer', createdAt: new Date('2026-10-04T00:00:00Z'), documentId: 'x',
+        document: { title: 'M', isShared: true, shareToken: 'tok-x' },
+      }],
     );
     const out = await selectDocumentsAndMinutes(prisma, 'risa', range);
     expect(out.concluded.map((i) => i.id)).toEqual(['newer', 'older']);

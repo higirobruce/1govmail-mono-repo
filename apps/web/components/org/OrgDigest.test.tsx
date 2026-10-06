@@ -88,6 +88,17 @@ describe('OrgDigest', () => {
     expect(screen.queryByText(/nothing shared yet/i)).not.toBeInTheDocument();
   });
 
+  it('clears a stale narrative when a later request fails', async () => {
+    render(<OrgDigest />);
+    expect(await screen.findByText(/focused on network readiness/i)).toBeInTheDocument();
+
+    digest.mockRejectedValueOnce(new Error('network down'));
+    fireEvent.click(screen.getByRole('button', { name: /today/i }));
+
+    expect(await screen.findByText(/couldn.t load/i)).toBeInTheDocument();
+    expect(screen.queryByText(/focused on network readiness/i)).not.toBeInTheDocument();
+  });
+
   it('retries with the currently selected window when the user clicks Try again', async () => {
     digest.mockReset();
     digest.mockRejectedValueOnce(new Error('network down'));

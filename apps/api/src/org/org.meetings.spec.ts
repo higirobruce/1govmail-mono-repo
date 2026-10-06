@@ -43,7 +43,6 @@ describe('selectMeetings', () => {
       title: 'Network readiness review',
       at: '2026-10-08T09:00:00.000Z',
       participantCount: 2,
-      href: '/calendar?event=e1',
     });
   });
 

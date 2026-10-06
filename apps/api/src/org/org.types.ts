@@ -20,7 +20,10 @@ export interface OrgItem {
   /** ISO. Start for meetings, last update for documents and minutes. */
   at: string;
   participantCount: number;
-  href: string;
+  /** Absent when the item cannot be resolved for anyone but its owner — a row
+   *  with no href renders as plain text, never as a link that silently 404s
+   *  or 403s for the reader. */
+  href?: string;
 }
 
 export interface OrgDigest {

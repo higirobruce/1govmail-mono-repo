@@ -40,7 +40,10 @@ function toItems(rows: Array<{
       title: r.title,
       at: r.startAt.toISOString(),
       participantCount: count,
-      href: `/calendar?event=${r.id}`,
+      // No href: `/calendar?event=${r.id}` resolves the ORGANISER's row via
+      // findFirst({ where: { id, userId } }) — a 404 for everyone else in the
+      // institution. Resolving the caller's own copy by icalUid is the richer
+      // fix and is out of scope for this wave; until then, no dead links.
     });
   }
   return out;

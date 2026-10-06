@@ -25,7 +25,10 @@ export async function selectDocumentsAndMinutes(
         updatedAt: { gte: range.pastFrom, lte: range.pastTo },
         OR: [{ isShared: true }, { invites: { some: {} } }],
       },
-      select: { id: true, title: true, updatedAt: true, invites: { select: { id: true } } },
+      select: {
+        id: true, title: true, updatedAt: true, isShared: true, shareToken: true,
+        invites: { select: { id: true } },
+      },
       orderBy: { updatedAt: 'desc' },
     }),
     prisma.meetingMinutes.findMany({
@@ -35,11 +38,19 @@ export async function selectDocumentsAndMinutes(
       },
       select: {
         id: true, createdAt: true, documentId: true,
-        document: { select: { title: true } },
+        document: { select: { title: true, isShared: true, shareToken: true } },
       },
       orderBy: { createdAt: 'desc' },
     }),
   ]);
+
+  // `/docs?open=:id` requires ownership or an invite — docs.service.ts throws
+  // ForbiddenException for a non-owner without one, which is exactly the
+  // isShared case this lane selects. Only the publicly-resolvable share link
+  // is safe to hand to every reader in the institution; everything else gets
+  // no href rather than a link that silently 403s.
+  const docHref = (d: { isShared: boolean; shareToken: string | null }): string | undefined =>
+    d.isShared && d.shareToken ? `/docs/share/${d.shareToken}` : undefined;
 
   const items: OrgItem[] = [
     ...docs.map((d: any) => ({
@@ -48,7 +59,7 @@ export async function selectDocumentsAndMinutes(
       title: d.title,
       at: d.updatedAt.toISOString(),
       participantCount: d.invites?.length ?? 0,
-      href: `/docs?open=${d.id}`,
+      href: docHref(d),
     })),
     ...minutes.map((m: any) => ({
       kind: 'minutes' as const,
@@ -56,7 +67,7 @@ export async function selectDocumentsAndMinutes(
       title: m.document?.title ?? 'Meeting minutes',
       at: m.createdAt.toISOString(),
       participantCount: 0,
-      href: `/docs?open=${m.documentId}`,
+      href: m.document ? docHref(m.document) : undefined,
     })),
   ];
 

@@ -76,4 +76,30 @@ describe('OrgDigest', () => {
     expect(screen.queryByText('Network readiness review')).not.toBeInTheDocument();
     expect(screen.queryByText('Q4 procurement plan')).not.toBeInTheDocument();
   });
+
+  it('shows a distinct error state when the request rejects, not the empty-state copy', async () => {
+    digest.mockReset();
+    digest.mockRejectedValue(new Error('network down'));
+    render(<OrgDigest />);
+    expect(await screen.findByText(/couldn.t load/i)).toBeInTheDocument();
+    // The failure must be visually/textually distinct from "quiet institution" —
+    // a test that only checks the error copy appeared would pass even if the
+    // empty-state copy also rendered alongside it.
+    expect(screen.queryByText(/nothing shared yet/i)).not.toBeInTheDocument();
+  });
+
+  it('retries with the currently selected window when the user clicks Try again', async () => {
+    digest.mockReset();
+    digest.mockRejectedValueOnce(new Error('network down'));
+    digest.mockResolvedValue(payload());
+    render(<OrgDigest />);
+    await screen.findByText(/couldn.t load/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+
+    // Must re-call with the window that was active when retry was pressed
+    // (the default, 'week'), not an empty/undefined argument.
+    await waitFor(() => expect(digest).toHaveBeenLastCalledWith('week'));
+    expect(await screen.findByText('Network readiness review')).toBeInTheDocument();
+  });
 });

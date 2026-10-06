@@ -43,10 +43,13 @@ export function OrgDigest() {
   const [window, setWindow] = useState<Window>('week');
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const load = useCallback(async (w: Window) => {
     setLoading(true);
+    setError(false);
     try { setData(await api.org.digest(w)); }
+    catch { setError(true); }
     finally { setLoading(false); }
   }, []);
 
@@ -75,7 +78,14 @@ export function OrgDigest() {
         <p className="text-base leading-relaxed mb-8">{data.narrative}</p>
       )}
 
-      {empty ? (
+      {error ? (
+        <div className="text-sm text-muted-foreground/70">
+          <p className="mb-2">Couldn&apos;t load what&apos;s happening across the institution.</p>
+          <button onClick={() => load(window)} className="text-primary hover:underline">
+            Try again
+          </button>
+        </div>
+      ) : empty ? (
         <p className="text-sm text-muted-foreground/60">
           Nothing shared yet for this period. Meetings with several people, and documents
           shared with colleagues, will appear here.

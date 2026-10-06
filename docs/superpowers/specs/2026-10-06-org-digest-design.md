@@ -53,7 +53,7 @@ Rejected alternatives, recorded so they are not relitigated:
 
 Two lists, plus a short narrative above them.
 
-- **Ahead** — significant meetings in the window.
+- **Ahead** — significant meetings in the window. **This lane comes first.**
 - **Concluded** — minutes published, documents finalised or newly shared.
 
 There are deliberately no "deadlines" here. Nothing in the schema carries a
@@ -115,9 +115,17 @@ Taken on `10.10.94.155` (27 users, 6,806 messages, 868 events, 77 documents) on
 | Recent events with >1 attendee | 11 of 148 | **the meetings lane will be sparse** |
 | Documents shared or invited | 25 of 77 (~32%) | **documents are the strongest signal today** |
 
-Two conclusions follow. **Documents lead the page**; meetings are the secondary
-lane. And the meetings lane is expected to be thin at first — this dataset is
-mostly solo calendar blocks, and genuine multi-party meetings grow with adoption.
+One conclusion follows directly: **the meetings lane will be thin at first.**
+This dataset is mostly solo calendar blocks, and genuine multi-party meetings
+grow with adoption.
+
+On the strength of the numbers alone, documents should lead the page — they are
+the only lane with real volume today. **Bruce chose meetings-first anyway, on
+editorial grounds**, on 2026-10-06: a meeting is what "what is going on" means to
+most readers, and a digest that opens with document churn reads like a changelog.
+The cost is accepted knowingly — the first thing on the page is the sparse lane,
+and it will look sparse until adoption fills it. Revisit if it still looks empty
+once the institution is genuinely using calendars.
 
 ## 6. Prerequisite, already cleared
 
@@ -231,15 +239,38 @@ No interruption on login, no modal, no email. The page is visited, not pushed.
 
 ## 11. Build plan
 
-1. `OrgDigestNarrative` model and migration.
-2. Server: the two list queries (documents first, meetings second, minutes),
-   institution-scoped, with de-duplication.
-3. Server: the `/org/digest` endpoint and window handling.
-4. Server: narrative generation, caching on `contentHash`, floor and failure path.
-5. Web: API client method and the page.
-6. Web: nav entry and the window switcher.
+Everything here ships as **one release**. No lane goes live on its own; a digest
+with half its content is worse than no digest.
 
-Phases 1–4 are server-only and land without user-visible change.
+The two lanes can genuinely be built in parallel, but only after the contract
+they share exists. Attempting them in parallel from the start would mean two
+workers editing the same endpoint, the same response type and the same
+institution-scoping helper.
+
+**Stage 1 — the shared foundation (sequential, must land first).**
+
+1. `OrgDigestNarrative` model and migration.
+2. The `OrgItem` type, the `/org/digest` endpoint skeleton with window parsing,
+   and the institution-scoping helper that derives the caller's institution from
+   the JWT and fails closed on NULL. Returns empty lists at this stage.
+
+**Stage 2 — the two lanes, in parallel.** They touch different queries and
+different tests, and both write into the contract Stage 1 fixed.
+
+3a. Meetings: attendee-threshold selection, de-duplication by `icalUid` with the
+    `(lower(title), startAt)` fallback.
+3b. Documents and minutes: `isShared`/invited selection, plus `MeetingMinutes`
+    joined to its document's owner for institution scoping.
+
+**Stage 3 — on top of both (sequential).**
+
+4. Narrative generation, `contentHash` caching, the floor and the failure path.
+   Needs both lanes, since the hash covers every item.
+5. Web: API client, the page, nav entry, window switcher.
+
+Stages 1 and 2 are server-only and land without user-visible change. Only
+step 5 makes the feature appear, which is what keeps the single-release
+guarantee cheap to honour.
 
 ## 12. Testing
 
@@ -280,5 +311,5 @@ Phases 1–4 are server-only and land without user-visible change.
 2. **`MEETING_MIN_ATTENDEES = 2`** is deliberately permissive to keep the lane
    non-empty at current volumes.
 3. **`NARRATIVE_MIN_ITEMS = 5`** as the floor.
-4. **Documents lead, meetings follow** — driven by §5's measurements, not by
-   taste. If meetings matter more editorially, say so and the order flips.
+4. **Meetings lead, documents and minutes follow** — an editorial decision taken
+   against the measurements (§5), knowing the leading lane is the sparse one.

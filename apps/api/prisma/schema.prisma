@@ -60,6 +60,7 @@ model User {
   meetingMinutes       MeetingMinutes[]
   aiConversations      AiConversation[]
 
+  @@index([institutionId])
   @@map("users")
 }
 

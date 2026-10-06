@@ -9,7 +9,7 @@ import { useConfirmStore } from '@/stores/confirm.store';
 import {
   Inbox, Send, FileText, Trash2, Archive,
   ChevronDown, LogOut, Settings, Plus, X,
-  Calendar, Users, FolderOpen,
+  Calendar, Users, FolderOpen, Building2,
   ListTodo, BookOpen, ShieldAlert,
   MoreHorizontal, Pencil, CloudOff, Loader2,
   PanelLeftClose, PanelLeftOpen, Clock,
@@ -810,6 +810,7 @@ export default function Sidebar({
           </div>
           <NavItem icon={Users} label="Contacts" onClick={() => { router.push('/contacts'); onClose?.(); }} tourId="contacts-nav" collapsed={railMode} />
           <NavItem icon={BookOpen} label="Docs" onClick={() => { router.push('/docs'); onClose?.(); }} tourId="docs-nav" collapsed={railMode} />
+          <NavItem icon={Building2} label="Organisation" onClick={() => { router.push('/org'); onClose?.(); }} tourId="org-nav" collapsed={railMode} />
           <NavItem icon={Clock} label="Chat history" onClick={() => { router.push('/ai/history'); onClose?.(); }} tourId="ai-history-nav" collapsed={railMode} />
 
           {/* Upcoming features */}

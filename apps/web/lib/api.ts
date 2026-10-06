@@ -208,6 +208,17 @@ export const api = {
     },
   },
 
+  org: {
+    /** The institution-level digest. The server derives the institution from
+     *  the caller; there is deliberately no parameter for it. */
+    digest: (window: 'day' | 'week' | 'month' = 'week') => {
+      if (USE_MOCK) {
+        return delay<any>({ window, institutionId: null, narrative: null, ahead: [], concluded: [] });
+      }
+      return request<any>(`/org/digest?window=${window}`);
+    },
+  },
+
   calendar: {
     /** Fetch events in a date range. start/end are ISO strings. */
     getEvents: (start: string, end: string) => {

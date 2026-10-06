@@ -10,7 +10,9 @@ export function makePrisma() {
   } as any;
 }
 
-const makeService = (prisma: any) => new OrgService(prisma);
+const makeNarrative = () => ({ get: jest.fn().mockResolvedValue(null) }) as any;
+const makeService = (prisma: any, narrative: any = makeNarrative()) =>
+  new OrgService(prisma, narrative);
 
 describe('OrgService institution scoping', () => {
   it('reads the institution from the user, never from the caller', async () => {
@@ -29,7 +31,8 @@ describe('OrgService institution scoping', () => {
   it('returns an EMPTY digest when the caller has no institution', async () => {
     const prisma = makePrisma();
     prisma.user.findUnique.mockResolvedValue({ institutionId: null });
-    const svc = makeService(prisma);
+    const narrative = makeNarrative();
+    const svc = makeService(prisma, narrative);
 
     const d = await svc.getDigest('u1', 'week');
 
@@ -40,6 +43,8 @@ describe('OrgService institution scoping', () => {
     expect(prisma.calendarEvent.findMany).not.toHaveBeenCalled();
     expect(prisma.document.findMany).not.toHaveBeenCalled();
     expect(prisma.meetingMinutes.findMany).not.toHaveBeenCalled();
+    // Strengthened: the guard must also block the model call, not just the lists.
+    expect(narrative.get).not.toHaveBeenCalled();
   });
 
   it('returns an EMPTY digest when the user row is missing', async () => {
@@ -84,5 +89,59 @@ describe('OrgService institution scoping', () => {
     expect(r.pastTo.getTime()).toBeLessThanOrEqual(after);
     expect(r.aheadTo.getTime()).toBeGreaterThan(after);
     expect(r.pastFrom.getTime()).toBeLessThan(before);
+  });
+
+  it('puts meetings ahead of documents in the concluded list', async () => {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue({ institutionId: 'risa' });
+    prisma.calendarEvent.findMany.mockResolvedValue([{
+      id: 'past-meeting', title: 'Review', startAt: new Date('2026-10-01T09:00:00Z'),
+      icalUid: 'u', attendees: [{ email: 'a@x' }, { email: 'b@x' }],
+    }]);
+    prisma.document.findMany.mockResolvedValue([{
+      id: 'doc', title: 'Plan', updatedAt: new Date('2026-10-05T09:00:00Z'), invites: [],
+    }]);
+    const svc = makeService(prisma);
+
+    const d = await svc.getDigest('u1', 'week');
+    // The document is NEWER, and still comes second: meetings lead by decision.
+    expect(d.concluded.map((i: any) => i.kind)).toEqual(['meeting', 'document']);
+  });
+
+  // Strengthened: every other test here uses the default narrative stub that
+  // always resolves null, so a getDigest that never calls narrative.get (or
+  // ignores what it returns) would pass all of them. This pins both that the
+  // model is actually invoked with the real assembled items and that its
+  // result is the one returned to the caller.
+  it('passes the assembled items to the narrative and surfaces its result', async () => {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue({ institutionId: 'risa' });
+    prisma.calendarEvent.findMany
+      .mockResolvedValueOnce([{
+        id: 'future-meeting', title: 'Kickoff', startAt: new Date('2026-10-10T09:00:00Z'),
+        icalUid: 'f1', attendees: [{ email: 'a@x' }, { email: 'b@x' }],
+      }])
+      .mockResolvedValueOnce([{
+        id: 'past-meeting', title: 'Review', startAt: new Date('2026-10-01T09:00:00Z'),
+        icalUid: 'p1', attendees: [{ email: 'a@x' }, { email: 'b@x' }],
+      }]);
+    prisma.document.findMany.mockResolvedValue([{
+      id: 'doc', title: 'Plan', updatedAt: new Date('2026-10-05T09:00:00Z'), invites: [],
+    }]);
+    const narrative = { get: jest.fn().mockResolvedValue('synthesized narrative') };
+    const svc = makeService(prisma, narrative);
+
+    const d = await svc.getDigest('u1', 'week');
+
+    expect(d.narrative).toBe('synthesized narrative');
+    expect(narrative.get).toHaveBeenCalledWith(
+      'risa',
+      'week',
+      [
+        expect.objectContaining({ kind: 'meeting', id: 'future-meeting' }),
+        expect.objectContaining({ kind: 'meeting', id: 'past-meeting' }),
+        expect.objectContaining({ kind: 'document', id: 'doc' }),
+      ],
+    );
   });
 });

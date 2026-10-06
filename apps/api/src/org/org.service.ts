@@ -1,14 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  type DigestWindow, type OrgDigest, type OrgItem, WINDOW_DAYS,
+  type DigestWindow, type OrgDigest, WINDOW_DAYS,
 } from './org.types';
+import { selectMeetings } from './org.meetings';
+import { selectDocumentsAndMinutes } from './org.documents';
+import { OrgNarrativeService } from './org.narrative';
 
 const DAY_MS = 86_400_000;
 
 @Injectable()
 export class OrgService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly narrative: OrgNarrativeService,
+  ) {}
 
   /**
    * The caller's institution, read from their own row. Never a parameter:
@@ -40,8 +46,17 @@ export class OrgService {
       return { window, institutionId: null, narrative: null, ahead: [], concluded: [] };
     }
 
-    const ahead: OrgItem[] = [];
-    const concluded: OrgItem[] = [];
-    return { window, institutionId, narrative: null, ahead, concluded };
+    const range = this.windowRange(window);
+    const [meetings, docs] = await Promise.all([
+      selectMeetings(this.prisma, institutionId, range),
+      selectDocumentsAndMinutes(this.prisma, institutionId, range),
+    ]);
+
+    // Meetings lead. Deliberate editorial ordering — do not sort these together.
+    const ahead = meetings.ahead;
+    const concluded = [...meetings.concluded, ...docs.concluded];
+
+    const narrative = await this.narrative.get(institutionId, window, [...ahead, ...concluded]);
+    return { window, institutionId, narrative, ahead, concluded };
   }
 }

@@ -879,3 +879,20 @@ model UserAiProfile {
 
   @@map("user_ai_profiles")
 }
+
+// One narrative per institution per window — three rows per institution.
+// Deliberately NOT AiGeneration: that table is keyed per user, and this text
+// must be identical for everyone in the institution.
+model OrgDigestNarrative {
+  id            String   @id @default(cuid())
+  institutionId String
+  window        String // 'day' | 'week' | 'month'
+  contentHash   String // hash of the item ids the narrative describes
+  content       String
+  model         String
+  generatedAt   DateTime @default(now())
+
+  @@unique([institutionId, window])
+  @@index([institutionId])
+  @@map("org_digest_narratives")
+}

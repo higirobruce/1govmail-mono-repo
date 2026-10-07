@@ -651,6 +651,10 @@ model Document {
   sharePermission SharePermission @default(VIEW) // what a share-link holder may do
   yjsState        Bytes? // Yjs encoded binary state for real-time collaboration
   isFavorite      Boolean         @default(false)
+  /// Whether this document is announced on the institution's org digest —
+  /// its title and date only, never its contents. New documents are visible
+  /// by default; the owner can switch one off.
+  orgVisible      Boolean         @default(true)
   tags            String[]        @default([])
   coverColor      String?
   createdAt       DateTime        @default(now())

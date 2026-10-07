@@ -81,18 +81,27 @@ listing fifteen attendees *is* an institution-wide meeting. Privacy is identical
 that attendee list was disclosed to all fifteen by the invitation.
 
 `organizer` is a separate column, so `attendees` holds invitees only. An event
-qualifies at **`MEETING_MIN_ATTENDEES = 2`** invitees (three people including the
-organiser). The constant is named and tunable; §9 explains why it starts low.
+qualifies at **`MEETING_MIN_ATTENDEES = 3`** invitees (four people including the
+organiser). The constant is named and tunable; §9 explains the value.
 
 **`icalUid` is demoted to de-duplication.** When two synced mailboxes do hold the
 same meeting it prevents showing it twice. When absent, fall back to
 `(lower(title), startAt)`. **No backfill and no re-sync campaign is required** —
 this was the previously-assumed blocker and the measurement removed it.
 
-### 4.2 Documents: already explicitly shared
+### 4.2 Documents: org-visible by default, with an owner opt-out
 
-A document qualifies when `isShared = true` or it has at least one
-`DocumentInvite`. Both states are deliberate acts by the owner.
+A document qualifies when `Document.orgVisible = true`, a column defaulting to
+`true`. Every new document is announced to the institution; the owner switches
+one off in the share dialog.
+
+Only the **title and date** reach the digest — never the contents, which stay
+behind the document's own permissions. The owner's control is over the
+announcement, not over access.
+
+This inverts the original rule, which required a deliberate act by the owner
+(`isShared = true` or at least one `DocumentInvite`) before a document appeared.
+See the amendment note in §15.
 
 ### 4.3 Minutes: already institution-level
 
@@ -223,10 +232,11 @@ collectively working on.
 - **Failure is silent.** If generation errors or times out, the endpoint returns
   the lists with `narrative: null`. The digest never fails because the model did.
 
-`MEETING_MIN_ATTENDEES` starts at 2 rather than something larger because the
-measured data has only 11 multi-attendee events in 60 days. A higher threshold
-would be more "significant" and would also render the lane permanently empty.
-Raise it once adoption makes the lane crowded.
+`MEETING_MIN_ATTENDEES` is 3 invitees — four people with the organiser. It
+shipped at 2 to keep the lane non-empty at launch volumes, and was raised once
+the digest ran live: two-person meetings read as private conversations rather
+than institutional activity. Re-tune it against the lane's density, not against
+a notion of what counts as significant.
 
 ## 10. Surface
 
@@ -280,8 +290,8 @@ guarantee cheap to honour.
 - Meeting selection: an event below the attendee threshold is excluded; one at
   the threshold is included; the same meeting present in two mailboxes appears
   once; de-duplication still works when `icalUid` is absent on one copy.
-- Document selection: `isShared` and invited documents are included; a private
-  document is not, even if recently edited.
+- Document selection: an `orgVisible` document is included; one the owner
+  switched off is not, even if it is shared or recently edited.
 - Narrative: below the floor the endpoint returns `narrative: null` and still
   returns the lists; a generation failure does the same; an unchanged
   `contentHash` reuses the cached row and does not call the model.
@@ -306,10 +316,36 @@ guarantee cheap to honour.
 ## 14. Assumptions to confirm on review
 
 1. **`attendees` excludes the organiser.** `organizer` is a separate column, so a
-   2-invitee threshold means three people. If the provider ever includes the
-   organiser in the array, the threshold means two people and should become 3.
-2. **`MEETING_MIN_ATTENDEES = 2`** is deliberately permissive to keep the lane
-   non-empty at current volumes.
+   3-invitee threshold means four people. If the provider ever includes the
+   organiser in the array, the threshold means three people and should become 4.
+2. **`MEETING_MIN_ATTENDEES = 3`** — raised from 2 after the digest ran live
+   (§15).
 3. **`NARRATIVE_MIN_ITEMS = 5`** as the floor.
 4. **Meetings lead, documents and minutes follow** — an editorial decision taken
    against the measurements (§5), knowing the leading lane is the sparse one.
+
+## 15. Amendment — 2026-10-07, after the first live digest
+
+Bruce read the digest on `.155` and found both lanes carrying items too small to
+be institutional: two-person meetings, and documents whose only claim was that
+they had been shared with one colleague.
+
+**Meetings.** `MEETING_MIN_ATTENDEES` 2 → 3.
+
+**Documents.** The qualifying rule inverts. It was opt-in by side effect — a
+document appeared because its owner had shared it, a decision made for other
+reasons entirely. It is now opt-out by intent: `Document.orgVisible` defaults to
+`true`, and the owner switches off the documents that should not be announced.
+
+The risk this accepts, stated plainly because it is the reason the inversion
+needed a decision rather than a patch: inverting the default exposes titles that
+were never chosen with an audience in mind. Measured against the live `.155`
+data before building, 58 documents would newly appear, among them a security
+vulnerability report, a commercial contract, a document titled with a person's
+name, and several left as "Untitled".
+
+The migration therefore does **not** default existing rows to `true`. It
+preserves what each document shows today — `orgVisible = true` only where the
+document is already shared or invited — so nothing that was private becomes
+announced. The default applies to documents created from now on, where the owner
+can see the switch at the moment they write the title.

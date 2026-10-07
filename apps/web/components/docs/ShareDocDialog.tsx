@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Copy, Link, Loader2, Users } from 'lucide-react';
+import { Building2, Copy, Link, Loader2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -38,18 +38,27 @@ export function ShareDocDialog({
   const [tab, setTab]       = useState<Tab>('invite');
   const [loading, setLoading] = useState(false);
   const [permission, setPermission] = useState<'VIEW' | 'EDIT'>('VIEW');
+  const [orgVisible, setOrgVisible] = useState(true);
+  const [orgSaving, setOrgSaving] = useState(false);
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '') ||
     (typeof window !== 'undefined' ? window.location.origin : '');
   const shareUrl = shareToken ? `${baseUrl}/d/${shareToken}` : '';
 
-  // Load the current link permission from the server when the dialog opens
+  // Load the current link permission and digest visibility when the dialog
+  // opens. Visibility is independent of link sharing, so this runs whether or
+  // not the document has a public link.
   useEffect(() => {
-    if (!open || !isShared) return;
+    if (!open) return;
     api.docs.getOne(docId)
-      .then((d) => { if (d.sharePermission) setPermission(d.sharePermission); })
+      .then((d) => {
+        if (d.sharePermission) setPermission(d.sharePermission);
+        // Only trust a real boolean: endpoints that omit the field must not be
+        // read as "hidden" and silently flip the switch off in the UI.
+        if (typeof d.orgVisible === 'boolean') setOrgVisible(d.orgVisible);
+      })
       .catch(() => {});
-  }, [open, isShared, docId]);
+  }, [open, docId]);
 
   const handleToggle = async () => {
     setLoading(true);
@@ -79,6 +88,20 @@ export function ShareDocDialog({
     } catch {
       setPermission(previous);
       toast.error('Failed to update link permission');
+    }
+  };
+
+  const handleOrgVisibleToggle = async () => {
+    const next = !orgVisible;
+    setOrgVisible(next);
+    setOrgSaving(true);
+    try {
+      await api.docs.update(docId, { orgVisible: next });
+    } catch {
+      setOrgVisible(!next);
+      toast.error('Failed to update organisation visibility');
+    } finally {
+      setOrgSaving(false);
     }
   };
 
@@ -219,6 +242,44 @@ export function ShareDocDialog({
             )}
           </div>
         )}
+
+        {/* Organisation digest — applies to both tabs, so it sits below them */}
+        <div className="flex items-center justify-between gap-4 border-t border-border pt-3 mt-1">
+          <div className="flex gap-2">
+            <Building2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium">Show in Organisation digest</span>
+              <span className="text-xs text-muted-foreground">
+                Announces the title and date to your institution. The contents stay
+                behind the permissions above.
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={orgVisible}
+            aria-label="Show in Organisation digest"
+            disabled={orgSaving || !isOwner}
+            onClick={handleOrgVisibleToggle}
+            className={cn(
+              'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+              orgVisible ? 'bg-primary' : 'bg-input',
+            )}
+          >
+            {orgSaving ? (
+              <Loader2 className="absolute left-0.5 w-3.5 h-3.5 animate-spin text-white" />
+            ) : (
+              <span
+                className={cn(
+                  'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-sm ring-0 transition-transform',
+                  orgVisible ? 'translate-x-4' : 'translate-x-0',
+                )}
+              />
+            )}
+          </button>
+        </div>
       </DialogContent>
     </Dialog>
   );

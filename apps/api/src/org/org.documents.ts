@@ -9,9 +9,13 @@ interface Range {
  * Retrospective only — a document has no future date, so this contributes
  * nothing to the `ahead` lane.
  *
- * A document qualifies on `isShared` (a share link exists) or on having at
- * least one invite. Both are explicit acts by the owner, which is what makes
- * surfacing them disclose nothing new.
+ * A document qualifies on its own `orgVisible` flag. New documents are visible
+ * by default and the owner can switch one off — so the digest shows what the
+ * institution is working on without anyone having to opt each file in.
+ *
+ * Only the title and date are announced. The contents stay behind the document's
+ * own permissions, and `docHref` still links only documents with a share token,
+ * so a visible-but-unshared row renders as plain text rather than a dead link.
  */
 export async function selectDocumentsAndMinutes(
   prisma: any,
@@ -23,7 +27,7 @@ export async function selectDocumentsAndMinutes(
       where: {
         user: { institutionId },
         updatedAt: { gte: range.pastFrom, lte: range.pastTo },
-        OR: [{ isShared: true }, { invites: { some: {} } }],
+        orgVisible: true,
       },
       select: {
         id: true, title: true, updatedAt: true, isShared: true, shareToken: true,
@@ -33,7 +37,7 @@ export async function selectDocumentsAndMinutes(
     }),
     prisma.meetingMinutes.findMany({
       where: {
-        document: { user: { institutionId } },
+        document: { user: { institutionId }, orgVisible: true },
         createdAt: { gte: range.pastFrom, lte: range.pastTo },
       },
       select: {

@@ -930,7 +930,7 @@ export const api = {
       if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: data?.title ?? 'Untitled', emoji: data?.emoji ?? null, parentId: data?.parentId ?? null, position: 0, isFavorite: false, tags: data?.tags ?? [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>('/docs', { method: 'POST', body: JSON.stringify(data ?? {}) });
     },
-    update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number; parentId: string | null; isFavorite: boolean; tags: string[]; coverColor: string | null }>) => {
+    update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number; parentId: string | null; isFavorite: boolean; tags: string[]; coverColor: string | null; orgVisible: boolean }>) => {
       if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, parentId: null, position: 0, isFavorite: false, tags: [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>(`/docs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
     },
@@ -1206,6 +1206,9 @@ export interface Doc {
   shareToken: string | null;
   isShared: boolean;
   sharePermission?: 'VIEW' | 'EDIT';
+  /** Whether the document is announced on the institution's org digest.
+   *  Optional because the list endpoints omit it — only `getOne` returns it. */
+  orgVisible?: boolean;
   createdAt: string;
   updatedAt: string;
   /** Present when the requesting user is an invitee (not the owner) */

@@ -32,7 +32,7 @@ describe('selectDocumentsAndMinutes', () => {
     expect(prisma.document.findMany.mock.calls[0][0].where.user)
       .toEqual({ institutionId: 'risa' });
     expect(prisma.meetingMinutes.findMany.mock.calls[0][0].where.document)
-      .toEqual({ user: { institutionId: 'risa' } });
+      .toMatchObject({ user: { institutionId: 'risa' } });
   });
 
   it('filters by the past window, not the ahead window', async () => {
@@ -72,13 +72,33 @@ describe('selectDocumentsAndMinutes', () => {
     expect(out.concluded[0].href).toBeUndefined();
   });
 
-  it('asks only for documents that are shared or invited', async () => {
+  it('asks only for documents the owner has left org-visible', async () => {
     const prisma = makePrisma();
     await selectDocumentsAndMinutes(prisma, 'risa', range);
-    expect(prisma.document.findMany.mock.calls[0][0].where.OR).toEqual([
-      { isShared: true },
-      { invites: { some: {} } },
-    ]);
+    const where = prisma.document.findMany.mock.calls[0][0].where;
+    expect(where.orgVisible).toBe(true);
+    // The old shared-or-invited rule must be gone, not merely supplemented:
+    // leaving it in would keep announcing documents the owner opted out of.
+    expect(where.OR).toBeUndefined();
+    expect(prisma.document.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  // The whole point of the toggle. A document can be shared with colleagues
+  // and still be withheld from the org page — sharing and announcing are
+  // different decisions.
+  it('does not ask for documents the owner switched off, even shared ones', async () => {
+    const prisma = makePrisma();
+    await selectDocumentsAndMinutes(prisma, 'risa', range);
+    const where = prisma.document.findMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ orgVisible: true, user: { institutionId: 'risa' } });
+  });
+
+  // Minutes live in a document; if that document is withheld, so are they.
+  it('scopes minutes to org-visible documents too', async () => {
+    const prisma = makePrisma();
+    await selectDocumentsAndMinutes(prisma, 'risa', range);
+    expect(prisma.meetingMinutes.findMany.mock.calls[0][0].where.document)
+      .toEqual({ user: { institutionId: 'risa' }, orgVisible: true });
   });
 
   it('includes minutes, titled from their document and linked via its share token', async () => {

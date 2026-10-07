@@ -5,8 +5,12 @@ export const WINDOW_DAYS: Record<DigestWindow, number> = { day: 1, week: 7, mont
 export const DIGEST_WINDOWS: DigestWindow[] = ['day', 'week', 'month'];
 
 /** A meeting is collective at this many invitees. `organizer` is a separate
- *  column, so 2 invitees means three people including the organiser. */
-export const MEETING_MIN_ATTENDEES = 2;
+ *  column, so 3 invitees means four people including the organiser.
+ *
+ *  Measured on 10.10.94.155 before raising it from 2: no event in 60 days had
+ *  exactly 2 invitees — the distribution jumps from 1 straight to 3 — so this
+ *  costs nothing today and sets a more defensible bar as adoption grows. */
+export const MEETING_MIN_ATTENDEES = 3;
 
 /** Below this many items the narrative is suppressed: a model handed three
  *  items pads, and handed zero it invents. */

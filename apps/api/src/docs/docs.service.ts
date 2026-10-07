@@ -241,6 +241,7 @@ export class DocsService {
         ...(dto.isFavorite !== undefined ? { isFavorite: dto.isFavorite } : {}),
         ...(dto.tags       !== undefined ? { tags:       dto.tags       } : {}),
         ...(dto.coverColor !== undefined ? { coverColor: dto.coverColor } : {}),
+        ...(dto.orgVisible !== undefined ? { orgVisible: dto.orgVisible } : {}),
       },
     });
     if (dto.content !== undefined) {

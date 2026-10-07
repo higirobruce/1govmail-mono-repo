@@ -1,4 +1,12 @@
 import { OrgService } from './org.service';
+import { MEETING_MIN_ATTENDEES } from './org.types';
+
+/** Derived from the constant so a future threshold change does not silently
+ *  empty these fixtures and turn the assertions vacuous. */
+const qualifyingAttendees = Array.from(
+  { length: MEETING_MIN_ATTENDEES },
+  (_, i) => ({ email: `p${i}@x` }),
+);
 
 export function makePrisma() {
   return {
@@ -96,7 +104,7 @@ describe('OrgService institution scoping', () => {
     prisma.user.findUnique.mockResolvedValue({ institutionId: 'risa' });
     prisma.calendarEvent.findMany.mockResolvedValue([{
       id: 'past-meeting', title: 'Review', startAt: new Date('2026-10-01T09:00:00Z'),
-      icalUid: 'u', attendees: [{ email: 'a@x' }, { email: 'b@x' }],
+      icalUid: 'u', attendees: qualifyingAttendees,
     }]);
     prisma.document.findMany.mockResolvedValue([{
       id: 'doc', title: 'Plan', updatedAt: new Date('2026-10-05T09:00:00Z'), invites: [],
@@ -119,11 +127,11 @@ describe('OrgService institution scoping', () => {
     prisma.calendarEvent.findMany
       .mockResolvedValueOnce([{
         id: 'future-meeting', title: 'Kickoff', startAt: new Date('2026-10-10T09:00:00Z'),
-        icalUid: 'f1', attendees: [{ email: 'a@x' }, { email: 'b@x' }],
+        icalUid: 'f1', attendees: qualifyingAttendees,
       }])
       .mockResolvedValueOnce([{
         id: 'past-meeting', title: 'Review', startAt: new Date('2026-10-01T09:00:00Z'),
-        icalUid: 'p1', attendees: [{ email: 'a@x' }, { email: 'b@x' }],
+        icalUid: 'p1', attendees: qualifyingAttendees,
       }]);
     prisma.document.findMany.mockResolvedValue([{
       id: 'doc', title: 'Plan', updatedAt: new Date('2026-10-05T09:00:00Z'), invites: [],

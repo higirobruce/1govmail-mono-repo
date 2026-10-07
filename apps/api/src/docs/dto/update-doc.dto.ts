@@ -33,4 +33,11 @@ export class UpdateDocDto {
   @IsOptional()
   @IsString()
   coverColor?: string | null;
+
+  /** Whether this document is announced on the institution's org digest.
+   *  Title and date only — the contents stay behind the document's own
+   *  permissions either way. */
+  @IsOptional()
+  @IsBoolean()
+  orgVisible?: boolean;
 }

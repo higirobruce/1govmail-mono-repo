@@ -1,4 +1,10 @@
 import { selectMeetings } from './org.meetings';
+import { MEETING_MIN_ATTENDEES } from './org.types';
+
+/** Derived from the constant, not hardcoded: the threshold is expected to rise
+ *  as adoption grows, and these fixtures should follow it rather than break. */
+const atThreshold = Array.from({ length: MEETING_MIN_ATTENDEES }, (_, i) => ({ email: `p${i}@risa.gov.rw` }));
+const belowThreshold = atThreshold.slice(0, MEETING_MIN_ATTENDEES - 1);
 
 const range = {
   aheadFrom: new Date('2026-10-06T00:00:00Z'),
@@ -12,7 +18,7 @@ const ev = (over: Partial<any> = {}) => ({
   title: 'Network readiness review',
   startAt: new Date('2026-10-08T09:00:00Z'),
   icalUid: 'uid-1',
-  attendees: [{ email: 'a@risa.gov.rw' }, { email: 'b@risa.gov.rw' }],
+  attendees: atThreshold,
   ...over,
 });
 
@@ -42,12 +48,12 @@ describe('selectMeetings', () => {
       id: 'e1',
       title: 'Network readiness review',
       at: '2026-10-08T09:00:00.000Z',
-      participantCount: 2,
+      participantCount: MEETING_MIN_ATTENDEES,
     });
   });
 
   it('drops an event below the threshold', async () => {
-    const prisma = makePrisma([ev({ attendees: [{ email: 'only@risa.gov.rw' }] })]);
+    const prisma = makePrisma([ev({ attendees: belowThreshold })]);
     const out = await selectMeetings(prisma, 'risa', range);
     // An empty expectation is satisfied by a stub that never queries at all,
     // so confirm the row was actually fetched and then filtered out.

@@ -19,6 +19,10 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverAnchor } from '@/components/ui/popover';
+import { GroupSharePanel } from '@/components/contacts/GroupSharePanel';
+import { composeUrlForGroup } from '@/lib/groupCompose';
+import { MAX_EXPANDED_MEMBERS } from '@/lib/groupRecipients';
+import { isGroupOwner as isGroupOwnerHelper, canEditGroup as canEditGroupHelper } from '@/lib/groupPermissions';
 import { toast } from 'sonner';
 import {
   Search, Plus, User, Mail, Phone, Building2, Briefcase,
@@ -53,6 +57,8 @@ interface ContactGroup {
   description: string | null;
   members: Array<{ email: string; name?: string }>;
   createdAt: string;
+  userId?: string;
+  invites?: Array<{ id: string; invitedEmail: string; role: 'VIEWER' | 'EDITOR' }>;
 }
 
 type FormMode = 'view' | 'create' | 'edit';
@@ -137,6 +143,8 @@ function FormField({ label, value, onChange, placeholder, type = 'text' }: {
 export default function ContactsPage() {
   const router = useRouter();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const currentUserId = useAuthStore((s) => s.user?.id);
+  const currentUserEmail = useAuthStore((s) => s.user?.email);
   const [hydrated, setHydrated] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -166,6 +174,13 @@ export default function ContactsPage() {
   const memberDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [groupSaving, setGroupSaving] = useState(false);
   const [groupDeleting, setGroupDeleting] = useState(false);
+
+  // See lib/groupPermissions.ts for the fail-closed ownership rule and why
+  // canEditGroup must match on the caller's OWN invite, not "does anyone
+  // holding an invite on this group have EDITOR".
+  const isGroupOwner = (g: ContactGroup | null) => isGroupOwnerHelper(g, currentUserId);
+  const canEditGroup = (g: ContactGroup | null) =>
+    canEditGroupHelper(g, currentUserId, currentUserEmail);
 
   const confirm = useConfirmStore((s) => s.confirm);
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -938,22 +953,41 @@ export default function ContactsPage() {
                 <h2 className="text-sm font-semibold text-foreground flex-1 truncate">{selectedGroup.name}</h2>
                 <Button
                   variant="ghost" size="sm"
-                  onClick={() => openEditGroup(selectedGroup)}
+                  onClick={() => {
+                    const { url, omitted } = composeUrlForGroup(selectedGroup.members);
+                    if (omitted > 0) {
+                      toast.info(
+                        `Added the first ${MAX_EXPANDED_MEMBERS} members — ${omitted} more were not included`,
+                      );
+                    }
+                    router.push(url);
+                  }}
                   className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-foreground gap-1.5"
                 >
-                  <Pencil className="w-3.5 h-3.5" /> Edit
+                  <Mail className="w-3.5 h-3.5" /> Email this group
                 </Button>
-                <Button
-                  variant="destructive-ghost" size="sm"
-                  onClick={() => handleDeleteGroup(selectedGroup)}
-                  disabled={groupDeleting}
-                  className="h-8 px-3 text-xs gap-1.5"
-                >
-                  {groupDeleting
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <Trash2 className="w-3.5 h-3.5" />}
-                  Delete
-                </Button>
+                {canEditGroup(selectedGroup) && (
+                  <Button
+                    variant="ghost" size="sm"
+                    onClick={() => openEditGroup(selectedGroup)}
+                    className="h-8 px-3 text-xs text-muted-foreground/60 hover:text-foreground gap-1.5"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Edit
+                  </Button>
+                )}
+                {isGroupOwner(selectedGroup) && (
+                  <Button
+                    variant="destructive-ghost" size="sm"
+                    onClick={() => handleDeleteGroup(selectedGroup)}
+                    disabled={groupDeleting}
+                    className="h-8 px-3 text-xs gap-1.5"
+                  >
+                    {groupDeleting
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <Trash2 className="w-3.5 h-3.5" />}
+                    Delete
+                  </Button>
+                )}
               </div>
 
               <ScrollArea className="flex-1 min-h-0">
@@ -998,6 +1032,10 @@ export default function ContactsPage() {
                       </div>
                     )}
                   </div>
+
+                  {selectedGroup && groupMode === 'view' && (
+                    <GroupSharePanel groupId={selectedGroup.id} isOwner={isGroupOwner(selectedGroup)} />
+                  )}
                 </div>
               </ScrollArea>
             </div>

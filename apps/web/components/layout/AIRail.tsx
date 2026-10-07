@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useThemeStore, type Theme } from '@/stores/theme.store';
+import { NotificationsBell } from '@/components/layout/NotificationsBell';
 
 interface RailButtonProps {
   label: string;
@@ -90,6 +91,9 @@ export function AIRail({
         </>
       )}
       <div className="flex-1" />
+      {/* Notifications: its own popover and query — the rail only gives it a
+          home. Alerting itself is app-wide and lives in NotificationAlerts. */}
+      <NotificationsBell />
       <RailButton label={`Theme: ${theme} (click for ${nextTheme})`} onClick={() => setTheme(nextTheme)}>
         <ThemeIcon className="size-4" />
       </RailButton>

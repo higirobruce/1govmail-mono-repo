@@ -123,3 +123,46 @@ describe('ZimbraService.galSelfLookup', () => {
     ).resolves.toEqual({ title: null, department: null, company: null });
   });
 });
+
+// Zimbra's SearchResponse only carries the address roles the request asks for.
+// At the default (`recip` absent) the `<e>` list holds the SENDER for received
+// mail, so `to`/`cc` come back empty and the client can never show who a
+// message was addressed to. `recip=2` asks for sender AND recipients — without
+// it, MailService persists empty toRecipients/ccRecipients no matter how many
+// times the folder is synced.
+describe('ZimbraService recipient projection', () => {
+  const session = { host: 'mail.example.com', email: 'u@example.com', authToken: 'tok' };
+
+  function makeService() {
+    const service = new ZimbraService();
+    const post = jest.fn().mockResolvedValue({
+      data: { Body: { SearchResponse: { m: [], total: 0, more: false } } },
+    });
+    jest.spyOn(service as any, 'buildClient').mockReturnValue({ post });
+    return { service, post };
+  }
+
+  it('asks for sender AND recipients when listing a folder', async () => {
+    const { service, post } = makeService();
+
+    await service.getMessages(session, '2');
+
+    expect(post.mock.calls[0][1].Body.SearchRequest.recip).toBe(2);
+  });
+
+  it('asks for sender AND recipients when searching', async () => {
+    const { service, post } = makeService();
+
+    await service.searchMessages(session, 'budget');
+
+    expect(post.mock.calls[0][1].Body.SearchRequest.recip).toBe(2);
+  });
+
+  it('asks for sender AND recipients on a structured search', async () => {
+    const { service, post } = makeService();
+
+    await service.searchStructured(session, { from: 'alice@risa.gov.rw' } as any);
+
+    expect(post.mock.calls[0][1].Body.SearchRequest.recip).toBe(2);
+  });
+});

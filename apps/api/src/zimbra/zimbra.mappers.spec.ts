@@ -407,6 +407,59 @@ describe('mapZimbraAppointmentDetail', () => {
   });
 });
 
+describe('Zimbra appointment UID', () => {
+  it('reads uid off a search hit when Zimbra sends one', () => {
+    const ev = mapZimbraAppointment({
+      id: '520', name: 'Cabinet briefing', uid: 'cabinet-2026-09-17@zimbra',
+      inst: [{ s: Date.parse('2026-09-17T09:00:00Z') }], dur: 3600000,
+    } as any);
+    expect(ev?.icalUid).toBe('cabinet-2026-09-17@zimbra');
+  });
+
+  it('leaves icalUid null when the search hit has no uid', () => {
+    // Not every Zimbra version puts uid on the search response; the detail
+    // fetch is the fallback, so a missing uid must be null and not a crash.
+    const ev = mapZimbraAppointment({
+      id: '520', name: 'Cabinet briefing',
+      inst: [{ s: Date.parse('2026-09-17T09:00:00Z') }], dur: 3600000,
+    } as any);
+    expect(ev?.icalUid ?? null).toBeNull();
+  });
+
+  it('reads uid out of the appointment detail invite component', () => {
+    const detail = mapZimbraAppointmentDetail({
+      id: '520',
+      inv: [{ comp: [{ uid: 'cabinet-2026-09-17@zimbra', at: [], or: { a: 'chair@risa.gov.rw' } }] }],
+    } as any);
+    expect(detail.icalUid).toBe('cabinet-2026-09-17@zimbra');
+  });
+
+  it('reads uid out of a bridge-collapsed OBJECT inv on the detail response', () => {
+    // Zimbra's JSON bridge collapses single-item arrays into plain objects, so
+    // a one-invite appointment arrives as `inv: {...}`, not `inv: [{...}]`.
+    // The detail path is the authoritative UID source, so an array-only
+    // accessor here silently disables cross-attendee minutes for every Zimbra
+    // meeting: no error, just "this meeting has no shared id".
+    const detail = mapZimbraAppointmentDetail({
+      id: '520',
+      inv: { comp: [{ uid: 'cabinet-2026-09-17@zimbra', at: [], or: { a: 'chair@risa.gov.rw' } }] },
+    } as any);
+    expect(detail.icalUid).toBe('cabinet-2026-09-17@zimbra');
+  });
+
+  it('falls back to a top-level uid on the detail response', () => {
+    const detail = mapZimbraAppointmentDetail({
+      id: '520', uid: 'cabinet-2026-09-17@zimbra', inv: { id: '512' },
+    } as any);
+    expect(detail.icalUid).toBe('cabinet-2026-09-17@zimbra');
+  });
+
+  it('leaves the detail icalUid null when neither the invite nor the appointment carries one', () => {
+    const detail = mapZimbraAppointmentDetail({ id: '520', inv: { id: '512' } } as any);
+    expect(detail.icalUid).toBeNull();
+  });
+});
+
 describe('mapZimbraFreeBusy', () => {
   it('normalises the busy/tentative/unavailable slot arrays to numeric {s,e} pairs', () => {
     expect(mapZimbraFreeBusy({

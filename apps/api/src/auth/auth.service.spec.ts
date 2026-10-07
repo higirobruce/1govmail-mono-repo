@@ -15,10 +15,10 @@ import { InstitutionRegistry } from './institution.registry';
 // 'other' carries a provider this build does not register, standing in for the
 // "unsupported provider" gate now that ews is a real provider.
 const institutionRows = [
-  { id: 'risa', label: 'RISA', provider: 'zimbra', host: 'mail.risa.gov.rw:8443', ewsDomain: null, enabled: true, position: 0 },
-  { id: 'legacy', label: 'Legacy', provider: 'zimbra', host: 'mail.example.com', ewsDomain: null, enabled: true, position: 1 },
-  { id: 'minaffet', label: 'MINAFFET', provider: 'ews', host: 'webmail.minaffet.gov.rw', ewsDomain: 'MINAFFET', enabled: true, position: 2 },
-  { id: 'other', label: 'Other', provider: 'imap', host: 'imap.example.com', ewsDomain: null, enabled: true, position: 3 },
+  { id: 'risa', label: 'RISA', provider: 'zimbra', host: 'mail.risa.gov.rw:8443', ewsDomain: null, emailDomain: 'risa.gov.rw', enabled: true, position: 0 },
+  { id: 'legacy', label: 'Legacy', provider: 'zimbra', host: 'mail.example.com', ewsDomain: null, emailDomain: 'example.com', enabled: true, position: 1 },
+  { id: 'minaffet', label: 'MINAFFET', provider: 'ews', host: 'webmail.minaffet.gov.rw', ewsDomain: 'MINAFFET', emailDomain: 'minaffet.gov.rw', enabled: true, position: 2 },
+  { id: 'other', label: 'Other', provider: 'imap', host: 'imap.example.com', ewsDomain: null, emailDomain: 'other.gov.rw', enabled: true, position: 3 },
 ];
 
 function makeService() {
@@ -41,6 +41,12 @@ function makeService() {
     list: jest.fn(),
     resolve: jest.fn(async (id: string) => institutionRows.find((r) => r.id === id) ?? null),
     resolveByHost: jest.fn(async (host: string) => institutionRows.find((r) => r.host === host) ?? null),
+    resolveByEmail: jest.fn(async (email: string) => {
+      const at = email.lastIndexOf('@');
+      if (at < 0) return null;
+      const domain = email.slice(at + 1).toLowerCase();
+      return institutionRows.find((r) => r.emailDomain === domain) ?? null;
+    }),
   } as unknown as InstitutionRegistry;
   // The REAL resolver over the zimbra + ews mocks: login/2FA/logout resolve
   // their provider through it, so the ews-login and eviction tests below
@@ -237,6 +243,81 @@ describe('AuthService.login institution resolution', () => {
     const { service } = makeService();
     await expect(service.login({ zimbraHost: 'evil.example.com', email: 'a@b', password: 'x' } as any))
       .rejects.toThrow(BadRequestException);
+  });
+
+  it('derives the institution from the address domain when the client sends none', async () => {
+    const { service, prisma, zimbra, institutionRegistry } = makeService();
+    zimbra.authenticate.mockResolvedValue({
+      twoFactorRequired: false,
+      authToken: 'zimbra-tok',
+      csrfToken: 'csrf',
+      lifetime: 3_600_000,
+      displayName: 'Test User',
+      redirectHost: undefined,
+    });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u1', email: 'xyz@risa.gov.rw', displayName: 'Test User', zimbraHost: 'mail.risa.gov.rw:8443',
+    });
+
+    // Exactly what the login form sends now that the dropdown is gone.
+    const res = await service.login({ email: 'xyz@risa.gov.rw', password: 'pw' } as any);
+
+    expect(institutionRegistry.resolveByEmail).toHaveBeenCalledWith('xyz@risa.gov.rw');
+    expect(zimbra.authenticate).toHaveBeenCalledWith('mail.risa.gov.rw:8443', 'xyz@risa.gov.rw', 'pw', { ntlmDomain: undefined });
+    expect(prisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ provider: 'zimbra', institutionId: 'risa' }),
+    }));
+    expect(res).toHaveProperty('accessToken');
+  });
+
+  it('routes an EWS address to its provider purely from the domain', async () => {
+    const { service, prisma, ews } = makeService();
+    ews.authenticate.mockResolvedValue({ twoFactorRequired: false, encryptedCredentials: 'blob', lifetime: 3_600_000, displayName: 'A' });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u2', email: 'ajs@minaffet.gov.rw', displayName: 'A', zimbraHost: 'webmail.minaffet.gov.rw',
+    });
+
+    await service.login({ email: 'ajs@minaffet.gov.rw', password: 'pw' } as any);
+
+    // The NTLM domain still comes from the institution row, not from the address.
+    expect(ews.authenticate).toHaveBeenCalledWith('webmail.minaffet.gov.rw', 'ajs@minaffet.gov.rw', 'pw', { ntlmDomain: 'MINAFFET' });
+  });
+
+  it('rejects an unregistered address domain and names the domain', async () => {
+    const { service, zimbra } = makeService();
+
+    await expect(service.login({ email: 'joe@minagri.gov.rw', password: 'x' } as any))
+      .rejects.toThrow(BadRequestException);
+    await expect(service.login({ email: 'joe@minagri.gov.rw', password: 'x' } as any))
+      .rejects.toThrow(/minagri\.gov\.rw/);
+    // Never reaches a mail server with an unroutable address.
+    expect(zimbra.authenticate).not.toHaveBeenCalled();
+  });
+
+  it('does not tell the user to pick from a list that no longer exists', async () => {
+    const { service } = makeService();
+    await expect(service.login({ email: 'joe@gmail.com', password: 'x' } as any))
+      .rejects.toThrow(/^(?!.*from the list).*$/s);
+  });
+
+  it('lets an explicit institution from an older client win over the domain', async () => {
+    const { service, prisma, zimbra, institutionRegistry } = makeService();
+    zimbra.authenticate.mockResolvedValue({
+      twoFactorRequired: false,
+      authToken: 'zimbra-tok',
+      csrfToken: 'csrf',
+      lifetime: 3_600_000,
+      displayName: 'Test User',
+      redirectHost: undefined,
+    });
+    prisma.user.upsert.mockResolvedValue({
+      id: 'u1', email: 'u@example.com', displayName: 'Test User', zimbraHost: 'mail.example.com',
+    });
+
+    await service.login({ institution: 'risa', email: 'u@example.com', password: 'pw' } as any);
+
+    expect(institutionRegistry.resolveByEmail).not.toHaveBeenCalled();
+    expect(zimbra.authenticate).toHaveBeenCalledWith('mail.risa.gov.rw:8443', 'u@example.com', 'pw', { ntlmDomain: undefined });
   });
 
   it('rejects institutions whose provider this build does not register (400)', async () => {

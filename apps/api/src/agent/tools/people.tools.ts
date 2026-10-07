@@ -46,7 +46,12 @@ export function buildPeopleTools(
       resultBudget: 1000,
       schema: z.object({ query: z.string().min(1).max(100) }),
       async execute(args: any, ctx) {
-        const rows = await contacts.autocomplete(ctx.userId, args.query);
+        // This tool never opts into groups, so the result is always the
+        // address-shaped variant — narrow away the (unreachable here) group
+        // member of the union rather than widening this call site's contract.
+        const rows = (await contacts.autocomplete(ctx.userId, args.query)).filter(
+          (r): r is { email: string; display: string } => !('kind' in r),
+        );
         return {
           summary: `${rows.length} contact(s)`,
           content: rows.length ? rows.map((r) => `${r.display} <${r.email}>`).join('\n') : 'No matching contacts.',

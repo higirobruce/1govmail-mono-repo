@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeProfileDraft, mergeSuggestions, type AiProfileDraft } from './ai-profile-helpers';
+import { normalizeProfileDraft, mergeSuggestions, type AiProfileDraft } from './profileDraft';
 
 function draft(overrides: Partial<AiProfileDraft> = {}): AiProfileDraft {
   return {

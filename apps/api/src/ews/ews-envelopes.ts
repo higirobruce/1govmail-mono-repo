@@ -108,6 +108,10 @@ const FINDITEM_SUMMARY_FIELDS =
   '<t:FieldURI FieldURI="item:Subject"/>' +
   '<t:FieldURI FieldURI="message:From"/>' +
   '<t:FieldURI FieldURI="message:ToRecipients"/>' +
+  // Cc is requested alongside To so a listed row knows whether the user was
+  // copied rather than addressed. Bcc is deliberately absent: Exchange never
+  // returns it on received mail, and GetItem supplies it for own sent items.
+  '<t:FieldURI FieldURI="message:CcRecipients"/>' +
   '<t:FieldURI FieldURI="item:DateTimeReceived"/>' +
   '<t:FieldURI FieldURI="item:Size"/>' +
   '<t:FieldURI FieldURI="message:IsRead"/>' +
@@ -876,6 +880,11 @@ export function findCalendarEnvelope(startIso: string, endIso: string): string {
     '<m:FindItem Traversal="Shallow">' +
     '<m:ItemShape>' +
     '<t:BaseShape>Default</t:BaseShape>' +
+    '<t:AdditionalProperties>' +
+    // The one identity that is the same string in every attendee's copy of
+    // this meeting — see the meeting-minutes spec §3.
+    '<t:FieldURI FieldURI="calendar:UID"/>' +
+    '</t:AdditionalProperties>' +
     '</m:ItemShape>' +
     `<m:CalendarView StartDate="${xmlEscape(startIso)}" EndDate="${xmlEscape(endIso)}"/>` +
     '<m:ParentFolderIds>' +
@@ -899,6 +908,9 @@ export function getAppointmentEnvelope(itemId: string): string {
     '<t:FieldURI FieldURI="calendar:RequiredAttendees"/>' +
     '<t:FieldURI FieldURI="calendar:OptionalAttendees"/>' +
     '<t:FieldURI FieldURI="calendar:Organizer"/>' +
+    // The one identity that is the same string in every attendee's copy of
+    // this meeting — see the meeting-minutes spec §3.
+    '<t:FieldURI FieldURI="calendar:UID"/>' +
     '</t:AdditionalProperties>' +
     '</m:ItemShape>' +
     '<m:ItemIds>' +

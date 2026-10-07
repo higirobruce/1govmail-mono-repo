@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A Deep FindFolder from msgfolderroot on a mailbox that holds THREE folders
+  named "Inbox": the real one, one under "Archive", and one under a PST
+  import's "Top of Information Store". Exchange returns the whole tree flat,
+  in its own order — here with a namesake FIRST, which is what makes a
+  DisplayName-only mapping pick the wrong folder.
+
+  Note the parentage, which is the only thing that separates them:
+  every top-level folder points at AAA-Root= (msgfolderroot itself, which a
+  Deep traversal from it does NOT return), while a nested one points at
+  another folder in this same list.
+-->
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Header>
+    <h:ServerVersionInfo MajorVersion="15" MinorVersion="2" MajorBuildNumber="2562" MinorBuildNumber="37"
+      xmlns:h="http://schemas.microsoft.com/exchange/services/2006/types" />
+  </s:Header>
+  <s:Body>
+    <m:FindFolderResponse xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+      xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+      <m:ResponseMessages>
+        <m:FindFolderResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="5" TotalItemsInView="5" IncludesLastItemInRange="true">
+            <t:Folders>
+              <t:Folder>
+                <t:FolderId Id="AAA-Archive-Inbox=" ChangeKey="CK1"/>
+                <t:ParentFolderId Id="AAA-Archive=" ChangeKey="CK3"/>
+                <t:DisplayName>Inbox</t:DisplayName>
+                <t:TotalCount>9</t:TotalCount>
+                <t:ChildFolderCount>0</t:ChildFolderCount>
+                <t:UnreadCount>5</t:UnreadCount>
+              </t:Folder>
+              <t:Folder>
+                <t:FolderId Id="AAA-Inbox=" ChangeKey="CK2"/>
+                <t:ParentFolderId Id="AAA-Root=" ChangeKey="CK0"/>
+                <t:DisplayName>Inbox</t:DisplayName>
+                <t:TotalCount>42</t:TotalCount>
+                <t:ChildFolderCount>0</t:ChildFolderCount>
+                <t:UnreadCount>5</t:UnreadCount>
+              </t:Folder>
+              <t:Folder>
+                <t:FolderId Id="AAA-Archive=" ChangeKey="CK3"/>
+                <t:ParentFolderId Id="AAA-Root=" ChangeKey="CK0"/>
+                <t:DisplayName>Archive</t:DisplayName>
+                <t:TotalCount>12</t:TotalCount>
+                <t:ChildFolderCount>1</t:ChildFolderCount>
+                <t:UnreadCount>0</t:UnreadCount>
+              </t:Folder>
+              <t:Folder>
+                <t:FolderId Id="AAA-PST=" ChangeKey="CK4"/>
+                <t:ParentFolderId Id="AAA-Root=" ChangeKey="CK0"/>
+                <t:DisplayName>Top of Information Store</t:DisplayName>
+                <t:TotalCount>3</t:TotalCount>
+                <t:ChildFolderCount>1</t:ChildFolderCount>
+                <t:UnreadCount>0</t:UnreadCount>
+              </t:Folder>
+              <t:Folder>
+                <t:FolderId Id="AAA-PST-Inbox=" ChangeKey="CK5"/>
+                <t:ParentFolderId Id="AAA-PST=" ChangeKey="CK4"/>
+                <t:DisplayName>Inbox</t:DisplayName>
+                <t:TotalCount>3</t:TotalCount>
+                <t:ChildFolderCount>0</t:ChildFolderCount>
+                <t:UnreadCount>1</t:UnreadCount>
+              </t:Folder>
+            </t:Folders>
+          </m:RootFolder>
+        </m:FindFolderResponseMessage>
+      </m:ResponseMessages>
+    </m:FindFolderResponse>
+  </s:Body>
+</s:Envelope>

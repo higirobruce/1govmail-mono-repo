@@ -10,10 +10,11 @@ export class LoginDto {
   password: string;
 
   /**
-   * Institution id from the `/auth/institutions` dropdown (e.g. "risa").
-   * The server resolves this to a provider + host via InstitutionRegistry —
-   * preferred over `zimbraHost`. At least one of `institution`/`zimbraHost`
-   * must be supplied; the service enforces that.
+   * Institution id (e.g. "risa"), resolved to a provider + host via
+   * InstitutionRegistry. The web client no longer sends this — the server
+   * derives the institution from the address domain when it is absent, so
+   * email + password alone is a complete login. Still accepted, and still
+   * takes precedence, for older clients that supply it.
    */
   @IsOptional()
   @IsString()

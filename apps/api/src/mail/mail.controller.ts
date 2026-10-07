@@ -141,6 +141,17 @@ export class MailController {
     return this.mailService.moveMessage(req.user.sub, messageId, folderId);
   }
 
+  /** Rescue a message from Junk: move it to the Inbox and clear the block that
+   *  put it there, so the next sync does not re-file it. */
+  @Patch('messages/:messageId/not-spam')
+  @HttpCode(HttpStatus.OK)
+  markNotSpam(
+    @Req() req: AuthenticatedRequest,
+    @Param('messageId') messageId: string,
+  ) {
+    return this.mailService.markNotSpam(req.user.sub, messageId);
+  }
+
   @Post('folders')
   @HttpCode(HttpStatus.OK)
   createFolder(
@@ -222,6 +233,30 @@ export class MailController {
       ...(inline ? { 'X-Content-Type-Options': 'nosniff' } : {}),
     });
     stream.pipe(res);
+  }
+
+  /**
+   * Inline images only — the parts a message declares in `inlineImages`, which
+   * the client fetches automatically on every open. Cached on disk, unlike
+   * attachments, which are clicked deliberately and can be enormous.
+   */
+  @Get('messages/:messageId/inline/:partId')
+  async inlineImage(
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response,
+    @Param('messageId') messageId: string,
+    @Param('partId') partId: string,
+  ) {
+    const { data, contentType } =
+      await this.mailService.getInlineImage(req.user.sub, messageId, partId);
+
+    res.set({
+      'Content-Type': contentType,
+      'Content-Length': String(data.byteLength),
+      'Cache-Control': 'private, max-age=86400',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.end(data);
   }
 
   // ── Snooze ───────────────────────────────────────────────────────────────────

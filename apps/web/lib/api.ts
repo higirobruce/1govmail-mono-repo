@@ -98,6 +98,44 @@ function delay<T>(data: T, ms = 120): Promise<T> {
   return new Promise((r) => setTimeout(() => r(data), ms));
 }
 
+export type ContactAddressSuggestionDTO = { kind?: undefined; email: string; display: string };
+
+export type ContactSuggestionDTO =
+  | ContactAddressSuggestionDTO
+  | {
+      kind: 'group';
+      groupId: string;
+      display: string;
+      memberCount: number;
+      members: Array<{ email: string; name?: string }>;
+    };
+
+/**
+ * Autocomplete email addresses / names from Zimbra contacts + GAL.
+ * Pass `includeGroups` to also receive the caller's contact groups — only
+ * the compose recipient field wants these; single-address search fields
+ * must not offer a group.
+ *
+ * Overloaded rather than a single optional-arg signature so the many
+ * existing call sites that never pass `opts` keep inferring the narrower
+ * address-only shape they were written against, instead of suddenly having
+ * to narrow a `kind: 'group'` case they can never actually receive.
+ */
+function contactsAutocomplete(q: string): Promise<ContactAddressSuggestionDTO[]>;
+function contactsAutocomplete(
+  q: string,
+  opts: { includeGroups: true },
+): Promise<ContactSuggestionDTO[]>;
+function contactsAutocomplete(
+  q: string,
+  opts?: { includeGroups?: boolean },
+): Promise<ContactSuggestionDTO[]> {
+  if (USE_MOCK) return delay<ContactSuggestionDTO[]>([]);
+  const qs = new URLSearchParams({ q });
+  if (opts?.includeGroups) qs.set('groups', 'true');
+  return request<ContactSuggestionDTO[]>(`/contacts/autocomplete?${qs.toString()}`);
+}
+
 export const api = {
   people: {
     /** Deterministic per-person dossier facts — GET /people/dossier. */
@@ -108,16 +146,7 @@ export const api = {
   },
 
   contacts: {
-    /**
-     * Autocomplete email addresses / names from Zimbra contacts + GAL.
-     * Returns up to ~20 matches for the given prefix query.
-     */
-    autocomplete: (q: string): Promise<Array<{ email: string; display: string }>> => {
-      if (USE_MOCK) return delay<Array<{ email: string; display: string }>>([]);
-      return request<Array<{ email: string; display: string }>>(
-        `/contacts/autocomplete?q=${encodeURIComponent(q)}`,
-      );
-    },
+    autocomplete: contactsAutocomplete,
     /** Fetch all contacts; sync=true forces a fresh pull from Zimbra. */
     getAll: (q?: string, sync = false) => {
       if (USE_MOCK) return delay<any[]>([]);
@@ -156,6 +185,37 @@ export const api = {
         if (USE_MOCK) return delay({ success: true });
         return request<{ success: boolean }>(`/contacts/groups/${id}`, { method: 'DELETE' });
       },
+      shares: {
+        list: (groupId: string) => {
+          if (USE_MOCK) return delay<any[]>([]);
+          return request<any[]>(`/contacts/groups/${groupId}/shares`);
+        },
+        add: (groupId: string, data: { email: string; role?: 'VIEWER' | 'EDITOR' }) => {
+          if (USE_MOCK) return delay({ id: `i-${Date.now()}`, ...data });
+          return request<any>(`/contacts/groups/${groupId}/shares`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+          });
+        },
+        remove: (groupId: string, inviteId: string) => {
+          if (USE_MOCK) return delay({ success: true });
+          return request<{ success: boolean }>(
+            `/contacts/groups/${groupId}/shares/${inviteId}`,
+            { method: 'DELETE' },
+          );
+        },
+      },
+    },
+  },
+
+  org: {
+    /** The institution-level digest. The server derives the institution from
+     *  the caller; there is deliberately no parameter for it. */
+    digest: (window: 'day' | 'week' | 'month' = 'week') => {
+      if (USE_MOCK) {
+        return delay<any>({ window, institutionId: null, narrative: null, ahead: [], concluded: [] });
+      }
+      return request<any>(`/org/digest?window=${window}`);
     },
   },
 
@@ -239,14 +299,23 @@ export const api = {
         `/calendar/freebusy?email=${encodeURIComponent(email)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
       );
     },
+    /** Create (or open) the minutes document for this event's occurrence.
+     *  `linked: false` means the meeting had no iCalendar UID, so this
+     *  document is not the canonical record for other attendees. */
+    createMinutes: (eventId: string, body: { title: string; content: string }) => {
+      if (USE_MOCK) return delay({ documentId: 'mock-doc', linked: true });
+      return request<{ documentId: string; linked: boolean }>(
+        `/calendar/events/${eventId}/minutes`,
+        { method: 'POST', body: JSON.stringify(body) },
+      );
+    },
   },
 
   auth: {
-    institutions: () => {
-      if (USE_MOCK) return delay<Array<{ id: string; label: string }>>([{ id: 'memory', label: 'Demo (local)' }]);
-      return request<Array<{ id: string; label: string }>>('/auth/institutions');
-    },
-    login: (email: string, password: string, institution: string) => {
+    // No `institution` argument: the server derives it from the address domain.
+    // GET /auth/institutions still exists for ops and non-web clients, but the
+    // login form no longer needs it.
+    login: (email: string, password: string) => {
       if (USE_MOCK)
         return delay({ accessToken: 'mock-token', user: { id: 'u1', email, displayName: 'Demo User', zimbraHost: 'mail.company.com' } });
       return request<
@@ -254,7 +323,7 @@ export const api = {
         | { requiresTwoFactor: true; twoFactorToken: string }
       >('/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password, institution }),
+        body: JSON.stringify({ email, password }),
       });
     },
     twoFactor: (twoFactorToken: string, code: string) => {
@@ -396,6 +465,16 @@ export const api = {
         body: JSON.stringify({ folderId }),
       });
     },
+
+    /** Rescue a message from the spam folder. Also clears whatever block put it
+     *  there; `unblocked` says whether a rule actually changed. */
+    notSpam: (messageId: string) => {
+      if (USE_MOCK) return delay({ success: true, unblocked: false });
+      return request<{ success: boolean; unblocked: boolean }>(
+        `/mail/messages/${messageId}/not-spam`,
+        { method: 'PATCH' },
+      );
+    },
     createFolder: (name: string) => {
       if (USE_MOCK) return delay({ id: `f-${Date.now()}`, name, path: `/${name}`, unreadCount: 0, totalCount: 0 });
       return request<any>('/mail/folders', {
@@ -432,6 +511,19 @@ export const api = {
       if (!res.ok) throw new Error('Failed to download attachment');
       const blob = await res.blob();
       return URL.createObjectURL(blob);
+    },
+
+    /** Inline image as a blob: URL. The iframe is sandboxed and cannot send a
+     *  bearer token, so the bytes are fetched here and handed over as a blob. */
+    inlineImage: async (messageId: string, partId: string): Promise<string> => {
+      if (USE_MOCK) return '';
+      const token = getToken();
+      const res = await fetch(
+        `${API_BASE}/mail/messages/${messageId}/inline/${encodeURIComponent(partId)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      if (!res.ok) throw new Error('Failed to load inline image');
+      return URL.createObjectURL(await res.blob());
     },
 
     // ── Snooze ────────────────────────────────────────────────────────────────
@@ -838,7 +930,7 @@ export const api = {
       if (USE_MOCK) return delay<Doc>({ id: `mock-${Date.now()}`, title: data?.title ?? 'Untitled', emoji: data?.emoji ?? null, parentId: data?.parentId ?? null, position: 0, isFavorite: false, tags: data?.tags ?? [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>('/docs', { method: 'POST', body: JSON.stringify(data ?? {}) });
     },
-    update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number; parentId: string | null; isFavorite: boolean; tags: string[]; coverColor: string | null }>) => {
+    update: (id: string, data: Partial<{ title: string; content: string; emoji: string; position: number; parentId: string | null; isFavorite: boolean; tags: string[]; coverColor: string | null; orgVisible: boolean }>) => {
       if (USE_MOCK) return delay<Doc>({ id, title: 'Untitled', emoji: null, parentId: null, position: 0, isFavorite: false, tags: [], coverColor: null, shareToken: null, isShared: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       return request<Doc>(`/docs/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
     },
@@ -922,6 +1014,40 @@ export const api = {
     getOne: (token: string) => request<Doc>(`/docs/shared/${token}`),
     update: (token: string, data: Partial<{ title: string; content: string }>) =>
       request<Doc>(`/docs/shared/${token}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  },
+
+  aiHistory: {
+    /** Saved Ask 1Gov conversations, newest first. `q` searches titles and turn text. */
+    list: (opts?: { q?: string; cursor?: string }) => {
+      if (USE_MOCK) return delay<{ items: any[]; nextCursor: string | null }>({ items: [], nextCursor: null });
+      const p = new URLSearchParams();
+      if (opts?.q) p.set('q', opts.q);
+      if (opts?.cursor) p.set('cursor', opts.cursor);
+      const qs = p.toString();
+      return request<{ items: any[]; nextCursor: string | null }>(
+        `/ai/conversations${qs ? `?${qs}` : ''}`,
+      );
+    },
+    get: (id: string) => {
+      if (USE_MOCK) return delay<any>(null);
+      return request<any>(`/ai/conversations/${id}`);
+    },
+    create: (body: any) => {
+      if (USE_MOCK) return delay<{ id: string }>({ id: 'mock' });
+      return request<{ id: string }>('/ai/conversations', { method: 'POST', body: JSON.stringify(body) });
+    },
+    append: (id: string, body: any) => {
+      if (USE_MOCK) return delay<void>(undefined as any);
+      return request<void>(`/ai/conversations/${id}/turns`, { method: 'POST', body: JSON.stringify(body) });
+    },
+    remove: (id: string) => {
+      if (USE_MOCK) return delay<void>(undefined as any);
+      return request<void>(`/ai/conversations/${id}`, { method: 'DELETE' });
+    },
+    removeAll: () => {
+      if (USE_MOCK) return delay<{ deleted: number }>({ deleted: 0 });
+      return request<{ deleted: number }>('/ai/conversations', { method: 'DELETE' });
+    },
   },
 };
 
@@ -1080,6 +1206,9 @@ export interface Doc {
   shareToken: string | null;
   isShared: boolean;
   sharePermission?: 'VIEW' | 'EDIT';
+  /** Whether the document is announced on the institution's org digest.
+   *  Optional because the list endpoints omit it — only `getOne` returns it. */
+  orgVisible?: boolean;
   createdAt: string;
   updatedAt: string;
   /** Present when the requesting user is an invitee (not the owner) */

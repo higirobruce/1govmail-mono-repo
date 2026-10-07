@@ -17,6 +17,7 @@ import { DocsModule } from './docs/docs.module';
 import { AiModule } from './ai/ai.module';
 import { ChatModule } from './chat/chat.module';
 import { AgentModule } from './agent/agent.module';
+import { OrgModule } from './org/org.module';
 import { AuditModule } from './common/audit/audit.module';
 import { CapabilityNotSupportedFilter } from './common/filters/capability-not-supported.filter';
 
@@ -44,6 +45,7 @@ import { CapabilityNotSupportedFilter } from './common/filters/capability-not-su
     AiModule,
     ChatModule,
     AgentModule,
+    OrgModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

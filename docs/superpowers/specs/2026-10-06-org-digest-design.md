@@ -81,7 +81,7 @@ listing fifteen attendees *is* an institution-wide meeting. Privacy is identical
 that attendee list was disclosed to all fifteen by the invitation.
 
 `organizer` is a separate column, so `attendees` holds invitees only. An event
-qualifies at **`MEETING_MIN_ATTENDEES = 3`** invitees (four people including the
+qualifies at **`MEETING_MIN_ATTENDEES = 4`** invitees (five people including the
 organiser). The constant is named and tunable; §9 explains the value.
 
 **`icalUid` is demoted to de-duplication.** When two synced mailboxes do hold the
@@ -232,11 +232,12 @@ collectively working on.
 - **Failure is silent.** If generation errors or times out, the endpoint returns
   the lists with `narrative: null`. The digest never fails because the model did.
 
-`MEETING_MIN_ATTENDEES` is 3 invitees — four people with the organiser. It
-shipped at 2 to keep the lane non-empty at launch volumes, and was raised once
-the digest ran live: two-person meetings read as private conversations rather
-than institutional activity. Re-tune it against the lane's density, not against
-a notion of what counts as significant.
+`MEETING_MIN_ATTENDEES` is 4 invitees — five people with the organiser. It
+shipped at 2 to keep the lane non-empty at launch volumes, went to 3 when the
+digest first ran live, and then to 4 once the distribution was actually
+measured: the live data has no 2-invitee events at all, so 3 excluded nothing.
+Re-tune it against the measured histogram, never against a report that one
+item looked too small.
 
 ## 10. Surface
 
@@ -316,10 +317,10 @@ guarantee cheap to honour.
 ## 14. Assumptions to confirm on review
 
 1. **`attendees` excludes the organiser.** `organizer` is a separate column, so a
-   3-invitee threshold means four people. If the provider ever includes the
-   organiser in the array, the threshold means three people and should become 4.
-2. **`MEETING_MIN_ATTENDEES = 3`** — raised from 2 after the digest ran live
-   (§15).
+   4-invitee threshold means five people. If the provider ever includes the
+   organiser in the array, the threshold means four people and should become 5.
+2. **`MEETING_MIN_ATTENDEES = 4`** — raised from 2 via 3 after the digest ran
+   live (§15, §16).
 3. **`NARRATIVE_MIN_ITEMS = 5`** as the floor.
 4. **Meetings lead, documents and minutes follow** — an editorial decision taken
    against the measurements (§5), knowing the leading lane is the sparse one.
@@ -330,7 +331,7 @@ Bruce read the digest on `.155` and found both lanes carrying items too small to
 be institutional: two-person meetings, and documents whose only claim was that
 they had been shared with one colleague.
 
-**Meetings.** `MEETING_MIN_ATTENDEES` 2 → 3.
+**Meetings.** `MEETING_MIN_ATTENDEES` 2 → 3. (Superseded the same day — see §16.)
 
 **Documents.** The qualifying rule inverts. It was opt-in by side effect — a
 document appeared because its owner had shared it, a decision made for other
@@ -349,3 +350,30 @@ preserves what each document shows today — `orgVisible = true` only where the
 document is already shared or invited — so nothing that was private becomes
 announced. The default applies to documents created from now on, where the owner
 can see the switch at the moment they write the title.
+
+## 16. Amendment — 2026-10-07, after measuring the distribution
+
+The §15 threshold raise was tuned from an observation, not from the data, and
+it turned out to be inert. Measured on `.155` immediately after deploying it,
+the live attendee distribution over 60 days is:
+
+| invitees | 0 | 1 | 3 | 6 | 7 | 8 | 11 | 12 | 13 | 14 | 15 | 23 | 74 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| events | 136 | 1 | 1 | 1 | 1 | 2 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
+
+There is no 2-invitee event anywhere in it. Raising the bar from 2 to 3
+excluded zero meetings, and the lane kept showing exactly what prompted the
+complaint.
+
+**`MEETING_MIN_ATTENDEES` is now 4** — the first value that removes anything,
+namely the single 3-invitee meeting. The lane keeps every entry from 6 invitees
+up.
+
+Both spec fixtures derive their attendee arrays from the constant rather than
+hardcoding a count, so this change needed no test edits. That property is worth
+preserving: a hardcoded fixture would have silently fallen below the new bar
+and turned its assertions vacuous rather than failing.
+
+**The rule this leaves behind:** read the histogram before moving a cutoff. A
+threshold chosen to answer "that item looks too small" can easily land in an
+empty region of the distribution and change nothing at all.

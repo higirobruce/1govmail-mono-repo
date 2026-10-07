@@ -141,4 +141,53 @@ describe('selectDocumentsAndMinutes', () => {
     const out = await selectDocumentsAndMinutes(prisma, 'risa', range);
     expect(out.concluded.map((i) => i.id)).toEqual(['newer', 'older']);
   });
+
+  // Live on .155 the digest showed "Minutes — Meet with CTO Roger" twice on the
+  // same date. A minutes document IS a Document, so the documents query emits it
+  // and the minutes query emits it again.
+  it('announces a minutes document once, not once per query', async () => {
+    const prisma = makePrisma(
+      [doc({ id: 'dm1', title: 'Minutes — Meet with CTO Roger' })],
+      [{
+        id: 'm1',
+        createdAt: new Date('2026-10-02T11:00:00Z'),
+        documentId: 'dm1',
+        document: { title: 'Minutes — Meet with CTO Roger', isShared: true, shareToken: 'tok-d1' },
+      }],
+    );
+
+    const { concluded } = await selectDocumentsAndMinutes(prisma, 'risa', range);
+
+    expect(concluded).toHaveLength(1);
+    // The minutes row is the one that survives: it carries the meeting meaning,
+    // where the document row is incidental to how minutes happen to be stored.
+    expect(concluded[0]).toMatchObject({ kind: 'minutes', id: 'm1' });
+  });
+
+  it('keeps a minutes document whose minutes row falls outside the window', async () => {
+    // Only the document is in range here — the minutes row was never selected.
+    // Dropping the document row unconditionally would lose the item entirely.
+    const prisma = makePrisma([doc({ id: 'dm2', title: 'Minutes — Older meeting' })], []);
+
+    const { concluded } = await selectDocumentsAndMinutes(prisma, 'risa', range);
+
+    expect(concluded).toHaveLength(1);
+    expect(concluded[0]).toMatchObject({ kind: 'document', id: 'dm2' });
+  });
+
+  it('leaves ordinary documents alone when minutes are present', async () => {
+    const prisma = makePrisma(
+      [doc({ id: 'dm3', title: 'Minutes — Standup' }), doc({ id: 'plain', title: 'Q4 procurement plan' })],
+      [{
+        id: 'm3',
+        createdAt: new Date('2026-10-03T09:00:00Z'),
+        documentId: 'dm3',
+        document: { title: 'Minutes — Standup', isShared: false, shareToken: null },
+      }],
+    );
+
+    const { concluded } = await selectDocumentsAndMinutes(prisma, 'risa', range);
+
+    expect(concluded.map((i: any) => i.id).sort()).toEqual(['m3', 'plain']);
+  });
 });

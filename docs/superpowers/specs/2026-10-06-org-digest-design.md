@@ -377,3 +377,29 @@ and turned its assertions vacuous rather than failing.
 **The rule this leaves behind:** read the histogram before moving a cutoff. A
 threshold chosen to answer "that item looks too small" can easily land in an
 empty region of the distribution and change nothing at all.
+
+## 17. Amendment — 2026-10-07, the duplicate found on the live page
+
+Reading the deployed digest on `.155` showed the same item twice: "Minutes —
+Meet with CTO Roger", identical title and date, in two adjacent rows.
+
+**Cause.** A minutes document is a `Document`. §4.2's document query selects it
+(it is org-visible and was updated in the window) and §4.3's minutes query
+selects it again. The two result sets were concatenated with no de-duplication
+— unlike the meetings lane, which has had dedup since the first release.
+
+**Rule.** When both queries select the same underlying document, the **minutes
+row wins**: it carries the meeting meaning, where the document row is incidental
+to how minutes happen to be stored.
+
+The key is the set of minutes rows **actually selected**, not "this document has
+minutes somewhere". A document can sit inside the window while its minutes row
+falls outside it; keying on the latter would drop the document row while nothing
+else announced it, losing the item outright. There is a test pinning exactly
+that case.
+
+**Also recorded, not yet acted on.** The item that prompted the threshold work in
+§15–16 was a *document* all along — "Minutes — Meeting with RMB CEO · 2 people",
+whose `participantCount` is its invite count. Documents have no size threshold at
+all; only the owner's `orgVisible` toggle governs them. Whether they should have
+one is open.

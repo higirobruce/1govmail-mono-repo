@@ -56,8 +56,22 @@ export async function selectDocumentsAndMinutes(
   const docHref = (d: { isShared: boolean; shareToken: string | null }): string | undefined =>
     d.isShared && d.shareToken ? `/docs/share/${d.shareToken}` : undefined;
 
+  // A minutes document is itself a Document, so both queries select it and the
+  // digest announced it twice (seen live on .155: the same title and date in two
+  // adjacent rows). The minutes row wins — it carries the meeting meaning, where
+  // the document row is incidental to how minutes happen to be stored.
+  //
+  // Keyed on the minutes rows actually selected, never on "has minutes at all":
+  // when a document is in the window but its minutes row is not, nothing else
+  // would announce it and dropping it would lose the item outright.
+  const announcedAsMinutes = new Set<string>(
+    minutes.map((m: any) => m.documentId).filter(Boolean),
+  );
+
   const items: OrgItem[] = [
-    ...docs.map((d: any) => ({
+    ...docs
+      .filter((d: any) => !announcedAsMinutes.has(d.id))
+      .map((d: any) => ({
       kind: 'document' as const,
       id: d.id,
       title: d.title,
